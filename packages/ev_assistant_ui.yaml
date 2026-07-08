@@ -1,0 +1,72 @@
+# =====================================================================
+# UI-Glue fuer die ev_assistant Integration: manuelle Eingabe per Formular.
+# Ablage: config/packages/ev_assistant_ui.yaml
+#   (configuration.yaml -> homeassistant: packages: !include_dir_named packages)
+# Die Buttons rufen die Integrations-Services auf (kein eigenes MQTT/Persistenz).
+# =====================================================================
+
+input_number:
+  ev_assistant_kwh:
+    name: Fremdladung geladene kWh
+    min: 0
+    max: 200
+    step: 0.1
+    unit_of_measurement: kWh
+    mode: box
+    icon: mdi:ev-station
+  ev_assistant_preis:
+    name: Fremdladung Preis pro kWh
+    min: 0
+    max: 5
+    step: 0.001
+    unit_of_measurement: "EUR/kWh"
+    mode: box
+    icon: mdi:currency-eur
+
+input_button:
+  ev_assistant_speichern:
+    name: Fremdladung speichern
+    icon: mdi:content-save
+  ev_assistant_verwerfen:
+    name: Fremdladung verwerfen
+    icon: mdi:trash-can-outline
+
+automation:
+  - alias: "Fremdladung erkannt -> Formular vorbelegen"
+    id: ev_assistant_prefill
+    mode: queued
+    trigger:
+      - platform: event
+        event_type: ev_assistant_pending
+    action:
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.ev_assistant_kwh
+        data:
+          value: "{{ trigger.event.data.energy_kwh | float(0) | round(1) }}"
+      - service: input_number.set_value
+        target:
+          entity_id: input_number.ev_assistant_preis
+        data:
+          value: "{{ states('sensor.ev_assistant_letzter_preis') | float(0) }}"
+
+  - alias: "Fremdladung speichern -> Service"
+    id: ev_assistant_save
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: input_button.ev_assistant_speichern
+    action:
+      - service: ev_assistant.log_charge
+        data:
+          kwh: "{{ states('input_number.ev_assistant_kwh') | float(0) }}"
+          price_kwh: "{{ states('input_number.ev_assistant_preis') | float(0) }}"
+
+  - alias: "Fremdladung verwerfen -> Service"
+    id: ev_assistant_discard
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: input_button.ev_assistant_verwerfen
+    action:
+      - service: ev_assistant.discard_pending

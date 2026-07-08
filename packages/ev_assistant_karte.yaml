@@ -1,0 +1,24 @@
+# Lovelace-Karte fuer die Eingabe-View (Deeplink-Ziel /lovelace).
+type: entities
+title: Fremdladung erfassen
+show_header_toggle: false
+entities:
+  - entity: binary_sensor.ev_assistant_erfassung_offen
+    name: Offen?
+  - entity: sensor.ev_assistant_schaetzung_offen
+    name: Schaetzung
+  - type: divider
+  - entity: input_number.ev_assistant_kwh
+    name: Geladene kWh (Beleg)
+  - entity: input_number.ev_assistant_preis
+    name: Preis pro kWh
+  - type: divider
+  - entity: input_button.ev_assistant_speichern
+    name: Speichern
+  - entity: input_button.ev_assistant_verwerfen
+    name: Verwerfen
+  - type: divider
+  - entity: sensor.ev_assistant_letzte_kosten
+  - entity: sensor.ev_assistant_kwh_gesamt
+  - entity: sensor.ev_assistant_kosten_gesamt
+  - entity: sensor.ev_assistant_anzahl_ladungen
