@@ -17,11 +17,30 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      - name: Create release zip
+        run: |
+          zip -r ev_assistant.zip custom_components/ hacs.json README.md LICENSE
+
+      - name: Extract changelog section for this version
+        run: |
+          VERSION_NUM="${{ steps.version.outputs.VERSION }}"
+          VERSION_NUM="${VERSION_NUM#v}"
+          awk -v ver="$VERSION_NUM" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release_notes.md
+          if [ ! -s release_notes.md ]; then
+            echo "_No changelog notes found for this version._" > release_notes.md
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
           name: ${{ steps.version.outputs.VERSION }}
-          generate_release_notes: true
+          files: ev_assistant.zip
+          body_path: release_notes.md
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

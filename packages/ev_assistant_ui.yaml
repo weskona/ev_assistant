@@ -3,6 +3,11 @@
 # Ablage: config/packages/ev_assistant_ui.yaml
 #   (configuration.yaml -> homeassistant: packages: !include_dir_named packages)
 # Die Buttons rufen die Integrations-Services auf (kein eigenes MQTT/Persistenz).
+#
+# Hinweis: Diese eine UI kann immer nur EIN Fahrzeug gleichzeitig bedienen —
+# `ev_assistant_config_entry_id` merkt sich, welche Instanz zuletzt eine
+# Fremdladung gemeldet hat (config_entry_id steht seit v0.4.0 im Event-Payload).
+# Bei mehreren Fahrzeugen gewinnt die zuletzt gemeldete Fremdladung.
 # =====================================================================
 
 input_number:
@@ -22,6 +27,13 @@ input_number:
     unit_of_measurement: "EUR/kWh"
     mode: box
     icon: mdi:currency-eur
+    # Kein separates Prefill noetig: input_number behaelt von sich aus den
+    # zuletzt eingegebenen Wert ueber Neustarts hinweg als Vorbelegung.
+
+input_text:
+  ev_assistant_config_entry_id:
+    name: Fremdladung Ziel-Fahrzeug (intern)
+    icon: mdi:car-electric
 
 input_button:
   ev_assistant_speichern:
@@ -39,16 +51,16 @@ automation:
       - platform: event
         event_type: ev_assistant_pending
     action:
+      - service: input_text.set_value
+        target:
+          entity_id: input_text.ev_assistant_config_entry_id
+        data:
+          value: "{{ trigger.event.data.config_entry_id }}"
       - service: input_number.set_value
         target:
           entity_id: input_number.ev_assistant_kwh
         data:
           value: "{{ trigger.event.data.energy_kwh | float(0) | round(1) }}"
-      - service: input_number.set_value
-        target:
-          entity_id: input_number.ev_assistant_preis
-        data:
-          value: "{{ states('sensor.ev_assistant_letzter_preis') | float(0) }}"
 
   - alias: "Fremdladung speichern -> Service"
     id: ev_assistant_save
@@ -59,6 +71,7 @@ automation:
     action:
       - service: ev_assistant.log_charge
         data:
+          config_entry_id: "{{ states('input_text.ev_assistant_config_entry_id') }}"
           kwh: "{{ states('input_number.ev_assistant_kwh') | float(0) }}"
           price_kwh: "{{ states('input_number.ev_assistant_preis') | float(0) }}"
 
@@ -70,3 +83,5 @@ automation:
         entity_id: input_button.ev_assistant_verwerfen
     action:
       - service: ev_assistant.discard_pending
+        data:
+          config_entry_id: "{{ states('input_text.ev_assistant_config_entry_id') }}"

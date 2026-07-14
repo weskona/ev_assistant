@@ -216,6 +216,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     # ----- Event-/Persistenz-Logik ---------------------------------------
     async def _handle_pending(self, pend: dict) -> None:
+        # config_entry_id im Event, damit Automationen (z.B. packages/
+        # ev_assistant_ui.yaml) bei mehreren Fahrzeugen wissen, welche
+        # Instanz die Fremdladung gemeldet hat.
+        pend["config_entry_id"] = self.entry.entry_id
         self.data["pending"] = pend
         await self._save()
         await self._publish(self._opt(CONF_PUBLISH_TOPIC, self._default_publish_topic), pend, retain=False)
@@ -264,7 +268,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     async def async_log_charge(self, kwh: float, price: float, start_ts: Optional[float] = None) -> None:
         kwh = round(float(kwh), 2)
         price = round(float(price), 4)
-        rec = {"kwh": kwh, "preis_kwh": price, "kosten": round(kwh * price, 2), "erfasst_ts": int(time.time())}
+        rec = {
+            "config_entry_id": self.entry.entry_id,
+            "kwh": kwh, "preis_kwh": price, "kosten": round(kwh * price, 2),
+            "erfasst_ts": int(time.time()),
+        }
         pend = self.data.get("pending")
         if pend:
             rec.update({
