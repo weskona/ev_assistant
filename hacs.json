@@ -1,5 +1,7 @@
 {
   "name": "EV Assistant",
   "render_readme": true,
+  "zip_release": true,
+  "filename": "ev_assistant.zip",
   "homeassistant": "2024.1.0"
 }
