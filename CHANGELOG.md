@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.5.1] - 2026-07-14
+
+### Fixed
+
+- Added the required `brand/icon.png` so the repository passes HACS's brand-assets validation check (previously failed with "does not provide brand assets and is not listed in the Home Assistant brands repository").
+
 ## [0.5.0] - 2026-07-14
 
 ### Fixed
