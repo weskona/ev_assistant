@@ -7,7 +7,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 
-from .const import DOMAIN, PLATFORMS, SERVICE_DISCARD, SERVICE_LOG, SERVICE_SIMULATE
+from .const import DOMAIN, PLATFORMS, SERVICE_DISCARD, SERVICE_EDIT, SERVICE_LOG, SERVICE_SIMULATE
 from .coordinator import EvAssistantCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,6 +29,13 @@ SIMULATE_SCHEMA = vol.Schema({
     vol.Required("soc_start"): vol.Coerce(float),
     vol.Required("soc_end"): vol.Coerce(float),
     vol.Optional("energy_source", default="soc"): str,
+})
+
+EDIT_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("erfasst_ts"): vol.Coerce(int),
+    vol.Required("kwh"): vol.Coerce(float),
+    vol.Required("price_kwh"): vol.Coerce(float),
 })
 
 
@@ -76,9 +83,17 @@ def _register_services(hass: HomeAssistant) -> None:
                 call.data["soc_start"], call.data["soc_end"], call.data.get("energy_source", "soc")
             )
 
+    async def _handle_edit(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_edit_charge(
+                call.data["erfasst_ts"], call.data["kwh"], call.data["price_kwh"]
+            )
+
     hass.services.async_register(DOMAIN, SERVICE_LOG, _handle_log, schema=LOG_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCARD, _handle_discard, schema=DISCARD_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE, _handle_simulate, schema=SIMULATE_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_EDIT, _handle_edit, schema=EDIT_SCHEMA)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -87,6 +102,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator = hass.data[DOMAIN].pop(entry.entry_id)
         await coordinator.async_shutdown()
         if not hass.data[DOMAIN]:
-            for service in (SERVICE_LOG, SERVICE_DISCARD, SERVICE_SIMULATE):
+            for service in (SERVICE_LOG, SERVICE_DISCARD, SERVICE_SIMULATE, SERVICE_EDIT):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok

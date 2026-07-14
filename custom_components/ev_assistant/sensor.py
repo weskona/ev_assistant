@@ -64,7 +64,9 @@ class LastCostSensor(EvAssistantEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         hist = self.coordinator.data.get("history") or []
-        return hist[0] if hist else {}
+        attrs: dict = dict(hist[0]) if hist else {}
+        attrs["historie"] = hist
+        return attrs
 
 
 class LastKwhSensor(EvAssistantEntity, SensorEntity):

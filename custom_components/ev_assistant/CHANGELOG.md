@@ -2,6 +2,19 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.6.0] - 2026-07-14
+
+### Added
+
+- **`ev_assistant.edit_charge` service**: corrects the kWh/price of an already-confirmed history entry (e.g. a typo noticed after the fact), identified by its `erfasst_ts` attribute. Running totals (kWh/cost) are adjusted by the difference rather than recomputed from the full history, so older entries that have aged out of the stored history (see `HISTORY_MAX`) don't distort the totals.
+- The last-cost sensor now also exposes a `historie` attribute with the full stored history list, so tools like the [EV Assistant Card](https://github.com/weskona/ev-assistant-card) can list and select any past entry to correct.
+
+## [0.5.1] - 2026-07-14
+
+### Fixed
+
+- Added the required `brand/icon.png` so the repository passes HACS's brand-assets validation check (previously failed with "does not provide brand assets and is not listed in the Home Assistant brands repository").
+
 ## [0.5.0] - 2026-07-14
 
 ### Fixed

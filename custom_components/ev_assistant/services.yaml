@@ -75,6 +75,56 @@ discard_pending:
         number:
           mode: box
 
+edit_charge:
+  name: Fremdladung nachträglich korrigieren
+  description: >
+    Korrigiert kWh und/oder Preis eines bereits erfassten Historien-
+    Eintrags nachtraeglich (z.B. Tippfehler beim Erfassen bemerkt). Die
+    Gesamtsummen (kWh/Kosten) werden um die Differenz angepasst, die
+    Anzahl bleibt unveraendert. Der zu korrigierende Eintrag wird ueber
+    erfasst_ts identifiziert (Wert aus dessen erfasst_ts-Attribut in der
+    Historie).
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    erfasst_ts:
+      name: Erfasst-Zeitstempel (Unix)
+      description: Identifiziert den zu korrigierenden Historien-Eintrag (Wert aus dessen erfasst_ts-Attribut).
+      required: true
+      example: 1751884800
+      selector:
+        number:
+          mode: box
+    kwh:
+      name: Geladene kWh
+      description: Korrigierte Energiemenge.
+      required: true
+      example: 21.4
+      selector:
+        number:
+          min: 0
+          max: 200
+          step: 0.1
+          unit_of_measurement: kWh
+          mode: box
+    price_kwh:
+      name: Preis pro kWh
+      description: Korrigierter Preis pro Kilowattstunde.
+      required: true
+      example: 0.59
+      selector:
+        number:
+          min: 0
+          max: 5
+          step: 0.001
+          unit_of_measurement: EUR/kWh
+          mode: box
+
 simulate_event:
   name: Fremdladung simulieren (Test)
   description: >

@@ -155,6 +155,7 @@ A compact reference for the three calculations EV Assistant does, all using the 
 
 - `ev_assistant.log_charge` — `config_entry_id`, `kwh`, `price_kwh` (+ optional `start_ts`): confirm a pending charge and write it to history. **More than one charge can be pending at once** (e.g. two charging stops on a road trip before you get around to confirming either) — `start_ts` picks which one; without it, the oldest is confirmed (FIFO).
 - `ev_assistant.discard_pending` — `config_entry_id` (+ optional `start_ts`): discard a pending charge (e.g. a false positive — it wasn't actually an external charge). Same `start_ts` selection rule as above.
+- `ev_assistant.edit_charge` — `config_entry_id`, `erfasst_ts`, `kwh`, `price_kwh`: correct the kWh/price of an already-confirmed history entry (e.g. a typo noticed after the fact), identified by its `erfasst_ts` attribute (see the `historie` attribute on the last-cost sensor, or the [EV Assistant Card](https://github.com/weskona/ev-assistant-card)'s History list). Running totals are adjusted by the difference, not recomputed from scratch.
 - `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): generate a **test event without a car** (triggers notification, MQTT, sensors) — see "Testing" below.
 
 All three services require `config_entry_id` to target a specific vehicle if you run more than one EV Assistant instance.
@@ -355,6 +356,7 @@ Eine kompakte Referenz für die drei Berechnungen, die EV Assistant durchführt,
 
 - `ev_assistant.log_charge` — `config_entry_id`, `kwh`, `price_kwh` (+ optional `start_ts`): eine offene Ladung bestätigen und in die Historie schreiben. **Es können mehrere Ladungen gleichzeitig offen sein** (z.B. zwei Ladestopps auf einem Roadtrip, bevor du zum Bestätigen kommst) — `start_ts` wählt die gemeinte aus; ohne Angabe wird die älteste bestätigt (FIFO).
 - `ev_assistant.discard_pending` — `config_entry_id` (+ optional `start_ts`): eine offene Ladung verwerfen (z.B. ein Fehlalarm — es war gar keine Fremdladung). Gleiche `start_ts`-Auswahlregel wie oben.
+- `ev_assistant.edit_charge` — `config_entry_id`, `erfasst_ts`, `kwh`, `price_kwh`: korrigiert kWh/Preis eines bereits bestätigten Historien-Eintrags nachträglich (z.B. ein Tippfehler, der später auffällt), identifiziert über dessen `erfasst_ts`-Attribut (siehe das `historie`-Attribut am Kosten-Sensor, oder die Historie-Liste der [EV Assistant Card](https://github.com/weskona/ev-assistant-card)). Die laufenden Summen werden um die Differenz angepasst, nicht neu berechnet.
 - `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): **Testereignis ohne Auto** erzeugen (löst Benachrichtigung, MQTT, Sensoren aus) — siehe „Testen" unten.
 
 Alle drei Services benötigen `config_entry_id`, um bei mehreren EV-Assistant-Instanzen das richtige Fahrzeug anzusprechen.

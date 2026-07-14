@@ -57,9 +57,11 @@ EFF_MAX_EFFICIENCY = 1.0
 
 EVENT_PENDING = "ev_assistant_pending"
 EVENT_LOGGED = "ev_assistant_logged"
+EVENT_EDITED = "ev_assistant_edited"
 
 SERVICE_LOG = "log_charge"
 SERVICE_DISCARD = "discard_pending"
 SERVICE_SIMULATE = "simulate_event"
+SERVICE_EDIT = "edit_charge"
 
 NOTIFY_TAG = "ev_assistant"

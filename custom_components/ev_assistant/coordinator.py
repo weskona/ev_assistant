@@ -26,7 +26,7 @@ from .const import (
     DEFAULT_PUBLISH_TOPIC, DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
     DEFAULT_USABLE_KWH, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
     EFF_MAX_EFFICIENCY, EFF_MIN_SAMPLES, EFF_MIN_SOC_DELTA,
-    EVENT_LOGGED, EVENT_PENDING, HISTORY_MAX,
+    EVENT_EDITED, EVENT_LOGGED, EVENT_PENDING, HISTORY_MAX,
     NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
 )
 from .engine import ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency, pop_pending
@@ -332,6 +332,36 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         else:
             await self._dismiss()
         self.async_set_updated_data(self.data)
+
+    async def async_edit_charge(self, erfasst_ts: int, kwh: float, price: float) -> bool:
+        """Korrigiert einen bereits bestaetigten Historien-Eintrag (z.B.
+        Tippfehler bei kWh/Preis beim Erfassen bemerkt). Passt die
+        laufenden Summen um die Differenz an statt sie aus der Historie neu
+        zu berechnen, da aeltere, nicht mehr in der Historie gespeicherte
+        Eintraege (siehe HISTORY_MAX) sonst aus den Summen herausfallen
+        wuerden. Gibt False zurueck, wenn kein Eintrag mit erfasst_ts
+        gefunden wurde."""
+        history = self.data.get("history") or []
+        for rec in history:
+            if rec.get("erfasst_ts") == erfasst_ts:
+                old_kwh = rec["kwh"]
+                old_kosten = rec["kosten"]
+                kwh = round(float(kwh), 2)
+                price = round(float(price), 4)
+                kosten = round(kwh * price, 2)
+                totals = self.data["totals"]
+                totals["kwh"] = round(totals.get("kwh", 0.0) - old_kwh + kwh, 2)
+                totals["kosten"] = round(totals.get("kosten", 0.0) - old_kosten + kosten, 2)
+                rec["kwh"] = kwh
+                rec["preis_kwh"] = price
+                rec["kosten"] = kosten
+                if history[0] is rec:
+                    self.data["last_price"] = price
+                await self._save()
+                self.hass.bus.async_fire(EVENT_EDITED, rec)
+                self.async_set_updated_data(self.data)
+                return True
+        return False
 
     async def async_discard(self, start_ts: Optional[float] = None) -> None:
         """Verwirft eine offene Fremdladung. Bei mehreren gleichzeitig
