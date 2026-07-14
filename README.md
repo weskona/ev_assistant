@@ -117,7 +117,7 @@ The HA device is named after the vehicle (`{Manufacturer} {Model}`), so entity n
 
 | Sensor | Meaning |
 |---|---|
-| `binary_sensor ... Fremdladung Erfassung offen` | **On** while there's a detected external charge waiting for you to confirm the real kWh/price. Attributes contain the full pending charge record (start/end time, SoC start/end, estimate, source). |
+| `binary_sensor ... Fremdladung Erfassung offen` | **On** while at least one detected external charge is waiting for you to confirm the real kWh/price. More than one can be open at once — attributes: `anzahl_offen` (count), `offene_ladungen` (the full list, each with start/end time, SoC start/end, estimate, source), plus the oldest one's fields flattened directly at the top level for convenience. |
 | `sensor ... Fremdladung Schätzung` | The estimated kWh of the currently pending charge (see "Energy estimation methods"). `unknown` when nothing is pending. |
 | `sensor ... Fremdladung kWh (letzte)` | The `kwh` value you entered for the most recently confirmed external charge (i.e. from the receipt, not the estimate). |
 | `sensor ... Fremdladung Kosten (letzte)` | `kwh × price_kwh` for that same most recent confirmed charge. |
@@ -153,8 +153,8 @@ A compact reference for the three calculations EV Assistant does, all using the 
 
 ### Services
 
-- `ev_assistant.log_charge` — `config_entry_id`, `kwh`, `price_kwh` (+ optional `start_ts`): confirm the pending charge and write it to history.
-- `ev_assistant.discard_pending` — `config_entry_id`: discard the pending charge (e.g. a false positive — it wasn't actually an external charge).
+- `ev_assistant.log_charge` — `config_entry_id`, `kwh`, `price_kwh` (+ optional `start_ts`): confirm a pending charge and write it to history. **More than one charge can be pending at once** (e.g. two charging stops on a road trip before you get around to confirming either) — `start_ts` picks which one; without it, the oldest is confirmed (FIFO).
+- `ev_assistant.discard_pending` — `config_entry_id` (+ optional `start_ts`): discard a pending charge (e.g. a false positive — it wasn't actually an external charge). Same `start_ts` selection rule as above.
 - `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): generate a **test event without a car** (triggers notification, MQTT, sensors) — see "Testing" below.
 
 All three services require `config_entry_id` to target a specific vehicle if you run more than one EV Assistant instance.
@@ -317,7 +317,7 @@ Das HA-Gerät heißt wie das Fahrzeug (`{Hersteller} {Modell}`), Entitäten ersc
 
 | Sensor | Bedeutung |
 |---|---|
-| `binary_sensor … Fremdladung Erfassung offen` | **An**, solange eine erkannte Fremdladung auf deine Bestätigung der echten kWh/des Preises wartet. Attribute enthalten den vollständigen offenen Ladedatensatz (Start-/Endzeit, SoC Start/Ende, Schätzung, Quelle). |
+| `binary_sensor … Fremdladung Erfassung offen` | **An**, solange mindestens eine erkannte Fremdladung auf deine Bestätigung der echten kWh/des Preises wartet. Es können mehrere gleichzeitig offen sein — Attribute: `anzahl_offen` (Anzahl), `offene_ladungen` (die vollständige Liste, je mit Start-/Endzeit, SoC Start/Ende, Schätzung, Quelle), zusätzlich die Felder der ältesten direkt oben drüber gespiegelt zur Bequemlichkeit. |
 | `sensor … Fremdladung Schätzung` | Die geschätzten kWh der aktuell offenen Ladung (siehe „Energie-Schätzmethoden"). `unknown`, wenn nichts offen ist. |
 | `sensor … Fremdladung kWh (letzte)` | Der `kwh`-Wert, den du für die zuletzt bestätigte Fremdladung eingetragen hast (also vom Beleg, nicht die Schätzung). |
 | `sensor … Fremdladung Kosten (letzte)` | `kwh × preis_kwh` für dieselbe zuletzt bestätigte Ladung. |
@@ -353,8 +353,8 @@ Eine kompakte Referenz für die drei Berechnungen, die EV Assistant durchführt,
 
 ### Services
 
-- `ev_assistant.log_charge` — `config_entry_id`, `kwh`, `price_kwh` (+ optional `start_ts`): offene Ladung bestätigen und in die Historie schreiben.
-- `ev_assistant.discard_pending` — `config_entry_id`: offene Ladung verwerfen (z.B. ein Fehlalarm — es war gar keine Fremdladung).
+- `ev_assistant.log_charge` — `config_entry_id`, `kwh`, `price_kwh` (+ optional `start_ts`): eine offene Ladung bestätigen und in die Historie schreiben. **Es können mehrere Ladungen gleichzeitig offen sein** (z.B. zwei Ladestopps auf einem Roadtrip, bevor du zum Bestätigen kommst) — `start_ts` wählt die gemeinte aus; ohne Angabe wird die älteste bestätigt (FIFO).
+- `ev_assistant.discard_pending` — `config_entry_id` (+ optional `start_ts`): eine offene Ladung verwerfen (z.B. ein Fehlalarm — es war gar keine Fremdladung). Gleiche `start_ts`-Auswahlregel wie oben.
 - `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): **Testereignis ohne Auto** erzeugen (löst Benachrichtigung, MQTT, Sensoren aus) — siehe „Testen" unten.
 
 Alle drei Services benötigen `config_entry_id`, um bei mehreren EV-Assistant-Instanzen das richtige Fahrzeug anzusprechen.

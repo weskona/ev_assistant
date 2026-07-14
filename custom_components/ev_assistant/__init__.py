@@ -21,6 +21,7 @@ LOG_SCHEMA = vol.Schema({
 
 DISCARD_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
+    vol.Optional("start_ts"): vol.Coerce(float),
 })
 
 SIMULATE_SCHEMA = vol.Schema({
@@ -66,7 +67,7 @@ def _register_services(hass: HomeAssistant) -> None:
     async def _handle_discard(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
-            await coordinator.async_discard()
+            await coordinator.async_discard(call.data.get("start_ts"))
 
     async def _handle_simulate(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])

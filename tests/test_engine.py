@@ -1,7 +1,7 @@
 """pytest fuer die reine Erkennungslogik (ohne Home Assistant)."""
 
 import pytest
-from engine import ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency
+from engine import ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency, pop_pending
 
 
 def stream(socs, start_ts=0, step=60, home=False, power=None):
@@ -149,3 +149,30 @@ def test_average_efficiency_rollierend():
     # 11 Werte, max_samples=10 -> der aelteste (0.80) faellt raus
     avg = average_efficiency(samples, max_samples=10)
     assert avg == pytest.approx(sum(samples[1:]) / 10, abs=0.0001)
+
+
+# ----- pop_pending: Auswahl bei mehreren gleichzeitig offenen Ladungen ------
+
+def test_pop_pending_leere_liste():
+    assert pop_pending([], None) is None
+    assert pop_pending([], 123) is None
+
+
+def test_pop_pending_ohne_start_ts_nimmt_die_aelteste():
+    pending = [{"start_ts": 100, "kind": "a"}, {"start_ts": 200, "kind": "b"}]
+    popped = pop_pending(pending, None)
+    assert popped == {"start_ts": 100, "kind": "a"}
+    assert pending == [{"start_ts": 200, "kind": "b"}]
+
+
+def test_pop_pending_mit_start_ts_trifft_die_richtige():
+    pending = [{"start_ts": 100, "kind": "a"}, {"start_ts": 200, "kind": "b"}, {"start_ts": 300, "kind": "c"}]
+    popped = pop_pending(pending, 200)
+    assert popped == {"start_ts": 200, "kind": "b"}
+    assert pending == [{"start_ts": 100, "kind": "a"}, {"start_ts": 300, "kind": "c"}]
+
+
+def test_pop_pending_unbekannter_start_ts_liefert_none_und_laesst_liste_unveraendert():
+    pending = [{"start_ts": 100, "kind": "a"}]
+    assert pop_pending(pending, 999) is None
+    assert pending == [{"start_ts": 100, "kind": "a"}]

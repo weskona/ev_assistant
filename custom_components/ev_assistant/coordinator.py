@@ -29,7 +29,7 @@ from .const import (
     EVENT_LOGGED, EVENT_PENDING, HISTORY_MAX,
     NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
 )
-from .engine import ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency
+from .engine import ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency, pop_pending
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ def _empty_data() -> dict:
         "history": [],
         "totals": {"kwh": 0.0, "kosten": 0.0, "count": 0},
         "last_price": 0.0,
-        "pending": None,
+        "pending": [],
         "efficiency_samples": [],
         "measured_efficiency": None,
     }
@@ -80,6 +80,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             base = _empty_data()
             base.update(stored)
             self.data = base
+        # Migration: "pending" war vor Mehrfach-Unterstuetzung ein einzelnes
+        # Dict oder None statt einer Liste.
+        pending = self.data.get("pending")
+        if isinstance(pending, dict):
+            self.data["pending"] = [pending]
+        elif pending is None:
+            self.data["pending"] = []
         self._build_detector()
         await self._setup_sources()
         self.async_set_updated_data(self.data)
@@ -218,13 +225,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     async def _handle_pending(self, pend: dict) -> None:
         # config_entry_id im Event, damit Automationen (z.B. packages/
         # ev_assistant_ui.yaml) bei mehreren Fahrzeugen wissen, welche
-        # Instanz die Fremdladung gemeldet hat.
+        # Instanz die Fremdladung gemeldet hat. "pending" ist eine Liste
+        # (mehrere gleichzeitig offene Fremdladungen moeglich, z.B. bei
+        # zwei Ladestopps auf einem Roadtrip vor dem ersten Bestaetigen) —
+        # neue Ladungen werden angehaengt, nie ueberschrieben.
         pend["config_entry_id"] = self.entry.entry_id
-        self.data["pending"] = pend
+        self.data.setdefault("pending", []).append(pend)
         await self._save()
         await self._publish(self._opt(CONF_PUBLISH_TOPIC, self._default_publish_topic), pend, retain=False)
         self.hass.bus.async_fire(EVENT_PENDING, pend)
-        await self._notify(pend)
+        await self._notify()
         self.async_set_updated_data(self.data)
 
     async def _publish(self, topic: str, payload: dict, retain: bool) -> None:
@@ -233,18 +243,37 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("MQTT publish auf %s fehlgeschlagen: %s", topic, err)
 
-    async def _notify(self, pend: dict) -> None:
-        message = (
-            f"+{pend['delta_soc']} % ({pend['soc_start']} -> {pend['soc_end']} %), "
-            f"~{round(pend['energy_kwh'], 1)} kWh geschätzt. kWh und Preis eintragen."
-        )
+    async def _notify(self) -> None:
+        """Baut EINE Benachrichtigung (gleiche notification_id, ersetzt sich
+        selbst) fuer ALLE aktuell offenen Fremdladungen — nicht pro Ladung
+        einzeln, sonst wuerden mehrere Notifications mit derselben ID sich
+        gegenseitig ueberschreiben und nur die letzte waere sichtbar."""
+        pending_list = self.data.get("pending") or []
+        if not pending_list:
+            return
+        if len(pending_list) == 1:
+            p = pending_list[0]
+            title = "Fremdladung erkannt"
+            message = (
+                f"+{p['delta_soc']} % ({p['soc_start']} -> {p['soc_end']} %), "
+                f"~{round(p['energy_kwh'], 1)} kWh geschätzt. kWh und Preis eintragen."
+            )
+        else:
+            title = f"{len(pending_list)} Fremdladungen erkannt"
+            lines = [
+                f"{i + 1}) +{p['delta_soc']} % ({p['soc_start']} -> {p['soc_end']} %), "
+                f"~{round(p['energy_kwh'], 1)} kWh"
+                for i, p in enumerate(pending_list)
+            ]
+            message = f"{len(pending_list)} offene Fremdladungen:\n" + "\n".join(lines) + "\nkWh und Preis eintragen."
+
         notify_service = self._opt(CONF_NOTIFY_SERVICE)
         if notify_service:
             try:
                 await self.hass.services.async_call(
                     "notify", notify_service,
                     {
-                        "title": "Fremdladung erkannt",
+                        "title": title,
                         "message": message,
                         "data": {
                             "tag": self._notify_tag,
@@ -259,13 +288,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         try:
             await self.hass.services.async_call(
                 "persistent_notification", "create",
-                {"notification_id": self._notify_tag, "title": "Fremdladung erfassen", "message": message},
+                {"notification_id": self._notify_tag, "title": title, "message": message},
                 blocking=False,
             )
         except Exception:  # noqa: BLE001
             pass
 
     async def async_log_charge(self, kwh: float, price: float, start_ts: Optional[float] = None) -> None:
+        """Bestaetigt eine offene Fremdladung. Bei mehreren gleichzeitig
+        offenen waehlt `start_ts` die gemeinte aus; ohne Angabe wird die
+        aelteste bestaetigt (FIFO)."""
         kwh = round(float(kwh), 2)
         price = round(float(price), 4)
         rec = {
@@ -273,7 +305,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "kwh": kwh, "preis_kwh": price, "kosten": round(kwh * price, 2),
             "erfasst_ts": int(time.time()),
         }
-        pend = self.data.get("pending")
+        pending_list = list(self.data.get("pending") or [])
+        pend = pop_pending(pending_list, start_ts)
         if pend:
             rec.update({
                 "start_ts": pend.get("start_ts"), "soc_start": pend.get("soc_start"),
@@ -282,6 +315,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             })
         elif start_ts is not None:
             rec["start_ts"] = start_ts
+        self.data["pending"] = pending_list
 
         self.data.setdefault("history", []).insert(0, rec)
         self.data["history"] = self.data["history"][:HISTORY_MAX]
@@ -290,17 +324,27 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         totals["kosten"] = round(totals.get("kosten", 0.0) + rec["kosten"], 2)
         totals["count"] = totals.get("count", 0) + 1
         self.data["last_price"] = price
-        self.data["pending"] = None
         await self._save()
         await self._publish(self._opt(CONF_PUBLISH_TOPIC, self._default_publish_topic) + "/erfasst", rec, retain=True)
         self.hass.bus.async_fire(EVENT_LOGGED, rec)
-        await self._dismiss()
+        if pending_list:
+            await self._notify()
+        else:
+            await self._dismiss()
         self.async_set_updated_data(self.data)
 
-    async def async_discard(self) -> None:
-        self.data["pending"] = None
+    async def async_discard(self, start_ts: Optional[float] = None) -> None:
+        """Verwirft eine offene Fremdladung. Bei mehreren gleichzeitig
+        offenen waehlt `start_ts` die gemeinte aus; ohne Angabe wird die
+        aelteste verworfen (FIFO)."""
+        pending_list = list(self.data.get("pending") or [])
+        pop_pending(pending_list, start_ts)
+        self.data["pending"] = pending_list
         await self._save()
-        await self._dismiss()
+        if pending_list:
+            await self._notify()
+        else:
+            await self._dismiss()
         self.async_set_updated_data(self.data)
 
     async def async_simulate(self, soc_start: float, soc_end: float, source: str = "soc") -> None:

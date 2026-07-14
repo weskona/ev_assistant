@@ -24,8 +24,17 @@ class PendingBinarySensor(EvAssistantEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
-        return self.coordinator.data.get("pending") is not None
+        return bool(self.coordinator.data.get("pending"))
 
     @property
     def extra_state_attributes(self):
-        return self.coordinator.data.get("pending") or {}
+        pending = self.coordinator.data.get("pending") or []
+        attrs: dict = {"anzahl_offen": len(pending)}
+        if pending:
+            # Aelteste Ladung weiterhin flach in den Attributen (Rueckwaerts-
+            # kompatibel zu Dashboards/Automationen aus der Zeit vor
+            # Mehrfach-Unterstuetzung, die z.B. state_attr(..., 'soc_start')
+            # direkt lesen).
+            attrs.update(pending[0])
+        attrs["offene_ladungen"] = pending
+        return attrs

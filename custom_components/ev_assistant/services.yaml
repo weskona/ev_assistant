@@ -1,9 +1,11 @@
 log_charge:
   name: Fremdladung erfassen
   description: >
-    Bestaetigt die offene Fremdladung mit manuell abgelesenen Werten
+    Bestaetigt eine offene Fremdladung mit manuell abgelesenen Werten
     (geladene kWh und Preis pro kWh vom Ladepunkt-Beleg) und schreibt sie in
-    die Historie. Ohne offene Ladung wird ein Einzeleintrag angelegt.
+    die Historie. Sind mehrere Fremdladungen gleichzeitig offen, waehlt
+    start_ts die gemeinte aus (ohne Angabe: die aelteste). Ohne offene
+    Ladung wird ein Einzeleintrag angelegt.
   fields:
     config_entry_id:
       name: Fahrzeug
@@ -38,7 +40,10 @@ log_charge:
           mode: box
     start_ts:
       name: Startzeit (Unix)
-      description: Optional, nur fuer Einzeleintraege ohne offene Ladung.
+      description: >
+        Optional. Bei mehreren gleichzeitig offenen Fremdladungen: waehlt
+        die zu bestaetigende aus (Wert aus deren start_ts-Attribut). Ohne
+        offene Ladung: Startzeit fuer einen manuellen Einzeleintrag.
       required: false
       example: 1751884800
       selector:
@@ -47,7 +52,10 @@ log_charge:
 
 discard_pending:
   name: Offene Fremdladung verwerfen
-  description: Verwirft die aktuell offene, unbestaetigte Fremdladung.
+  description: >
+    Verwirft eine offene, unbestaetigte Fremdladung. Sind mehrere
+    gleichzeitig offen, waehlt start_ts die gemeinte aus (ohne Angabe: die
+    aelteste).
   fields:
     config_entry_id:
       name: Fahrzeug
@@ -56,6 +64,16 @@ discard_pending:
       selector:
         config_entry:
           integration: ev_assistant
+    start_ts:
+      name: Startzeit (Unix)
+      description: >
+        Optional. Bei mehreren gleichzeitig offenen Fremdladungen: waehlt
+        die zu verwerfende aus (Wert aus deren start_ts-Attribut).
+      required: false
+      example: 1751884800
+      selector:
+        number:
+          mode: box
 
 simulate_event:
   name: Fremdladung simulieren (Test)

@@ -242,3 +242,22 @@ def average_efficiency(samples: list[float], max_samples: int = 10) -> Optional[
     """Gleitender Durchschnitt der letzten `max_samples` Effizienz-Stichproben."""
     recent = samples[-max_samples:]
     return round(sum(recent) / len(recent), 4) if recent else None
+
+
+def pop_pending(pending_list: list, start_ts: Optional[float]) -> Optional[dict]:
+    """Entfernt und liefert die passende offene Ladung aus `pending_list`
+    (in-place): bei angegebenem `start_ts` die mit exakt passendem Start,
+    sonst die aelteste (FIFO, die Liste ist append-only chronologisch
+    sortiert). Gibt None zurueck, wenn nichts (passendes) offen ist.
+
+    Mehrere Fremdladungen koennen gleichzeitig offen sein (z.B. zwei
+    Ladestopps auf einem Roadtrip vor dem ersten Bestaetigen) — diese
+    Funktion waehlt aus, welche log_charge/discard_pending gerade meint."""
+    if not pending_list:
+        return None
+    if start_ts is not None:
+        for i, p in enumerate(pending_list):
+            if p.get("start_ts") == start_ts:
+                return pending_list.pop(i)
+        return None
+    return pending_list.pop(0)

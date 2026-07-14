@@ -2,6 +2,19 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.5.0] - 2026-07-14
+
+### Fixed
+
+- **Data loss when a second external charge was detected before the first was confirmed**: `pending` was a single record that got silently overwritten by the next detection (e.g. two charging stops on a road trip before you got around to confirming either) — the first charge's estimate was lost with no notification, no history entry, nothing. `pending` is now a list; detections are appended, never overwritten.
+
+### Added
+
+- `ev_assistant.log_charge` and `ev_assistant.discard_pending` now accept an optional `start_ts` to pick which of several simultaneously pending charges to act on (the value comes from that charge's own `start_ts` attribute). Without it, the oldest pending charge is used (FIFO) — existing automations that don't pass `start_ts` keep working unchanged.
+- The pending-charge notification now lists **all** currently open charges (not just the newest) when there's more than one, still using a single notification that replaces itself rather than spamming multiple.
+- `binary_sensor ... Fremdladung Erfassung offen` and `sensor ... Fremdladung Schätzung` gained `anzahl_offen` (count) and `offene_ladungen` (the full list) attributes; the oldest charge's own fields remain flattened at the top level for backward compatibility.
+- Existing stored data (single dict or `None`) is migrated automatically to the new list format on first startup after upgrading — verified with the exact scenario that surfaced this gap (a real pending charge survived the migration with all its data intact).
+
 ## [0.4.3] - 2026-07-14
 
 ### Added

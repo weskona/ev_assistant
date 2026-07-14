@@ -35,12 +35,17 @@ class PendingEstimateSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def native_value(self):
-        pend = self.coordinator.data.get("pending")
-        return round(pend["energy_kwh"], 2) if pend else None
+        pending = self.coordinator.data.get("pending") or []
+        return round(pending[0]["energy_kwh"], 2) if pending else None
 
     @property
     def extra_state_attributes(self):
-        return self.coordinator.data.get("pending") or {}
+        pending = self.coordinator.data.get("pending") or []
+        attrs: dict = {"anzahl_offen": len(pending)}
+        if pending:
+            attrs.update(pending[0])
+        attrs["offene_ladungen"] = pending
+        return attrs
 
 
 class LastCostSensor(EvAssistantEntity, SensorEntity):
