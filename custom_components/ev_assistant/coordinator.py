@@ -236,7 +236,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     async def _notify(self, pend: dict) -> None:
         message = (
             f"+{pend['delta_soc']} % ({pend['soc_start']} -> {pend['soc_end']} %), "
-            f"~{round(pend['energy_kwh'], 1)} kWh geschaetzt. kWh und Preis eintragen."
+            f"~{round(pend['energy_kwh'], 1)} kWh geschätzt. kWh und Preis eintragen."
         )
         notify_service = self._opt(CONF_NOTIFY_SERVICE)
         if notify_service:

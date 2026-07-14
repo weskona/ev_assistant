@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.4.2] - 2026-07-14
+
+### Documentation
+
+- Substantially expanded README (English first, then German): a detailed "how it works" explanation of the detection state machine, a full worked walkthrough of what happens step by step when an external charge is detected, an "energy estimation methods" reference table for the three calculation sources (`soc`/`power_ac`/`power_dc`), a `Sensors in detail` table replacing the old plain entity list, and a dedicated "example calculations" section covering all four calculations the integration performs (external-charge SoC estimate, power-sensor estimate, efficiency-calibration sample, and logging the real receipt) — all worked examples verified against the actual `engine.py` logic, not just hand-calculated.
+- Fixed a small ASCII-transliteration typo in the pending-charge notification text (`geschaetzt` → `geschätzt`).
+
 ## [0.4.1] - 2026-07-14
 
 ### Fixed
