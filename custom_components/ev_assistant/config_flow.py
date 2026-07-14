@@ -14,7 +14,7 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_ERSTZULASSUNG, CONF_HOME_ENTITY,
     CONF_HOME_TEMPLATE, CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT,
-    CONF_NOISE, CONF_NOTIFY_SERVICE, CONF_POWER_ENTITY, CONF_POWER_IS_AC,
+    CONF_NOISE, CONF_NOTIFY_SERVICE, CONF_ODO_ENTITY, CONF_POWER_ENTITY, CONF_POWER_IS_AC,
     CONF_POWER_TEMPLATE, CONF_POWER_TOPIC, CONF_PUBLISH_TOPIC,
     CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_TOPIC, CONF_START_DELTA,
     CONF_USABLE_KWH, CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL, CONF_WALLBOX_ENERGY_ENTITY,
@@ -41,6 +41,9 @@ _POWER_ENTITY = selector.EntitySelector(
 )
 _WALLBOX_ENERGY_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor", device_class="energy")
+)
+_ODO_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="sensor", device_class="distance")
 )
 
 
@@ -82,11 +85,17 @@ def build_vehicle_schema(cur: dict) -> vol.Schema:
     sich weder Fremdladungen noch der Ladewirkungsgrad sinnvoll schaetzen).
     Ladewirkungsgrad bleibt optional, da er automatisch aus echten
     Heim-Ladesessions kalibriert werden kann (siehe EfficiencyCalibrator).
+    Kilometerstand ist eine reine Anzeige-Entitaet (kein Erkennungssignal),
+    daher nur als HA-Entitaet waehlbar, ohne MQTT-Topic-Alternative.
     """
+    def sv(key):
+        return {"suggested_value": cur.get(key)}
+
     return vol.Schema({
         vol.Required(CONF_VEHICLE_HERSTELLER, default=cur.get(CONF_VEHICLE_HERSTELLER, "")): str,
         vol.Required(CONF_VEHICLE_MODELL, default=cur.get(CONF_VEHICLE_MODELL, "")): str,
-        vol.Optional(CONF_ERSTZULASSUNG, description={"suggested_value": cur.get(CONF_ERSTZULASSUNG)}): selector.DateSelector(),
+        vol.Optional(CONF_ERSTZULASSUNG, description=sv(CONF_ERSTZULASSUNG)): selector.DateSelector(),
+        vol.Optional(CONF_ODO_ENTITY, description=sv(CONF_ODO_ENTITY)): _ODO_ENTITY,
         vol.Required(CONF_USABLE_KWH, default=cur.get(CONF_USABLE_KWH, DEFAULT_USABLE_KWH)): vol.Coerce(float),
         vol.Optional(CONF_EFFICIENCY, default=cur.get(CONF_EFFICIENCY, DEFAULT_EFFICIENCY)): vol.Coerce(float),
     })

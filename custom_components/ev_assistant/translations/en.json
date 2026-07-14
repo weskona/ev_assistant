@@ -8,6 +8,7 @@
           "vehicle_hersteller": "Hersteller",
           "vehicle_modell": "Modell",
           "erstzulassung": "Erstzulassung",
+          "odo_entity": "Kilometerstand-Entität",
           "usable_kwh": "Nutzbare Akku-Kapazität (kWh)",
           "charge_efficiency": "Ladewirkungsgrad (AC->Batterie, Startwert)"
         }
@@ -71,6 +72,7 @@
           "vehicle_hersteller": "Hersteller",
           "vehicle_modell": "Modell",
           "erstzulassung": "Erstzulassung",
+          "odo_entity": "Kilometerstand-Entität",
           "usable_kwh": "Nutzbare Akku-Kapazität (kWh)",
           "charge_efficiency": "Ladewirkungsgrad (AC->Batterie, Startwert)"
         }
@@ -150,6 +152,12 @@
       },
       "measured_efficiency": {
         "name": "Ladewirkungsgrad (gemessen)"
+      },
+      "odo": {
+        "name": "Kilometerstand"
+      },
+      "erstzulassung": {
+        "name": "Erstzulassung"
       }
     },
     "binary_sensor": {

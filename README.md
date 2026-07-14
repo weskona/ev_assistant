@@ -81,7 +81,7 @@ A power sensor (when available) is generally more accurate than the SoC-only met
 
 Settings → Devices & Services → **Add integration** → "EV Assistant". Setup is a 5-step flow (also used identically when editing via **Configure**):
 
-1. **Vehicle** — Manufacturer + model (required, e.g. "Peugeot" / "e-2008" — together they become the HA device name), first registration date (optional), usable battery capacity in kWh (required), charge efficiency (optional starting value, see calibration below).
+1. **Vehicle** — Manufacturer + model (required, e.g. "Peugeot" / "e-2008" — together they become the HA device name), first registration date (optional), odometer entity (optional, filtered to `sensor` + `device_class: distance` — mirrored onto the EV Assistant device as its own `... Kilometerstand` sensor, purely a display convenience with no effect on detection), usable battery capacity in kWh (required), charge efficiency (optional starting value, see calibration below).
 2. **Basic signals** — SoC and home-charging source, each as **HA entity OR MQTT topic** (entity takes priority). At least one source per signal is required (marked with `*`). The SoC entity picker is filtered to `sensor` + `device_class: battery`; the home-charging entity picker to `sensor` + `device_class: power`. If your setup doesn't fit those (e.g. a `binary_sensor`), use the MQTT-topic field instead, or the template field to convert a raw value.
 3. **Charging power** (optional) — improves the energy estimate of an external charge beyond plain SoC-delta (see "Energy estimation methods" above). Also where you configure a **wallbox energy meter** (cumulative kWh counter) for automatic efficiency calibration.
 4. **Output** — MQTT publish topic for detected charges, optional `notify.*` service.
@@ -126,6 +126,8 @@ The HA device is named after the vehicle (`{Manufacturer} {Model}`), so entity n
 | `sensor ... Fremdladung Kosten (gesamt)` | Running total of all confirmed external-charge costs. |
 | `sensor ... Fremdladung Anzahl` | How many external charges have been confirmed in total. |
 | `sensor ... Ladewirkungsgrad (gemessen)` ("measured charge efficiency") | The live-calibrated efficiency from **home** charging sessions (see above) — **not** related to external charges at all. Shown as a percentage. Attributes: `anzahl_sessions` (samples collected so far), `benoetigte_sessions` (3, the minimum needed before it takes over), `einzelwerte_prozent` (each individual sample), `wird_verwendet` (whether the measured value is currently being used instead of the manual one), `manueller_wert_prozent` (the configured fallback value). |
+| `sensor ... Kilometerstand` (diagnostic) | Mirrors the odometer entity configured in step 1, if any, grouped onto the EV Assistant device. Pure display passthrough. |
+| `sensor ... Erstzulassung` (diagnostic) | The first-registration date entered in step 1, exposed as a proper `date`-typed sensor. |
 
 ### Example calculations
 
@@ -159,7 +161,7 @@ A compact reference for the three calculations EV Assistant does, all using the 
 - `ev_assistant.delete_charge` — `config_entry_id`, `erfasst_ts`: fully removes an already-confirmed history entry (e.g. a falsely detected charge that wasn't actually external). Running totals are adjusted by the removed amount. **Not reversible.**
 - `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): generate a **test event without a car** (triggers notification, MQTT, sensors) — see "Testing" below.
 
-All services require `config_entry_id` to target a specific vehicle if you run more than one EV Assistant instance.
+All three services require `config_entry_id` to target a specific vehicle if you run more than one EV Assistant instance.
 
 ### Manual-entry UI (recommended: dedicated card)
 
@@ -283,7 +285,7 @@ Ein Ladeleistungssensor (wenn vorhanden) ist meist genauer als die reine SoC-Sch
 
 Einstellungen → Geräte & Dienste → **Integration hinzufügen** → „EV Assistant". Die Einrichtung läuft in 5 Schritten (identisch auch beim Bearbeiten über **Konfigurieren**):
 
-1. **Fahrzeug** — Hersteller + Modell (Pflicht, z.B. „Peugeot" / „e-2008" — ergeben zusammen den HA-Gerätenamen), Erstzulassung (optional), nutzbare Akku-Kapazität in kWh (Pflicht), Ladewirkungsgrad (optionaler Startwert, siehe Kalibrierung unten).
+1. **Fahrzeug** — Hersteller + Modell (Pflicht, z.B. „Peugeot" / „e-2008" — ergeben zusammen den HA-Gerätenamen), Erstzulassung (optional), Kilometerstand-Entität (optional, gefiltert auf `sensor` + `device_class: distance` — wird als eigener `... Kilometerstand`-Sensor am EV-Assistant-Gerät gespiegelt, reine Anzeige ohne Einfluss auf die Erkennung), nutzbare Akku-Kapazität in kWh (Pflicht), Ladewirkungsgrad (optionaler Startwert, siehe Kalibrierung unten).
 2. **Grundsignale** — SoC- und Heim-Laden-Quelle, jeweils als **HA-Entität ODER MQTT-Topic** (Entität hat Vorrang). Mindestens eine Quelle pro Signal ist Pflicht (mit `*` markiert). Der SoC-Entitäts-Picker ist auf `sensor` + `device_class: battery` gefiltert, der Heim-Laden-Picker auf `sensor` + `device_class: power`. Passt das nicht zu deinem Setup (z.B. ein `binary_sensor`), nutze stattdessen das MQTT-Topic-Feld oder das Template-Feld zur Umrechnung.
 3. **Ladeleistung** (optional) — verbessert die Energie-Schätzung einer Fremdladung gegenüber der reinen SoC-Delta-Schätzung (siehe „Energie-Schätzmethoden" oben). Hier wird auch ein **Wallbox-Energiezähler** (kumulativer kWh-Zähler) für die automatische Ladewirkungsgrad-Kalibrierung hinterlegt.
 4. **Ausgabe** — MQTT-Publish-Topic für erkannte Ladungen, optionaler `notify.*`-Dienst.
@@ -328,6 +330,8 @@ Das HA-Gerät heißt wie das Fahrzeug (`{Hersteller} {Modell}`), Entitäten ersc
 | `sensor … Fremdladung Kosten (gesamt)` | Laufende Summe aller bestätigten Fremdladungskosten. |
 | `sensor … Fremdladung Anzahl` | Wie viele Fremdladungen insgesamt bestätigt wurden. |
 | `sensor … Ladewirkungsgrad (gemessen)` | Der live kalibrierte Wirkungsgrad aus **Heim**-Ladesessions (siehe oben) — hat mit Fremdladungen nichts zu tun. Als Prozentwert angezeigt. Attribute: `anzahl_sessions` (bisher gesammelte Stichproben), `benoetigte_sessions` (3, das Minimum bevor er übernimmt), `einzelwerte_prozent` (jede Einzelstichprobe), `wird_verwendet` (ob der gemessene Wert gerade anstelle des manuellen verwendet wird), `manueller_wert_prozent` (der konfigurierte Fallback-Wert). |
+| `sensor … Kilometerstand` (Diagnose) | Spiegelt die in Schritt 1 konfigurierte Kilometerstand-Entität, falls vorhanden, gruppiert am EV-Assistant-Gerät. Reine Anzeige-Weiterleitung. |
+| `sensor … Erstzulassung` (Diagnose) | Das in Schritt 1 eingetragene Erstzulassungsdatum, als eigener `date`-Sensor. |
 
 ### Beispielrechnungen
 
@@ -361,7 +365,7 @@ Eine kompakte Referenz für die drei Berechnungen, die EV Assistant durchführt,
 - `ev_assistant.delete_charge` — `config_entry_id`, `erfasst_ts`: löscht einen bereits bestätigten Historien-Eintrag vollständig (z.B. eine fälschlich erkannte Ladung, die gar keine Fremdladung war). Die laufenden Summen werden um den gelöschten Betrag verringert. **Nicht rückgängig zu machen.**
 - `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): **Testereignis ohne Auto** erzeugen (löst Benachrichtigung, MQTT, Sensoren aus) — siehe „Testen" unten.
 
-Alle Services benötigen `config_entry_id`, um bei mehreren EV-Assistant-Instanzen das richtige Fahrzeug anzusprechen.
+Alle drei Services benötigen `config_entry_id`, um bei mehreren EV-Assistant-Instanzen das richtige Fahrzeug anzusprechen.
 
 ### UI zur manuellen Eingabe (empfohlen: eigene Karte)
 

@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.8.0] - 2026-07-15
+
+### Added
+
+- **Odometer entity picker** in the Vehicle step (step 1): pick your car's mileage sensor (filtered to `device_class: distance`) to have it mirrored on the EV Assistant device itself, grouped with the rest of the vehicle's sensors instead of living only on the source integration's device. Purely a display passthrough — no detection logic depends on it. Optional, no MQTT topic alternative (it's not a detection signal).
+- New `... Kilometerstand` sensor (mirrors the configured odometer entity's value and unit) and `... Erstzulassung` sensor (exposes the first-registration date already collected in step 1 as a proper `date`-typed sensor instead of only living in config). Both are diagnostic entities.
+
 ## [0.7.0] - 2026-07-15
 
 ### Added

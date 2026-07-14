@@ -1,13 +1,16 @@
 """Sensoren fuer ev_assistant."""
 from __future__ import annotations
 
-from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from datetime import date
+
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy
+from homeassistant.const import UnitOfEnergy, UnitOfLength
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_EFFICIENCY, DEFAULT_EFFICIENCY, DOMAIN, EFF_MIN_SAMPLES
+from .const import CONF_EFFICIENCY, CONF_ERSTZULASSUNG, DEFAULT_EFFICIENCY, DOMAIN, EFF_MIN_SAMPLES
 from .entity import EvAssistantEntity
 
 
@@ -22,6 +25,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         CountSensor(coordinator, entry),
         LastPriceSensor(coordinator, entry),
         MeasuredEfficiencySensor(coordinator, entry),
+        OdoSensor(coordinator, entry),
+        ErstzulassungSensor(coordinator, entry),
     ])
 
 
@@ -169,3 +174,50 @@ class MeasuredEfficiencySensor(EvAssistantEntity, SensorEntity):
             "wird_verwendet": self.coordinator.data.get("measured_efficiency") is not None,
             "manueller_wert_prozent": round(manueller_wert * 100, 1),
         }
+
+
+class OdoSensor(EvAssistantEntity, SensorEntity):
+    """Kilometerstand, gespiegelt von der im Fahrzeug-Schritt gewaehlten
+    Quell-Entitaet — gruppiert am EV-Assistant-Geraet statt an dem Geraet
+    der Herkunfts-Integration."""
+
+    _attr_translation_key = "odo"
+    _attr_device_class = SensorDeviceClass.DISTANCE
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:counter"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "odo")
+
+    @property
+    def native_value(self):
+        return self.coordinator.data.get("odo")
+
+    @property
+    def native_unit_of_measurement(self):
+        return self.coordinator.data.get("odo_unit") or UnitOfLength.KILOMETERS
+
+
+class ErstzulassungSensor(EvAssistantEntity, SensorEntity):
+    """Erstzulassungsdatum aus den Fahrzeug-Eckdaten — rein statischer
+    Konfigurationswert, keine Live-Quelle noetig."""
+
+    _attr_translation_key = "erstzulassung"
+    _attr_device_class = SensorDeviceClass.DATE
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:calendar"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "erstzulassung")
+
+    @property
+    def native_value(self):
+        entry = self.coordinator.entry
+        value = entry.options.get(CONF_ERSTZULASSUNG, entry.data.get(CONF_ERSTZULASSUNG))
+        if not value:
+            return None
+        try:
+            return date.fromisoformat(value)
+        except (TypeError, ValueError):
+            return None

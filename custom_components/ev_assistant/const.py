@@ -31,6 +31,7 @@ CONF_DROP_ENDS = "drop_ends"
 CONF_VEHICLE_HERSTELLER = "vehicle_hersteller"
 CONF_VEHICLE_MODELL = "vehicle_modell"
 CONF_ERSTZULASSUNG = "erstzulassung"
+CONF_ODO_ENTITY = "odo_entity"
 
 DEFAULT_TEMPLATE = "{{ value }}"
 DEFAULT_PUBLISH_TOPIC = "ev_assistant/ladung/extern"

@@ -18,7 +18,7 @@ from .const import (
     CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_HOME_ENTITY, CONF_HOME_TEMPLATE,
     CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT, CONF_NOISE, CONF_NOTIFY_SERVICE,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE, CONF_POWER_TOPIC,
-    CONF_PUBLISH_TOPIC, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_TOPIC,
+    CONF_ODO_ENTITY, CONF_PUBLISH_TOPIC, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_TOPIC,
     CONF_START_DELTA, CONF_USABLE_KWH, CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE, CONF_WALLBOX_ENERGY_TOPIC,
     DEFAULT_DROP_ENDS, DEFAULT_EFFICIENCY,
@@ -45,6 +45,8 @@ def _empty_data() -> dict:
         "pending": [],
         "efficiency_samples": [],
         "measured_efficiency": None,
+        "odo": None,
+        "odo_unit": None,
     }
 
 
@@ -120,6 +122,27 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         )
         await self._wire(CONF_HOME_ENTITY, CONF_HOME_TOPIC, CONF_HOME_TEMPLATE, self._set_home)
         await self._wire(CONF_POWER_ENTITY, CONF_POWER_TOPIC, CONF_POWER_TEMPLATE, self._set_power)
+        self._wire_odo()
+
+    def _wire_odo(self) -> None:
+        """Kilometerstand: reine Anzeige-Entitaet (kein Erkennungssignal),
+        daher nur als HA-Entitaet waehlbar, keine MQTT-Topic-Alternative
+        wie bei den Erkennungs-Signalen."""
+        entity_id = self._opt(CONF_ODO_ENTITY)
+        if not entity_id:
+            return
+
+        @callback
+        def _on_state(event) -> None:
+            new = event.data.get("new_state")
+            if new is None or new.state in _INVALID:
+                return
+            self._set_odo(new.state, new.attributes.get("unit_of_measurement"))
+
+        self._unsub.append(async_track_state_change_event(self.hass, [entity_id], _on_state))
+        state = self.hass.states.get(entity_id)
+        if state is not None and state.state not in _INVALID:
+            self._set_odo(state.state, state.attributes.get("unit_of_measurement"))
 
     async def _wire(self, entity_key, topic_key, tmpl_key, setter: Callable[[object], None]) -> None:
         entity_id = self._opt(entity_key)
@@ -194,6 +217,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self._wallbox_energy = float(raw)
         except (ValueError, TypeError):
             self._wallbox_energy = None
+
+    @callback
+    def _set_odo(self, raw, unit) -> None:
+        try:
+            value = float(raw)
+        except (ValueError, TypeError):
+            return
+        self.data["odo"] = value
+        self.data["odo_unit"] = unit or self.data.get("odo_unit") or "km"
+        self.async_set_updated_data(self.data)
+        self.hass.async_create_task(self._save())
 
     async def _run_detection(self) -> None:
         if self._soc is None or self._detector is None:
