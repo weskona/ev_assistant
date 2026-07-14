@@ -19,7 +19,8 @@ jobs:
 
       - name: Create release zip
         run: |
-          zip -r ev_assistant.zip custom_components/ hacs.json README.md LICENSE
+          cd custom_components/ev_assistant
+          zip -r ../../ev_assistant.zip .
 
       - name: Extract changelog section for this version
         run: |

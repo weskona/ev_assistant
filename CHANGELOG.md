@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.6.2] - 2026-07-14
+
+### Fixed
+
+- **0.6.1's `zip_release` broke HACS's ability to see/install the release entirely**: the release zip wrapped everything under `custom_components/ev_assistant/` (plus `hacs.json`/`README.md`/`LICENSE` at the root), but HACS's `zip_release` mode expects the integration's files directly at the zip root (verified byte-for-byte against HACS's own `hacs.zip` release asset, which has `manifest.json` etc. at the top level, no `custom_components/hacs/` wrapper). The release workflow now zips the *contents* of `custom_components/ev_assistant/` directly.
+
 ## [0.6.1] - 2026-07-14
 
 ### Fixed
