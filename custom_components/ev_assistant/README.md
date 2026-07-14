@@ -159,7 +159,7 @@ A compact reference for the three calculations EV Assistant does, all using the 
 - `ev_assistant.delete_charge` — `config_entry_id`, `erfasst_ts`: fully removes an already-confirmed history entry (e.g. a falsely detected charge that wasn't actually external). Running totals are adjusted by the removed amount. **Not reversible.**
 - `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): generate a **test event without a car** (triggers notification, MQTT, sensors) — see "Testing" below.
 
-All three services require `config_entry_id` to target a specific vehicle if you run more than one EV Assistant instance.
+All services require `config_entry_id` to target a specific vehicle if you run more than one EV Assistant instance.
 
 ### Manual-entry UI (recommended: dedicated card)
 
@@ -361,7 +361,7 @@ Eine kompakte Referenz für die drei Berechnungen, die EV Assistant durchführt,
 - `ev_assistant.delete_charge` — `config_entry_id`, `erfasst_ts`: löscht einen bereits bestätigten Historien-Eintrag vollständig (z.B. eine fälschlich erkannte Ladung, die gar keine Fremdladung war). Die laufenden Summen werden um den gelöschten Betrag verringert. **Nicht rückgängig zu machen.**
 - `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): **Testereignis ohne Auto** erzeugen (löst Benachrichtigung, MQTT, Sensoren aus) — siehe „Testen" unten.
 
-Alle drei Services benötigen `config_entry_id`, um bei mehreren EV-Assistant-Instanzen das richtige Fahrzeug anzusprechen.
+Alle Services benötigen `config_entry_id`, um bei mehreren EV-Assistant-Instanzen das richtige Fahrzeug anzusprechen.
 
 ### UI zur manuellen Eingabe (empfohlen: eigene Karte)
 
