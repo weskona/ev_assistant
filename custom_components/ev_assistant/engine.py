@@ -184,3 +184,61 @@ class ChargeDetector:
         self._last_power = None
         self._last_power_ts = None
         return ev if delta >= self.start_delta else None
+
+
+class EfficiencyCalibrator:
+    """Kalibriert den Ladewirkungsgrad (AC->Batterie) aus echten
+    Heim-Ladesessions: SoC-Delta * usable_kwh (Batterie-Energie) gegen die
+    von einem Wallbox-Energiezaehler gemessene AC-Energie derselben Session.
+
+    Rein ereignisgetrieben ueber Home-Charging-Uebergaenge (start()/end()
+    bei True<->False-Wechsel des Heim-Laden-Signals) -- kein SoC-Sampling
+    noetig wie bei ChargeDetector, daher bewusst als eigene, minimale
+    Zustandsmaschine statt Erweiterung von ChargeDetector.
+    """
+
+    def __init__(
+        self,
+        usable_kwh: float,
+        min_soc_delta: float = 5.0,
+        min_efficiency: float = 0.5,
+        max_efficiency: float = 1.0,
+    ):
+        self.usable_kwh = usable_kwh
+        self.min_soc_delta = min_soc_delta
+        self.min_efficiency = min_efficiency
+        self.max_efficiency = max_efficiency
+        self._anchor_soc: Optional[float] = None
+        self._anchor_wallbox_kwh: Optional[float] = None
+
+    def start(self, soc: float, wallbox_kwh: Optional[float]) -> None:
+        self._anchor_soc = soc
+        self._anchor_wallbox_kwh = wallbox_kwh
+
+    def end(self, soc: float, wallbox_kwh: Optional[float]) -> Optional[float]:
+        """Schliesst die Session ab und liefert eine neue Effizienz-
+        Stichprobe (0..1), oder None wenn die Session nicht auswertbar war
+        (zu kurz / Wallbox-Wert fehlt(e) / unplausibles Ergebnis)."""
+        anchor_soc = self._anchor_soc
+        anchor_wallbox_kwh = self._anchor_wallbox_kwh
+        self._anchor_soc = None
+        self._anchor_wallbox_kwh = None
+
+        if anchor_soc is None or anchor_wallbox_kwh is None or wallbox_kwh is None:
+            return None
+        soc_delta = soc - anchor_soc
+        wallbox_delta = wallbox_kwh - anchor_wallbox_kwh
+        if soc_delta < self.min_soc_delta or wallbox_delta <= 0:
+            return None
+
+        battery_kwh = soc_delta / 100.0 * self.usable_kwh
+        efficiency = battery_kwh / wallbox_delta
+        if not (self.min_efficiency <= efficiency <= self.max_efficiency):
+            return None
+        return round(efficiency, 4)
+
+
+def average_efficiency(samples: list[float], max_samples: int = 10) -> Optional[float]:
+    """Gleitender Durchschnitt der letzten `max_samples` Effizienz-Stichproben."""
+    recent = samples[-max_samples:]
+    return round(sum(recent) / len(recent), 4) if recent else None

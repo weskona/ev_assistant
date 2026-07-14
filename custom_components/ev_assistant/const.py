@@ -14,6 +14,9 @@ CONF_HOME_TEMPLATE = "home_template"
 CONF_POWER_ENTITY = "power_entity"
 CONF_POWER_TOPIC = "power_topic"
 CONF_POWER_TEMPLATE = "power_template"
+CONF_WALLBOX_ENERGY_ENTITY = "wallbox_energy_entity"
+CONF_WALLBOX_ENERGY_TOPIC = "wallbox_energy_topic"
+CONF_WALLBOX_ENERGY_TEMPLATE = "wallbox_energy_template"
 CONF_PUBLISH_TOPIC = "publish_topic"
 CONF_NOTIFY_SERVICE = "notify_service"
 CONF_USABLE_KWH = "usable_kwh"
@@ -23,6 +26,11 @@ CONF_START_DELTA = "start_delta"
 CONF_NOISE = "noise"
 CONF_IDLE_TIMEOUT = "idle_timeout_s"
 CONF_DROP_ENDS = "drop_ends"
+
+# Fahrzeug-Eckdaten
+CONF_VEHICLE_HERSTELLER = "vehicle_hersteller"
+CONF_VEHICLE_MODELL = "vehicle_modell"
+CONF_ERSTZULASSUNG = "erstzulassung"
 
 DEFAULT_TEMPLATE = "{{ value }}"
 DEFAULT_PUBLISH_TOPIC = "ev_assistant/ladung/extern"
@@ -37,6 +45,15 @@ DEFAULT_DROP_ENDS = 1.0
 STORAGE_VERSION = 1
 STORAGE_KEY = "ev_assistant_data"
 HISTORY_MAX = 100
+
+# Ladewirkungsgrad-Kalibrierung aus echten Heim-Ladesessions (siehe
+# engine.py::EfficiencyCalibrator). Nicht ueber den Config Flow einstellbar,
+# um die Erkennungs-Feinjustierung nicht mit Nischen-Reglern zu ueberladen.
+EFF_MIN_SOC_DELTA = 5.0
+EFF_MIN_SAMPLES = 3
+EFF_MAX_SAMPLES = 10
+EFF_MIN_EFFICIENCY = 0.5
+EFF_MAX_EFFICIENCY = 1.0
 
 EVENT_PENDING = "ev_assistant_pending"
 EVENT_LOGGED = "ev_assistant_logged"

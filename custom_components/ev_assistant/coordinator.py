@@ -19,13 +19,17 @@ from .const import (
     CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT, CONF_NOISE, CONF_NOTIFY_SERVICE,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE, CONF_POWER_TOPIC,
     CONF_PUBLISH_TOPIC, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_TOPIC,
-    CONF_START_DELTA, CONF_USABLE_KWH, DEFAULT_DROP_ENDS, DEFAULT_EFFICIENCY,
+    CONF_START_DELTA, CONF_USABLE_KWH, CONF_WALLBOX_ENERGY_ENTITY,
+    CONF_WALLBOX_ENERGY_TEMPLATE, CONF_WALLBOX_ENERGY_TOPIC,
+    DEFAULT_DROP_ENDS, DEFAULT_EFFICIENCY,
     DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE, DEFAULT_POWER_IS_AC,
     DEFAULT_PUBLISH_TOPIC, DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
-    DEFAULT_USABLE_KWH, DOMAIN, EVENT_LOGGED, EVENT_PENDING, HISTORY_MAX,
+    DEFAULT_USABLE_KWH, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
+    EFF_MAX_EFFICIENCY, EFF_MIN_SAMPLES, EFF_MIN_SOC_DELTA,
+    EVENT_LOGGED, EVENT_PENDING, HISTORY_MAX,
     NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
 )
-from .engine import ChargeDetector, ChargeSample
+from .engine import ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -39,6 +43,8 @@ def _empty_data() -> dict:
         "totals": {"kwh": 0.0, "kosten": 0.0, "count": 0},
         "last_price": 0.0,
         "pending": None,
+        "efficiency_samples": [],
+        "measured_efficiency": None,
     }
 
 
@@ -53,12 +59,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=None)
         self.entry = entry
-        self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}_{entry.entry_id}")
+        self._notify_tag = f"{NOTIFY_TAG}_{entry.entry_id}"
+        self._default_publish_topic = f"{DEFAULT_PUBLISH_TOPIC}/{entry.entry_id}"
         self._unsub: list[Callable] = []
         self._soc: Optional[float] = None
         self._home: bool = False
         self._power: Optional[float] = None
+        self._wallbox_energy: Optional[float] = None
         self._detector: Optional[ChargeDetector] = None
+        self._calibrator: Optional[EfficiencyCalibrator] = None
         self.data = _empty_data()
 
     def _opt(self, key, default=None):
@@ -75,19 +85,32 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.async_set_updated_data(self.data)
 
     def _build_detector(self) -> None:
+        usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+        manual_efficiency = float(self._opt(CONF_EFFICIENCY, DEFAULT_EFFICIENCY))
+        measured_efficiency = self.data.get("measured_efficiency")
         self._detector = ChargeDetector(
-            usable_kwh=float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH)),
-            charge_efficiency=float(self._opt(CONF_EFFICIENCY, DEFAULT_EFFICIENCY)),
+            usable_kwh=usable_kwh,
+            charge_efficiency=measured_efficiency if measured_efficiency is not None else manual_efficiency,
             power_is_ac=bool(self._opt(CONF_POWER_IS_AC, DEFAULT_POWER_IS_AC)),
             start_delta=float(self._opt(CONF_START_DELTA, DEFAULT_START_DELTA)),
             noise=float(self._opt(CONF_NOISE, DEFAULT_NOISE)),
             idle_timeout_s=float(self._opt(CONF_IDLE_TIMEOUT, DEFAULT_IDLE_TIMEOUT)),
             drop_ends=float(self._opt(CONF_DROP_ENDS, DEFAULT_DROP_ENDS)),
         )
+        self._calibrator = EfficiencyCalibrator(
+            usable_kwh=usable_kwh,
+            min_soc_delta=EFF_MIN_SOC_DELTA,
+            min_efficiency=EFF_MIN_EFFICIENCY,
+            max_efficiency=EFF_MAX_EFFICIENCY,
+        )
 
     # ----- Quellen-Verdrahtung -------------------------------------------
     async def _setup_sources(self) -> None:
         await self._wire(CONF_SOC_ENTITY, CONF_SOC_TOPIC, CONF_SOC_TEMPLATE, self._set_soc)
+        await self._wire(
+            CONF_WALLBOX_ENERGY_ENTITY, CONF_WALLBOX_ENERGY_TOPIC,
+            CONF_WALLBOX_ENERGY_TEMPLATE, self._set_wallbox_energy,
+        )
         await self._wire(CONF_HOME_ENTITY, CONF_HOME_TOPIC, CONF_HOME_TEMPLATE, self._set_home)
         await self._wire(CONF_POWER_ENTITY, CONF_POWER_TOPIC, CONF_POWER_TEMPLATE, self._set_power)
 
@@ -140,7 +163,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     @callback
     def _set_home(self, raw) -> None:
+        was_home = self._home
         self._home = str(raw).strip().lower() in _HOME_TRUE
+        if self._calibrator is None or self._soc is None:
+            return
+        if not was_home and self._home:
+            self._calibrator.start(self._soc, self._wallbox_energy)
+        elif was_home and not self._home:
+            sample = self._calibrator.end(self._soc, self._wallbox_energy)
+            if sample is not None:
+                self.hass.async_create_task(self._record_efficiency_sample(sample))
 
     @callback
     def _set_power(self, raw) -> None:
@@ -148,6 +180,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self._power = float(raw)
         except (ValueError, TypeError):
             self._power = None
+
+    @callback
+    def _set_wallbox_energy(self, raw) -> None:
+        try:
+            self._wallbox_energy = float(raw)
+        except (ValueError, TypeError):
+            self._wallbox_energy = None
 
     async def _run_detection(self) -> None:
         if self._soc is None or self._detector is None:
@@ -157,11 +196,29 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if event is not None:
             await self._handle_pending(event.as_dict())
 
+    async def _record_efficiency_sample(self, sample: float) -> None:
+        """Neue Effizienz-Stichprobe aus einer abgeschlossenen Heim-
+        Ladesession. Sobald genug Stichproben vorliegen (EFF_MIN_SAMPLES),
+        wird der gemessene Durchschnitt automatisch fuer alle weiteren
+        Berechnungen verwendet (Detector direkt aktualisiert, kein Neustart
+        noetig) — der manuelle charge_efficiency-Wert bleibt Fallback."""
+        samples = list(self.data.get("efficiency_samples") or [])
+        samples.append(sample)
+        samples = samples[-EFF_MAX_SAMPLES:]
+        self.data["efficiency_samples"] = samples
+        if len(samples) >= EFF_MIN_SAMPLES:
+            measured = average_efficiency(samples, EFF_MAX_SAMPLES)
+            self.data["measured_efficiency"] = measured
+            if measured is not None and self._detector is not None:
+                self._detector.charge_efficiency = measured
+        await self._save()
+        self.async_set_updated_data(self.data)
+
     # ----- Event-/Persistenz-Logik ---------------------------------------
     async def _handle_pending(self, pend: dict) -> None:
         self.data["pending"] = pend
         await self._save()
-        await self._publish(self._opt(CONF_PUBLISH_TOPIC, DEFAULT_PUBLISH_TOPIC), pend, retain=False)
+        await self._publish(self._opt(CONF_PUBLISH_TOPIC, self._default_publish_topic), pend, retain=False)
         self.hass.bus.async_fire(EVENT_PENDING, pend)
         await self._notify(pend)
         self.async_set_updated_data(self.data)
@@ -186,7 +243,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                         "title": "Fremdladung erkannt",
                         "message": message,
                         "data": {
-                            "tag": NOTIFY_TAG,
+                            "tag": self._notify_tag,
                             "persistent": True,
                             "actions": [{"action": "URI", "title": "Eintragen", "uri": "/lovelace"}],
                         },
@@ -198,7 +255,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         try:
             await self.hass.services.async_call(
                 "persistent_notification", "create",
-                {"notification_id": NOTIFY_TAG, "title": "Fremdladung erfassen", "message": message},
+                {"notification_id": self._notify_tag, "title": "Fremdladung erfassen", "message": message},
                 blocking=False,
             )
         except Exception:  # noqa: BLE001
@@ -227,7 +284,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["last_price"] = price
         self.data["pending"] = None
         await self._save()
-        await self._publish(self._opt(CONF_PUBLISH_TOPIC, DEFAULT_PUBLISH_TOPIC) + "/erfasst", rec, retain=True)
+        await self._publish(self._opt(CONF_PUBLISH_TOPIC, self._default_publish_topic) + "/erfasst", rec, retain=True)
         self.hass.bus.async_fire(EVENT_LOGGED, rec)
         await self._dismiss()
         self.async_set_updated_data(self.data)
@@ -257,7 +314,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     async def _dismiss(self) -> None:
         try:
             await self.hass.services.async_call(
-                "persistent_notification", "dismiss", {"notification_id": NOTIFY_TAG}, blocking=False
+                "persistent_notification", "dismiss", {"notification_id": self._notify_tag}, blocking=False
             )
         except Exception:  # noqa: BLE001
             pass

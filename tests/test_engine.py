@@ -1,7 +1,7 @@
 """pytest fuer die reine Erkennungslogik (ohne Home Assistant)."""
 
 import pytest
-from engine import ChargeDetector, ChargeSample
+from engine import ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency
 
 
 def stream(socs, start_ts=0, step=60, home=False, power=None):
@@ -93,3 +93,59 @@ def test_as_dict_schema():
         "energy_source", "duration_min", "kind",
     }
     assert d["energy_kwh"] >= d["energy_batt_kwh"]
+
+
+# ----- EfficiencyCalibrator: Ladewirkungsgrad aus echten Heim-Ladesessions ---
+
+def test_kalibrierung_erfolgreich():
+    cal = EfficiencyCalibrator(usable_kwh=45)
+    cal.start(soc=30, wallbox_kwh=100.0)
+    eff = cal.end(soc=50, wallbox_kwh=110.2)
+    # 20% von 45 kWh = 9 kWh Batterie, 10.2 kWh AC -> 9 / 10.2
+    assert eff == pytest.approx(9.0 / 10.2, abs=0.001)
+
+
+def test_kalibrierung_zu_kurze_session_wird_verworfen():
+    cal = EfficiencyCalibrator(usable_kwh=45, min_soc_delta=5.0)
+    cal.start(soc=30, wallbox_kwh=100.0)
+    assert cal.end(soc=32, wallbox_kwh=101.0) is None
+
+
+def test_kalibrierung_ohne_wallbox_wert_wird_verworfen():
+    cal = EfficiencyCalibrator(usable_kwh=45)
+    cal.start(soc=30, wallbox_kwh=None)
+    assert cal.end(soc=50, wallbox_kwh=110.0) is None
+
+    cal.start(soc=30, wallbox_kwh=100.0)
+    assert cal.end(soc=50, wallbox_kwh=None) is None
+
+
+def test_kalibrierung_unplausibler_wert_wird_verworfen():
+    cal = EfficiencyCalibrator(usable_kwh=45, min_efficiency=0.5, max_efficiency=1.0)
+    cal.start(soc=30, wallbox_kwh=100.0)
+    # 20% von 45 kWh = 9 kWh Batterie, aber nur 5 kWh AC gemessen -> Effizienz > 1.0, unplausibel
+    assert cal.end(soc=50, wallbox_kwh=105.0) is None
+
+
+def test_kalibrierung_ohne_start_wird_verworfen():
+    cal = EfficiencyCalibrator(usable_kwh=45)
+    assert cal.end(soc=50, wallbox_kwh=110.0) is None
+
+
+def test_kalibrierung_reset_nach_end():
+    cal = EfficiencyCalibrator(usable_kwh=45)
+    cal.start(soc=30, wallbox_kwh=100.0)
+    cal.end(soc=50, wallbox_kwh=110.2)
+    # Anker wurde zurueckgesetzt -> ohne neuen start() liefert end() None
+    assert cal.end(soc=60, wallbox_kwh=120.0) is None
+
+
+def test_average_efficiency_leer():
+    assert average_efficiency([]) is None
+
+
+def test_average_efficiency_rollierend():
+    samples = [0.80, 0.82, 0.84, 0.86, 0.88, 0.90, 0.92, 0.94, 0.96, 0.98, 1.00]
+    # 11 Werte, max_samples=10 -> der aelteste (0.80) faellt raus
+    avg = average_efficiency(samples, max_samples=10)
+    assert avg == pytest.approx(sum(samples[1:]) / 10, abs=0.0001)

@@ -5,6 +5,13 @@ log_charge:
     (geladene kWh und Preis pro kWh vom Ladepunkt-Beleg) und schreibt sie in
     die Historie. Ohne offene Ladung wird ein Einzeleintrag angelegt.
   fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
     kwh:
       name: Geladene kWh
       description: Am Ladepunkt abgerechnete Energiemenge (inkl. Verluste).
@@ -41,6 +48,14 @@ log_charge:
 discard_pending:
   name: Offene Fremdladung verwerfen
   description: Verwirft die aktuell offene, unbestaetigte Fremdladung.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
 
 simulate_event:
   name: Fremdladung simulieren (Test)
@@ -48,6 +63,13 @@ simulate_event:
     Erzeugt zum Testen eine offene Fremdladung (ohne Auto). Loest
     Benachrichtigung, MQTT-Publish und Sensoren aus.
   fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
     soc_start:
       name: SoC Start (%)
       required: true

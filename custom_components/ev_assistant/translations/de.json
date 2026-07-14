@@ -1,24 +1,54 @@
 {
   "config": {
     "step": {
-      "user": {
-        "title": "EV Assistant",
-        "description": "Quelle je Signal: HA-Entitaet (Vorrang) ODER MQTT-Topic. SoC ist Pflicht (Entitaet oder Topic). Beispiel Stellantis: SoC-Entitaet = sensor.<auto>_battery.",
+      "fahrzeug": {
+        "title": "EV Assistant - Fahrzeug",
+        "description": "Schritt 1/5: Fahrzeug-Eckdaten. Hersteller, Modell und nutzbare Akku-Kapazität sind Pflicht — Hersteller und Modell ergeben zusammen den Gerätenamen in der HA-Geräteliste. Der Ladewirkungsgrad ist optional — er kann automatisch aus echten Heim-Ladesessions kalibriert werden, wenn du im nächsten Schritt eine Wallbox-Energiemessung hinterlegst.",
         "data": {
-          "soc_entity": "SoC-Entitaet",
-          "soc_topic": "SoC-Topic (MQTT)",
+          "vehicle_hersteller": "Hersteller",
+          "vehicle_modell": "Modell",
+          "erstzulassung": "Erstzulassung",
+          "usable_kwh": "Nutzbare Akku-Kapazität (kWh)",
+          "charge_efficiency": "Ladewirkungsgrad (AC->Batterie, Startwert)"
+        }
+      },
+      "grundsignale": {
+        "title": "EV Assistant - Grundsignale",
+        "description": "Schritt 2/5: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery.",
+        "data": {
+          "soc_entity": "SoC-Entität *",
+          "soc_topic": "SoC-Topic (MQTT) *",
           "soc_template": "SoC-Template",
-          "home_entity": "Heim-Laden-Entitaet (evcc/Warp)",
-          "home_topic": "Heim-Laden-Topic (MQTT)",
-          "home_template": "Heim-Laden-Template",
-          "power_entity": "Ladeleistung-Entitaet (optional)",
+          "home_entity": "Heim-Laden-Entität (evcc/Warp) *",
+          "home_topic": "Heim-Laden-Topic (MQTT) *",
+          "home_template": "Heim-Laden-Template"
+        }
+      },
+      "ladeleistung": {
+        "title": "EV Assistant - Ladeleistung",
+        "description": "Schritt 3/5: optionale Ladeleistungs- und Wallbox-Energiemessung. Die Ladeleistung verbessert die Energie-Schätzung einer Fremdladung gegenüber der reinen SoC-Delta-Schätzung. Die Wallbox-Energiemessung (kumulativer kWh-Zähler) ermöglicht die automatische Kalibrierung des Ladewirkungsgrads aus echten Heim-Ladesessions.",
+        "data": {
+          "power_entity": "Ladeleistung-Entität (optional)",
           "power_topic": "Ladeleistung-Topic (MQTT, optional)",
           "power_template": "Ladeleistung-Template",
-          "publish_topic": "Publish-Topic fuer Events",
-          "notify_service": "notify-Service (z.B. mobile_app_handy)",
-          "usable_kwh": "Nutzbare Kapazitaet (kWh)",
-          "charge_efficiency": "Ladewirkungsgrad (AC->Batterie)",
           "power_is_ac": "Ladeleistung ist AC-seitig",
+          "wallbox_energy_entity": "Wallbox-Energiezähler (optional)",
+          "wallbox_energy_topic": "Wallbox-Energiezähler-Topic (MQTT, optional)",
+          "wallbox_energy_template": "Wallbox-Energiezähler-Template"
+        }
+      },
+      "ausgabe": {
+        "title": "EV Assistant - Ausgabe",
+        "description": "Schritt 4/5: wohin erkannte Fremdladungen gemeldet werden.",
+        "data": {
+          "publish_topic": "Publish-Topic für Events",
+          "notify_service": "notify-Service"
+        }
+      },
+      "erkennung": {
+        "title": "EV Assistant - Erkennung",
+        "description": "Schritt 5/5: Feinjustierung der Fremdlade-Erkennung. Die Standardwerte passen für die meisten Fälle.",
+        "data": {
           "start_delta": "Start-Schwelle (% SoC-Anstieg)",
           "noise": "SoC-Rauschen (%)",
           "idle_timeout_s": "Timeout ohne Anstieg (s)",
@@ -27,32 +57,61 @@
       }
     },
     "error": {
-      "no_soc_source": "Bitte eine SoC-Quelle angeben: entweder eine Entitaet ODER ein MQTT-Topic."
-    },
-    "abort": {
-      "single_instance_allowed": "Es ist bereits eine Instanz eingerichtet."
+      "no_soc_source": "Bitte eine SoC-Quelle angeben: entweder eine Entität ODER ein MQTT-Topic.",
+      "no_home_source": "Bitte eine Heim-Laden-Quelle angeben: entweder eine Entität ODER ein MQTT-Topic. Ohne dieses Signal wird jede SoC-Zunahme fälschlich als Fremdladen erkannt, auch normales Laden zuhause.",
+      "vehicle_name_required": "Bitte Hersteller und Modell angeben."
     }
   },
   "options": {
     "step": {
-      "init": {
-        "title": "EV Assistant - Einstellungen",
-        "description": "Quellen und Erkennung anpassen. Entitaet hat Vorrang vor Topic.",
+      "fahrzeug": {
+        "title": "EV Assistant - Fahrzeug",
+        "description": "Schritt 1/5: Fahrzeug-Eckdaten. Hersteller, Modell und nutzbare Akku-Kapazität sind Pflicht.",
         "data": {
-          "soc_entity": "SoC-Entitaet",
-          "soc_topic": "SoC-Topic (MQTT)",
+          "vehicle_hersteller": "Hersteller",
+          "vehicle_modell": "Modell",
+          "erstzulassung": "Erstzulassung",
+          "usable_kwh": "Nutzbare Akku-Kapazität (kWh)",
+          "charge_efficiency": "Ladewirkungsgrad (AC->Batterie, Startwert)"
+        }
+      },
+      "grundsignale": {
+        "title": "EV Assistant - Grundsignale",
+        "description": "Schritt 2/5: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic.",
+        "data": {
+          "soc_entity": "SoC-Entität *",
+          "soc_topic": "SoC-Topic (MQTT) *",
           "soc_template": "SoC-Template",
-          "home_entity": "Heim-Laden-Entitaet (evcc/Warp)",
-          "home_topic": "Heim-Laden-Topic (MQTT)",
-          "home_template": "Heim-Laden-Template",
-          "power_entity": "Ladeleistung-Entitaet (optional)",
+          "home_entity": "Heim-Laden-Entität (evcc/Warp) *",
+          "home_topic": "Heim-Laden-Topic (MQTT) *",
+          "home_template": "Heim-Laden-Template"
+        }
+      },
+      "ladeleistung": {
+        "title": "EV Assistant - Ladeleistung",
+        "description": "Schritt 3/5: optionale Ladeleistungs- und Wallbox-Energiemessung.",
+        "data": {
+          "power_entity": "Ladeleistung-Entität (optional)",
           "power_topic": "Ladeleistung-Topic (MQTT, optional)",
           "power_template": "Ladeleistung-Template",
-          "publish_topic": "Publish-Topic fuer Events",
-          "notify_service": "notify-Service",
-          "usable_kwh": "Nutzbare Kapazitaet (kWh)",
-          "charge_efficiency": "Ladewirkungsgrad (AC->Batterie)",
           "power_is_ac": "Ladeleistung ist AC-seitig",
+          "wallbox_energy_entity": "Wallbox-Energiezähler (optional)",
+          "wallbox_energy_topic": "Wallbox-Energiezähler-Topic (MQTT, optional)",
+          "wallbox_energy_template": "Wallbox-Energiezähler-Template"
+        }
+      },
+      "ausgabe": {
+        "title": "EV Assistant - Ausgabe",
+        "description": "Schritt 4/5: wohin erkannte Fremdladungen gemeldet werden.",
+        "data": {
+          "publish_topic": "Publish-Topic für Events",
+          "notify_service": "notify-Service"
+        }
+      },
+      "erkennung": {
+        "title": "EV Assistant - Erkennung",
+        "description": "Schritt 5/5: Feinjustierung der Fremdlade-Erkennung.",
+        "data": {
           "start_delta": "Start-Schwelle (% SoC-Anstieg)",
           "noise": "SoC-Rauschen (%)",
           "idle_timeout_s": "Timeout ohne Anstieg (s)",
@@ -61,7 +120,9 @@
       }
     },
     "error": {
-      "no_soc_source": "Bitte eine SoC-Quelle angeben: entweder eine Entitaet ODER ein MQTT-Topic."
+      "no_soc_source": "Bitte eine SoC-Quelle angeben: entweder eine Entität ODER ein MQTT-Topic.",
+      "no_home_source": "Bitte eine Heim-Laden-Quelle angeben: entweder eine Entität ODER ein MQTT-Topic. Ohne dieses Signal wird jede SoC-Zunahme fälschlich als Fremdladen erkannt, auch normales Laden zuhause.",
+      "vehicle_name_required": "Bitte Hersteller und Modell angeben."
     }
   }
 }

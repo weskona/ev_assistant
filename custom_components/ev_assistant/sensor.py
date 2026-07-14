@@ -7,7 +7,7 @@ from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import CONF_EFFICIENCY, DEFAULT_EFFICIENCY, DOMAIN, EFF_MIN_SAMPLES
 from .entity import EvAssistantEntity
 
 
@@ -21,11 +21,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         TotalCostSensor(coordinator, entry),
         CountSensor(coordinator, entry),
         LastPriceSensor(coordinator, entry),
+        MeasuredEfficiencySensor(coordinator, entry),
     ])
 
 
 class PendingEstimateSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "Schaetzung offen"
+    _attr_name = "Fremdladung Schätzung"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:help-circle-outline"
 
@@ -43,7 +44,7 @@ class PendingEstimateSensor(EvAssistantEntity, SensorEntity):
 
 
 class LastCostSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "Letzte Kosten"
+    _attr_name = "Fremdladung Kosten (letzte)"
     _attr_native_unit_of_measurement = "EUR"
     _attr_icon = "mdi:cash"
 
@@ -62,7 +63,7 @@ class LastCostSensor(EvAssistantEntity, SensorEntity):
 
 
 class LastKwhSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "Letzte kWh"
+    _attr_name = "Fremdladung kWh (letzte)"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:ev-station"
 
@@ -76,7 +77,7 @@ class LastKwhSensor(EvAssistantEntity, SensorEntity):
 
 
 class TotalKwhSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "kWh gesamt"
+    _attr_name = "Fremdladung kWh (gesamt)"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:counter"
@@ -90,7 +91,7 @@ class TotalKwhSensor(EvAssistantEntity, SensorEntity):
 
 
 class TotalCostSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "Kosten gesamt"
+    _attr_name = "Fremdladung Kosten (gesamt)"
     _attr_native_unit_of_measurement = "EUR"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:cash-multiple"
@@ -104,7 +105,7 @@ class TotalCostSensor(EvAssistantEntity, SensorEntity):
 
 
 class CountSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "Anzahl Ladungen"
+    _attr_name = "Fremdladung Anzahl"
     _attr_icon = "mdi:format-list-numbered"
 
     def __init__(self, coordinator, entry):
@@ -116,7 +117,7 @@ class CountSensor(EvAssistantEntity, SensorEntity):
 
 
 class LastPriceSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "Letzter Preis"
+    _attr_name = "Fremdladung Preis (letzter)"
     _attr_native_unit_of_measurement = "EUR/kWh"
     _attr_icon = "mdi:currency-eur"
 
@@ -126,3 +127,38 @@ class LastPriceSensor(EvAssistantEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator.data.get("last_price", 0.0)
+
+
+class MeasuredEfficiencySensor(EvAssistantEntity, SensorEntity):
+    """Aus echten Heim-Ladesessions kalibrierter Ladewirkungsgrad (siehe
+    engine.py::EfficiencyCalibrator). Ersetzt automatisch den manuell
+    eingegebenen Wert fuer alle Berechnungen, sobald genug Sessions
+    ausgewertet wurden (EFF_MIN_SAMPLES) — bis dahin bleibt der manuelle
+    Wert (Attribut manueller_wert) massgeblich."""
+
+    _attr_name = "Ladewirkungsgrad (gemessen)"
+    _attr_native_unit_of_measurement = "%"
+    _attr_icon = "mdi:gauge"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "measured_efficiency")
+
+    @property
+    def native_value(self):
+        val = self.coordinator.data.get("measured_efficiency")
+        return round(val * 100, 1) if val is not None else None
+
+    @property
+    def extra_state_attributes(self):
+        samples = self.coordinator.data.get("efficiency_samples") or []
+        entry = self.coordinator.entry
+        manueller_wert = entry.options.get(
+            CONF_EFFICIENCY, entry.data.get(CONF_EFFICIENCY, DEFAULT_EFFICIENCY)
+        )
+        return {
+            "anzahl_sessions": len(samples),
+            "benoetigte_sessions": EFF_MIN_SAMPLES,
+            "einzelwerte_prozent": [round(s * 100, 1) for s in samples],
+            "wird_verwendet": self.coordinator.data.get("measured_efficiency") is not None,
+            "manueller_wert_prozent": round(manueller_wert * 100, 1),
+        }
