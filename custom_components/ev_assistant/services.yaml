@@ -125,6 +125,32 @@ edit_charge:
           unit_of_measurement: EUR/kWh
           mode: box
 
+delete_charge:
+  name: Fremdladung löschen
+  description: >
+    Löscht einen bereits erfassten Historien-Eintrag vollständig (z.B.
+    eine fälschlich erkannte Fremdladung, die gar keine war). Die
+    Gesamtsummen (kWh/Kosten/Anzahl) werden entsprechend verringert.
+    Nicht rückgängig zu machen. Der zu löschende Eintrag wird über
+    erfasst_ts identifiziert (Wert aus dessen erfasst_ts-Attribut in der
+    Historie).
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    erfasst_ts:
+      name: Erfasst-Zeitstempel (Unix)
+      description: Identifiziert den zu löschenden Historien-Eintrag (Wert aus dessen erfasst_ts-Attribut).
+      required: true
+      example: 1751884800
+      selector:
+        number:
+          mode: box
+
 simulate_event:
   name: Fremdladung simulieren (Test)
   description: >

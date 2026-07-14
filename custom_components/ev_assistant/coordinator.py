@@ -26,7 +26,7 @@ from .const import (
     DEFAULT_PUBLISH_TOPIC, DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
     DEFAULT_USABLE_KWH, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
     EFF_MAX_EFFICIENCY, EFF_MIN_SAMPLES, EFF_MIN_SOC_DELTA,
-    EVENT_EDITED, EVENT_LOGGED, EVENT_PENDING, HISTORY_MAX,
+    EVENT_DELETED, EVENT_EDITED, EVENT_LOGGED, EVENT_PENDING, HISTORY_MAX,
     NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
 )
 from .engine import ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency, pop_pending
@@ -359,6 +359,31 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                     self.data["last_price"] = price
                 await self._save()
                 self.hass.bus.async_fire(EVENT_EDITED, rec)
+                self.async_set_updated_data(self.data)
+                return True
+        return False
+
+    async def async_delete_charge(self, erfasst_ts: int) -> bool:
+        """Loescht einen bereits bestaetigten Historien-Eintrag vollstaendig
+        (z.B. eine faelschlich erkannte Fremdladung, die gar keine war).
+        Passt die laufenden Summen um den geloeschten Betrag an; war der
+        geloeschte Eintrag der juengste, wird last_price auf den neuen
+        juengsten Eintrag zurueckgesetzt (oder 0.0, falls die Historie
+        danach leer ist). Gibt False zurueck, wenn kein Eintrag mit
+        erfasst_ts gefunden wurde."""
+        history = self.data.get("history") or []
+        for i, rec in enumerate(history):
+            if rec.get("erfasst_ts") == erfasst_ts:
+                was_newest = i == 0
+                history.pop(i)
+                totals = self.data["totals"]
+                totals["kwh"] = round(totals.get("kwh", 0.0) - rec["kwh"], 2)
+                totals["kosten"] = round(totals.get("kosten", 0.0) - rec["kosten"], 2)
+                totals["count"] = max(0, totals.get("count", 0) - 1)
+                if was_newest:
+                    self.data["last_price"] = history[0]["preis_kwh"] if history else 0.0
+                await self._save()
+                self.hass.bus.async_fire(EVENT_DELETED, rec)
                 self.async_set_updated_data(self.data)
                 return True
         return False

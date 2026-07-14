@@ -7,7 +7,10 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 
-from .const import DOMAIN, PLATFORMS, SERVICE_DISCARD, SERVICE_EDIT, SERVICE_LOG, SERVICE_SIMULATE
+from .const import (
+    DOMAIN, PLATFORMS, SERVICE_DELETE, SERVICE_DISCARD, SERVICE_EDIT,
+    SERVICE_LOG, SERVICE_SIMULATE,
+)
 from .coordinator import EvAssistantCoordinator
 
 _LOGGER = logging.getLogger(__name__)
@@ -36,6 +39,11 @@ EDIT_SCHEMA = vol.Schema({
     vol.Required("erfasst_ts"): vol.Coerce(int),
     vol.Required("kwh"): vol.Coerce(float),
     vol.Required("price_kwh"): vol.Coerce(float),
+})
+
+DELETE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("erfasst_ts"): vol.Coerce(int),
 })
 
 
@@ -90,10 +98,16 @@ def _register_services(hass: HomeAssistant) -> None:
                 call.data["erfasst_ts"], call.data["kwh"], call.data["price_kwh"]
             )
 
+    async def _handle_delete(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_delete_charge(call.data["erfasst_ts"])
+
     hass.services.async_register(DOMAIN, SERVICE_LOG, _handle_log, schema=LOG_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCARD, _handle_discard, schema=DISCARD_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE, _handle_simulate, schema=SIMULATE_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_EDIT, _handle_edit, schema=EDIT_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_DELETE, _handle_delete, schema=DELETE_SCHEMA)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -102,6 +116,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator = hass.data[DOMAIN].pop(entry.entry_id)
         await coordinator.async_shutdown()
         if not hass.data[DOMAIN]:
-            for service in (SERVICE_LOG, SERVICE_DISCARD, SERVICE_SIMULATE, SERVICE_EDIT):
+            for service in (SERVICE_LOG, SERVICE_DISCARD, SERVICE_SIMULATE, SERVICE_EDIT, SERVICE_DELETE):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok

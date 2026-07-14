@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.7.0] - 2026-07-15
+
+### Added
+
+- **`ev_assistant.delete_charge` service**: fully removes an already-confirmed history entry (e.g. a falsely detected charge that wasn't actually an external charge), identified by its `erfasst_ts` attribute. Running totals (kWh/cost/count) are adjusted by the removed amount; if the deleted entry was the most recent one, `last_price` resets to the new most recent entry's price (or 0.0 if history is now empty). Not reversible.
+
 ## [0.6.2] - 2026-07-14
 
 ### Fixed
