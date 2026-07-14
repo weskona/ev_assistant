@@ -124,5 +124,38 @@
       "no_home_source": "Bitte eine Heim-Laden-Quelle angeben: entweder eine Entität ODER ein MQTT-Topic. Ohne dieses Signal wird jede SoC-Zunahme fälschlich als Fremdladen erkannt, auch normales Laden zuhause.",
       "vehicle_name_required": "Bitte Hersteller und Modell angeben."
     }
+  },
+  "entity": {
+    "sensor": {
+      "pending_estimate": {
+        "name": "Fremdladung Schätzung"
+      },
+      "last_cost": {
+        "name": "Fremdladung Kosten (letzte)"
+      },
+      "last_kwh": {
+        "name": "Fremdladung kWh (letzte)"
+      },
+      "total_kwh": {
+        "name": "Fremdladung kWh (gesamt)"
+      },
+      "total_cost": {
+        "name": "Fremdladung Kosten (gesamt)"
+      },
+      "count": {
+        "name": "Fremdladung Anzahl"
+      },
+      "last_price": {
+        "name": "Fremdladung Preis (letzter)"
+      },
+      "measured_efficiency": {
+        "name": "Ladewirkungsgrad (gemessen)"
+      }
+    },
+    "binary_sensor": {
+      "pending": {
+        "name": "Fremdladung Erfassung offen"
+      }
+    }
   }
 }

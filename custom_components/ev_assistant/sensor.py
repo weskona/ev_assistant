@@ -26,7 +26,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
 
 class PendingEstimateSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "Fremdladung Schätzung"
+    _attr_translation_key = "pending_estimate"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:help-circle-outline"
 
@@ -44,7 +44,7 @@ class PendingEstimateSensor(EvAssistantEntity, SensorEntity):
 
 
 class LastCostSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "Fremdladung Kosten (letzte)"
+    _attr_translation_key = "last_cost"
     _attr_native_unit_of_measurement = "EUR"
     _attr_icon = "mdi:cash"
 
@@ -63,7 +63,7 @@ class LastCostSensor(EvAssistantEntity, SensorEntity):
 
 
 class LastKwhSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "Fremdladung kWh (letzte)"
+    _attr_translation_key = "last_kwh"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:ev-station"
 
@@ -77,7 +77,7 @@ class LastKwhSensor(EvAssistantEntity, SensorEntity):
 
 
 class TotalKwhSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "Fremdladung kWh (gesamt)"
+    _attr_translation_key = "total_kwh"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:counter"
@@ -91,7 +91,7 @@ class TotalKwhSensor(EvAssistantEntity, SensorEntity):
 
 
 class TotalCostSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "Fremdladung Kosten (gesamt)"
+    _attr_translation_key = "total_cost"
     _attr_native_unit_of_measurement = "EUR"
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:cash-multiple"
@@ -105,7 +105,7 @@ class TotalCostSensor(EvAssistantEntity, SensorEntity):
 
 
 class CountSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "Fremdladung Anzahl"
+    _attr_translation_key = "count"
     _attr_icon = "mdi:format-list-numbered"
 
     def __init__(self, coordinator, entry):
@@ -117,7 +117,7 @@ class CountSensor(EvAssistantEntity, SensorEntity):
 
 
 class LastPriceSensor(EvAssistantEntity, SensorEntity):
-    _attr_name = "Fremdladung Preis (letzter)"
+    _attr_translation_key = "last_price"
     _attr_native_unit_of_measurement = "EUR/kWh"
     _attr_icon = "mdi:currency-eur"
 
@@ -136,7 +136,7 @@ class MeasuredEfficiencySensor(EvAssistantEntity, SensorEntity):
     ausgewertet wurden (EFF_MIN_SAMPLES) — bis dahin bleibt der manuelle
     Wert (Attribut manueller_wert) massgeblich."""
 
-    _attr_name = "Ladewirkungsgrad (gemessen)"
+    _attr_translation_key = "measured_efficiency"
     _attr_native_unit_of_measurement = "%"
     _attr_icon = "mdi:gauge"
 

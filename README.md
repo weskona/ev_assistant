@@ -159,11 +159,15 @@ A compact reference for the three calculations EV Assistant does, all using the 
 
 All three services require `config_entry_id` to target a specific vehicle if you run more than one EV Assistant instance.
 
-### Manual-entry UI (optional)
+### Manual-entry UI (recommended: dedicated card)
+
+**[EV Assistant Card](https://github.com/weskona/ev-assistant-card)** is a custom Lovelace card built specifically for this integration — point it at your vehicle's device and it finds all sensors itself, shows an inline kWh/price form when a charge is pending, and calls the services directly with the correct `config_entry_id` (no helper entities or automations needed, works correctly with multiple vehicles). This supersedes the YAML package below.
+
+### Manual-entry UI (legacy, YAML package)
 
 `packages/ev_assistant_ui.yaml` provides two input fields + save/discard buttons wired to the services above; `packages/ev_assistant_karte.yaml` is a matching Lovelace card. Copy into `config/packages/` (`homeassistant: packages: !include_dir_named packages`) and reload.
 
-> **Known limitation:** the card's example entity IDs (e.g. `sensor.ev_assistant_letzte_kosten`) assume the old fixed device name "EV Assistant" — since v0.4.0 the device is named after your vehicle instead, so adjust the card's entity list to match your actual entity IDs.
+> **Known limitation:** the card's example entity IDs (e.g. `sensor.ev_assistant_letzte_kosten`) assume the old fixed device name "EV Assistant" — since v0.4.0 the device is named after your vehicle instead, so adjust the card's entity list to match your actual entity IDs. If you're setting this up fresh, use the [EV Assistant Card](https://github.com/weskona/ev-assistant-card) above instead.
 
 ### Testing
 
@@ -355,11 +359,15 @@ Eine kompakte Referenz für die drei Berechnungen, die EV Assistant durchführt,
 
 Alle drei Services benötigen `config_entry_id`, um bei mehreren EV-Assistant-Instanzen das richtige Fahrzeug anzusprechen.
 
-### UI zur manuellen Eingabe (optional)
+### UI zur manuellen Eingabe (empfohlen: eigene Karte)
+
+**[EV Assistant Card](https://github.com/weskona/ev-assistant-card)** ist eine eigens für diese Integration gebaute Lovelace-Karte — auf das Fahrzeug-Gerät zeigen, sie findet alle Sensoren selbst, zeigt bei offener Ladung ein direktes kWh/Preis-Formular und ruft die Services direkt mit der korrekten `config_entry_id` auf (keine Helfer-Entitäten oder Automationen nötig, funktioniert korrekt auch mit mehreren Fahrzeugen). Ersetzt das YAML-Package unten.
+
+### UI zur manuellen Eingabe (Legacy, YAML-Package)
 
 `packages/ev_assistant_ui.yaml` liefert zwei Eingabefelder + Speichern/Verwerfen-Buttons, die die obigen Services aufrufen; `packages/ev_assistant_karte.yaml` ist die passende Lovelace-Karte. Nach `config/packages/` kopieren (`homeassistant: packages: !include_dir_named packages`) und neu laden.
 
-> **Bekannte Einschränkung:** Die Beispiel-Entity-IDs der Karte (z.B. `sensor.ev_assistant_letzte_kosten`) gehen vom alten, festen Gerätenamen „EV Assistant" aus — seit v0.4.0 heißt das Gerät wie dein Fahrzeug, daher die Entity-Liste der Karte an deine tatsächlichen Entity-IDs anpassen.
+> **Bekannte Einschränkung:** Die Beispiel-Entity-IDs der Karte (z.B. `sensor.ev_assistant_letzte_kosten`) gehen vom alten, festen Gerätenamen „EV Assistant" aus — seit v0.4.0 heißt das Gerät wie dein Fahrzeug, daher die Entity-Liste der Karte an deine tatsächlichen Entity-IDs anpassen. Bei einer Neueinrichtung stattdessen gleich die [EV Assistant Card](https://github.com/weskona/ev-assistant-card) oben verwenden.
 
 ### Testen
 

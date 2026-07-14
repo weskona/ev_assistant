@@ -2,6 +2,16 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.4.3] - 2026-07-14
+
+### Added
+
+- **[EV Assistant Card](https://github.com/weskona/ev-assistant-card)**: a new dedicated Lovelace card, recommended over the `packages/ev_assistant_ui.yaml` helper-entity approach. README updated to point to it.
+
+### Changed
+
+- Sensors now use `_attr_translation_key` instead of hardcoded `_attr_name` (matching the sibling `tariffy` integration's pattern), with the same display text as before — no user-visible change, but this makes the sensors' role machine-discoverable by translation key/unique_id for tools like the new card above.
+
 ## [0.4.2] - 2026-07-14
 
 ### Documentation

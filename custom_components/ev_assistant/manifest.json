@@ -1,7 +1,7 @@
 {
   "domain": "ev_assistant",
   "name": "EV Assistant",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "config_flow": true,
   "documentation": "https://github.com/weskona/ev_assistant",
   "issue_tracker": "https://github.com/weskona/ev_assistant/issues",

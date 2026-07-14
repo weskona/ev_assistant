@@ -16,7 +16,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 
 
 class PendingBinarySensor(EvAssistantEntity, BinarySensorEntity):
-    _attr_name = "Fremdladung Erfassung offen"
+    _attr_translation_key = "pending"
     _attr_icon = "mdi:bell-ring"
 
     def __init__(self, coordinator, entry):
