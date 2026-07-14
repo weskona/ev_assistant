@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.8.1] - 2026-07-15
+
+### Fixed
+
+- **Editing/deleting a non-newest history entry didn't show up in the UI without a manual reload**: `edit_charge`/`delete_charge` on an older entry (not the most recent charge) correctly updated the stored data, but the last-cost sensor's `historie` attribute — which the [EV Assistant Card](https://github.com/weskona/ev-assistant-card)'s History list reads — didn't get pushed to Home Assistant's state machine, since the sensor's own `native_value` (tied to only the newest entry) hadn't changed. Added `force_update` to the affected sensors so attribute-only changes are always written through. Verified live: repeated the exact failing scenario before and after the fix.
+
 ## [0.8.0] - 2026-07-15
 
 ### Added

@@ -34,6 +34,11 @@ class PendingEstimateSensor(EvAssistantEntity, SensorEntity):
     _attr_translation_key = "pending_estimate"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
     _attr_icon = "mdi:help-circle-outline"
+    # force_update: der native_value bleibt oft gleich, waehrend sich nur
+    # Attribute aendern (z.B. offene_ladungen-Liste bei mehreren offenen
+    # Ladungen) -- ohne force_update schreibt HA solche reinen
+    # Attribut-Aenderungen nicht zuverlaessig in die State Machine.
+    _attr_force_update = True
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry, "pending_estimate")
@@ -57,6 +62,11 @@ class LastCostSensor(EvAssistantEntity, SensorEntity):
     _attr_translation_key = "last_cost"
     _attr_native_unit_of_measurement = "EUR"
     _attr_icon = "mdi:cash"
+    # force_update: edit_charge/delete_charge auf einen AELTEREN (nicht den
+    # juengsten) Historien-Eintrag aendert die historie-Liste, aber nicht
+    # den native_value (hist[0]) -- ohne force_update kommt die Aenderung
+    # sonst nicht zuverlaessig in der Karte/UI an.
+    _attr_force_update = True
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry, "last_cost")
