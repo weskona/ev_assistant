@@ -15,7 +15,7 @@
       },
       "grundsignale": {
         "title": "EV Assistant - Grundsignale",
-        "description": "Schritt 2/5: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery.",
+        "description": "Schritt 2/5: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery. Heim-Laden-Entität als Leistungssensor (z.B. Wallbox-Ladeleistung von evcc/Warp): ab 0,1 kW gilt als \"lädt\" — Sensoren in anderer Einheit (z.B. Watt) über das Template-Feld in kW umrechnen, z.B. {{ value | float / 1000 }}.",
         "data": {
           "soc_entity": "SoC-Entität *",
           "soc_topic": "SoC-Topic (MQTT) *",
@@ -79,7 +79,7 @@
       },
       "grundsignale": {
         "title": "EV Assistant - Grundsignale",
-        "description": "Schritt 2/5: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic.",
+        "description": "Schritt 2/5: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery. Heim-Laden-Entität als Leistungssensor (z.B. Wallbox-Ladeleistung von evcc/Warp): ab 0,1 kW gilt als \"lädt\" — Sensoren in anderer Einheit (z.B. Watt) über das Template-Feld in kW umrechnen, z.B. {{ value | float / 1000 }}.",
         "data": {
           "soc_entity": "SoC-Entität *",
           "soc_topic": "SoC-Topic (MQTT) *",

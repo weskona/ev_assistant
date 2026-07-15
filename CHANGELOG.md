@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.8.2] - 2026-07-15
+
+### Fixed
+
+- **Home-charging entity picker was filtered to `device_class: power` (e.g. a wallbox's charging-power sensor) but the parsing logic only matched text/boolean values (`"on"`, `"charging"`, ...)** — a numeric power reading like `"7.4"` never matched, so home-charging was silently never detected for anyone using a real power sensor as recommended by the picker. Numeric values are now compared against a 0.1 kW threshold; non-numeric values still fall back to the original text match (e.g. evcc's own `"charging"`/`"on"` status), so existing setups keep working unchanged.
+
 ## [0.8.1] - 2026-07-15
 
 ### Fixed

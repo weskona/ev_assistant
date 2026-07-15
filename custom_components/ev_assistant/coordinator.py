@@ -35,6 +35,11 @@ _LOGGER = logging.getLogger(__name__)
 
 _HOME_TRUE = ("on", "true", "1", "yes", "charging", "charge")
 _INVALID = ("unknown", "unavailable", "none", "", None)
+# Ab dieser Leistung (kW) gilt eine Power-Entitaet als "laedt". Der
+# Home-Entitaet-Picker im Config Flow filtert auf device_class: power (z.B.
+# eine Wallbox-Ladeleistung von evcc/Warp), daher muss ein numerischer Wert
+# als Schwellwert statt als Text-Vergleich ausgewertet werden.
+_HOME_POWER_THRESHOLD_KW = 0.1
 
 
 def _empty_data() -> dict:
@@ -194,7 +199,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     @callback
     def _set_home(self, raw) -> None:
         was_home = self._home
-        self._home = str(raw).strip().lower() in _HOME_TRUE
+        try:
+            # Power-Entitaet (z.B. Wallbox-Ladeleistung): numerischer
+            # Schwellwert statt Text-Vergleich.
+            self._home = float(raw) > _HOME_POWER_THRESHOLD_KW
+        except (ValueError, TypeError):
+            # Text-/Boolean-artiges Signal (z.B. evcc-MQTT-Status "charging").
+            self._home = str(raw).strip().lower() in _HOME_TRUE
         if self._calibrator is None or self._soc is None:
             return
         if not was_home and self._home:
