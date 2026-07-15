@@ -2,6 +2,14 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.10.0] - 2026-07-16
+
+### Added
+
+- **Cost comparison vs. a combustion car**: new step 6 in the config flow (`home_price_kwh`, `verbrenner_l_100km`, `verbrenner_price_per_liter`, and an optional `verbrenner_price_entity` that overrides the fixed fuel price when set). Distance driven is tracked via the odometer entity from step 1 (delta since first seen); home-charging kWh via the wallbox energy meter from step 3 (same delta pattern). All inputs are optional — the new sensors simply show `unknown` until their required data is available.
+- New sensors: `... Heimladen kWh (gesamt)`, `... Heimladen Kosten (gesamt)`, and the headline `... Ersparnis ggü. Verbrenner` (with `gefahrene_km`, `heimladen_kosten`, `fremdladen_kosten`, `kosten_ev_gesamt`, `kosten_verbrenner_geschaetzt`, `kraftstoffpreis_live` attributes).
+- New pure function `engine.py::calculate_savings` (unit-tested) for the underlying math.
+
 ## [0.9.0] - 2026-07-15
 
 ### Added

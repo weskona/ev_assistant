@@ -33,6 +33,15 @@ CONF_VEHICLE_MODELL = "vehicle_modell"
 CONF_ERSTZULASSUNG = "erstzulassung"
 CONF_ODO_ENTITY = "odo_entity"
 
+# Kostenvergleich gegenueber einem Verbrenner (alle optional -- ohne sie
+# bleiben die Ersparnis-Sensoren unbekannt statt einen Fehler zu werfen).
+# Kraftstoffpreis: fester Wert ODER live-Entitaet (z.B. ein Tankstellenpreis-
+# Sensor) -- die Entitaet hat Vorrang, wenn beides gesetzt ist.
+CONF_HOME_PRICE_KWH = "home_price_kwh"
+CONF_VERBRENNER_L_100KM = "verbrenner_l_100km"
+CONF_VERBRENNER_PRICE_PER_LITER = "verbrenner_price_per_liter"
+CONF_VERBRENNER_PRICE_ENTITY = "verbrenner_price_entity"
+
 DEFAULT_TEMPLATE = "{{ value }}"
 DEFAULT_PUBLISH_TOPIC = "ev_assistant/ladung/extern"
 DEFAULT_USABLE_KWH = 45.0
@@ -46,6 +55,8 @@ DEFAULT_DROP_ENDS = 1.0
 STORAGE_VERSION = 1
 STORAGE_KEY = "ev_assistant_data"
 HISTORY_MAX = 100
+
+MILES_TO_KM = 1.60934
 
 # Ladewirkungsgrad-Kalibrierung aus echten Heim-Ladesessions (siehe
 # engine.py::EfficiencyCalibrator). Nicht ueber den Config Flow einstellbar,

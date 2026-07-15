@@ -13,11 +13,13 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_ERSTZULASSUNG, CONF_HOME_ENTITY,
-    CONF_HOME_TEMPLATE, CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT,
+    CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE, CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT,
     CONF_NOISE, CONF_NOTIFY_SERVICE, CONF_ODO_ENTITY, CONF_POWER_ENTITY, CONF_POWER_IS_AC,
     CONF_POWER_TEMPLATE, CONF_POWER_TOPIC, CONF_PUBLISH_TOPIC,
     CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_TOPIC, CONF_START_DELTA,
-    CONF_USABLE_KWH, CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL, CONF_WALLBOX_ENERGY_ENTITY,
+    CONF_USABLE_KWH, CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL,
+    CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY, CONF_VERBRENNER_PRICE_PER_LITER,
+    CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE, CONF_WALLBOX_ENERGY_TOPIC,
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY, DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE,
@@ -44,6 +46,11 @@ _WALLBOX_ENERGY_ENTITY = selector.EntitySelector(
 )
 _ODO_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor", device_class="distance")
+)
+# Kraftstoffpreis-Sensoren haben keinen einheitlichen device_class in HA
+# (anders als die anderen Signale oben) -- daher ungefiltert auf sensor.
+_VERBRENNER_PRICE_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="sensor")
 )
 
 
@@ -141,6 +148,26 @@ def build_detection_schema(cur: dict) -> vol.Schema:
     })
 
 
+def build_comparison_schema(cur: dict) -> vol.Schema:
+    """Schritt 6: optionaler Kostenvergleich gegenueber einem Verbrenner.
+
+    Alle Felder optional -- ohne sie bleiben die Ersparnis-Sensoren
+    unbekannt statt einen Fehler zu werfen. Heimladen-Kosten setzen
+    zusaetzlich eine konfigurierte Wallbox-Energiemessung (Schritt 3)
+    voraus, da sonst keine Heimladen-kWh vorliegen. Kraftstoffpreis: fester
+    Wert ODER Live-Entitaet (z.B. Tankstellenpreis-Sensor) -- die Entitaet
+    hat Vorrang, wenn beides gesetzt ist."""
+    def sv(key):
+        return {"suggested_value": cur.get(key)}
+
+    return vol.Schema({
+        vol.Optional(CONF_HOME_PRICE_KWH, description=sv(CONF_HOME_PRICE_KWH)): vol.Coerce(float),
+        vol.Optional(CONF_VERBRENNER_L_100KM, description=sv(CONF_VERBRENNER_L_100KM)): vol.Coerce(float),
+        vol.Optional(CONF_VERBRENNER_PRICE_PER_LITER, description=sv(CONF_VERBRENNER_PRICE_PER_LITER)): vol.Coerce(float),
+        vol.Optional(CONF_VERBRENNER_PRICE_ENTITY, description=sv(CONF_VERBRENNER_PRICE_ENTITY)): _VERBRENNER_PRICE_ENTITY,
+    })
+
+
 def _has_soc(data: dict) -> bool:
     return bool(data.get(CONF_SOC_ENTITY) or data.get(CONF_SOC_TOPIC))
 
@@ -165,8 +192,9 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
     Schritt 4 (ausgabe): wohin erkannte Fremdladungen gemeldet werden
     (MQTT-Topic, notify-Service).
     Schritt 5 (erkennung): Feinjustierung der Fremdlade-Erkennung
-    (ChargeDetector-Schwellwerte). Der Eintrag wird erst am Ende dieser
-    Kette angelegt.
+    (ChargeDetector-Schwellwerte).
+    Schritt 6 (vergleich): optionaler Kostenvergleich gegenueber einem
+    Verbrenner. Der Eintrag wird erst am Ende dieser Kette angelegt.
     """
 
     VERSION = 1
@@ -231,6 +259,15 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_erkennung(self, user_input=None) -> FlowResult:
         if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            return await self.async_step_vergleich()
+
+        return self.async_show_form(
+            step_id="erkennung", data_schema=build_detection_schema(user_input or {})
+        )
+
+    async def async_step_vergleich(self, user_input=None) -> FlowResult:
+        if user_input is not None:
             data = {**self._data, **_clean(user_input)}
             hersteller = data.get(CONF_VEHICLE_HERSTELLER)
             modell = data.get(CONF_VEHICLE_MODELL)
@@ -239,7 +276,7 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_create_entry(title=title, data=data)
 
         return self.async_show_form(
-            step_id="erkennung", data_schema=build_detection_schema(user_input or {})
+            step_id="vergleich", data_schema=build_comparison_schema(user_input or {})
         )
 
     @staticmethod
@@ -251,10 +288,11 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
 class EvAssistantOptionsFlow(OptionsFlow):
     """Spiegelt dieselbe Schrittkette wie die Ersteinrichtung (siehe
     EvAssistantConfigFlow: Fahrzeug -> Grundsignale -> Ladeleistung ->
-    Ausgabe -> Erkennung), damit man gezielt nur den betroffenen Bereich
-    durchklicken kann statt eine ~17-Felder-Mammutseite auszufuellen.
+    Ausgabe -> Erkennung -> Vergleich), damit man gezielt nur den
+    betroffenen Bereich durchklicken kann statt eine Mammutseite mit allen
+    Feldern auszufuellen.
 
-    Wichtig: die Optionen werden erst am Ende der Kette (async_step_erkennung)
+    Wichtig: die Optionen werden erst am Ende der Kette (async_step_vergleich)
     EINMALIG geschrieben — mit dem ueber alle Schritte akkumulierten
     self._data. Wuerde man stattdessen bei jedem Zwischenschritt einzeln
     async_create_entry() aufrufen, wuerden die Felder der vorherigen Schritte
@@ -326,9 +364,18 @@ class EvAssistantOptionsFlow(OptionsFlow):
 
     async def async_step_erkennung(self, user_input=None) -> FlowResult:
         if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            return await self.async_step_vergleich()
+
+        return self.async_show_form(
+            step_id="erkennung", data_schema=build_detection_schema(self._current())
+        )
+
+    async def async_step_vergleich(self, user_input=None) -> FlowResult:
+        if user_input is not None:
             data = {**self._data, **_clean(user_input)}
             return self.async_create_entry(title="", data=data)
 
         return self.async_show_form(
-            step_id="erkennung", data_schema=build_detection_schema(self._current())
+            step_id="vergleich", data_schema=build_comparison_schema(self._current())
         )

@@ -3,7 +3,7 @@
     "step": {
       "fahrzeug": {
         "title": "EV Assistant - Fahrzeug",
-        "description": "Schritt 1/5: Fahrzeug-Eckdaten. Hersteller, Modell und nutzbare Akku-Kapazität sind Pflicht — Hersteller und Modell ergeben zusammen den Gerätenamen in der HA-Geräteliste. Der Ladewirkungsgrad ist optional — er kann automatisch aus echten Heim-Ladesessions kalibriert werden, wenn du im nächsten Schritt eine Wallbox-Energiemessung hinterlegst.",
+        "description": "Schritt 1/6: Fahrzeug-Eckdaten. Hersteller, Modell und nutzbare Akku-Kapazität sind Pflicht — Hersteller und Modell ergeben zusammen den Gerätenamen in der HA-Geräteliste. Der Ladewirkungsgrad ist optional — er kann automatisch aus echten Heim-Ladesessions kalibriert werden, wenn du im nächsten Schritt eine Wallbox-Energiemessung hinterlegst.",
         "data": {
           "vehicle_hersteller": "Hersteller",
           "vehicle_modell": "Modell",
@@ -15,7 +15,7 @@
       },
       "grundsignale": {
         "title": "EV Assistant - Grundsignale",
-        "description": "Schritt 2/5: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery. Heim-Laden-Entität als Leistungssensor (z.B. Wallbox-Ladeleistung von evcc/Warp): ab 0,1 kW gilt als \"lädt\" — Sensoren in anderer Einheit (z.B. Watt) über das Template-Feld in kW umrechnen, z.B. {{ value | float / 1000 }}.",
+        "description": "Schritt 2/6: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery. Heim-Laden-Entität als Leistungssensor (z.B. Wallbox-Ladeleistung von evcc/Warp): ab 0,1 kW gilt als \"lädt\" — Sensoren in anderer Einheit (z.B. Watt) über das Template-Feld in kW umrechnen, z.B. {{ value | float / 1000 }}.",
         "data": {
           "soc_entity": "SoC-Entität *",
           "soc_topic": "SoC-Topic (MQTT) *",
@@ -27,7 +27,7 @@
       },
       "ladeleistung": {
         "title": "EV Assistant - Ladeleistung",
-        "description": "Schritt 3/5: optionale Ladeleistungs- und Wallbox-Energiemessung. Die Ladeleistung verbessert die Energie-Schätzung einer Fremdladung gegenüber der reinen SoC-Delta-Schätzung. Die Wallbox-Energiemessung (kumulativer kWh-Zähler) ermöglicht die automatische Kalibrierung des Ladewirkungsgrads aus echten Heim-Ladesessions.",
+        "description": "Schritt 3/6: optionale Ladeleistungs- und Wallbox-Energiemessung. Die Ladeleistung verbessert die Energie-Schätzung einer Fremdladung gegenüber der reinen SoC-Delta-Schätzung. Die Wallbox-Energiemessung (kumulativer kWh-Zähler) ermöglicht die automatische Kalibrierung des Ladewirkungsgrads aus echten Heim-Ladesessions.",
         "data": {
           "power_entity": "Ladeleistung-Entität (optional)",
           "power_topic": "Ladeleistung-Topic (MQTT, optional)",
@@ -40,7 +40,7 @@
       },
       "ausgabe": {
         "title": "EV Assistant - Ausgabe",
-        "description": "Schritt 4/5: wohin erkannte Fremdladungen gemeldet werden.",
+        "description": "Schritt 4/6: wohin erkannte Fremdladungen gemeldet werden.",
         "data": {
           "publish_topic": "Publish-Topic für Events",
           "notify_service": "notify-Service"
@@ -48,12 +48,22 @@
       },
       "erkennung": {
         "title": "EV Assistant - Erkennung",
-        "description": "Schritt 5/5: Feinjustierung der Fremdlade-Erkennung. Die Standardwerte passen für die meisten Fälle.",
+        "description": "Schritt 5/6: Feinjustierung der Fremdlade-Erkennung. Die Standardwerte passen für die meisten Fälle.",
         "data": {
           "start_delta": "Start-Schwelle (% SoC-Anstieg)",
           "noise": "SoC-Rauschen (%)",
           "idle_timeout_s": "Timeout ohne Anstieg (s)",
           "drop_ends": "Abfall beendet Ladung (%)"
+        }
+      },
+      "vergleich": {
+        "title": "EV Assistant - Kostenvergleich",
+        "description": "Schritt 6/6: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional — ohne sie bleiben die Ersparnis-Sensoren unbekannt. Heimladen-Kosten setzen zusätzlich eine konfigurierte Wallbox-Energiemessung (Schritt 3) voraus. Kraftstoffpreis: fester Wert ODER Entität (z.B. ein Tankstellenpreis-Sensor) — die Entität hat Vorrang, wenn beides gesetzt ist.",
+        "data": {
+          "home_price_kwh": "Preis pro kWh (Heimladen)",
+          "verbrenner_l_100km": "Verbrauch Vergleichsfahrzeug (L/100km)",
+          "verbrenner_price_per_liter": "Kraftstoffpreis (EUR/Liter)",
+          "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis, falls gesetzt)"
         }
       }
     },
@@ -67,7 +77,7 @@
     "step": {
       "fahrzeug": {
         "title": "EV Assistant - Fahrzeug",
-        "description": "Schritt 1/5: Fahrzeug-Eckdaten. Hersteller, Modell und nutzbare Akku-Kapazität sind Pflicht.",
+        "description": "Schritt 1/6: Fahrzeug-Eckdaten. Hersteller, Modell und nutzbare Akku-Kapazität sind Pflicht.",
         "data": {
           "vehicle_hersteller": "Hersteller",
           "vehicle_modell": "Modell",
@@ -79,7 +89,7 @@
       },
       "grundsignale": {
         "title": "EV Assistant - Grundsignale",
-        "description": "Schritt 2/5: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery. Heim-Laden-Entität als Leistungssensor (z.B. Wallbox-Ladeleistung von evcc/Warp): ab 0,1 kW gilt als \"lädt\" — Sensoren in anderer Einheit (z.B. Watt) über das Template-Feld in kW umrechnen, z.B. {{ value | float / 1000 }}.",
+        "description": "Schritt 2/6: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery. Heim-Laden-Entität als Leistungssensor (z.B. Wallbox-Ladeleistung von evcc/Warp): ab 0,1 kW gilt als \"lädt\" — Sensoren in anderer Einheit (z.B. Watt) über das Template-Feld in kW umrechnen, z.B. {{ value | float / 1000 }}.",
         "data": {
           "soc_entity": "SoC-Entität *",
           "soc_topic": "SoC-Topic (MQTT) *",
@@ -91,7 +101,7 @@
       },
       "ladeleistung": {
         "title": "EV Assistant - Ladeleistung",
-        "description": "Schritt 3/5: optionale Ladeleistungs- und Wallbox-Energiemessung.",
+        "description": "Schritt 3/6: optionale Ladeleistungs- und Wallbox-Energiemessung.",
         "data": {
           "power_entity": "Ladeleistung-Entität (optional)",
           "power_topic": "Ladeleistung-Topic (MQTT, optional)",
@@ -104,7 +114,7 @@
       },
       "ausgabe": {
         "title": "EV Assistant - Ausgabe",
-        "description": "Schritt 4/5: wohin erkannte Fremdladungen gemeldet werden.",
+        "description": "Schritt 4/6: wohin erkannte Fremdladungen gemeldet werden.",
         "data": {
           "publish_topic": "Publish-Topic für Events",
           "notify_service": "notify-Service"
@@ -112,12 +122,22 @@
       },
       "erkennung": {
         "title": "EV Assistant - Erkennung",
-        "description": "Schritt 5/5: Feinjustierung der Fremdlade-Erkennung.",
+        "description": "Schritt 5/6: Feinjustierung der Fremdlade-Erkennung.",
         "data": {
           "start_delta": "Start-Schwelle (% SoC-Anstieg)",
           "noise": "SoC-Rauschen (%)",
           "idle_timeout_s": "Timeout ohne Anstieg (s)",
           "drop_ends": "Abfall beendet Ladung (%)"
+        }
+      },
+      "vergleich": {
+        "title": "EV Assistant - Kostenvergleich",
+        "description": "Schritt 6/6: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional — ohne sie bleiben die Ersparnis-Sensoren unbekannt. Heimladen-Kosten setzen zusätzlich eine konfigurierte Wallbox-Energiemessung (Schritt 3) voraus. Kraftstoffpreis: fester Wert ODER Entität (z.B. ein Tankstellenpreis-Sensor) — die Entität hat Vorrang, wenn beides gesetzt ist.",
+        "data": {
+          "home_price_kwh": "Preis pro kWh (Heimladen)",
+          "verbrenner_l_100km": "Verbrauch Vergleichsfahrzeug (L/100km)",
+          "verbrenner_price_per_liter": "Kraftstoffpreis (EUR/Liter)",
+          "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis, falls gesetzt)"
         }
       }
     },
@@ -161,6 +181,15 @@
       },
       "erstzulassung": {
         "name": "Erstzulassung"
+      },
+      "home_kwh": {
+        "name": "Heimladen kWh (gesamt)"
+      },
+      "home_cost": {
+        "name": "Heimladen Kosten (gesamt)"
+      },
+      "savings": {
+        "name": "Ersparnis ggü. Verbrenner"
       }
     },
     "binary_sensor": {

@@ -1,7 +1,10 @@
 """pytest fuer die reine Erkennungslogik (ohne Home Assistant)."""
 
 import pytest
-from engine import ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency, pop_pending
+from engine import (
+    ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency,
+    calculate_savings, pop_pending,
+)
 
 
 def stream(socs, start_ts=0, step=60, home=False, power=None):
@@ -176,3 +179,40 @@ def test_pop_pending_unbekannter_start_ts_liefert_none_und_laesst_liste_unveraen
     pending = [{"start_ts": 100, "kind": "a"}]
     assert pop_pending(pending, 999) is None
     assert pending == [{"start_ts": 100, "kind": "a"}]
+
+
+# ----- calculate_savings: Kostenvergleich gegenueber einem Verbrenner ------
+
+def test_calculate_savings_durchgerechnetes_beispiel():
+    r = calculate_savings(
+        km_driven=1000, home_kwh=150, home_price_kwh=0.30,
+        fremdladen_kosten=50, verbrenner_l_100km=6.5, verbrenner_price_per_liter=1.75,
+    )
+    assert r == {
+        "heimladen_kosten": 45.0,
+        "kosten_ev_gesamt": 95.0,
+        "kosten_verbrenner_geschaetzt": 113.75,
+        "ersparnis": 18.75,
+    }
+
+
+def test_calculate_savings_ohne_heimladen_nur_fremdladungskosten():
+    r = calculate_savings(
+        km_driven=1000, home_kwh=None, home_price_kwh=None,
+        fremdladen_kosten=50, verbrenner_l_100km=6.5, verbrenner_price_per_liter=1.75,
+    )
+    assert r == {
+        "heimladen_kosten": 0.0,
+        "kosten_ev_gesamt": 50.0,
+        "kosten_verbrenner_geschaetzt": 113.75,
+        "ersparnis": 63.75,
+    }
+
+
+@pytest.mark.parametrize("km_driven,l_100km,price", [
+    (None, 6.5, 1.75),
+    (1000, None, 1.75),
+    (1000, 6.5, None),
+])
+def test_calculate_savings_fehlende_pflichtgroesse_liefert_none(km_driven, l_100km, price):
+    assert calculate_savings(km_driven, 150, 0.30, 50, l_100km, price) is None

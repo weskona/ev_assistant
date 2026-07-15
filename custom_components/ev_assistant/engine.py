@@ -261,3 +261,32 @@ def pop_pending(pending_list: list, start_ts: Optional[float]) -> Optional[dict]
                 return pending_list.pop(i)
         return None
     return pending_list.pop(0)
+
+
+def calculate_savings(
+    km_driven: Optional[float],
+    home_kwh: Optional[float],
+    home_price_kwh: Optional[float],
+    fremdladen_kosten: float,
+    verbrenner_l_100km: Optional[float],
+    verbrenner_price_per_liter: Optional[float],
+) -> Optional[dict]:
+    """Gesamtkosten der EV-Nutzung (Heimladen + Fremdladen) gegen einen
+    Vergleichs-Verbrenner (Verbrauch x Kraftstoffpreis auf derselben
+    Strecke). Gibt None zurueck, wenn eine der zwingend noetigen Groessen
+    fehlt (km_driven, verbrenner_l_100km, verbrenner_price_per_liter) --
+    home_kwh/home_price_kwh sind einzeln optional: fehlen sie, wird nur
+    mit den (immer vorhandenen) Fremdladungskosten gerechnet."""
+    if km_driven is None or verbrenner_l_100km is None or verbrenner_price_per_liter is None:
+        return None
+    heimladen_kosten = 0.0
+    if home_kwh is not None and home_price_kwh is not None:
+        heimladen_kosten = round(home_kwh * home_price_kwh, 2)
+    kosten_ev_gesamt = round(heimladen_kosten + fremdladen_kosten, 2)
+    kosten_verbrenner = round((km_driven / 100.0) * verbrenner_l_100km * verbrenner_price_per_liter, 2)
+    return {
+        "heimladen_kosten": heimladen_kosten,
+        "kosten_ev_gesamt": kosten_ev_gesamt,
+        "kosten_verbrenner_geschaetzt": kosten_verbrenner,
+        "ersparnis": round(kosten_verbrenner - kosten_ev_gesamt, 2),
+    }

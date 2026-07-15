@@ -16,11 +16,12 @@ from homeassistant.helpers.template import Template
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
-    CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_HOME_ENTITY, CONF_HOME_TEMPLATE,
+    CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_HOME_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
     CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT, CONF_NOISE, CONF_NOTIFY_SERVICE,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE, CONF_POWER_TOPIC,
     CONF_ODO_ENTITY, CONF_PUBLISH_TOPIC, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_TOPIC,
-    CONF_START_DELTA, CONF_USABLE_KWH, CONF_WALLBOX_ENERGY_ENTITY,
+    CONF_START_DELTA, CONF_USABLE_KWH, CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY,
+    CONF_VERBRENNER_PRICE_PER_LITER, CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE, CONF_WALLBOX_ENERGY_TOPIC,
     DEFAULT_DROP_ENDS, DEFAULT_EFFICIENCY,
     DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE, DEFAULT_POWER_IS_AC,
@@ -28,9 +29,12 @@ from .const import (
     DEFAULT_USABLE_KWH, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
     EFF_MAX_EFFICIENCY, EFF_MIN_SAMPLES, EFF_MIN_SOC_DELTA,
     EVENT_DELETED, EVENT_EDITED, EVENT_LOGGED, EVENT_PENDING, HISTORY_MAX,
-    NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
+    MILES_TO_KM, NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
 )
-from .engine import ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency, pop_pending
+from .engine import (
+    ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency,
+    calculate_savings, pop_pending,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,6 +57,8 @@ def _empty_data() -> dict:
         "measured_efficiency": None,
         "odo": None,
         "odo_unit": None,
+        "odo_start": None,
+        "wallbox_energy_start": None,
     }
 
 
@@ -75,6 +81,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._home: bool = False
         self._power: Optional[float] = None
         self._wallbox_energy: Optional[float] = None
+        self._verbrenner_price_live: Optional[float] = None
         self._detector: Optional[ChargeDetector] = None
         self._calibrator: Optional[EfficiencyCalibrator] = None
         self.data = _empty_data()
@@ -139,6 +146,27 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._wire(CONF_HOME_ENTITY, CONF_HOME_TOPIC, CONF_HOME_TEMPLATE, self._set_home)
         await self._wire(CONF_POWER_ENTITY, CONF_POWER_TOPIC, CONF_POWER_TEMPLATE, self._set_power)
         self._wire_odo()
+        self._wire_verbrenner_price()
+
+    def _wire_verbrenner_price(self) -> None:
+        """Kraftstoffpreis: optionale Live-Entitaet (z.B. Tankstellenpreis-
+        Sensor), hat Vorrang vor dem festen Konfigurationswert (siehe
+        savings()). Reine Zusatz-Entitaet, keine MQTT-Topic-Alternative."""
+        entity_id = self._opt(CONF_VERBRENNER_PRICE_ENTITY)
+        if not entity_id:
+            return
+
+        @callback
+        def _on_state(event) -> None:
+            new = event.data.get("new_state")
+            if new is None or new.state in _INVALID:
+                return
+            self._set_verbrenner_price(new.state)
+
+        self._unsub.append(async_track_state_change_event(self.hass, [entity_id], _on_state))
+        state = self.hass.states.get(entity_id)
+        if state is not None and state.state not in _INVALID:
+            self._set_verbrenner_price(state.state)
 
     def _wire_odo(self) -> None:
         """Kilometerstand: reine Anzeige-Entitaet (kein Erkennungssignal),
@@ -239,6 +267,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self._wallbox_energy = float(raw)
         except (ValueError, TypeError):
             self._wallbox_energy = None
+            return
+        # Referenzwert fuer die Heimladen-kWh-Berechnung im Kostenvergleich
+        # (Gesamt-kWh seit Einrichtung = aktueller Zaehlerstand - dieser
+        # Referenzwert). Nur beim allerersten gueltigen Wert gesetzt.
+        if self.data.get("wallbox_energy_start") is None:
+            self.data["wallbox_energy_start"] = self._wallbox_energy
+            self.hass.async_create_task(self._save())
+        self.async_set_updated_data(self.data)
 
     @callback
     def _set_odo(self, raw, unit) -> None:
@@ -246,10 +282,22 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             value = float(raw)
         except (ValueError, TypeError):
             return
+        # Referenzwert fuer die gefahrene Strecke im Kostenvergleich (siehe
+        # async_savings). Nur beim allerersten gueltigen Wert gesetzt.
+        if self.data.get("odo_start") is None:
+            self.data["odo_start"] = value
         self.data["odo"] = value
         self.data["odo_unit"] = unit or self.data.get("odo_unit") or "km"
         self.async_set_updated_data(self.data)
         self.hass.async_create_task(self._save())
+
+    @callback
+    def _set_verbrenner_price(self, raw) -> None:
+        try:
+            self._verbrenner_price_live = float(raw)
+        except (ValueError, TypeError):
+            return
+        self.async_set_updated_data(self.data)
 
     async def _run_detection(self) -> None:
         if self._soc is None or self._detector is None:
@@ -480,6 +528,44 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "duration_min": 60.0, "kind": "extern",
         }
         await self._handle_pending(pend)
+
+    # ----- Kostenvergleich gegenueber einem Verbrenner --------------------
+    def _km_driven(self) -> Optional[float]:
+        odo = self.data.get("odo")
+        odo_start = self.data.get("odo_start")
+        if odo is None or odo_start is None:
+            return None
+        delta = odo - odo_start
+        if self.data.get("odo_unit") == "mi":
+            delta *= MILES_TO_KM
+        return round(delta, 1)
+
+    def _home_kwh(self) -> Optional[float]:
+        start = self.data.get("wallbox_energy_start")
+        if self._wallbox_energy is None or start is None:
+            return None
+        return round(self._wallbox_energy - start, 2)
+
+    def savings(self) -> Optional[dict]:
+        """Kostenvergleich gegenueber einem Verbrenner (siehe
+        engine.py::calculate_savings), oder None wenn eine der zwingend
+        noetigen Groessen (Kilometerstand-Delta, Verbrenner-Verbrauch,
+        Kraftstoffpreis) fehlt. Kraftstoffpreis: die Live-Entitaet (falls
+        konfiguriert und ein gueltiger Wert vorliegt) hat Vorrang vor dem
+        festen Konfigurationswert."""
+        home_price = self._opt(CONF_HOME_PRICE_KWH)
+        verbrenner_l = self._opt(CONF_VERBRENNER_L_100KM)
+        verbrenner_price = self._opt(CONF_VERBRENNER_PRICE_PER_LITER)
+        if self._verbrenner_price_live is not None:
+            verbrenner_price = self._verbrenner_price_live
+        return calculate_savings(
+            km_driven=self._km_driven(),
+            home_kwh=self._home_kwh(),
+            home_price_kwh=float(home_price) if home_price is not None else None,
+            fremdladen_kosten=self.data.get("totals", {}).get("kosten", 0.0),
+            verbrenner_l_100km=float(verbrenner_l) if verbrenner_l is not None else None,
+            verbrenner_price_per_liter=float(verbrenner_price) if verbrenner_price is not None else None,
+        )
 
     async def _dismiss(self) -> None:
         try:

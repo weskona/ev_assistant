@@ -10,7 +10,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_EFFICIENCY, CONF_ERSTZULASSUNG, DEFAULT_EFFICIENCY, DOMAIN, EFF_MIN_SAMPLES
+from .const import (
+    CONF_EFFICIENCY, CONF_ERSTZULASSUNG, CONF_HOME_PRICE_KWH, DEFAULT_EFFICIENCY,
+    DOMAIN, EFF_MIN_SAMPLES,
+)
 from .entity import EvAssistantEntity
 
 
@@ -28,6 +31,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         MeasuredEfficiencySensor(coordinator, entry),
         OdoSensor(coordinator, entry),
         ErstzulassungSensor(coordinator, entry),
+        HomeKwhSensor(coordinator, entry),
+        HomeCostSensor(coordinator, entry),
+        SavingsSensor(coordinator, entry),
     ])
 
 
@@ -251,3 +257,75 @@ class ErstzulassungSensor(EvAssistantEntity, SensorEntity):
             return date.fromisoformat(value)
         except (TypeError, ValueError):
             return None
+
+
+class HomeKwhSensor(EvAssistantEntity, SensorEntity):
+    """Zuhause geladene kWh seit Einrichtung (Delta des Wallbox-
+    Energiezaehlers) -- Grundlage fuer den Kostenvergleich gegenueber
+    einem Verbrenner. unknown ohne konfigurierte Wallbox-Energiemessung
+    (Schritt 3 des Config Flow)."""
+
+    _attr_translation_key = "home_kwh"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:home-lightning-bolt"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "home_kwh")
+
+    @property
+    def native_value(self):
+        return self.coordinator._home_kwh()
+
+
+class HomeCostSensor(EvAssistantEntity, SensorEntity):
+    """Geschaetzte Heimladen-Kosten seit Einrichtung (Heimladen-kWh x
+    konfigurierter Heimstrompreis, Schritt 6). unknown ohne Wallbox-
+    Energiemessung oder ohne konfigurierten Heimstrompreis."""
+
+    _attr_translation_key = "home_cost"
+    _attr_native_unit_of_measurement = "EUR"
+    _attr_icon = "mdi:home-currency-usd"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "home_cost")
+
+    @property
+    def native_value(self):
+        home_kwh = self.coordinator._home_kwh()
+        home_price = self.coordinator._opt(CONF_HOME_PRICE_KWH)
+        if home_kwh is None or home_price is None:
+            return None
+        return round(home_kwh * float(home_price), 2)
+
+
+class SavingsSensor(EvAssistantEntity, SensorEntity):
+    """Ersparnis gegenueber einem Vergleichs-Verbrenner auf derselben
+    Strecke (siehe engine.py::calculate_savings). unknown, bis
+    Kilometerstand-Entitaet (Schritt 1), Verbrenner-Verbrauch und
+    -Kraftstoffpreis (Schritt 6) konfiguriert sind. Heimladen-kWh/-Preis
+    sind dabei einzeln optional -- fehlen sie, wird nur mit den
+    Fremdladungskosten gerechnet (siehe engine.py::calculate_savings)."""
+
+    _attr_translation_key = "savings"
+    _attr_native_unit_of_measurement = "EUR"
+    _attr_icon = "mdi:cash-multiple"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "savings")
+
+    @property
+    def native_value(self):
+        savings = self.coordinator.savings()
+        return savings["ersparnis"] if savings else None
+
+    @property
+    def extra_state_attributes(self):
+        savings = self.coordinator.savings()
+        if not savings:
+            return {}
+        attrs = dict(savings)
+        attrs["gefahrene_km"] = self.coordinator._km_driven()
+        attrs["fremdladen_kosten"] = self.coordinator.data.get("totals", {}).get("kosten", 0.0)
+        attrs["kraftstoffpreis_live"] = self.coordinator._verbrenner_price_live is not None
+        return attrs
