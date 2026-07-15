@@ -5,7 +5,7 @@ from datetime import date
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy, UnitOfLength
+from homeassistant.const import UnitOfEnergy, UnitOfLength, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -24,6 +24,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         TotalCostSensor(coordinator, entry),
         CountSensor(coordinator, entry),
         LastPriceSensor(coordinator, entry),
+        LastDurationSensor(coordinator, entry),
         MeasuredEfficiencySensor(coordinator, entry),
         OdoSensor(coordinator, entry),
         ErstzulassungSensor(coordinator, entry),
@@ -149,6 +150,25 @@ class LastPriceSensor(EvAssistantEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator.data.get("last_price", 0.0)
+
+
+class LastDurationSensor(EvAssistantEntity, SensorEntity):
+    """Ladezeit der zuletzt bestaetigten Fremdladung (von Erkennungs-Start
+    bis Erkennungs-Ende, siehe engine.py::ChargeEvent.duration_min) --
+    unbekannt fuer Alt-Eintraege vor Einfuehrung von dauer_min, sowie fuer
+    manuelle Einzeleintraege ohne zugrunde liegende Erkennung."""
+
+    _attr_translation_key = "last_duration"
+    _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_icon = "mdi:timer-outline"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "last_duration")
+
+    @property
+    def native_value(self):
+        hist = self.coordinator.data.get("history") or []
+        return hist[0].get("dauer_min") if hist else None
 
 
 class MeasuredEfficiencySensor(EvAssistantEntity, SensorEntity):

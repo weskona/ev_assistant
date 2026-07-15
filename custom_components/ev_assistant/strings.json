@@ -150,6 +150,9 @@
       "last_price": {
         "name": "Fremdladung Preis (letzter)"
       },
+      "last_duration": {
+        "name": "Fremdladung Ladezeit (letzte)"
+      },
       "measured_efficiency": {
         "name": "Ladewirkungsgrad (gemessen)"
       },

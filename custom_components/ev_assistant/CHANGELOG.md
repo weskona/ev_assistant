@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.9.0] - 2026-07-15
+
+### Added
+
+- **Charging duration**: new `... Fremdladung Ladezeit (letzte)` sensor shows how long the most recently confirmed external charge took (detection start to end, in minutes). Previously `duration_min` was computed by the detector but discarded once a charge was confirmed — it's now carried into the history record (`dauer_min`) instead of being lost.
+
 ## [0.8.3] - 2026-07-15
 
 ### Fixed

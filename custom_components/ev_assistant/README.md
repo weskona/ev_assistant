@@ -122,6 +122,7 @@ The HA device is named after the vehicle (`{Manufacturer} {Model}`), so entity n
 | `sensor ... Fremdladung kWh (letzte)` | The `kwh` value you entered for the most recently confirmed external charge (i.e. from the receipt, not the estimate). |
 | `sensor ... Fremdladung Kosten (letzte)` | `kwh × price_kwh` for that same most recent confirmed charge. |
 | `sensor ... Fremdladung Preis (letzter)` | The price per kWh you entered for the most recent confirmed charge. |
+| `sensor ... Fremdladung Ladezeit (letzte)` | How long the detected charging session lasted (from detection start to end), in minutes. `unknown` for older history entries confirmed before this sensor existed, or for a manually logged charge with no underlying detection. |
 | `sensor ... Fremdladung kWh (gesamt)` | Running total of all confirmed external-charge kWh since setup (or since you last reset it — it's a `total_increasing` sensor, so the HA Energy dashboard can use it directly). |
 | `sensor ... Fremdladung Kosten (gesamt)` | Running total of all confirmed external-charge costs. |
 | `sensor ... Fremdladung Anzahl` | How many external charges have been confirmed in total. |
@@ -326,6 +327,7 @@ Das HA-Gerät heißt wie das Fahrzeug (`{Hersteller} {Modell}`), Entitäten ersc
 | `sensor … Fremdladung kWh (letzte)` | Der `kwh`-Wert, den du für die zuletzt bestätigte Fremdladung eingetragen hast (also vom Beleg, nicht die Schätzung). |
 | `sensor … Fremdladung Kosten (letzte)` | `kwh × preis_kwh` für dieselbe zuletzt bestätigte Ladung. |
 | `sensor … Fremdladung Preis (letzter)` | Der Preis pro kWh, den du für die zuletzt bestätigte Ladung eingetragen hast. |
+| `sensor … Fremdladung Ladezeit (letzte)` | Wie lange die erkannte Ladesession gedauert hat (von Erkennungs-Start bis -Ende), in Minuten. `unknown` bei älteren Historien-Einträgen von vor Einführung dieses Sensors, oder bei einem manuellen Einzeleintrag ohne zugrunde liegende Erkennung. |
 | `sensor … Fremdladung kWh (gesamt)` | Laufende Summe aller bestätigten Fremdladungs-kWh seit Einrichtung (bzw. seit dem letzten Reset — ein `total_increasing`-Sensor, direkt fürs HA-Energie-Dashboard nutzbar). |
 | `sensor … Fremdladung Kosten (gesamt)` | Laufende Summe aller bestätigten Fremdladungskosten. |
 | `sensor … Fremdladung Anzahl` | Wie viele Fremdladungen insgesamt bestätigt wurden. |

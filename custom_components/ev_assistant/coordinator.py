@@ -374,6 +374,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 "start_ts": pend.get("start_ts"), "soc_start": pend.get("soc_start"),
                 "soc_end": pend.get("soc_end"), "delta_soc": pend.get("delta_soc"),
                 "schaetzung_kwh": pend.get("energy_kwh"), "quelle": pend.get("energy_source"),
+                "dauer_min": pend.get("duration_min"),
             })
         elif start_ts is not None:
             rec["start_ts"] = start_ts
