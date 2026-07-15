@@ -4,12 +4,13 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import timedelta
 from typing import Callable, Optional
 
 from homeassistant.components import mqtt
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.template import Template
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -96,6 +97,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self.data["pending"] = []
         self._build_detector()
         await self._setup_sources()
+        # Periodischer Re-Check zusaetzlich zu den SoC-getriebenen Updates:
+        # idle_timeout_s wird nur ausgewertet, wenn _run_detection() laeuft,
+        # was normalerweise nur bei einer NEUEN SoC-Messung passiert. Bleibt
+        # der SoC-Wert laenger unveraendert stehen (z.B. Akku voll, Sensor
+        # meldet sich nur bei Aenderung), wuerde eine aktive Session sonst
+        # nie per Idle-Timeout abgeschlossen werden, da es kein Ereignis
+        # gibt, das die Pruefung anstoesst.
+        self._unsub.append(
+            async_track_time_interval(self.hass, self._periodic_check, timedelta(seconds=60))
+        )
         self.async_set_updated_data(self.data)
 
     def _build_detector(self) -> None:
@@ -247,6 +258,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         event = self._detector.update(sample)
         if event is not None:
             await self._handle_pending(event.as_dict())
+
+    async def _periodic_check(self, _now) -> None:
+        """Stoesst _run_detection() auch ohne neue SoC-Messung an, damit
+        idle_timeout_s bei einem laenger unveraenderten SoC-Wert trotzdem
+        greift (siehe Kommentar in async_setup)."""
+        await self._run_detection()
 
     async def _record_efficiency_sample(self, sample: float) -> None:
         """Neue Effizienz-Stichprobe aus einer abgeschlossenen Heim-

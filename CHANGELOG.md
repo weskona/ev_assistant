@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.8.3] - 2026-07-15
+
+### Fixed
+
+- **`idle_timeout_s` never fired if the SoC value stopped changing entirely** (e.g. battery reaches 100 % and the source sensor only reports on change): detection re-evaluation only ran when a *new* SoC sample arrived, so an active session's idle-timeout condition was never checked once the last SoC update happened. Added a periodic 60 s re-check (using the last known signal values) so a stuck-at-plateau session still finalizes on schedule instead of staying silently active forever.
+
 ## [0.8.2] - 2026-07-15
 
 ### Fixed
