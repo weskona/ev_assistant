@@ -79,13 +79,14 @@ A power sensor (when available) is generally more accurate than the SoC-only met
 
 ### Configuration
 
-Settings → Devices & Services → **Add integration** → "EV Assistant". Setup is a 5-step flow (also used identically when editing via **Configure**):
+Settings → Devices & Services → **Add integration** → "EV Assistant". Setup is a 6-step flow (also used identically when editing via **Configure**):
 
-1. **Vehicle** — Manufacturer + model (required, e.g. "Peugeot" / "e-2008" — together they become the HA device name), first registration date (optional), odometer entity (optional, filtered to `sensor` + `device_class: distance` — mirrored onto the EV Assistant device as its own `... Kilometerstand` sensor, purely a display convenience with no effect on detection), usable battery capacity in kWh (required), charge efficiency (optional starting value, see calibration below).
-2. **Basic signals** — SoC and home-charging source, each as **HA entity OR MQTT topic** (entity takes priority). At least one source per signal is required (marked with `*`). The SoC entity picker is filtered to `sensor` + `device_class: battery`; the home-charging entity picker to `sensor` + `device_class: power`. If your setup doesn't fit those (e.g. a `binary_sensor`), use the MQTT-topic field instead, or the template field to convert a raw value.
-3. **Charging power** (optional) — improves the energy estimate of an external charge beyond plain SoC-delta (see "Energy estimation methods" above). Also where you configure a **wallbox energy meter** (cumulative kWh counter) for automatic efficiency calibration.
+1. **Vehicle** — Manufacturer + model (required, e.g. "Peugeot" / "e-2008" — together they become the HA device name), first registration date (optional), odometer entity (optional, filtered to `sensor` + `device_class: distance` — mirrored onto the EV Assistant device as its own `... Kilometerstand` sensor, and used as the distance basis for the cost comparison in step 6), usable battery capacity in kWh (required), charge efficiency (optional starting value, see calibration below).
+2. **Basic signals** — SoC and home-charging source, each as **HA entity OR MQTT topic** (entity takes priority). At least one source per signal is required (marked with `*`). The SoC entity picker is filtered to `sensor` + `device_class: battery`; the home-charging entity picker to `sensor` + `device_class: power` (e.g. a wallbox's charging-power sensor from evcc/Warp) — a numeric value **above 0.1 kW counts as "charging"**; a non-numeric value (e.g. evcc's own `"charging"`/`"on"` status string) falls back to a plain text match instead. If your power sensor reports a different unit (e.g. Watts), convert it with the template field, e.g. `{{ value | float / 1000 }}`. If your setup doesn't fit those (e.g. a `binary_sensor`), use the MQTT-topic field instead.
+3. **Charging power** (optional) — improves the energy estimate of an external charge beyond plain SoC-delta (see "Energy estimation methods" above). Also where you configure a **wallbox energy meter** (cumulative kWh counter) for automatic efficiency calibration *and* for the home-charging cost tracked in step 6.
 4. **Output** — MQTT publish topic for detected charges, optional `notify.*` service.
 5. **Detection fine-tuning** — thresholds of the underlying state machine described above (`start_delta`, `noise`, `idle_timeout_s`, `drop_ends`). Defaults work for most vehicles; raise them for a car whose SoC only updates coarsely/infrequently (e.g. some cloud APIs).
+6. **Cost comparison** (optional) — see "Cost comparison vs. a combustion car" below.
 
 ### Sources: manufacturer-independent
 
@@ -111,6 +112,18 @@ A single session isn't trusted blindly — implausible samples are discarded aut
 
 The manual value from step 1 remains the fallback the whole time until enough sessions exist. See sensor `... Ladewirkungsgrad (gemessen)` ("measured charge efficiency") below for the live status.
 
+### Cost comparison vs. a combustion car
+
+All fields in step 6 are optional — configure as many or as few as you like; the sensors below simply show `unknown` until their required inputs are available.
+
+**Distance driven:** the odometer entity from step 1 is read once at first startup and remembered as a reference point. "km driven" is always `current odometer − that reference value` — so the comparison covers everything from when you configured EV Assistant onward, not the car's full lifetime mileage.
+
+**Home-charging cost:** the wallbox energy meter from step 3 (the same cumulative counter used for efficiency calibration) is read the same way — first-seen value as reference, current value minus that reference gives total home-charged kWh. Multiplied by the price you enter in step 6 (`home_price_kwh`), that's your estimated home-charging spend. Without a wallbox meter configured, this is simply treated as 0 — the comparison still works using only the (always-tracked) external-charging costs.
+
+**Combustion reference:** `(km driven ÷ 100) × verbrenner_l_100km × verbrenner_price_per_liter` — a straightforward "what would this distance have cost in fuel" estimate for the comparison vehicle you describe. The fuel price can also be linked to a live entity (e.g. a fuel-price tracker sensor) instead of typing in a fixed value — if both are set, the entity wins. The `... Ersparnis ggü. Verbrenner` sensor's `kraftstoffpreis_live` attribute tells you which one is currently in effect.
+
+**Worked example:** you've driven **1,000 km** since setting up EV Assistant. Your wallbox meter shows **150 kWh** charged at home, at a configured price of **0.30 EUR/kWh** → **45.00 EUR** home-charging cost. Your tracked external ("Fremdladung") charges total **50.00 EUR** so far. Total EV energy cost: `45.00 + 50.00 = 95.00 EUR`. Your reference combustion car uses 6.5 L/100km at a fuel price of 1.75 EUR/L: `(1,000 ÷ 100) × 6.5 × 1.75 = 113.75 EUR`. Your estimated savings: `113.75 − 95.00 = 18.75 EUR` over those 1,000 km.
+
 ### Sensors in detail
 
 The HA device is named after the vehicle (`{Manufacturer} {Model}`), so entity names below appear as `{Device} {Entity}`, e.g. "Peugeot e-2008 Fremdladung Anzahl".
@@ -122,12 +135,16 @@ The HA device is named after the vehicle (`{Manufacturer} {Model}`), so entity n
 | `sensor ... Fremdladung kWh (letzte)` | The `kwh` value you entered for the most recently confirmed external charge (i.e. from the receipt, not the estimate). |
 | `sensor ... Fremdladung Kosten (letzte)` | `kwh × price_kwh` for that same most recent confirmed charge. |
 | `sensor ... Fremdladung Preis (letzter)` | The price per kWh you entered for the most recent confirmed charge. |
+| `sensor ... Fremdladung Ladezeit (letzte)` | How long the detected charging session lasted (from detection start to end), in minutes. `unknown` for older history entries confirmed before this sensor existed, or for a manually logged charge with no underlying detection. |
 | `sensor ... Fremdladung kWh (gesamt)` | Running total of all confirmed external-charge kWh since setup (or since you last reset it — it's a `total_increasing` sensor, so the HA Energy dashboard can use it directly). |
 | `sensor ... Fremdladung Kosten (gesamt)` | Running total of all confirmed external-charge costs. |
 | `sensor ... Fremdladung Anzahl` | How many external charges have been confirmed in total. |
 | `sensor ... Ladewirkungsgrad (gemessen)` ("measured charge efficiency") | The live-calibrated efficiency from **home** charging sessions (see above) — **not** related to external charges at all. Shown as a percentage. Attributes: `anzahl_sessions` (samples collected so far), `benoetigte_sessions` (3, the minimum needed before it takes over), `einzelwerte_prozent` (each individual sample), `wird_verwendet` (whether the measured value is currently being used instead of the manual one), `manueller_wert_prozent` (the configured fallback value). |
 | `sensor ... Kilometerstand` (diagnostic) | Mirrors the odometer entity configured in step 1, if any, grouped onto the EV Assistant device. Pure display passthrough. |
 | `sensor ... Erstzulassung` (diagnostic) | The first-registration date entered in step 1, exposed as a proper `date`-typed sensor. |
+| `sensor ... Heimladen kWh (gesamt)` | Total home-charged kWh since setup, from the wallbox energy meter (step 3). `unknown` without a configured meter. |
+| `sensor ... Heimladen Kosten (gesamt)` | Home-charging kWh above × the price per kWh from step 6. `unknown` without a configured meter or price. |
+| `sensor ... Ersparnis ggü. Verbrenner` | Estimated savings vs. the reference combustion car from step 6, over the distance driven since setup (see "Cost comparison" above). `unknown` until the odometer entity, combustion consumption, and fuel price are all configured. Attributes: `gefahrene_km`, `heimladen_kosten`, `fremdladen_kosten`, `kosten_ev_gesamt`, `kosten_verbrenner_geschaetzt`, `kraftstoffpreis_live` (whether the fuel-price entity is currently overriding the fixed value). |
 
 ### Example calculations
 
@@ -283,13 +300,14 @@ Ein Ladeleistungssensor (wenn vorhanden) ist meist genauer als die reine SoC-Sch
 
 ### Konfiguration
 
-Einstellungen → Geräte & Dienste → **Integration hinzufügen** → „EV Assistant". Die Einrichtung läuft in 5 Schritten (identisch auch beim Bearbeiten über **Konfigurieren**):
+Einstellungen → Geräte & Dienste → **Integration hinzufügen** → „EV Assistant". Die Einrichtung läuft in 6 Schritten (identisch auch beim Bearbeiten über **Konfigurieren**):
 
-1. **Fahrzeug** — Hersteller + Modell (Pflicht, z.B. „Peugeot" / „e-2008" — ergeben zusammen den HA-Gerätenamen), Erstzulassung (optional), Kilometerstand-Entität (optional, gefiltert auf `sensor` + `device_class: distance` — wird als eigener `... Kilometerstand`-Sensor am EV-Assistant-Gerät gespiegelt, reine Anzeige ohne Einfluss auf die Erkennung), nutzbare Akku-Kapazität in kWh (Pflicht), Ladewirkungsgrad (optionaler Startwert, siehe Kalibrierung unten).
-2. **Grundsignale** — SoC- und Heim-Laden-Quelle, jeweils als **HA-Entität ODER MQTT-Topic** (Entität hat Vorrang). Mindestens eine Quelle pro Signal ist Pflicht (mit `*` markiert). Der SoC-Entitäts-Picker ist auf `sensor` + `device_class: battery` gefiltert, der Heim-Laden-Picker auf `sensor` + `device_class: power`. Passt das nicht zu deinem Setup (z.B. ein `binary_sensor`), nutze stattdessen das MQTT-Topic-Feld oder das Template-Feld zur Umrechnung.
-3. **Ladeleistung** (optional) — verbessert die Energie-Schätzung einer Fremdladung gegenüber der reinen SoC-Delta-Schätzung (siehe „Energie-Schätzmethoden" oben). Hier wird auch ein **Wallbox-Energiezähler** (kumulativer kWh-Zähler) für die automatische Ladewirkungsgrad-Kalibrierung hinterlegt.
+1. **Fahrzeug** — Hersteller + Modell (Pflicht, z.B. „Peugeot" / „e-2008" — ergeben zusammen den HA-Gerätenamen), Erstzulassung (optional), Kilometerstand-Entität (optional, gefiltert auf `sensor` + `device_class: distance` — wird als eigener `... Kilometerstand`-Sensor am EV-Assistant-Gerät gespiegelt und als Streckenbasis für den Kostenvergleich in Schritt 6 genutzt), nutzbare Akku-Kapazität in kWh (Pflicht), Ladewirkungsgrad (optionaler Startwert, siehe Kalibrierung unten).
+2. **Grundsignale** — SoC- und Heim-Laden-Quelle, jeweils als **HA-Entität ODER MQTT-Topic** (Entität hat Vorrang). Mindestens eine Quelle pro Signal ist Pflicht (mit `*` markiert). Der SoC-Entitäts-Picker ist auf `sensor` + `device_class: battery` gefiltert, der Heim-Laden-Picker auf `sensor` + `device_class: power` (z.B. die Ladeleistung einer Wallbox von evcc/Warp) — ein Zahlenwert **über 0,1 kW gilt als „lädt"**; ein nicht-numerischer Wert (z.B. evccs eigener `"charging"`/`"on"`-Status) fällt stattdessen auf einen reinen Text-Vergleich zurück. Meldet dein Leistungssensor eine andere Einheit (z.B. Watt), rechne über das Template-Feld um, z.B. `{{ value | float / 1000 }}`. Passt das nicht zu deinem Setup (z.B. ein `binary_sensor`), nutze stattdessen das MQTT-Topic-Feld.
+3. **Ladeleistung** (optional) — verbessert die Energie-Schätzung einer Fremdladung gegenüber der reinen SoC-Delta-Schätzung (siehe „Energie-Schätzmethoden" oben). Hier wird auch ein **Wallbox-Energiezähler** (kumulativer kWh-Zähler) für die automatische Ladewirkungsgrad-Kalibrierung *und* für die Heimladen-Kosten in Schritt 6 hinterlegt.
 4. **Ausgabe** — MQTT-Publish-Topic für erkannte Ladungen, optionaler `notify.*`-Dienst.
 5. **Erkennungs-Feinjustierung** — Schwellwerte der oben beschriebenen Zustandsmaschine (`start_delta`, `noise`, `idle_timeout_s`, `drop_ends`). Die Standardwerte passen für die meisten Fahrzeuge; bei einem Auto, dessen SoC nur grob/selten aktualisiert wird (manche Cloud-APIs), großzügiger einstellen.
+6. **Kostenvergleich** (optional) — siehe „Kostenvergleich gegenüber einem Verbrenner" unten.
 
 ### Quellen: herstellerunabhängig
 
@@ -315,6 +333,18 @@ Einer einzelnen Session wird nicht blind vertraut — unplausible Stichproben we
 
 Der manuelle Wert aus Schritt 1 bleibt die ganze Zeit Fallback, bis genug Sessions vorliegen. Siehe Sensor „… Ladewirkungsgrad (gemessen)" unten für den aktuellen Live-Status.
 
+### Kostenvergleich gegenüber einem Verbrenner
+
+Alle Felder in Schritt 6 sind optional — beliebig viele oder wenige konfigurieren; die Sensoren unten zeigen einfach `unknown`, solange ihre nötigen Eingaben fehlen.
+
+**Gefahrene Strecke:** die Kilometerstand-Entität aus Schritt 1 wird beim ersten Start einmal ausgelesen und als Referenzwert gemerkt. „Gefahrene km" ist immer `aktueller Kilometerstand − dieser Referenzwert` — der Vergleich deckt also alles seit der Einrichtung von EV Assistant ab, nicht die Gesamt-Laufleistung des Autos.
+
+**Heimladen-Kosten:** der Wallbox-Energiezähler aus Schritt 3 (derselbe kumulative Zähler wie für die Wirkungsgrad-Kalibrierung) wird genauso ausgelesen — erster gesehener Wert als Referenz, aktueller Wert minus Referenz ergibt die gesamten zuhause geladenen kWh. Multipliziert mit dem in Schritt 6 eingetragenen Preis (`home_price_kwh`) ergibt das die geschätzten Heimladen-Kosten. Ohne konfigurierten Wallbox-Zähler wird das einfach als 0 behandelt — der Vergleich funktioniert dann nur mit den (immer getrackten) Fremdladungskosten.
+
+**Verbrenner-Referenz:** `(gefahrene km ÷ 100) × verbrenner_l_100km × verbrenner_price_per_liter` — eine einfache „was hätte diese Strecke an Kraftstoff gekostet"-Schätzung für das von dir beschriebene Vergleichsfahrzeug. Der Kraftstoffpreis kann statt eines festen Werts auch an eine Live-Entität gekoppelt werden (z.B. ein Tankstellenpreis-Sensor) — sind beide gesetzt, gewinnt die Entität. Das Attribut `kraftstoffpreis_live` am Sensor „… Ersparnis ggü. Verbrenner" zeigt, welcher Wert gerade aktiv ist.
+
+**Durchgerechnetes Beispiel:** du bist seit der Einrichtung von EV Assistant **1.000 km** gefahren. Dein Wallbox-Zähler zeigt **150 kWh** zuhause geladen, bei einem eingetragenen Preis von **0,30 EUR/kWh** → **45,00 EUR** Heimladen-Kosten. Deine erfassten Fremdladungen summieren sich bisher auf **50,00 EUR**. Gesamte EV-Energiekosten: `45,00 + 50,00 = 95,00 EUR`. Dein Vergleichs-Verbrenner verbraucht 6,5 L/100km bei einem Kraftstoffpreis von 1,75 EUR/L: `(1.000 ÷ 100) × 6,5 × 1,75 = 113,75 EUR`. Geschätzte Ersparnis: `113,75 − 95,00 = 18,75 EUR` über diese 1.000 km.
+
 ### Sensoren im Detail
 
 Das HA-Gerät heißt wie das Fahrzeug (`{Hersteller} {Modell}`), Entitäten erscheinen daher als `{Gerät} {Entität}`, z.B. „Peugeot e-2008 Fremdladung Anzahl".
@@ -326,12 +356,16 @@ Das HA-Gerät heißt wie das Fahrzeug (`{Hersteller} {Modell}`), Entitäten ersc
 | `sensor … Fremdladung kWh (letzte)` | Der `kwh`-Wert, den du für die zuletzt bestätigte Fremdladung eingetragen hast (also vom Beleg, nicht die Schätzung). |
 | `sensor … Fremdladung Kosten (letzte)` | `kwh × preis_kwh` für dieselbe zuletzt bestätigte Ladung. |
 | `sensor … Fremdladung Preis (letzter)` | Der Preis pro kWh, den du für die zuletzt bestätigte Ladung eingetragen hast. |
+| `sensor … Fremdladung Ladezeit (letzte)` | Wie lange die erkannte Ladesession gedauert hat (von Erkennungs-Start bis -Ende), in Minuten. `unknown` bei älteren Historien-Einträgen von vor Einführung dieses Sensors, oder bei einem manuellen Einzeleintrag ohne zugrunde liegende Erkennung. |
 | `sensor … Fremdladung kWh (gesamt)` | Laufende Summe aller bestätigten Fremdladungs-kWh seit Einrichtung (bzw. seit dem letzten Reset — ein `total_increasing`-Sensor, direkt fürs HA-Energie-Dashboard nutzbar). |
 | `sensor … Fremdladung Kosten (gesamt)` | Laufende Summe aller bestätigten Fremdladungskosten. |
 | `sensor … Fremdladung Anzahl` | Wie viele Fremdladungen insgesamt bestätigt wurden. |
 | `sensor … Ladewirkungsgrad (gemessen)` | Der live kalibrierte Wirkungsgrad aus **Heim**-Ladesessions (siehe oben) — hat mit Fremdladungen nichts zu tun. Als Prozentwert angezeigt. Attribute: `anzahl_sessions` (bisher gesammelte Stichproben), `benoetigte_sessions` (3, das Minimum bevor er übernimmt), `einzelwerte_prozent` (jede Einzelstichprobe), `wird_verwendet` (ob der gemessene Wert gerade anstelle des manuellen verwendet wird), `manueller_wert_prozent` (der konfigurierte Fallback-Wert). |
 | `sensor … Kilometerstand` (Diagnose) | Spiegelt die in Schritt 1 konfigurierte Kilometerstand-Entität, falls vorhanden, gruppiert am EV-Assistant-Gerät. Reine Anzeige-Weiterleitung. |
 | `sensor … Erstzulassung` (Diagnose) | Das in Schritt 1 eingetragene Erstzulassungsdatum, als eigener `date`-Sensor. |
+| `sensor … Heimladen kWh (gesamt)` | Gesamte zuhause geladene kWh seit Einrichtung, aus dem Wallbox-Energiezähler (Schritt 3). `unknown` ohne konfigurierten Zähler. |
+| `sensor … Heimladen Kosten (gesamt)` | Obige Heimladen-kWh × der in Schritt 6 eingetragene Preis pro kWh. `unknown` ohne konfigurierten Zähler oder Preis. |
+| `sensor … Ersparnis ggü. Verbrenner` | Geschätzte Ersparnis gegenüber dem Vergleichs-Verbrenner aus Schritt 6, über die seit Einrichtung gefahrene Strecke (siehe „Kostenvergleich" oben). `unknown`, bis Kilometerstand-Entität, Verbrenner-Verbrauch und Kraftstoffpreis alle konfiguriert sind. Attribute: `gefahrene_km`, `heimladen_kosten`, `fremdladen_kosten`, `kosten_ev_gesamt`, `kosten_verbrenner_geschaetzt`, `kraftstoffpreis_live` (ob gerade die Kraftstoffpreis-Entität den festen Wert überschreibt). |
 
 ### Beispielrechnungen
 
