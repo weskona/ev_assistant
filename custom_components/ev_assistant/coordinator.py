@@ -16,7 +16,8 @@ from homeassistant.helpers.template import Template
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
-    CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_HOME_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
+    CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_HOME_ENTITY, CONF_HOME_PRICE_ENTITY,
+    CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
     CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT, CONF_NOISE, CONF_NOTIFY_SERVICE,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE, CONF_POWER_TOPIC,
     CONF_ODO_ENTITY, CONF_PUBLISH_TOPIC, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_TOPIC,
@@ -61,6 +62,7 @@ def _empty_data() -> dict:
         "wallbox_energy_start": None,
         "detector_state": None,
         "verbrenner_price_last": None,
+        "home_price_last": None,
     }
 
 
@@ -84,6 +86,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._power: Optional[float] = None
         self._wallbox_energy: Optional[float] = None
         self._verbrenner_price_live: Optional[float] = None
+        self._home_price_live: Optional[float] = None
         self._detector: Optional[ChargeDetector] = None
         self._calibrator: Optional[EfficiencyCalibrator] = None
         self.data = _empty_data()
@@ -104,10 +107,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self.data["pending"] = [pending]
         elif pending is None:
             self.data["pending"] = []
-        # Letzter bekannter Kraftstoffpreis der Live-Entitaet als Fallback,
-        # bevor sich die Entitaet nach dem Start ueberhaupt zum ersten Mal
-        # wieder meldet (siehe _set_verbrenner_price/savings()).
+        # Letzter bekannter Kraftstoff-/Heimstrompreis der jeweiligen
+        # Live-Entitaet als Fallback, bevor sich die Entitaet nach dem Start
+        # ueberhaupt zum ersten Mal wieder meldet (siehe
+        # _set_verbrenner_price/_set_home_price/savings()).
         self._verbrenner_price_live = self.data.get("verbrenner_price_last")
+        self._home_price_live = self.data.get("home_price_last")
         self._build_detector()
         await self._setup_sources()
         # Periodischer Re-Check zusaetzlich zu den SoC-getriebenen Updates:
@@ -158,6 +163,27 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._wire(CONF_POWER_ENTITY, CONF_POWER_TOPIC, CONF_POWER_TEMPLATE, self._set_power)
         self._wire_odo()
         self._wire_verbrenner_price()
+        self._wire_home_price()
+
+    def _wire_home_price(self) -> None:
+        """Heimstrompreis: optionale Live-Entitaet (z.B. ein dynamischer
+        Tarif-Sensor), hat Vorrang vor dem festen Konfigurationswert (siehe
+        _home_price()). Reine Zusatz-Entitaet, keine MQTT-Topic-Alternative."""
+        entity_id = self._opt(CONF_HOME_PRICE_ENTITY)
+        if not entity_id:
+            return
+
+        @callback
+        def _on_state(event) -> None:
+            new = event.data.get("new_state")
+            if new is None or new.state in _INVALID:
+                return
+            self._set_home_price(new.state)
+
+        self._unsub.append(async_track_state_change_event(self.hass, [entity_id], _on_state))
+        state = self.hass.states.get(entity_id)
+        if state is not None and state.state not in _INVALID:
+            self._set_home_price(state.state)
 
     def _wire_verbrenner_price(self) -> None:
         """Kraftstoffpreis: optionale Live-Entitaet (z.B. Tankstellenpreis-
@@ -312,6 +338,19 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # bevor sich die Entitaet zum ersten Mal wieder meldet (siehe
         # async_setup(), das diesen Wert als Startwert wiederherstellt).
         self.data["verbrenner_price_last"] = self._verbrenner_price_live
+        self.async_set_updated_data(self.data)
+        self.hass.async_create_task(self._save())
+
+    @callback
+    def _set_home_price(self, raw) -> None:
+        try:
+            self._home_price_live = float(raw)
+        except (ValueError, TypeError):
+            return
+        # Persistiert, damit ein Neustart nicht auf "unbekannt" zurueckfaellt,
+        # bevor sich die Entitaet zum ersten Mal wieder meldet (siehe
+        # async_setup(), das diesen Wert als Startwert wiederherstellt).
+        self.data["home_price_last"] = self._home_price_live
         self.async_set_updated_data(self.data)
         self.hass.async_create_task(self._save())
 
@@ -564,14 +603,22 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return None
         return round(self._wallbox_energy - start, 2)
 
+    def _home_price(self) -> Optional[float]:
+        """Heimstrompreis: die Live-Entitaet (falls konfiguriert und ein
+        gueltiger Wert vorliegt) hat Vorrang vor dem festen
+        Konfigurationswert -- siehe _wire_home_price()/savings()."""
+        if self._home_price_live is not None:
+            return self._home_price_live
+        price = self._opt(CONF_HOME_PRICE_KWH)
+        return float(price) if price is not None else None
+
     def savings(self) -> Optional[dict]:
         """Kostenvergleich gegenueber einem Verbrenner (siehe
         engine.py::calculate_savings), oder None wenn eine der zwingend
         noetigen Groessen (Kilometerstand-Delta, Verbrenner-Verbrauch,
-        Kraftstoffpreis) fehlt. Kraftstoffpreis: die Live-Entitaet (falls
-        konfiguriert und ein gueltiger Wert vorliegt) hat Vorrang vor dem
-        festen Konfigurationswert."""
-        home_price = self._opt(CONF_HOME_PRICE_KWH)
+        Kraftstoffpreis) fehlt. Heimstrompreis und Kraftstoffpreis: die
+        jeweilige Live-Entitaet (falls konfiguriert und ein gueltiger Wert
+        vorliegt) hat Vorrang vor dem festen Konfigurationswert."""
         verbrenner_l = self._opt(CONF_VERBRENNER_L_100KM)
         verbrenner_price = self._opt(CONF_VERBRENNER_PRICE_PER_LITER)
         if self._verbrenner_price_live is not None:
@@ -579,7 +626,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return calculate_savings(
             km_driven=self._km_driven(),
             home_kwh=self._home_kwh(),
-            home_price_kwh=float(home_price) if home_price is not None else None,
+            home_price_kwh=self._home_price(),
             fremdladen_kosten=self.data.get("totals", {}).get("kosten", 0.0),
             verbrenner_l_100km=float(verbrenner_l) if verbrenner_l is not None else None,
             verbrenner_price_per_liter=float(verbrenner_price) if verbrenner_price is not None else None,

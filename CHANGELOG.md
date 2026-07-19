@@ -2,6 +2,16 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.12.0] - 2026-07-20
+
+### Added
+
+- **Home electricity price can now be a live entity, not just a fixed value**: the cost comparison's `home_price_kwh` (step 6) gets a sibling `home_price_entity` field, mirroring how the fuel price already works — link it to a dynamic-tariff sensor and it takes precedence over the fixed value whenever both are set. Its last known good value is persisted and restored on restart/outage, same as the fuel price. The `... Ersparnis ggü. Verbrenner` sensor gets a new `heimstrompreis_live` attribute alongside the existing `kraftstoffpreis_live`.
+
+### Changed
+
+- **`Ladewirkungsgrad (gemessen)` is now a diagnostic entity**: it reflects the calibration status of a config-flow-provided setting (`charge_efficiency`) rather than a core charge-tracking metric, matching the existing diagnostic treatment of `Kilometerstand` and `Erstzulassung`.
+
 ## [0.11.1] - 2026-07-20
 
 ### Fixed

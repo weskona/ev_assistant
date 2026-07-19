@@ -11,7 +11,7 @@ from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    CONF_EFFICIENCY, CONF_ERSTZULASSUNG, CONF_HOME_PRICE_KWH, DEFAULT_EFFICIENCY,
+    CONF_EFFICIENCY, CONF_ERSTZULASSUNG, DEFAULT_EFFICIENCY,
     DOMAIN, EFF_MIN_SAMPLES,
 )
 from .entity import EvAssistantEntity
@@ -186,6 +186,7 @@ class MeasuredEfficiencySensor(EvAssistantEntity, SensorEntity):
 
     _attr_translation_key = "measured_efficiency"
     _attr_native_unit_of_measurement = "%"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:gauge"
 
     def __init__(self, coordinator, entry):
@@ -293,10 +294,10 @@ class HomeCostSensor(EvAssistantEntity, SensorEntity):
     @property
     def native_value(self):
         home_kwh = self.coordinator._home_kwh()
-        home_price = self.coordinator._opt(CONF_HOME_PRICE_KWH)
+        home_price = self.coordinator._home_price()
         if home_kwh is None or home_price is None:
             return None
-        return round(home_kwh * float(home_price), 2)
+        return round(home_kwh * home_price, 2)
 
 
 class SavingsSensor(EvAssistantEntity, SensorEntity):
@@ -328,4 +329,5 @@ class SavingsSensor(EvAssistantEntity, SensorEntity):
         attrs["gefahrene_km"] = self.coordinator._km_driven()
         attrs["fremdladen_kosten"] = self.coordinator.data.get("totals", {}).get("kosten", 0.0)
         attrs["kraftstoffpreis_live"] = self.coordinator._verbrenner_price_live is not None
+        attrs["heimstrompreis_live"] = self.coordinator._home_price_live is not None
         return attrs

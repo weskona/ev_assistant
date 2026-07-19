@@ -58,9 +58,10 @@
       },
       "vergleich": {
         "title": "EV Assistant - Kostenvergleich",
-        "description": "Schritt 6/6: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional — ohne sie bleiben die Ersparnis-Sensoren unbekannt. Heimladen-Kosten setzen zusätzlich eine konfigurierte Wallbox-Energiemessung (Schritt 3) voraus. Kraftstoffpreis: fester Wert ODER Entität (z.B. ein Tankstellenpreis-Sensor) — die Entität hat Vorrang, wenn beides gesetzt ist.",
+        "description": "Schritt 6/6: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional — ohne sie bleiben die Ersparnis-Sensoren unbekannt. Heimladen-Kosten setzen zusätzlich eine konfigurierte Wallbox-Energiemessung (Schritt 3) voraus. Heimstrompreis und Kraftstoffpreis: jeweils fester Wert ODER Entität (z.B. ein dynamischer Tarif- bzw. ein Tankstellenpreis-Sensor) — die Entität hat Vorrang, wenn beides gesetzt ist.",
         "data": {
           "home_price_kwh": "Preis pro kWh (Heimladen)",
+          "home_price_entity": "Heimstrompreis-Entität (überschreibt den festen Preis, falls gesetzt)",
           "verbrenner_l_100km": "Verbrauch Vergleichsfahrzeug (L/100km)",
           "verbrenner_price_per_liter": "Kraftstoffpreis (EUR/Liter)",
           "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis, falls gesetzt)"
@@ -132,9 +133,10 @@
       },
       "vergleich": {
         "title": "EV Assistant - Kostenvergleich",
-        "description": "Schritt 6/6: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional — ohne sie bleiben die Ersparnis-Sensoren unbekannt. Heimladen-Kosten setzen zusätzlich eine konfigurierte Wallbox-Energiemessung (Schritt 3) voraus. Kraftstoffpreis: fester Wert ODER Entität (z.B. ein Tankstellenpreis-Sensor) — die Entität hat Vorrang, wenn beides gesetzt ist.",
+        "description": "Schritt 6/6: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional — ohne sie bleiben die Ersparnis-Sensoren unbekannt. Heimladen-Kosten setzen zusätzlich eine konfigurierte Wallbox-Energiemessung (Schritt 3) voraus. Heimstrompreis und Kraftstoffpreis: jeweils fester Wert ODER Entität (z.B. ein dynamischer Tarif- bzw. ein Tankstellenpreis-Sensor) — die Entität hat Vorrang, wenn beides gesetzt ist.",
         "data": {
           "home_price_kwh": "Preis pro kWh (Heimladen)",
+          "home_price_entity": "Heimstrompreis-Entität (überschreibt den festen Preis, falls gesetzt)",
           "verbrenner_l_100km": "Verbrauch Vergleichsfahrzeug (L/100km)",
           "verbrenner_price_per_liter": "Kraftstoffpreis (EUR/Liter)",
           "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis, falls gesetzt)"

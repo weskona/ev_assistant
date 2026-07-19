@@ -13,7 +13,7 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_ERSTZULASSUNG, CONF_HOME_ENTITY,
-    CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE, CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT,
+    CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE, CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT,
     CONF_NOISE, CONF_NOTIFY_SERVICE, CONF_ODO_ENTITY, CONF_POWER_ENTITY, CONF_POWER_IS_AC,
     CONF_POWER_TEMPLATE, CONF_POWER_TOPIC, CONF_PUBLISH_TOPIC,
     CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_TOPIC, CONF_START_DELTA,
@@ -47,9 +47,13 @@ _WALLBOX_ENERGY_ENTITY = selector.EntitySelector(
 _ODO_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor", device_class="distance")
 )
-# Kraftstoffpreis-Sensoren haben keinen einheitlichen device_class in HA
-# (anders als die anderen Signale oben) -- daher ungefiltert auf sensor.
+# Kraftstoffpreis- und Heimstrompreis-Sensoren haben keinen einheitlichen
+# device_class in HA (anders als die anderen Signale oben) -- daher
+# ungefiltert auf sensor.
 _VERBRENNER_PRICE_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="sensor")
+)
+_HOME_PRICE_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor")
 )
 
@@ -154,14 +158,16 @@ def build_comparison_schema(cur: dict) -> vol.Schema:
     Alle Felder optional -- ohne sie bleiben die Ersparnis-Sensoren
     unbekannt statt einen Fehler zu werfen. Heimladen-Kosten setzen
     zusaetzlich eine konfigurierte Wallbox-Energiemessung (Schritt 3)
-    voraus, da sonst keine Heimladen-kWh vorliegen. Kraftstoffpreis: fester
-    Wert ODER Live-Entitaet (z.B. Tankstellenpreis-Sensor) -- die Entitaet
-    hat Vorrang, wenn beides gesetzt ist."""
+    voraus, da sonst keine Heimladen-kWh vorliegen. Heimstrompreis und
+    Kraftstoffpreis: jeweils fester Wert ODER Live-Entitaet (z.B. ein
+    dynamischer Tarif- bzw. Tankstellenpreis-Sensor) -- die Entitaet hat
+    Vorrang, wenn beides gesetzt ist."""
     def sv(key):
         return {"suggested_value": cur.get(key)}
 
     return vol.Schema({
         vol.Optional(CONF_HOME_PRICE_KWH, description=sv(CONF_HOME_PRICE_KWH)): vol.Coerce(float),
+        vol.Optional(CONF_HOME_PRICE_ENTITY, description=sv(CONF_HOME_PRICE_ENTITY)): _HOME_PRICE_ENTITY,
         vol.Optional(CONF_VERBRENNER_L_100KM, description=sv(CONF_VERBRENNER_L_100KM)): vol.Coerce(float),
         vol.Optional(CONF_VERBRENNER_PRICE_PER_LITER, description=sv(CONF_VERBRENNER_PRICE_PER_LITER)): vol.Coerce(float),
         vol.Optional(CONF_VERBRENNER_PRICE_ENTITY, description=sv(CONF_VERBRENNER_PRICE_ENTITY)): _VERBRENNER_PRICE_ENTITY,

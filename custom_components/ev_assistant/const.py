@@ -35,9 +35,11 @@ CONF_ODO_ENTITY = "odo_entity"
 
 # Kostenvergleich gegenueber einem Verbrenner (alle optional -- ohne sie
 # bleiben die Ersparnis-Sensoren unbekannt statt einen Fehler zu werfen).
-# Kraftstoffpreis: fester Wert ODER live-Entitaet (z.B. ein Tankstellenpreis-
-# Sensor) -- die Entitaet hat Vorrang, wenn beides gesetzt ist.
+# Heimstrompreis UND Kraftstoffpreis: jeweils fester Wert ODER live-Entitaet
+# (z.B. ein dynamischer Tarif- bzw. ein Tankstellenpreis-Sensor) -- die
+# Entitaet hat Vorrang, wenn beides gesetzt ist.
 CONF_HOME_PRICE_KWH = "home_price_kwh"
+CONF_HOME_PRICE_ENTITY = "home_price_entity"
 CONF_VERBRENNER_L_100KM = "verbrenner_l_100km"
 CONF_VERBRENNER_PRICE_PER_LITER = "verbrenner_price_per_liter"
 CONF_VERBRENNER_PRICE_ENTITY = "verbrenner_price_entity"
