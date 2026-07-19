@@ -3,19 +3,19 @@
     "step": {
       "fahrzeug": {
         "title": "EV Assistant - Fahrzeug",
-        "description": "Schritt 1/6: Fahrzeug-Eckdaten. Hersteller, Modell und nutzbare Akku-Kapazität sind Pflicht — Hersteller und Modell ergeben zusammen den Gerätenamen in der HA-Geräteliste. Der Ladewirkungsgrad ist optional — er kann automatisch aus echten Heim-Ladesessions kalibriert werden, wenn du im nächsten Schritt eine Wallbox-Energiemessung hinterlegst.",
+        "description": "Schritt 1/6: Fahrzeug-Eckdaten. Hersteller, Modell und nutzbare Akku-Kapazität sind Pflicht — Hersteller und Modell ergeben zusammen den Gerätenamen in der HA-Geräteliste. Nutzbare Akku-Kapazität: der Wert, der tatsächlich zum Fahren/Laden zur Verfügung steht — NICHT die oft größere Brutto-/Werksangabe des Herstellers (z.B. viele Modelle: 58 kWh brutto, aber nur 52 kWh nutzbar). Dieser Wert bestimmt direkt, wie viele kWh ein Prozentpunkt SoC-Anstieg entspricht — falsch eingetragen, sind alle Energie-Schätzungen falsch. Der Ladewirkungsgrad ist nur ein Startwert (optional) — er wird automatisch ersetzt, sobald genug echte Heim-Ladesessions vorliegen (siehe Schritt 3). Erstzulassung und Kilometerstand-Entität sind rein informativ und beeinflussen keine Berechnung — außer dem Kilometerstand, der zusätzlich als Streckenbasis für den optionalen Kostenvergleich in Schritt 6 dient.",
         "data": {
           "vehicle_hersteller": "Hersteller",
           "vehicle_modell": "Modell",
-          "erstzulassung": "Erstzulassung",
-          "odo_entity": "Kilometerstand-Entität",
-          "usable_kwh": "Nutzbare Akku-Kapazität (kWh)",
-          "charge_efficiency": "Ladewirkungsgrad (AC->Batterie, Startwert)"
+          "erstzulassung": "Erstzulassung (nur Anzeige, keine Berechnung)",
+          "odo_entity": "Kilometerstand-Entität (Anzeige + Streckenbasis für Kostenvergleich in Schritt 6)",
+          "usable_kwh": "Nutzbare Akku-Kapazität (kWh, netto — NICHT die Brutto-Werksangabe)",
+          "charge_efficiency": "Ladewirkungsgrad (AC->Batterie, nur Startwert bis zur automatischen Kalibrierung)"
         }
       },
       "grundsignale": {
         "title": "EV Assistant - Grundsignale",
-        "description": "Schritt 2/6: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery. Heim-Laden-Entität als Leistungssensor (z.B. Wallbox-Ladeleistung von evcc/Warp): ab 0,1 kW gilt als \"lädt\" — Sensoren in anderer Einheit (z.B. Watt) über das Template-Feld in kW umrechnen, z.B. {{ value | float / 1000 }}.",
+        "description": "Schritt 2/6: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery. Heim-Laden-Entität als Leistungssensor (z.B. Wallbox-Ladeleistung von evcc/Warp): ab 0,1 kW gilt als \"lädt\". Wichtig: dient NUR der Ja/Nein-Erkennung \"lädt gerade zuhause\" — das ist NICHT dieselbe Ladeleistung wie in Schritt 3 (die kommt dort bewusst vom Fahrzeug statt der Wallbox, damit sie auch unterwegs bei einer Fremdladung funktioniert). Sensoren in anderer Einheit (z.B. Watt) über das Template-Feld in kW umrechnen, z.B. {{ value | float / 1000 }}.",
         "data": {
           "soc_entity": "SoC-Entität *",
           "soc_topic": "SoC-Topic (MQTT) *",
@@ -40,20 +40,20 @@
       },
       "ausgabe": {
         "title": "EV Assistant - Ausgabe",
-        "description": "Schritt 4/6: wohin erkannte Fremdladungen gemeldet werden.",
+        "description": "Schritt 4/6: wie du zusätzlich über eine erkannte Fremdladung informiert wirst. Eine Benachrichtigung im Home-Assistant-Bereich \"Benachrichtigungen\" erscheint IMMER automatisch, unabhängig von diesen beiden optionalen Feldern. notify-Service schickt zusätzlich eine Push-Nachricht (z.B. aufs Handy); das MQTT-Topic veröffentlicht die Rohdaten als JSON für eigene Automationen/Integrationen. Beide sind rein optional.",
         "data": {
-          "publish_topic": "Publish-Topic für Events",
-          "notify_service": "notify-Service"
+          "publish_topic": "MQTT-Topic für Events (optional, für eigene Automationen)",
+          "notify_service": "notify-Service für Push-Benachrichtigung (optional, zusätzlich zur automatischen Benachrichtigung)"
         }
       },
       "erkennung": {
         "title": "EV Assistant - Erkennung",
-        "description": "Schritt 5/6: Feinjustierung der Fremdlade-Erkennung. Die Standardwerte passen für die meisten Fälle.",
+        "description": "Schritt 5/6: Feinjustierung der Fremdlade-Erkennung. Die Standardwerte passen für die meisten Fälle — nur ändern, wenn du weißt was du tust. Ablauf: eine Ladung startet, sobald der SoC um die Start-Schwelle über den letzten Ruhewert steigt; sie endet entweder, wenn der SoC um mehr als \"SoC-Abfall\" unter den erreichten Höchststand fällt, oder wenn \"Timeout ohne neuen SoC-Höchstwert\" lang kein neuer Höchststand mehr erreicht wurde (z.B. weil der Akku voll ist). \"SoC-Rauschen\" toleriert normales Sensor-Zittern beim Verfolgen des Höchststands und muss deshalb IMMER kleiner sein als die Start-Schwelle — sonst kann schon normales Rauschen eine falsche Erkennung auslösen.",
         "data": {
-          "start_delta": "Start-Schwelle (% SoC-Anstieg)",
-          "noise": "SoC-Rauschen (%)",
-          "idle_timeout_s": "Timeout ohne Anstieg (s)",
-          "drop_ends": "Abfall beendet Ladung (%)"
+          "start_delta": "Start-Schwelle (%, ab wie viel SoC-Anstieg eine Ladung als gestartet gilt)",
+          "noise": "SoC-Rauschen (%, Toleranz gegen Sensor-Zittern — muss kleiner sein als die Start-Schwelle!)",
+          "idle_timeout_s": "Timeout ohne neuen SoC-Höchstwert (s, beendet die Ladung auch ohne SoC-Abfall)",
+          "drop_ends": "SoC-Abfall beendet Ladung sofort (%, gegenüber dem bisherigen Höchststand)"
         }
       },
       "vergleich": {
@@ -78,19 +78,19 @@
     "step": {
       "fahrzeug": {
         "title": "EV Assistant - Fahrzeug",
-        "description": "Schritt 1/6: Fahrzeug-Eckdaten. Hersteller, Modell und nutzbare Akku-Kapazität sind Pflicht.",
+        "description": "Schritt 1/6: Fahrzeug-Eckdaten. Hersteller, Modell und nutzbare Akku-Kapazität sind Pflicht. Nutzbare Akku-Kapazität: der Wert, der tatsächlich zum Fahren/Laden zur Verfügung steht — NICHT die oft größere Brutto-/Werksangabe des Herstellers.",
         "data": {
           "vehicle_hersteller": "Hersteller",
           "vehicle_modell": "Modell",
-          "erstzulassung": "Erstzulassung",
-          "odo_entity": "Kilometerstand-Entität",
-          "usable_kwh": "Nutzbare Akku-Kapazität (kWh)",
-          "charge_efficiency": "Ladewirkungsgrad (AC->Batterie, Startwert)"
+          "erstzulassung": "Erstzulassung (nur Anzeige, keine Berechnung)",
+          "odo_entity": "Kilometerstand-Entität (Anzeige + Streckenbasis für Kostenvergleich in Schritt 6)",
+          "usable_kwh": "Nutzbare Akku-Kapazität (kWh, netto — NICHT die Brutto-Werksangabe)",
+          "charge_efficiency": "Ladewirkungsgrad (AC->Batterie, nur Startwert bis zur automatischen Kalibrierung)"
         }
       },
       "grundsignale": {
         "title": "EV Assistant - Grundsignale",
-        "description": "Schritt 2/6: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery. Heim-Laden-Entität als Leistungssensor (z.B. Wallbox-Ladeleistung von evcc/Warp): ab 0,1 kW gilt als \"lädt\" — Sensoren in anderer Einheit (z.B. Watt) über das Template-Feld in kW umrechnen, z.B. {{ value | float / 1000 }}.",
+        "description": "Schritt 2/6: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery. Heim-Laden-Entität als Leistungssensor (z.B. Wallbox-Ladeleistung von evcc/Warp): ab 0,1 kW gilt als \"lädt\". Wichtig: dient NUR der Ja/Nein-Erkennung \"lädt gerade zuhause\" — das ist NICHT dieselbe Ladeleistung wie in Schritt 3 (die kommt dort bewusst vom Fahrzeug statt der Wallbox, damit sie auch unterwegs bei einer Fremdladung funktioniert). Sensoren in anderer Einheit (z.B. Watt) über das Template-Feld in kW umrechnen, z.B. {{ value | float / 1000 }}.",
         "data": {
           "soc_entity": "SoC-Entität *",
           "soc_topic": "SoC-Topic (MQTT) *",
@@ -115,20 +115,20 @@
       },
       "ausgabe": {
         "title": "EV Assistant - Ausgabe",
-        "description": "Schritt 4/6: wohin erkannte Fremdladungen gemeldet werden.",
+        "description": "Schritt 4/6: wie du zusätzlich über eine erkannte Fremdladung informiert wirst. Eine Benachrichtigung im Home-Assistant-Bereich \"Benachrichtigungen\" erscheint IMMER automatisch, unabhängig von diesen beiden optionalen Feldern. notify-Service schickt zusätzlich eine Push-Nachricht (z.B. aufs Handy); das MQTT-Topic veröffentlicht die Rohdaten als JSON für eigene Automationen/Integrationen. Beide sind rein optional.",
         "data": {
-          "publish_topic": "Publish-Topic für Events",
-          "notify_service": "notify-Service"
+          "publish_topic": "MQTT-Topic für Events (optional, für eigene Automationen)",
+          "notify_service": "notify-Service für Push-Benachrichtigung (optional, zusätzlich zur automatischen Benachrichtigung)"
         }
       },
       "erkennung": {
         "title": "EV Assistant - Erkennung",
-        "description": "Schritt 5/6: Feinjustierung der Fremdlade-Erkennung.",
+        "description": "Schritt 5/6: Feinjustierung der Fremdlade-Erkennung. Ablauf: eine Ladung startet, sobald der SoC um die Start-Schwelle über den letzten Ruhewert steigt; sie endet bei einem SoC-Abfall unter den Höchststand oder nach dem Timeout ohne neuen Höchstwert. SoC-Rauschen muss IMMER kleiner sein als die Start-Schwelle, sonst löst schon normales Sensor-Zittern eine falsche Erkennung aus.",
         "data": {
-          "start_delta": "Start-Schwelle (% SoC-Anstieg)",
-          "noise": "SoC-Rauschen (%)",
-          "idle_timeout_s": "Timeout ohne Anstieg (s)",
-          "drop_ends": "Abfall beendet Ladung (%)"
+          "start_delta": "Start-Schwelle (%, ab wie viel SoC-Anstieg eine Ladung als gestartet gilt)",
+          "noise": "SoC-Rauschen (%, Toleranz gegen Sensor-Zittern — muss kleiner sein als die Start-Schwelle!)",
+          "idle_timeout_s": "Timeout ohne neuen SoC-Höchstwert (s, beendet die Ladung auch ohne SoC-Abfall)",
+          "drop_ends": "SoC-Abfall beendet Ladung sofort (%, gegenüber dem bisherigen Höchststand)"
         }
       },
       "vergleich": {

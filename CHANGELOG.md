@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.13.0] - 2026-07-20
+
+### Changed
+
+- **Rewrote every config flow step's description and field labels for clarity**, continuing the 0.12.1/0.12.2 charging-power/wallbox-meter clarification across the whole flow: usable battery capacity now explicitly says it means the *net* value, not a manufacturer's larger gross/factory figure; first-registration date and odometer entity now say they're display-only (except the odometer's role as the cost-comparison distance basis); the home-charging signal (step 2) now explicitly disambiguates itself from the unrelated charging-power field in step 3; step 4's output fields now explain that a persistent notification always appears regardless, with `notify.*`/MQTT being additive; step 5's fields now explain what each detection threshold actually does and the `noise` < `start_delta` requirement inline instead of only in the README. The README's setup walkthrough was updated to match.
+
 ## [0.12.2] - 2026-07-20
 
 ### Changed
