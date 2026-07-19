@@ -60,6 +60,7 @@ def _empty_data() -> dict:
         "odo_start": None,
         "wallbox_energy_start": None,
         "detector_state": None,
+        "verbrenner_price_last": None,
     }
 
 
@@ -103,6 +104,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self.data["pending"] = [pending]
         elif pending is None:
             self.data["pending"] = []
+        # Letzter bekannter Kraftstoffpreis der Live-Entitaet als Fallback,
+        # bevor sich die Entitaet nach dem Start ueberhaupt zum ersten Mal
+        # wieder meldet (siehe _set_verbrenner_price/savings()).
+        self._verbrenner_price_live = self.data.get("verbrenner_price_last")
         self._build_detector()
         await self._setup_sources()
         # Periodischer Re-Check zusaetzlich zu den SoC-getriebenen Updates:
@@ -303,7 +308,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self._verbrenner_price_live = float(raw)
         except (ValueError, TypeError):
             return
+        # Persistiert, damit ein Neustart nicht auf "unbekannt" zurueckfaellt,
+        # bevor sich die Entitaet zum ersten Mal wieder meldet (siehe
+        # async_setup(), das diesen Wert als Startwert wiederherstellt).
+        self.data["verbrenner_price_last"] = self._verbrenner_price_live
         self.async_set_updated_data(self.data)
+        self.hass.async_create_task(self._save())
 
     async def _run_detection(self) -> None:
         if self._soc is None or self._detector is None:

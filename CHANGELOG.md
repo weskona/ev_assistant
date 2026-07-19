@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.11.1] - 2026-07-20
+
+### Fixed
+
+- **Fuel-price entity's value wasn't remembered across restarts**: if `verbrenner_price_entity` went `unavailable` right after a restart (before reporting a fresh value), the savings comparison had nothing to fall back to until the entity reported again — even though the entity's last known value was perfectly usable. The last valid reading is now persisted and restored on startup, so the comparison keeps working through brief entity outages and restarts.
+
 ## [0.11.0] - 2026-07-19
 
 ### Added
