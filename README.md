@@ -34,13 +34,13 @@ At the end, EV Assistant has a `soc_start`, a `soc_end`, and needs to turn that 
 
 ### Detection walkthrough — a worked example
 
-Say your car has a 45 kWh usable battery and the default 88 % charge efficiency (both configurable in step 1 of setup). You drive away from home with the battery at **32 %** and plug in at a public charger. No power sensor is configured yet — just SoC and the home-charging signal.
+Say your car has a 45 kWh usable battery and the default 88 % charge efficiency (both configurable in step 1 of setup). You drive away from home with the battery at **32 %** and plug in at a public charger. No vehicle charging-power sensor is configured yet — just SoC and the home-charging signal.
 
 1. Before you left, the last few SoC readings were flat at 32 % with home-charging off (you weren't charging, just driving/parked away from home). The anchor sits at **32 %**.
 2. At the charger, the next SoC reading comes in at **35 %**. That's +3 percentage points above the anchor — exactly the `start_delta` threshold — so a Fremdladung session **starts**, officially from `soc_start = 32 %` (the anchor), at the timestamp of that last 32 % reading.
 3. Over the next couple of hours, SoC keeps ticking up: 40 %, 55 %, 68 %, 74 %. Each new high becomes the tracked peak.
 4. You unplug at **74 %** and drive home. Ten minutes pass with the SoC entity reporting no further increase (it's not charging anymore) — the `idle_timeout_s` fires and the session **ends**.
-5. Delta = 74 % − 32 % = **42 percentage points**. Without a power sensor, EV Assistant falls back to the SoC-only estimate:
+5. Delta = 74 % − 32 % = **42 percentage points**. Without a vehicle charging-power sensor, EV Assistant falls back to the SoC-only estimate:
    - Battery-side energy: `42 % of 45 kWh = 18.9 kWh`
    - AC-side (billed) estimate, accounting for charging losses: `18.9 kWh ÷ 0.88 = 21.48 kWh` — the notification rounds this to **≈ 21.5 kWh**.
 6. EV Assistant now:
@@ -60,11 +60,11 @@ The estimate shown while a charge is pending, and stored as `schaetzung_kwh`/`qu
 
 | Source | When it's used | How it's calculated |
 |---|---|---|
-| `soc` | No charging-power sensor configured (or no data during this session) | `battery_kwh = soc_delta% × usable_kWh`; `ac_kwh = battery_kwh ÷ charge_efficiency` |
-| `power_ac` | Charging-power sensor configured with **"power is AC-side"** enabled (the default) | `ac_kwh` = the power readings integrated over time (trapezoidal rule) — this is already the billed-side energy, no efficiency math needed; `battery_kwh = ac_kwh × charge_efficiency` (informational only) |
-| `power_dc` | Charging-power sensor configured with **"power is AC-side"** disabled (sensor measures the battery/DC side, e.g. some vehicle telemetry) | `battery_kwh` = the power readings integrated over time; `ac_kwh = battery_kwh ÷ charge_efficiency` |
+| `soc` | No vehicle charging-power sensor configured (or no data during this session) | `battery_kwh = soc_delta% × usable_kWh`; `ac_kwh = battery_kwh ÷ charge_efficiency` |
+| `power_ac` | Vehicle charging-power sensor configured with **"power is AC-side"** enabled (the default) | `ac_kwh` = the power readings integrated over time (trapezoidal rule) — this is already the billed-side energy, no efficiency math needed; `battery_kwh = ac_kwh × charge_efficiency` (informational only) |
+| `power_dc` | Vehicle charging-power sensor configured with **"power is AC-side"** disabled (sensor reports the battery/DC side) | `battery_kwh` = the power readings integrated over time; `ac_kwh = battery_kwh ÷ charge_efficiency` |
 
-A power sensor (when available) is generally more accurate than the SoC-only method, because it reacts to the *actual* charging curve (which typically tapers off well before 100 %) instead of assuming a linear relationship between percentage and kWh.
+A vehicle charging-power sensor (when available) is generally more accurate than the SoC-only method, because it reacts to the *actual* charging curve (which typically tapers off well before 100 %) instead of assuming a linear relationship between percentage and kWh. It's read from the vehicle's own telemetry (not your home wallbox) so it also reports data during an external charge away from home, where your wallbox naturally has no signal at all.
 
 ### Installation
 
@@ -83,7 +83,7 @@ Settings → Devices & Services → **Add integration** → "EV Assistant". Setu
 
 1. **Vehicle** — Manufacturer + model (required, e.g. "Peugeot" / "e-2008" — together they become the HA device name), first registration date (optional), odometer entity (optional, filtered to `sensor` + `device_class: distance` — mirrored onto the EV Assistant device as its own `... Kilometerstand` sensor, and used as the distance basis for the cost comparison in step 6), usable battery capacity in kWh (required), charge efficiency (optional starting value, see calibration below).
 2. **Basic signals** — SoC and home-charging source, each as **HA entity OR MQTT topic** (entity takes priority). At least one source per signal is required (marked with `*`). The SoC entity picker is filtered to `sensor` + `device_class: battery`; the home-charging entity picker to `sensor` + `device_class: power` (e.g. a wallbox's charging-power sensor from evcc/Warp) — a numeric value **above 0.1 kW counts as "charging"**; a non-numeric value (e.g. evcc's own `"charging"`/`"on"` status string) falls back to a plain text match instead. If your power sensor reports a different unit (e.g. Watts), convert it with the template field, e.g. `{{ value | float / 1000 }}`. If your setup doesn't fit those (e.g. a `binary_sensor`), use the MQTT-topic field instead.
-3. **Charging power** (optional) — improves the energy estimate of an external charge beyond plain SoC-delta (see "Energy estimation methods" above). Also where you configure a **wallbox energy meter** (cumulative kWh counter) for automatic efficiency calibration *and* for the home-charging cost tracked in step 6.
+3. **Charging power** (optional) — a momentary power reading in W/kW, typically from vehicle telemetry rather than your wallbox (so it still reports data during an external charge, where the wallbox is idle); improves the energy estimate of an external charge beyond plain SoC-delta (see "Energy estimation methods" above). Also where you configure a **wallbox energy meter** (cumulative kWh counter) for automatic efficiency calibration *and* for the home-charging cost tracked in step 6.
 4. **Output** — MQTT publish topic for detected charges, optional `notify.*` service.
 5. **Detection fine-tuning** — thresholds of the underlying state machine described above (`start_delta`, `noise`, `idle_timeout_s`, `drop_ends`). Defaults work for most vehicles; raise them for a car whose SoC only updates coarsely/infrequently (e.g. some cloud APIs).
 6. **Cost comparison** (optional) — see "Cost comparison vs. a combustion car" below.
@@ -150,12 +150,12 @@ The HA device is named after the vehicle (`{Manufacturer} {Model}`), so entity n
 
 A compact reference for the three calculations EV Assistant does, all using the defaults (45 kWh usable battery, 88 % efficiency):
 
-**1) External charge, SoC-only estimate** (no power sensor configured)
+**1) External charge, SoC-only estimate** (no vehicle charging-power sensor configured)
 > SoC 32 % → 74 % (Δ 42 pp)
 > Battery energy: `0.42 × 45 kWh = 18.9 kWh`
 > Billed (AC) estimate: `18.9 ÷ 0.88 = 21.48 kWh` ≈ **21.5 kWh**
 
-**2) External charge, power-sensor estimate** (charging power sensor configured, AC-side)
+**2) External charge, power-sensor estimate** (vehicle charging-power sensor configured, AC-side)
 > Suppose the power readings for this session integrate to **11.0 kWh** total (EV Assistant does this integration automatically from however many power readings arrive, using the trapezoidal rule — it doesn't need a fixed sampling interval).
 > That 11.0 kWh **is already the billed-side number** — no efficiency division needed, unlike the SoC-only method above.
 > Battery-side figure (informational only, e.g. for the losses shown in history): `11.0 × 0.88 = 9.68 kWh` → `losses_kwh = 11.0 − 9.68 = 1.32 kWh`.
@@ -255,13 +255,13 @@ Am Ende hat EV Assistant einen `soc_start` und einen `soc_end` und muss daraus e
 
 ### Erkennungs-Ablauf — ein durchgerechnetes Beispiel
 
-Angenommen dein Auto hat einen nutzbaren Akku von 45 kWh und den Standard-Ladewirkungsgrad von 88 % (beide in Schritt 1 der Einrichtung einstellbar). Du fährst mit 32 % Akkustand von zuhause weg und steckst an einer öffentlichen Ladesäule ein. Ein Ladeleistungssensor ist noch nicht konfiguriert — nur SoC und das Heim-Laden-Signal.
+Angenommen dein Auto hat einen nutzbaren Akku von 45 kWh und den Standard-Ladewirkungsgrad von 88 % (beide in Schritt 1 der Einrichtung einstellbar). Du fährst mit 32 % Akkustand von zuhause weg und steckst an einer öffentlichen Ladesäule ein. Ein Fahrzeug-Ladeleistungssensor ist noch nicht konfiguriert — nur SoC und das Heim-Laden-Signal.
 
 1. Bevor du losgefahren bist, lagen die letzten SoC-Werte konstant bei 32 % mit Heim-Laden aus (du hast nicht geladen, nur geparkt/bist gefahren). Der Anker steht bei **32 %**.
 2. An der Ladesäule kommt der nächste SoC-Wert mit **35 %** rein. Das sind +3 Prozentpunkte über dem Anker — genau die `start_delta`-Schwelle — also **beginnt** eine Fremdladung-Session, offiziell ab `soc_start = 32 %` (dem Anker), zum Zeitpunkt dieses letzten 32-%-Werts.
 3. In den nächsten Stunden steigt der SoC weiter: 40 %, 55 %, 68 %, 74 %. Jeder neue Höchstwert wird als Peak gemerkt.
 4. Du steckst bei **74 %** ab und fährst nach Hause. Zehn Minuten vergehen, ohne dass der SoC-Sensor einen weiteren Anstieg meldet (es wird nicht mehr geladen) — der `idle_timeout_s` greift und die Session **endet**.
-5. Delta = 74 % − 32 % = **42 Prozentpunkte**. Ohne Ladeleistungssensor greift EV Assistant auf die reine SoC-Schätzung zurück:
+5. Delta = 74 % − 32 % = **42 Prozentpunkte**. Ohne Fahrzeug-Ladeleistungssensor greift EV Assistant auf die reine SoC-Schätzung zurück:
    - Batterieseitige Energie: `42 % von 45 kWh = 18,9 kWh`
    - AC-seitige (abgerechnete) Schätzung, unter Berücksichtigung der Ladeverluste: `18,9 kWh ÷ 0,88 = 21,48 kWh` — die Benachrichtigung rundet das auf **≈ 21,5 kWh**.
 6. EV Assistant tut jetzt Folgendes:
@@ -281,11 +281,11 @@ Die Schätzung, die bei einer offenen Ladung angezeigt und als `schaetzung_kwh`/
 
 | Quelle | Wann verwendet | Berechnung |
 |---|---|---|
-| `soc` | Kein Ladeleistungssensor konfiguriert (oder keine Daten während dieser Session) | `Batterie-kWh = SoC-Delta% × nutzbare kWh`; `AC-kWh = Batterie-kWh ÷ Ladewirkungsgrad` |
-| `power_ac` | Ladeleistungssensor konfiguriert, mit **„Ladeleistung ist AC-seitig"** aktiviert (Standard) | `AC-kWh` = die Leistungswerte über die Zeit integriert (Trapezregel) — das ist bereits der abgerechnete Wert, keine Wirkungsgrad-Rechnung nötig; `Batterie-kWh = AC-kWh × Ladewirkungsgrad` (nur informativ) |
-| `power_dc` | Ladeleistungssensor konfiguriert, „AC-seitig" deaktiviert (Sensor misst batterie-/DC-seitig, z.B. manche Fahrzeugtelemetrie) | `Batterie-kWh` = die Leistungswerte über die Zeit integriert; `AC-kWh = Batterie-kWh ÷ Ladewirkungsgrad` |
+| `soc` | Kein Fahrzeug-Ladeleistungssensor konfiguriert (oder keine Daten während dieser Session) | `Batterie-kWh = SoC-Delta% × nutzbare kWh`; `AC-kWh = Batterie-kWh ÷ Ladewirkungsgrad` |
+| `power_ac` | Fahrzeug-Ladeleistungssensor konfiguriert, mit **„Ladeleistung ist AC-seitig"** aktiviert (Standard) | `AC-kWh` = die Leistungswerte über die Zeit integriert (Trapezregel) — das ist bereits der abgerechnete Wert, keine Wirkungsgrad-Rechnung nötig; `Batterie-kWh = AC-kWh × Ladewirkungsgrad` (nur informativ) |
+| `power_dc` | Fahrzeug-Ladeleistungssensor konfiguriert, „AC-seitig" deaktiviert (Sensor misst batterie-/DC-seitig) | `Batterie-kWh` = die Leistungswerte über die Zeit integriert; `AC-kWh = Batterie-kWh ÷ Ladewirkungsgrad` |
 
-Ein Ladeleistungssensor (wenn vorhanden) ist meist genauer als die reine SoC-Schätzung, da er die *tatsächliche* Ladekurve abbildet (die typischerweise deutlich vor 100 % abflacht) statt einen linearen Zusammenhang zwischen Prozent und kWh anzunehmen.
+Ein Fahrzeug-Ladeleistungssensor (wenn vorhanden) ist meist genauer als die reine SoC-Schätzung, da er die *tatsächliche* Ladekurve abbildet (die typischerweise deutlich vor 100 % abflacht) statt einen linearen Zusammenhang zwischen Prozent und kWh anzunehmen. Er kommt aus der Fahrzeug-Telemetrie (nicht deiner Wallbox), liefert daher auch bei einer Fremdladung unterwegs Werte — die eigene Wallbox hat dort naturgemäß gar kein Signal.
 
 ### Installation
 
@@ -304,7 +304,7 @@ Einstellungen → Geräte & Dienste → **Integration hinzufügen** → „EV As
 
 1. **Fahrzeug** — Hersteller + Modell (Pflicht, z.B. „Peugeot" / „e-2008" — ergeben zusammen den HA-Gerätenamen), Erstzulassung (optional), Kilometerstand-Entität (optional, gefiltert auf `sensor` + `device_class: distance` — wird als eigener `... Kilometerstand`-Sensor am EV-Assistant-Gerät gespiegelt und als Streckenbasis für den Kostenvergleich in Schritt 6 genutzt), nutzbare Akku-Kapazität in kWh (Pflicht), Ladewirkungsgrad (optionaler Startwert, siehe Kalibrierung unten).
 2. **Grundsignale** — SoC- und Heim-Laden-Quelle, jeweils als **HA-Entität ODER MQTT-Topic** (Entität hat Vorrang). Mindestens eine Quelle pro Signal ist Pflicht (mit `*` markiert). Der SoC-Entitäts-Picker ist auf `sensor` + `device_class: battery` gefiltert, der Heim-Laden-Picker auf `sensor` + `device_class: power` (z.B. die Ladeleistung einer Wallbox von evcc/Warp) — ein Zahlenwert **über 0,1 kW gilt als „lädt"**; ein nicht-numerischer Wert (z.B. evccs eigener `"charging"`/`"on"`-Status) fällt stattdessen auf einen reinen Text-Vergleich zurück. Meldet dein Leistungssensor eine andere Einheit (z.B. Watt), rechne über das Template-Feld um, z.B. `{{ value | float / 1000 }}`. Passt das nicht zu deinem Setup (z.B. ein `binary_sensor`), nutze stattdessen das MQTT-Topic-Feld.
-3. **Ladeleistung** (optional) — verbessert die Energie-Schätzung einer Fremdladung gegenüber der reinen SoC-Delta-Schätzung (siehe „Energie-Schätzmethoden" oben). Hier wird auch ein **Wallbox-Energiezähler** (kumulativer kWh-Zähler) für die automatische Ladewirkungsgrad-Kalibrierung *und* für die Heimladen-Kosten in Schritt 6 hinterlegt.
+3. **Ladeleistung** (optional) — ein Momentanwert in W/kW, typischerweise aus der Fahrzeug-Telemetrie statt deiner Wallbox (liefert dadurch auch bei einer Fremdladung unterwegs Werte, wo die Wallbox nichts misst); verbessert die Energie-Schätzung einer Fremdladung gegenüber der reinen SoC-Delta-Schätzung (siehe „Energie-Schätzmethoden" oben). Hier wird auch ein **Wallbox-Energiezähler** (kumulativer kWh-Zähler) für die automatische Ladewirkungsgrad-Kalibrierung *und* für die Heimladen-Kosten in Schritt 6 hinterlegt.
 4. **Ausgabe** — MQTT-Publish-Topic für erkannte Ladungen, optionaler `notify.*`-Dienst.
 5. **Erkennungs-Feinjustierung** — Schwellwerte der oben beschriebenen Zustandsmaschine (`start_delta`, `noise`, `idle_timeout_s`, `drop_ends`). Die Standardwerte passen für die meisten Fahrzeuge; bei einem Auto, dessen SoC nur grob/selten aktualisiert wird (manche Cloud-APIs), großzügiger einstellen.
 6. **Kostenvergleich** (optional) — siehe „Kostenvergleich gegenüber einem Verbrenner" unten.
@@ -371,12 +371,12 @@ Das HA-Gerät heißt wie das Fahrzeug (`{Hersteller} {Modell}`), Entitäten ersc
 
 Eine kompakte Referenz für die drei Berechnungen, die EV Assistant durchführt, jeweils mit den Standardwerten (45 kWh nutzbarer Akku, 88 % Wirkungsgrad):
 
-**1) Fremdladung, reine SoC-Schätzung** (kein Ladeleistungssensor konfiguriert)
+**1) Fremdladung, reine SoC-Schätzung** (kein Fahrzeug-Ladeleistungssensor konfiguriert)
 > SoC 32 % → 74 % (Δ 42 Prozentpunkte)
 > Batterie-Energie: `0,42 × 45 kWh = 18,9 kWh`
 > Abgerechnete (AC-)Schätzung: `18,9 ÷ 0,88 = 21,48 kWh` ≈ **21,5 kWh**
 
-**2) Fremdladung, Schätzung per Ladeleistungssensor** (Ladeleistungssensor konfiguriert, AC-seitig)
+**2) Fremdladung, Schätzung per Ladeleistungssensor** (Fahrzeug-Ladeleistungssensor konfiguriert, AC-seitig)
 > Angenommen die Leistungswerte dieser Session integrieren sich zu insgesamt **11,0 kWh** (EV Assistant macht diese Integration automatisch aus beliebig vielen Leistungswerten per Trapezregel — kein festes Abtastintervall nötig).
 > Diese 11,0 kWh sind **bereits der abgerechnete Wert** — anders als bei der reinen SoC-Schätzung ist keine Wirkungsgrad-Division nötig.
 > Batterieseitiger Wert (nur informativ, z.B. für die in der Historie angezeigten Verluste): `11,0 × 0,88 = 9,68 kWh` → `losses_kwh = 11,0 − 9,68 = 1,32 kWh`.

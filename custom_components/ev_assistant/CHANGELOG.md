@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.12.1] - 2026-07-20
+
+### Changed
+
+- **Clarified what "Ladeleistung" (charging power, step 3) actually means**: the field name/description previously didn't say where the reading should come from, which read as if it should be your home wallbox's power sensor. It's actually read from the vehicle's own telemetry — `power_kw` is only integrated by the detector *during an external charge*, i.e. exactly when the car isn't plugged into your wallbox, so a wallbox-sourced reading would report nothing during the scenario this field exists for. Relabeled the field ("Fahrzeug-Ladeleistung") and reworded the step 3 description, the "power is AC-side" toggle, and the related README sections (energy estimation methods, worked examples) to say so explicitly.
+
 ## [0.12.0] - 2026-07-20
 
 ### Added
