@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.12.2] - 2026-07-20
+
+### Changed
+
+- **Clarified the wallbox energy meter's field label/description too**, as the counterpart to 0.12.1's charging-power clarification: it explicitly says it's a *cumulative* kWh counter of your *own* wallbox (never a momentary reading), relevant only while charging at home — as opposed to the charging-power field, which is a momentary vehicle-telemetry reading relevant during external charges. Step 3's description now spells out both fields side by side so the contrast is explicit.
+
 ## [0.12.1] - 2026-07-20
 
 ### Changed

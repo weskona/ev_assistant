@@ -27,13 +27,13 @@
       },
       "ladeleistung": {
         "title": "EV Assistant - Ladeleistung",
-        "description": "Schritt 3/6: optionale Ladeleistungs- und Wallbox-Energiemessung. Die Ladeleistung ist die aktuelle Momentanleistung deines Fahrzeugs beim Laden in Watt oder kW (kein Zähler, typischerweise Fahrzeug-Telemetrie statt Wallbox-Sensor — sie liefert dadurch auch bei Fremdladungen unterwegs Werte, wo die eigene Wallbox naturgemäß nichts messen kann) — sie verbessert die Energie-Schätzung einer Fremdladung gegenüber der reinen SoC-Delta-Schätzung. Meldet dein Sensor die AC-seitige (Ladepunkt-)Leistung, lass \"Ladeleistung ist AC-seitig\" aktiviert (Standard); meldet er die DC-/Batterie-seitige Leistung, schalte es aus. Die Wallbox-Energiemessung (kumulativer kWh-Zähler) ermöglicht die automatische Kalibrierung des Ladewirkungsgrads aus echten Heim-Ladesessions.",
+        "description": "Schritt 3/6: optionale Ladeleistungs- und Wallbox-Energiemessung — zwei unterschiedliche Quellen für zwei unterschiedliche Zwecke. Die Ladeleistung ist die aktuelle Momentanleistung deines Fahrzeugs beim Laden in Watt oder kW (kein Zähler, typischerweise Fahrzeug-Telemetrie statt Wallbox-Sensor — sie liefert dadurch auch bei Fremdladungen unterwegs Werte, wo die eigene Wallbox naturgemäß nichts messen kann) — sie verbessert die Energie-Schätzung einer Fremdladung gegenüber der reinen SoC-Delta-Schätzung. Meldet dein Sensor die AC-seitige (Ladepunkt-)Leistung, lass \"Ladeleistung ist AC-seitig\" aktiviert (Standard); meldet er die DC-/Batterie-seitige Leistung, schalte es aus. Der Wallbox-Energiezähler ist dagegen genau umgekehrt gelagert: ein kumulativer kWh-Zähler deiner eigenen Wallbox (wie ein normaler Stromzähler, kein Momentanwert) — er ist nur beim Heim-Laden relevant und ermöglicht die automatische Kalibrierung des Ladewirkungsgrads aus echten Heim-Ladesessions sowie die Heimladen-Kosten in Schritt 6.",
         "data": {
           "power_entity": "Fahrzeug-Ladeleistung in Watt/kW (optional)",
           "power_topic": "Fahrzeug-Ladeleistung-Topic (MQTT, optional)",
           "power_template": "Fahrzeug-Ladeleistung-Template",
           "power_is_ac": "Ladeleistung ist AC-seitig (Ladepunkt) statt DC-seitig (Batterie)",
-          "wallbox_energy_entity": "Wallbox-Energiezähler (optional)",
+          "wallbox_energy_entity": "Wallbox-Energiezähler (kumulativer kWh-Zähler deiner Wallbox, optional)",
           "wallbox_energy_topic": "Wallbox-Energiezähler-Topic (MQTT, optional)",
           "wallbox_energy_template": "Wallbox-Energiezähler-Template"
         }
@@ -108,7 +108,7 @@
           "power_topic": "Fahrzeug-Ladeleistung-Topic (MQTT, optional)",
           "power_template": "Fahrzeug-Ladeleistung-Template",
           "power_is_ac": "Ladeleistung ist AC-seitig (Ladepunkt) statt DC-seitig (Batterie)",
-          "wallbox_energy_entity": "Wallbox-Energiezähler (optional)",
+          "wallbox_energy_entity": "Wallbox-Energiezähler (kumulativer kWh-Zähler deiner Wallbox, optional)",
           "wallbox_energy_topic": "Wallbox-Energiezähler-Topic (MQTT, optional)",
           "wallbox_energy_template": "Wallbox-Energiezähler-Template"
         }
