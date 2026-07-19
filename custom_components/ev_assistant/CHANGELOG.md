@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.10.1] - 2026-07-19
+
+### Changed
+
+- **`start_delta` default lowered from 3 % to 1 %**: 3 percentage points turned out to be too insensitive for slower-updating or coarser SoC sources (e.g. some cloud-based telemetry), where a real external charge could go unnoticed for a while. 1 % is more responsive while still safely above the `noise` default (0.5 %) — keep `start_delta` above `noise` to avoid false detections from ordinary sensor jitter (now called out explicitly in the README).
+
 ## [0.10.0] - 2026-07-16
 
 ### Added
