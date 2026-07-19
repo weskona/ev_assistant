@@ -108,6 +108,44 @@ class ChargeDetector:
             return self._update_idle(s)
         return self._update_charging(s)
 
+    def get_state(self) -> dict:
+        """Momentaufnahme des Zustandsautomaten (Anker, laufende Session,
+        Peak, ...) zum Persistieren -- siehe load_state(). Ohne das wuerde
+        ein HA-Neustart eine gerade laufende (noch nicht abgeschlossene)
+        Erkennung stillschweigend verwerfen, da diese Werte sonst nur im
+        Arbeitsspeicher existieren."""
+        return {
+            "active": self._active,
+            "anchor_soc": self._anchor_soc,
+            "anchor_ts": self._anchor_ts,
+            "start_ts": self._start_ts,
+            "start_soc": self._start_soc,
+            "peak_soc": self._peak_soc,
+            "last_rise_ts": self._last_rise_ts,
+            "e_power_kwh": self._e_power_kwh,
+            "have_power": self._have_power,
+            "last_power": self._last_power,
+            "last_power_ts": self._last_power_ts,
+        }
+
+    def load_state(self, state: Optional[dict]) -> None:
+        """Stellt einen zuvor per get_state() gesicherten Zustand wieder
+        her. Ohne gespeicherten Zustand (None/leer) bleibt der frische
+        __init__-Zustand unveraendert."""
+        if not state:
+            return
+        self._active = state.get("active", False)
+        self._anchor_soc = state.get("anchor_soc")
+        self._anchor_ts = state.get("anchor_ts")
+        self._start_ts = state.get("start_ts", 0.0)
+        self._start_soc = state.get("start_soc", 0.0)
+        self._peak_soc = state.get("peak_soc", 0.0)
+        self._last_rise_ts = state.get("last_rise_ts", 0.0)
+        self._e_power_kwh = state.get("e_power_kwh", 0.0)
+        self._have_power = state.get("have_power", False)
+        self._last_power = state.get("last_power")
+        self._last_power_ts = state.get("last_power_ts")
+
     def _update_idle(self, s: ChargeSample) -> Optional[ChargeEvent]:
         if s.home_charging:
             self._anchor_soc = s.soc

@@ -98,6 +98,39 @@ def test_as_dict_schema():
     assert d["energy_kwh"] >= d["energy_batt_kwh"]
 
 
+def test_get_state_load_state_ueberlebt_simulierten_neustart():
+    """Ein HA-Neustart darf eine bereits laufende (noch nicht
+    abgeschlossene) Fremdladung nicht verwerfen -- get_state()/load_state()
+    muss denselben Ablauf liefern wie ohne Neustart dazwischen."""
+    socs = [80, 80.5, 81.0, 82.0, 83.0, 81.5]  # letzter Wert fällt >drop_ends unter peak -> finalize
+    samples = stream(socs, start_ts=0)
+
+    det_ref = ChargeDetector(usable_kwh=45, idle_timeout_s=9999, start_delta=1.0, noise=0.5, drop_ends=1.0)
+    events_ref = run(det_ref, samples)
+
+    det_a = ChargeDetector(usable_kwh=45, idle_timeout_s=9999, start_delta=1.0, noise=0.5, drop_ends=1.0)
+    events_a = run(det_a, samples[:3])  # Session ist an dieser Stelle bereits aktiv
+    state = det_a.get_state()
+
+    det_b = ChargeDetector(usable_kwh=45, idle_timeout_s=9999, start_delta=1.0, noise=0.5, drop_ends=1.0)
+    det_b.load_state(state)
+    events_b = run(det_b, samples[3:])
+
+    d_ref = [e.as_dict() for e in events_ref]
+    d_sim = [e.as_dict() for e in (events_a + events_b)]
+    assert d_ref == d_sim
+    assert d_ref[0]["soc_start"] == 80
+    assert d_ref[0]["soc_end"] == 83.0
+
+
+def test_load_state_ohne_gespeicherten_zustand_ist_no_op():
+    det = ChargeDetector(usable_kwh=45)
+    det.load_state(None)
+    det.load_state({})
+    assert det.get_state()["active"] is False
+    assert det.get_state()["anchor_soc"] is None
+
+
 # ----- EfficiencyCalibrator: Ladewirkungsgrad aus echten Heim-Ladesessions ---
 
 def test_kalibrierung_erfolgreich():

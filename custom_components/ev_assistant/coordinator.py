@@ -59,6 +59,7 @@ def _empty_data() -> dict:
         "odo_unit": None,
         "odo_start": None,
         "wallbox_energy_start": None,
+        "detector_state": None,
     }
 
 
@@ -129,6 +130,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             idle_timeout_s=float(self._opt(CONF_IDLE_TIMEOUT, DEFAULT_IDLE_TIMEOUT)),
             drop_ends=float(self._opt(CONF_DROP_ENDS, DEFAULT_DROP_ENDS)),
         )
+        # Stellt eine ggf. laufende (noch nicht abgeschlossene) Fremdladung
+        # ueber einen HA-Neustart hinweg wieder her -- ohne das wuerde jeder
+        # Neustart den Anker-/Peak-Zustand stillschweigend verwerfen und
+        # eine echte, aber noch nicht fertige Erkennung verlieren.
+        self._detector.load_state(self.data.get("detector_state"))
         self._calibrator = EfficiencyCalibrator(
             usable_kwh=usable_kwh,
             min_soc_delta=EFF_MIN_SOC_DELTA,
@@ -304,6 +310,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return
         sample = ChargeSample(ts=time.time(), soc=self._soc, home_charging=self._home, power_kw=self._power)
         event = self._detector.update(sample)
+        self.data["detector_state"] = self._detector.get_state()
+        await self._save()
         if event is not None:
             await self._handle_pending(event.as_dict())
 

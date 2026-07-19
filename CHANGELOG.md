@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.11.0] - 2026-07-19
+
+### Added
+
+- **A running (not-yet-finalized) Fremdladung detection now survives HA restarts**: the detector's anchor/peak/session state was only ever kept in memory, so any restart silently discarded an in-progress detection — a genuine external charge in progress could be lost without a trace. This state is now persisted (`engine.py::ChargeDetector.get_state()`/`load_state()`) alongside history/pending, and restored automatically on setup. Verified with a test that simulates a restart mid-session and confirms the resulting `ChargeEvent` is identical to one without a restart in between.
+
 ## [0.10.1] - 2026-07-19
 
 ### Changed
