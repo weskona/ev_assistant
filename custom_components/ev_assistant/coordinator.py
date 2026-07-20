@@ -1,10 +1,12 @@
 """Coordinator: Quellen (Entity ODER MQTT), Erkennung, Persistenz, Services."""
 from __future__ import annotations
 
+import csv
 import json
 import logging
+import os
 import time
-from datetime import timedelta
+from datetime import date, timedelta
 from typing import Callable, Optional
 
 from homeassistant.components import mqtt
@@ -21,20 +23,23 @@ from .const import (
     CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT, CONF_NOISE, CONF_NOTIFY_SERVICE,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE, CONF_POWER_TOPIC,
     CONF_ODO_ENTITY, CONF_PUBLISH_TOPIC, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_TOPIC,
-    CONF_START_DELTA, CONF_USABLE_KWH, CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY,
+    CONF_START_DELTA, CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM, CONF_USABLE_KWH,
+    CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY,
     CONF_VERBRENNER_PRICE_PER_LITER, CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE, CONF_WALLBOX_ENERGY_TOPIC,
     DEFAULT_DROP_ENDS, DEFAULT_EFFICIENCY,
     DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE, DEFAULT_POWER_IS_AC,
     DEFAULT_PUBLISH_TOPIC, DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
+    DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
     EFF_MAX_EFFICIENCY, EFF_MIN_SAMPLES, EFF_MIN_SOC_DELTA,
-    EVENT_DELETED, EVENT_EDITED, EVENT_LOGGED, EVENT_PENDING, HISTORY_MAX,
+    EVENT_DELETED, EVENT_EDITED, EVENT_LOGGED, EVENT_PENDING, EVENT_TRIP_DELETED,
+    EVENT_TRIP_EDITED, EVENT_TRIP_LOGGED, EVENT_TRIP_PENDING, HISTORY_MAX,
     MILES_TO_KM, NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
 )
 from .engine import (
-    ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency,
-    calculate_savings, pop_pending,
+    ChargeDetector, ChargeSample, EfficiencyCalibrator, TripDetector, TripSample,
+    average_efficiency, calculate_savings, pop_pending,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -63,6 +68,10 @@ def _empty_data() -> dict:
         "detector_state": None,
         "verbrenner_price_last": None,
         "home_price_last": None,
+        "fahrten": [],
+        "pending_trips": [],
+        "trip_totals": {"km": 0.0, "count": 0},
+        "trip_detector_state": None,
     }
 
 
@@ -89,6 +98,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._home_price_live: Optional[float] = None
         self._detector: Optional[ChargeDetector] = None
         self._calibrator: Optional[EfficiencyCalibrator] = None
+        self._trip_detector: Optional[TripDetector] = None
         self.data = _empty_data()
 
     def _opt(self, key, default=None):
@@ -114,14 +124,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._verbrenner_price_live = self.data.get("verbrenner_price_last")
         self._home_price_live = self.data.get("home_price_last")
         self._build_detector()
+        self._build_trip_detector()
         await self._setup_sources()
-        # Periodischer Re-Check zusaetzlich zu den SoC-getriebenen Updates:
-        # idle_timeout_s wird nur ausgewertet, wenn _run_detection() laeuft,
-        # was normalerweise nur bei einer NEUEN SoC-Messung passiert. Bleibt
-        # der SoC-Wert laenger unveraendert stehen (z.B. Akku voll, Sensor
-        # meldet sich nur bei Aenderung), wuerde eine aktive Session sonst
-        # nie per Idle-Timeout abgeschlossen werden, da es kein Ereignis
-        # gibt, das die Pruefung anstoesst.
+        # Periodischer Re-Check zusaetzlich zu den SoC-/Kilometerstand-
+        # getriebenen Updates: idle_timeout_s wird nur ausgewertet, wenn
+        # _run_detection()/_run_trip_detection() laufen, was normalerweise
+        # nur bei einer NEUEN Messung passiert. Bleibt der Wert laenger
+        # unveraendert stehen (z.B. Akku voll bzw. Auto parkt, Sensor meldet
+        # sich nur bei Aenderung), wuerde eine aktive Session sonst nie per
+        # Idle-Timeout abgeschlossen werden, da es kein Ereignis gibt, das
+        # die Pruefung anstoesst.
         self._unsub.append(
             async_track_time_interval(self.hass, self._periodic_check, timedelta(seconds=60))
         )
@@ -151,6 +163,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             min_efficiency=EFF_MIN_EFFICIENCY,
             max_efficiency=EFF_MAX_EFFICIENCY,
         )
+
+    def _build_trip_detector(self) -> None:
+        self._trip_detector = TripDetector(
+            min_km=float(self._opt(CONF_TRIP_MIN_KM, DEFAULT_TRIP_MIN_KM)),
+            idle_timeout_s=float(self._opt(CONF_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_IDLE_TIMEOUT)),
+        )
+        # Stellt eine ggf. laufende (noch nicht abgeschlossene) Fahrt ueber
+        # einen HA-Neustart hinweg wieder her, aus demselben Grund wie bei
+        # ChargeDetector.load_state() oben.
+        self._trip_detector.load_state(self.data.get("trip_detector_state"))
 
     # ----- Quellen-Verdrahtung -------------------------------------------
     async def _setup_sources(self) -> None:
@@ -327,6 +349,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["odo_unit"] = unit or self.data.get("odo_unit") or "km"
         self.async_set_updated_data(self.data)
         self.hass.async_create_task(self._save())
+        self.hass.async_create_task(self._run_trip_detection())
 
     @callback
     def _set_verbrenner_price(self, raw) -> None:
@@ -365,10 +388,33 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             await self._handle_pending(event.as_dict())
 
     async def _periodic_check(self, _now) -> None:
-        """Stoesst _run_detection() auch ohne neue SoC-Messung an, damit
-        idle_timeout_s bei einem laenger unveraenderten SoC-Wert trotzdem
-        greift (siehe Kommentar in async_setup)."""
+        """Stoesst _run_detection()/_run_trip_detection() auch ohne neue
+        SoC-/Kilometerstand-Messung an, damit idle_timeout_s bei einem
+        laenger unveraenderten Wert trotzdem greift (siehe Kommentar in
+        async_setup)."""
         await self._run_detection()
+        await self._run_trip_detection()
+
+    def _odo_km(self) -> Optional[float]:
+        """Aktueller Kilometerstand in km, unabhaengig von der Quell-Einheit
+        -- dieselbe Umrechnung wie in _km_driven()."""
+        odo = self.data.get("odo")
+        if odo is None:
+            return None
+        if self.data.get("odo_unit") == "mi":
+            return odo * MILES_TO_KM
+        return odo
+
+    async def _run_trip_detection(self) -> None:
+        km = self._odo_km()
+        if km is None or self._trip_detector is None:
+            return
+        sample = TripSample(ts=time.time(), odo_km=km)
+        event = self._trip_detector.update(sample)
+        self.data["trip_detector_state"] = self._trip_detector.get_state()
+        await self._save()
+        if event is not None:
+            await self._handle_pending_trip(event.as_dict())
 
     async def _record_efficiency_sample(self, sample: float) -> None:
         """Neue Effizienz-Stichprobe aus einer abgeschlossenen Heim-
@@ -460,6 +506,175 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             )
         except Exception:  # noqa: BLE001
             pass
+
+    # ----- Fahrtenbuch -----------------------------------------------------
+    async def _handle_pending_trip(self, pend: dict) -> None:
+        """Analog _handle_pending() fuer Fremdladungen: "pending_trips" ist
+        eine Liste (mehrere gleichzeitig offene, noch nicht bestaetigte
+        Fahrten moeglich), neue Fahrten werden angehaengt, nie ueberschrieben."""
+        pend["config_entry_id"] = self.entry.entry_id
+        self.data.setdefault("pending_trips", []).append(pend)
+        await self._save()
+        self.hass.bus.async_fire(EVENT_TRIP_PENDING, pend)
+        await self._notify_trip()
+        self.async_set_updated_data(self.data)
+
+    async def _notify_trip(self) -> None:
+        """Analog _notify(): eine Benachrichtigung (eigene notification_id)
+        fuer ALLE aktuell offenen Fahrten."""
+        pending_list = self.data.get("pending_trips") or []
+        if not pending_list:
+            return
+        if len(pending_list) == 1:
+            p = pending_list[0]
+            title = "Fahrt erkannt"
+            message = f"{p['km']} km gefahren. Start-/Zielort eintragen."
+        else:
+            title = f"{len(pending_list)} Fahrten erkannt"
+            lines = [f"{i + 1}) {p['km']} km" for i, p in enumerate(pending_list)]
+            message = f"{len(pending_list)} offene Fahrten:\n" + "\n".join(lines) + "\nStart-/Zielort eintragen."
+
+        try:
+            await self.hass.services.async_call(
+                "persistent_notification", "create",
+                {"notification_id": f"{self._notify_tag}_trip", "title": title, "message": message},
+                blocking=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _dismiss_trip(self) -> None:
+        try:
+            await self.hass.services.async_call(
+                "persistent_notification", "dismiss",
+                {"notification_id": f"{self._notify_tag}_trip"}, blocking=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def async_log_trip(self, start_ort: str, end_ort: str, start_ts: Optional[float] = None) -> None:
+        """Bestaetigt eine offene Fahrt mit Start-/Zielort. Bei mehreren
+        gleichzeitig offenen waehlt `start_ts` die gemeinte aus; ohne Angabe
+        die aelteste (FIFO). Anders als async_log_charge gibt es KEINEN
+        Fallback auf einen manuellen Einzeleintrag ohne offene Fahrt --
+        odo_start/odo_end/km stammen ausschliesslich aus der Erkennung."""
+        pending_list = list(self.data.get("pending_trips") or [])
+        pend = pop_pending(pending_list, start_ts)
+        if pend is None:
+            _LOGGER.warning("ev_assistant: keine offene Fahrt zum Bestaetigen gefunden")
+            return
+        self.data["pending_trips"] = pending_list
+
+        rec = {
+            "config_entry_id": self.entry.entry_id,
+            "datum": date.fromtimestamp(pend["start_ts"]).isoformat(),
+            "start_ts": pend["start_ts"], "end_ts": pend["end_ts"],
+            "odo_start": pend["odo_start"], "odo_end": pend["odo_end"],
+            "km": pend["km"], "start_ort": start_ort, "end_ort": end_ort,
+            "erfasst_ts": int(time.time()),
+        }
+        self.data.setdefault("fahrten", []).insert(0, rec)
+        self.data["fahrten"] = self.data["fahrten"][:HISTORY_MAX]
+        totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
+        totals["km"] = round(totals.get("km", 0.0) + rec["km"], 2)
+        totals["count"] = totals.get("count", 0) + 1
+        await self._save()
+        self.hass.bus.async_fire(EVENT_TRIP_LOGGED, rec)
+        if pending_list:
+            await self._notify_trip()
+        else:
+            await self._dismiss_trip()
+        self.async_set_updated_data(self.data)
+
+    async def async_discard_trip(self, start_ts: Optional[float] = None) -> None:
+        """Verwirft eine offene Fahrt. Bei mehreren gleichzeitig offenen
+        waehlt `start_ts` die gemeinte aus; ohne Angabe die aelteste (FIFO)."""
+        pending_list = list(self.data.get("pending_trips") or [])
+        pop_pending(pending_list, start_ts)
+        self.data["pending_trips"] = pending_list
+        await self._save()
+        if pending_list:
+            await self._notify_trip()
+        else:
+            await self._dismiss_trip()
+        self.async_set_updated_data(self.data)
+
+    async def async_edit_trip(self, erfasst_ts: int, start_ort: str, end_ort: str) -> bool:
+        """Korrigiert Start-/Zielort eines bereits bestaetigten Fahrtenbuch-
+        Eintrags (z.B. Tippfehler beim Erfassen bemerkt) -- analog
+        async_edit_charge(). Kilometerstand/Strecke sind NICHT editierbar,
+        da sie ausschliesslich aus der Erkennung stammen (siehe
+        async_log_trip()). Gibt False zurueck, wenn kein Eintrag mit
+        erfasst_ts gefunden wurde."""
+        fahrten = self.data.get("fahrten") or []
+        for rec in fahrten:
+            if rec.get("erfasst_ts") == erfasst_ts:
+                rec["start_ort"] = start_ort
+                rec["end_ort"] = end_ort
+                await self._save()
+                self.hass.bus.async_fire(EVENT_TRIP_EDITED, rec)
+                self.async_set_updated_data(self.data)
+                return True
+        return False
+
+    async def async_delete_trip(self, erfasst_ts: int) -> bool:
+        """Loescht einen bereits bestaetigten Fahrtenbuch-Eintrag
+        vollstaendig (z.B. eine faelschlich erkannte Fahrt) -- analog
+        async_delete_charge(). Passt trip_totals um den geloeschten Betrag
+        an. Gibt False zurueck, wenn kein Eintrag mit erfasst_ts gefunden
+        wurde. Nicht rueckgaengig zu machen."""
+        fahrten = self.data.get("fahrten") or []
+        for i, rec in enumerate(fahrten):
+            if rec.get("erfasst_ts") == erfasst_ts:
+                fahrten.pop(i)
+                totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
+                totals["km"] = round(totals.get("km", 0.0) - rec["km"], 2)
+                totals["count"] = max(0, totals.get("count", 0) - 1)
+                await self._save()
+                self.hass.bus.async_fire(EVENT_TRIP_DELETED, rec)
+                self.async_set_updated_data(self.data)
+                return True
+        return False
+
+    async def async_simulate_trip(self, km: float) -> None:
+        odo = self._odo_km() or 0.0
+        now = int(time.time())
+        pend = {
+            "start_ts": now - 1800, "end_ts": now,
+            "odo_start": round(odo, 2), "odo_end": round(odo + km, 2),
+            "km": round(km, 2),
+        }
+        await self._handle_pending_trip(pend)
+
+    async def async_export_fahrtenbuch(self) -> str:
+        """Exportiert das Fahrtenbuch (chronologisch aufsteigend) als CSV
+        nach www/, damit es unter /local/... herunterladbar ist."""
+        fahrten = list(reversed(self.data.get("fahrten") or []))
+        path = self.hass.config.path("www", f"ev_assistant_fahrtenbuch_{self.entry.entry_id}.csv")
+        await self.hass.async_add_executor_job(self._write_fahrtenbuch_csv, path, fahrten)
+        filename = os.path.basename(path)
+        try:
+            await self.hass.services.async_call(
+                "persistent_notification", "create",
+                {
+                    "notification_id": f"{self._notify_tag}_export",
+                    "title": "Fahrtenbuch exportiert",
+                    "message": f"CSV-Export bereit: [{filename}](/local/{filename})",
+                },
+                blocking=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return path
+
+    @staticmethod
+    def _write_fahrtenbuch_csv(path: str, fahrten: list[dict]) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f, delimiter=";")
+            writer.writerow(["Datum", "Start", "Ziel", "km Start", "km Ende", "Strecke (km)"])
+            for t in fahrten:
+                writer.writerow([t["datum"], t["start_ort"], t["end_ort"], t["odo_start"], t["odo_end"], t["km"]])
 
     async def async_log_charge(self, kwh: float, price: float, start_ts: Optional[float] = None) -> None:
         """Bestaetigt eine offene Fremdladung. Bei mehreren gleichzeitig

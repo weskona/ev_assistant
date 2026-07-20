@@ -2,8 +2,8 @@
 
 import pytest
 from engine import (
-    ChargeDetector, ChargeSample, EfficiencyCalibrator, average_efficiency,
-    calculate_savings, pop_pending,
+    ChargeDetector, ChargeSample, EfficiencyCalibrator, TripDetector, TripSample,
+    average_efficiency, calculate_savings, pop_pending,
 )
 
 
@@ -249,3 +249,87 @@ def test_calculate_savings_ohne_heimladen_nur_fremdladungskosten():
 ])
 def test_calculate_savings_fehlende_pflichtgroesse_liefert_none(km_driven, l_100km, price):
     assert calculate_savings(km_driven, 150, 0.30, 50, l_100km, price) is None
+
+
+# ----- TripDetector: Fahrtenbuch-Erkennung aus dem Kilometerstand ----------
+
+def trip_stream(odos, start_ts=0, step=60):
+    return [TripSample(ts=start_ts + i * step, odo_km=v) for i, v in enumerate(odos)]
+
+
+def run_trips(det, samples):
+    return [e for s in samples if (e := det.update(s))]
+
+
+def test_fahrt_wird_erkannt_und_start_ts_ist_letzter_ruhepunkt():
+    det = TripDetector(min_km=0.5, idle_timeout_s=300)
+    samples = (
+        trip_stream([100.0, 100.0], start_ts=0, step=60)  # steht, 0s/60s
+        + trip_stream([105.0, 112.3, 120.0], start_ts=120, step=60)  # faehrt
+        + trip_stream([120.0], start_ts=541)  # 301s Stillstand -> finalize
+    )
+    ev = run_trips(det, samples)[0]
+    assert ev.start_ts == 60  # letzter Ruhepunkt VOR Fahrtbeginn, nicht der erste Fahrt-Sample
+    assert ev.end_ts == 240
+    assert (ev.odo_start, ev.odo_end) == (100.0, 120.0)
+    assert ev.km == 20.0
+
+
+def test_kleine_strecke_unter_min_km_wird_verworfen():
+    det = TripDetector(min_km=0.5, idle_timeout_s=300)
+    samples = trip_stream([50.0, 50.0], step=60) + trip_stream([50.2], start_ts=120) + trip_stream([50.2], start_ts=500)
+    assert run_trips(det, samples) == []
+
+
+def test_zwei_fahrten_getrennt_durch_standzeit():
+    det = TripDetector(min_km=0.5, idle_timeout_s=120)
+    samples = (
+        trip_stream([0.0, 0.0], step=60)
+        + trip_stream([10.0], start_ts=120)
+        + trip_stream([10.0], start_ts=241)  # 121s Stillstand -> Fahrt 1 endet
+        + trip_stream([10.0], start_ts=360)  # weiterhin Stillstand (Anker wird nachgefuehrt)
+        + trip_stream([15.0], start_ts=420)  # neue Fahrt beginnt
+        + trip_stream([15.0], start_ts=541)  # 121s Stillstand -> Fahrt 2 endet
+    )
+    evs = run_trips(det, samples)
+    assert len(evs) == 2
+    assert (evs[0].odo_start, evs[0].odo_end) == (0.0, 10.0)
+    assert (evs[1].odo_start, evs[1].odo_end) == (10.0, 15.0)
+
+
+def test_get_state_load_state_ueberlebt_simulierten_neustart():
+    """Wie bei ChargeDetector: eine noch nicht abgeschlossene Fahrt darf
+    einen HA-Neustart nicht verwerfen."""
+    samples = trip_stream([200.0, 200.0], step=60) + trip_stream([205.0], start_ts=120) + trip_stream([205.0], start_ts=460)
+
+    det_ref = TripDetector(min_km=0.5, idle_timeout_s=300)
+    events_ref = run_trips(det_ref, samples)
+
+    det_a = TripDetector(min_km=0.5, idle_timeout_s=300)
+    events_a = run_trips(det_a, samples[:3])  # Fahrt ist an dieser Stelle bereits aktiv
+    state = det_a.get_state()
+
+    det_b = TripDetector(min_km=0.5, idle_timeout_s=300)
+    det_b.load_state(state)
+    events_b = run_trips(det_b, samples[3:])
+
+    d_ref = [e.as_dict() for e in events_ref]
+    d_sim = [e.as_dict() for e in (events_a + events_b)]
+    assert d_ref == d_sim
+    assert d_ref[0]["odo_start"] == 200.0
+    assert d_ref[0]["odo_end"] == 205.0
+
+
+def test_load_state_ohne_gespeicherten_zustand_ist_no_op():
+    det = TripDetector()
+    det.load_state(None)
+    det.load_state({})
+    assert det._active is False
+    assert det._anchor_odo is None
+
+
+def test_trip_as_dict_schema():
+    det = TripDetector(min_km=0.5, idle_timeout_s=120)
+    samples = trip_stream([0.0, 0.0], step=60) + trip_stream([5.0], start_ts=120) + trip_stream([5.0], start_ts=300)
+    d = run_trips(det, samples)[0].as_dict()
+    assert set(d) == {"start_ts", "end_ts", "odo_start", "odo_end", "km", "duration_min"}

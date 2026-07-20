@@ -2,6 +2,33 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.14.1] - 2026-07-20
+
+### Added
+
+- **`edit_trip`/`delete_trip` services for the Fahrtenbuch**, completing the CRUD set introduced
+  in 0.14.0 (`edit_charge`/`delete_charge` already existed for external charges). `edit_trip`
+  corrects the start/end location of an already-confirmed entry (distance/odometer stay
+  detector-only, not editable). `delete_trip` fully removes an entry and adjusts the running
+  totals — not reversible, mirroring `delete_charge`.
+
+## [0.14.0] - 2026-07-20
+
+### Added
+
+- **Fahrtenbuch (trip log)**: trips are now detected automatically from the same odometer
+  entity/sensor used for the cost comparison (step 1), no GPS needed — a new `TripDetector`
+  (`engine.py`) segments the monotonically increasing odometer into individual trips, separated
+  by stationary periods, mirroring the existing `ChargeDetector` architecture (state persists
+  across restarts the same way). Each detected trip is confirmed manually via the new
+  `ev_assistant.log_trip` service with a start/end location; `ev_assistant.discard_pending_trip`
+  discards a false positive, and `ev_assistant.simulate_trip` creates a synthetic one for testing.
+  New sensors: trip pending estimate/binary sensor, last trip distance, trip count, total
+  logged km. A new config-flow step ("Fahrtenbuch", step 6/7) tunes the minimum trip distance
+  and the stationary timeout that ends a trip. `ev_assistant.export_fahrtenbuch` writes the full
+  history as a CSV file to `www/` for download/tax purposes. No purpose (business/private) or
+  comment field by design — this is a plain distance/location log, not a compliance tool.
+
 ## [0.13.0] - 2026-07-20
 
 ### Changed

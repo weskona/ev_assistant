@@ -1,10 +1,13 @@
 """
-engine.py — Fremdlade-Erkennung (reine Logik, KEINE HA-Abhaengigkeiten).
+engine.py — Fremdlade- und Fahrten-Erkennung (reine Logik, KEINE HA-Abhaengigkeiten).
 
 Per pytest testbar. Dieselbe Datei kann auch in ev_profile genutzt werden.
 
 Erkennung: "Fremdladen" = SoC steigt, waehrend die Heim-Wallbox NICHT laedt
 (Korrelationssignal `home_charging` aus evcc/Warp). Kein GPS noetig.
+
+Fahrtenbuch (TripDetector weiter unten): eine Fahrt = Zeitraum zwischen zwei
+Standzeiten des monoton steigenden Kilometerstands. Ebenfalls kein GPS noetig.
 
 Energie (aussagekraeftig = AC am Ladepunkt, inkl. Ladeverluste):
   - `power_kw` je Sample vorhanden -> ueber Session integriert (~Zaehlerwert):
@@ -280,6 +283,129 @@ def average_efficiency(samples: list[float], max_samples: int = 10) -> Optional[
     """Gleitender Durchschnitt der letzten `max_samples` Effizienz-Stichproben."""
     recent = samples[-max_samples:]
     return round(sum(recent) / len(recent), 4) if recent else None
+
+
+@dataclass(frozen=True)
+class TripSample:
+    ts: float
+    odo_km: float
+
+
+@dataclass
+class TripEvent:
+    start_ts: float
+    end_ts: float
+    odo_start: float
+    odo_end: float
+
+    @property
+    def km(self) -> float:
+        return round(self.odo_end - self.odo_start, 2)
+
+    @property
+    def duration_min(self) -> float:
+        return round((self.end_ts - self.start_ts) / 60.0, 1)
+
+    def as_dict(self) -> dict:
+        return {
+            "start_ts": self.start_ts,
+            "end_ts": self.end_ts,
+            "odo_start": round(self.odo_start, 2),
+            "odo_end": round(self.odo_end, 2),
+            "km": self.km,
+            "duration_min": self.duration_min,
+        }
+
+
+class TripDetector:
+    """Segmentiert einen monoton steigenden Kilometerstand in einzelne
+    Fahrten, getrennt durch Standzeiten -- kein GPS noetig. Anders als
+    ChargeDetector (SoC kann fallen/schwanken) braucht es kein Peak-
+    Tracking/drop_ends: der Kilometerstand steigt nur, daher trennt hier
+    eine Standzeit >= idle_timeout_s zwei Fahrten."""
+
+    def __init__(self, min_km: float = 0.5, idle_timeout_s: float = 300.0):
+        self.min_km = min_km
+        self.idle_timeout_s = idle_timeout_s
+
+        self._anchor_odo: Optional[float] = None
+        self._anchor_ts: Optional[float] = None
+        self._active = False
+        self._start_ts = 0.0
+        self._start_odo = 0.0
+        self._last_odo = 0.0
+        self._last_move_ts = 0.0
+
+    def update(self, s: TripSample) -> Optional[TripEvent]:
+        if self._anchor_odo is None:
+            self._anchor_odo = s.odo_km
+            self._anchor_ts = s.ts
+            self._last_odo = s.odo_km
+            self._last_move_ts = s.ts
+            return None
+        if not self._active:
+            return self._update_idle(s)
+        return self._update_driving(s)
+
+    def get_state(self) -> dict:
+        """Momentaufnahme zum Persistieren, analog ChargeDetector.get_state()
+        -- ohne das wuerde eine gerade laufende (noch nicht abgeschlossene)
+        Fahrt einen HA-Neustart nicht ueberleben."""
+        return {
+            "anchor_odo": self._anchor_odo,
+            "anchor_ts": self._anchor_ts,
+            "active": self._active,
+            "start_ts": self._start_ts,
+            "start_odo": self._start_odo,
+            "last_odo": self._last_odo,
+            "last_move_ts": self._last_move_ts,
+        }
+
+    def load_state(self, state: Optional[dict]) -> None:
+        if not state:
+            return
+        self._anchor_odo = state.get("anchor_odo")
+        self._anchor_ts = state.get("anchor_ts")
+        self._active = state.get("active", False)
+        self._start_ts = state.get("start_ts", 0.0)
+        self._start_odo = state.get("start_odo", 0.0)
+        self._last_odo = state.get("last_odo", 0.0)
+        self._last_move_ts = state.get("last_move_ts", 0.0)
+
+    def _update_idle(self, s: TripSample) -> Optional[TripEvent]:
+        if s.odo_km > self._last_odo:
+            self._active = True
+            self._start_ts = self._anchor_ts
+            self._start_odo = self._anchor_odo
+            self._last_odo = s.odo_km
+            self._last_move_ts = s.ts
+            return None
+        # Kein neuer Kilometerstand -> Anker (letzter bekannter Ruhepunkt)
+        # nachfuehren, damit eine spaeter beginnende Fahrt ab dem Ende der
+        # tatsaechlichen Standzeit gezaehlt wird statt ab deren Anfang.
+        self._anchor_ts = s.ts
+        return None
+
+    def _update_driving(self, s: TripSample) -> Optional[TripEvent]:
+        if s.odo_km > self._last_odo:
+            self._last_odo = s.odo_km
+            self._last_move_ts = s.ts
+            return None
+        if s.ts - self._last_move_ts >= self.idle_timeout_s:
+            return self._finalize(s)
+        return None
+
+    def _finalize(self, s: TripSample) -> Optional[TripEvent]:
+        ev = TripEvent(
+            start_ts=self._start_ts,
+            end_ts=self._last_move_ts,
+            odo_start=self._start_odo,
+            odo_end=self._last_odo,
+        )
+        self._active = False
+        self._anchor_odo = self._last_odo
+        self._anchor_ts = s.ts
+        return ev if ev.km >= self.min_km else None
 
 
 def pop_pending(pending_list: list, start_ts: Optional[float]) -> Optional[dict]:

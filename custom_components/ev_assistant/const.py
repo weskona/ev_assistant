@@ -33,6 +33,11 @@ CONF_VEHICLE_MODELL = "vehicle_modell"
 CONF_ERSTZULASSUNG = "erstzulassung"
 CONF_ODO_ENTITY = "odo_entity"
 
+# Fahrtenbuch: Feinjustierung der Fahrten-Erkennung (engine.py::TripDetector),
+# basiert auf derselben Kilometerstand-Entitaet (CONF_ODO_ENTITY oben).
+CONF_TRIP_MIN_KM = "trip_min_km"
+CONF_TRIP_IDLE_TIMEOUT = "trip_idle_timeout_s"
+
 # Kostenvergleich gegenueber einem Verbrenner (alle optional -- ohne sie
 # bleiben die Ersparnis-Sensoren unbekannt statt einen Fehler zu werfen).
 # Heimstrompreis UND Kraftstoffpreis: jeweils fester Wert ODER live-Entitaet
@@ -53,6 +58,8 @@ DEFAULT_START_DELTA = 1.0
 DEFAULT_NOISE = 0.5
 DEFAULT_IDLE_TIMEOUT = 600.0
 DEFAULT_DROP_ENDS = 1.0
+DEFAULT_TRIP_MIN_KM = 0.5
+DEFAULT_TRIP_IDLE_TIMEOUT = 300.0
 
 STORAGE_VERSION = 1
 STORAGE_KEY = "ev_assistant_data"
@@ -73,11 +80,21 @@ EVENT_PENDING = "ev_assistant_pending"
 EVENT_LOGGED = "ev_assistant_logged"
 EVENT_EDITED = "ev_assistant_edited"
 EVENT_DELETED = "ev_assistant_deleted"
+EVENT_TRIP_PENDING = "ev_assistant_trip_pending"
+EVENT_TRIP_LOGGED = "ev_assistant_trip_logged"
+EVENT_TRIP_EDITED = "ev_assistant_trip_edited"
+EVENT_TRIP_DELETED = "ev_assistant_trip_deleted"
 
 SERVICE_LOG = "log_charge"
 SERVICE_DISCARD = "discard_pending"
 SERVICE_SIMULATE = "simulate_event"
 SERVICE_EDIT = "edit_charge"
 SERVICE_DELETE = "delete_charge"
+SERVICE_LOG_TRIP = "log_trip"
+SERVICE_DISCARD_TRIP = "discard_pending_trip"
+SERVICE_EXPORT_TRIPS = "export_fahrtenbuch"
+SERVICE_SIMULATE_TRIP = "simulate_trip"
+SERVICE_EDIT_TRIP = "edit_trip"
+SERVICE_DELETE_TRIP = "delete_trip"
 
 NOTIFY_TAG = "ev_assistant"

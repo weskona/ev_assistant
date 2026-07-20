@@ -12,7 +12,7 @@ from .entity import EvAssistantEntity
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([PendingBinarySensor(coordinator, entry)])
+    async_add_entities([PendingBinarySensor(coordinator, entry), TripPendingBinarySensor(coordinator, entry)])
 
 
 class PendingBinarySensor(EvAssistantEntity, BinarySensorEntity):
@@ -37,4 +37,27 @@ class PendingBinarySensor(EvAssistantEntity, BinarySensorEntity):
             # direkt lesen).
             attrs.update(pending[0])
         attrs["offene_ladungen"] = pending
+        return attrs
+
+
+class TripPendingBinarySensor(EvAssistantEntity, BinarySensorEntity):
+    """Analog PendingBinarySensor, aber fuer offene (unbestaetigte) Fahrten."""
+
+    _attr_translation_key = "trip_pending"
+    _attr_icon = "mdi:map-marker-distance"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "trip_pending")
+
+    @property
+    def is_on(self) -> bool:
+        return bool(self.coordinator.data.get("pending_trips"))
+
+    @property
+    def extra_state_attributes(self):
+        pending = self.coordinator.data.get("pending_trips") or []
+        attrs: dict = {"anzahl_offen": len(pending)}
+        if pending:
+            attrs.update(pending[0])
+        attrs["offene_fahrten"] = pending
         return attrs

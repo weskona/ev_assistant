@@ -17,6 +17,7 @@ from .const import (
     CONF_NOISE, CONF_NOTIFY_SERVICE, CONF_ODO_ENTITY, CONF_POWER_ENTITY, CONF_POWER_IS_AC,
     CONF_POWER_TEMPLATE, CONF_POWER_TOPIC, CONF_PUBLISH_TOPIC,
     CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_TOPIC, CONF_START_DELTA,
+    CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM,
     CONF_USABLE_KWH, CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL,
     CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY, CONF_VERBRENNER_PRICE_PER_LITER,
     CONF_WALLBOX_ENERGY_ENTITY,
@@ -24,7 +25,8 @@ from .const import (
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY, DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE,
     DEFAULT_POWER_IS_AC, DEFAULT_PUBLISH_TOPIC, DEFAULT_START_DELTA,
-    DEFAULT_TEMPLATE, DEFAULT_USABLE_KWH, DOMAIN,
+    DEFAULT_TEMPLATE, DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM,
+    DEFAULT_USABLE_KWH, DOMAIN,
 )
 
 # Entity-Picker je Signal auf den passenden device_class gefiltert, damit
@@ -152,6 +154,17 @@ def build_detection_schema(cur: dict) -> vol.Schema:
     })
 
 
+def build_trip_schema(cur: dict) -> vol.Schema:
+    """Schritt 6: Feinjustierung der Fahrten-Erkennung (TripDetector), die
+    auf derselben Kilometerstand-Entitaet aus Schritt 1 basiert."""
+    return vol.Schema({
+        vol.Optional(CONF_TRIP_MIN_KM, default=cur.get(CONF_TRIP_MIN_KM, DEFAULT_TRIP_MIN_KM)): vol.Coerce(float),
+        vol.Optional(
+            CONF_TRIP_IDLE_TIMEOUT, default=cur.get(CONF_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_IDLE_TIMEOUT)
+        ): vol.Coerce(float),
+    })
+
+
 def build_comparison_schema(cur: dict) -> vol.Schema:
     """Schritt 6: optionaler Kostenvergleich gegenueber einem Verbrenner.
 
@@ -199,7 +212,10 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
     (MQTT-Topic, notify-Service).
     Schritt 5 (erkennung): Feinjustierung der Fremdlade-Erkennung
     (ChargeDetector-Schwellwerte).
-    Schritt 6 (vergleich): optionaler Kostenvergleich gegenueber einem
+    Schritt 6 (fahrtenbuch): Feinjustierung der Fahrten-Erkennung
+    (TripDetector-Schwellwerte, basiert auf derselben Kilometerstand-
+    Entitaet aus Schritt 1).
+    Schritt 7 (vergleich): optionaler Kostenvergleich gegenueber einem
     Verbrenner. Der Eintrag wird erst am Ende dieser Kette angelegt.
     """
 
@@ -266,10 +282,19 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_erkennung(self, user_input=None) -> FlowResult:
         if user_input is not None:
             self._data = {**self._data, **_clean(user_input)}
-            return await self.async_step_vergleich()
+            return await self.async_step_fahrtenbuch()
 
         return self.async_show_form(
             step_id="erkennung", data_schema=build_detection_schema(user_input or {})
+        )
+
+    async def async_step_fahrtenbuch(self, user_input=None) -> FlowResult:
+        if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            return await self.async_step_vergleich()
+
+        return self.async_show_form(
+            step_id="fahrtenbuch", data_schema=build_trip_schema(user_input or {})
         )
 
     async def async_step_vergleich(self, user_input=None) -> FlowResult:
@@ -294,9 +319,9 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
 class EvAssistantOptionsFlow(OptionsFlow):
     """Spiegelt dieselbe Schrittkette wie die Ersteinrichtung (siehe
     EvAssistantConfigFlow: Fahrzeug -> Grundsignale -> Ladeleistung ->
-    Ausgabe -> Erkennung -> Vergleich), damit man gezielt nur den
-    betroffenen Bereich durchklicken kann statt eine Mammutseite mit allen
-    Feldern auszufuellen.
+    Ausgabe -> Erkennung -> Fahrtenbuch -> Vergleich), damit man gezielt nur
+    den betroffenen Bereich durchklicken kann statt eine Mammutseite mit
+    allen Feldern auszufuellen.
 
     Wichtig: die Optionen werden erst am Ende der Kette (async_step_vergleich)
     EINMALIG geschrieben — mit dem ueber alle Schritte akkumulierten
@@ -371,10 +396,19 @@ class EvAssistantOptionsFlow(OptionsFlow):
     async def async_step_erkennung(self, user_input=None) -> FlowResult:
         if user_input is not None:
             self._data = {**self._data, **_clean(user_input)}
-            return await self.async_step_vergleich()
+            return await self.async_step_fahrtenbuch()
 
         return self.async_show_form(
             step_id="erkennung", data_schema=build_detection_schema(self._current())
+        )
+
+    async def async_step_fahrtenbuch(self, user_input=None) -> FlowResult:
+        if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            return await self.async_step_vergleich()
+
+        return self.async_show_form(
+            step_id="fahrtenbuch", data_schema=build_trip_schema(self._current())
         )
 
     async def async_step_vergleich(self, user_input=None) -> FlowResult:

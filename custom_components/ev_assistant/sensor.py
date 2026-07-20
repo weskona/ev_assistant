@@ -34,6 +34,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         HomeKwhSensor(coordinator, entry),
         HomeCostSensor(coordinator, entry),
         SavingsSensor(coordinator, entry),
+        PendingTripSensor(coordinator, entry),
+        LastTripSensor(coordinator, entry),
+        TripCountSensor(coordinator, entry),
+        TotalTripKmSensor(coordinator, entry),
     ])
 
 
@@ -331,3 +335,84 @@ class SavingsSensor(EvAssistantEntity, SensorEntity):
         attrs["kraftstoffpreis_live"] = self.coordinator._verbrenner_price_live is not None
         attrs["heimstrompreis_live"] = self.coordinator._home_price_live is not None
         return attrs
+
+
+class PendingTripSensor(EvAssistantEntity, SensorEntity):
+    """Kilometer der aeltesten offenen (noch nicht bestaetigten) Fahrt --
+    analog PendingEstimateSensor fuer Fremdladungen."""
+
+    _attr_translation_key = "trip_pending_estimate"
+    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
+    _attr_icon = "mdi:map-marker-path"
+    _attr_force_update = True
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "trip_pending_estimate")
+
+    @property
+    def native_value(self):
+        pending = self.coordinator.data.get("pending_trips") or []
+        return pending[0]["km"] if pending else None
+
+    @property
+    def extra_state_attributes(self):
+        pending = self.coordinator.data.get("pending_trips") or []
+        attrs: dict = {"anzahl_offen": len(pending)}
+        if pending:
+            attrs.update(pending[0])
+        attrs["offene_fahrten"] = pending
+        return attrs
+
+
+class LastTripSensor(EvAssistantEntity, SensorEntity):
+    """Letzte bestaetigte Fahrt (Fahrtenbuch) -- analog LastCostSensor."""
+
+    _attr_translation_key = "last_trip_km"
+    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
+    _attr_icon = "mdi:map-marker-distance"
+    _attr_force_update = True
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "last_trip_km")
+
+    @property
+    def native_value(self):
+        fahrten = self.coordinator.data.get("fahrten") or []
+        return fahrten[0]["km"] if fahrten else None
+
+    @property
+    def extra_state_attributes(self):
+        fahrten = self.coordinator.data.get("fahrten") or []
+        attrs: dict = dict(fahrten[0]) if fahrten else {}
+        attrs["fahrtenbuch"] = fahrten
+        return attrs
+
+
+class TripCountSensor(EvAssistantEntity, SensorEntity):
+    """Anzahl bestaetigter Fahrtenbuch-Eintraege -- analog CountSensor."""
+
+    _attr_translation_key = "trip_count"
+    _attr_icon = "mdi:format-list-numbered"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "trip_count")
+
+    @property
+    def native_value(self):
+        return self.coordinator.data.get("trip_totals", {}).get("count", 0)
+
+
+class TotalTripKmSensor(EvAssistantEntity, SensorEntity):
+    """Gesamt-km im Fahrtenbuch seit Einrichtung -- analog TotalKwhSensor."""
+
+    _attr_translation_key = "total_trip_km"
+    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    _attr_icon = "mdi:counter"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "total_trip_km")
+
+    @property
+    def native_value(self):
+        return self.coordinator.data.get("trip_totals", {}).get("km", 0.0)

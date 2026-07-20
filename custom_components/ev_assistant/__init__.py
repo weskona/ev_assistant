@@ -8,8 +8,9 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 
 from .const import (
-    DOMAIN, PLATFORMS, SERVICE_DELETE, SERVICE_DISCARD, SERVICE_EDIT,
-    SERVICE_LOG, SERVICE_SIMULATE,
+    DOMAIN, PLATFORMS, SERVICE_DELETE, SERVICE_DELETE_TRIP, SERVICE_DISCARD,
+    SERVICE_DISCARD_TRIP, SERVICE_EDIT, SERVICE_EDIT_TRIP, SERVICE_EXPORT_TRIPS,
+    SERVICE_LOG, SERVICE_LOG_TRIP, SERVICE_SIMULATE, SERVICE_SIMULATE_TRIP,
 )
 from .coordinator import EvAssistantCoordinator
 
@@ -42,6 +43,39 @@ EDIT_SCHEMA = vol.Schema({
 })
 
 DELETE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("erfasst_ts"): vol.Coerce(int),
+})
+
+LOG_TRIP_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("start_ort"): str,
+    vol.Required("end_ort"): str,
+    vol.Optional("start_ts"): vol.Coerce(float),
+})
+
+DISCARD_TRIP_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Optional("start_ts"): vol.Coerce(float),
+})
+
+EXPORT_TRIPS_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+})
+
+SIMULATE_TRIP_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("km"): vol.Coerce(float),
+})
+
+EDIT_TRIP_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("erfasst_ts"): vol.Coerce(int),
+    vol.Required("start_ort"): str,
+    vol.Required("end_ort"): str,
+})
+
+DELETE_TRIP_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
     vol.Required("erfasst_ts"): vol.Coerce(int),
 })
@@ -103,11 +137,51 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_delete_charge(call.data["erfasst_ts"])
 
+    async def _handle_log_trip(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_log_trip(
+                call.data["start_ort"], call.data["end_ort"], call.data.get("start_ts")
+            )
+
+    async def _handle_discard_trip(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_discard_trip(call.data.get("start_ts"))
+
+    async def _handle_export_trips(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_export_fahrtenbuch()
+
+    async def _handle_simulate_trip(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_simulate_trip(call.data["km"])
+
+    async def _handle_edit_trip(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_edit_trip(
+                call.data["erfasst_ts"], call.data["start_ort"], call.data["end_ort"]
+            )
+
+    async def _handle_delete_trip(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_delete_trip(call.data["erfasst_ts"])
+
     hass.services.async_register(DOMAIN, SERVICE_LOG, _handle_log, schema=LOG_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCARD, _handle_discard, schema=DISCARD_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE, _handle_simulate, schema=SIMULATE_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_EDIT, _handle_edit, schema=EDIT_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DELETE, _handle_delete, schema=DELETE_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_LOG_TRIP, _handle_log_trip, schema=LOG_TRIP_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_DISCARD_TRIP, _handle_discard_trip, schema=DISCARD_TRIP_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_EXPORT_TRIPS, _handle_export_trips, schema=EXPORT_TRIPS_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_SIMULATE_TRIP, _handle_simulate_trip, schema=SIMULATE_TRIP_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_EDIT_TRIP, _handle_edit_trip, schema=EDIT_TRIP_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_DELETE_TRIP, _handle_delete_trip, schema=DELETE_TRIP_SCHEMA)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -116,6 +190,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator = hass.data[DOMAIN].pop(entry.entry_id)
         await coordinator.async_shutdown()
         if not hass.data[DOMAIN]:
-            for service in (SERVICE_LOG, SERVICE_DISCARD, SERVICE_SIMULATE, SERVICE_EDIT, SERVICE_DELETE):
+            for service in (
+                SERVICE_LOG, SERVICE_DISCARD, SERVICE_SIMULATE, SERVICE_EDIT, SERVICE_DELETE,
+                SERVICE_LOG_TRIP, SERVICE_DISCARD_TRIP, SERVICE_EXPORT_TRIPS, SERVICE_SIMULATE_TRIP,
+                SERVICE_EDIT_TRIP, SERVICE_DELETE_TRIP,
+            ):
                 hass.services.async_remove(DOMAIN, service)
     return unload_ok

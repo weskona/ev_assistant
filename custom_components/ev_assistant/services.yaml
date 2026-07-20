@@ -183,3 +183,165 @@ simulate_event:
       selector:
         select:
           options: [soc, power_ac, power_dc]
+
+log_trip:
+  name: Fahrt erfassen
+  description: >
+    Bestaetigt eine offene, automatisch erkannte Fahrt mit Start- und
+    Zielort. Sind mehrere Fahrten gleichzeitig offen, waehlt start_ts die
+    gemeinte aus (ohne Angabe: die aelteste). Ohne offene Fahrt passiert
+    nichts -- Kilometerstand-Werte stammen ausschliesslich aus der
+    Erkennung, nicht aus einem manuellen Einzeleintrag.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    start_ort:
+      name: Startort
+      required: true
+      example: Zuhause
+      selector:
+        text:
+    end_ort:
+      name: Zielort
+      required: true
+      example: Büro
+      selector:
+        text:
+    start_ts:
+      name: Startzeit (Unix)
+      description: >
+        Optional. Bei mehreren gleichzeitig offenen Fahrten: waehlt die zu
+        bestaetigende aus (Wert aus deren start_ts-Attribut).
+      required: false
+      example: 1751884800
+      selector:
+        number:
+          mode: box
+
+discard_pending_trip:
+  name: Offene Fahrt verwerfen
+  description: >
+    Verwirft eine offene, unbestaetigte Fahrt. Sind mehrere gleichzeitig
+    offen, waehlt start_ts die gemeinte aus (ohne Angabe: die aelteste).
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    start_ts:
+      name: Startzeit (Unix)
+      description: >
+        Optional. Bei mehreren gleichzeitig offenen Fahrten: waehlt die zu
+        verwerfende aus (Wert aus deren start_ts-Attribut).
+      required: false
+      example: 1751884800
+      selector:
+        number:
+          mode: box
+
+export_fahrtenbuch:
+  name: Fahrtenbuch exportieren
+  description: >
+    Schreibt das komplette Fahrtenbuch als CSV-Datei nach
+    /config/www/ev_assistant_fahrtenbuch_[config_entry_id].csv (chronologisch
+    aufsteigend) und meldet den Download-Link per Benachrichtigung.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+
+simulate_trip:
+  name: Fahrt simulieren (Test)
+  description: >
+    Erzeugt zum Testen eine offene Fahrt (ohne Auto). Loest
+    Benachrichtigung und Sensoren aus.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    km:
+      name: Strecke (km)
+      required: true
+      example: 12.5
+      selector:
+        number:
+          min: 0
+          max: 2000
+          step: 0.1
+          unit_of_measurement: km
+          mode: box
+
+edit_trip:
+  name: Fahrt nachträglich korrigieren
+  description: >
+    Korrigiert Start-/Zielort eines bereits bestätigten Fahrtenbuch-
+    Eintrags nachträglich (z.B. Tippfehler beim Erfassen bemerkt).
+    Kilometerstand und Strecke sind nicht editierbar, da sie
+    ausschließlich aus der automatischen Erkennung stammen.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    erfasst_ts:
+      name: Erfasst-Zeitstempel (Unix)
+      description: Identifiziert den zu korrigierenden Fahrtenbuch-Eintrag (Wert aus dessen erfasst_ts-Attribut).
+      required: true
+      example: 1751884800
+      selector:
+        number:
+          mode: box
+    start_ort:
+      name: Startort
+      required: true
+      example: Zuhause
+      selector:
+        text:
+    end_ort:
+      name: Zielort
+      required: true
+      example: Büro
+      selector:
+        text:
+
+delete_trip:
+  name: Fahrt löschen
+  description: >
+    Löscht einen bereits bestätigten Fahrtenbuch-Eintrag vollständig
+    (z.B. eine fälschlich erkannte Fahrt). Die Gesamtsummen (km/Anzahl)
+    werden entsprechend verringert. Nicht rückgängig zu machen.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    erfasst_ts:
+      name: Erfasst-Zeitstempel (Unix)
+      description: Identifiziert den zu löschenden Fahrtenbuch-Eintrag (Wert aus dessen erfasst_ts-Attribut).
+      required: true
+      example: 1751884800
+      selector:
+        number:
+          mode: box
