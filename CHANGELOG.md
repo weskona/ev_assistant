@@ -2,6 +2,42 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.15.1] - 2026-07-24
+
+### Fixed
+
+- **"Heimladen kWh (gesamt)" (and the analogous km-driven comparison) could show a large,
+  meaningless negative value after swapping the underlying wallbox-energy or odometer entity**:
+  both `wallbox_energy_start` and `odo_start` are reference values frozen on the very first valid
+  reading and never touched again, by design (see the original comments) — but if you later
+  reconfigure `wallbox_energy_entity`/`odo_entity` to point at a *different* entity (e.g. a
+  placeholder/dummy sensor while no wallbox exists yet), the old reference still refers to the
+  previous entity's absolute value. `current(new entity) - reference(old entity)` then produces
+  an arbitrary, often deeply negative number instead of "unknown". The coordinator now also
+  remembers which entity/topic each reference was captured against
+  (`wallbox_energy_start_source`/`odo_start_source`) and re-captures the reference automatically
+  the next time the configured source no longer matches. Existing installs upgrading to this
+  version keep their current reference as-is (no source recorded yet ⇒ no forced reset) — only a
+  reconfiguration *after* upgrading triggers a fresh capture. Does not retroactively fix a value
+  that's already gone negative from a swap made before this update; use
+  `ev_assistant.simulate_event`/a manual data correction for that.
+
+## [0.15.0] - 2026-07-24
+
+### Added
+
+- **Automatic start/end location suggestion for the Fahrtenbuch**: a new optional `gps_entity`
+  config field (step 6, "Fahrtenbuch") accepts a `person` or `device_tracker` entity (e.g. the
+  driver's phone). When a trip starts and ends, the entity's current HA zone (e.g. "Home") is
+  captured as a `start_ort_vorschlag`/`end_ort_vorschlag` suggestion on the pending trip —
+  exposed as attributes on the existing pending-trip sensor/binary sensor. This does **not**
+  replace manual confirmation via `log_trip`: it's a prefill suggestion, not an automatic
+  entry, so a typo-prone or momentarily out-of-zone location can still be corrected by hand.
+  Falls back to no suggestion (empty, as before) if `gps_entity` isn't configured or the
+  location isn't inside any known zone. `engine.py::TripDetector` gained a public `active`
+  property so the coordinator can detect the idle→driving transition and snapshot the location
+  at that exact moment, without teaching the (deliberately GPS-agnostic) detector about zones.
+
 ## [0.14.1] - 2026-07-20
 
 ### Added
