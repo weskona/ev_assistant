@@ -58,10 +58,11 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Fahrtenbuch",
-        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung (Fahrtenbuch), die denselben Kilometerstand-Sensor aus Schritt 1 nutzt. Die Standardwerte passen für die meisten Fälle. Ablauf: eine Fahrt beginnt, sobald sich der Kilometerstand nach einer Standzeit wieder erhöht, und endet, sobald der Kilometerstand die angegebene Standzeit lang nicht mehr steigt (Auto parkt). Erkannte Fahrten unter der Mindest-Strecke werden verworfen (filtert Rundungsrauschen des Sensors). Erkannte Fahrten werden anschließend manuell mit Start-/Zielort bestätigt (Dienst ev_assistant.log_trip).",
+        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung (Fahrtenbuch), die denselben Kilometerstand-Sensor aus Schritt 1 nutzt. Die Standardwerte passen für die meisten Fälle. Ablauf: eine Fahrt beginnt, sobald sich der Kilometerstand nach einer Standzeit wieder erhöht, und endet, sobald der Kilometerstand die angegebene Standzeit lang nicht mehr steigt (Auto parkt). Erkannte Fahrten unter der Mindest-Strecke werden verworfen (filtert Rundungsrauschen des Sensors). Erkannte Fahrten werden anschließend manuell mit Start-/Zielort bestätigt (Dienst ev_assistant.log_trip). Optional: eine person- oder device_tracker-Entität (z.B. dein Handy) liefert dabei einen Vorschlag für Start-/Zielort anhand ihrer HA-Zone (z.B. \"Home\") — ersetzt die manuelle Eingabe nicht, füllt sie nur vor.",
         "data": {
           "trip_min_km": "Mindest-Strecke (km, kürzer erkannte Fahrten werden verworfen)",
-          "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s, ohne neuen Kilometerstand gilt die Fahrt als beendet)"
+          "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s, ohne neuen Kilometerstand gilt die Fahrt als beendet)",
+          "gps_entity": "Orts-Vorschlag (optional, person- oder device_tracker-Entität, z.B. dein Handy)"
         }
       },
       "vergleich": {
@@ -141,10 +142,11 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Fahrtenbuch",
-        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung (Fahrtenbuch). Eine Fahrt beginnt, sobald sich der Kilometerstand nach einer Standzeit wieder erhöht, und endet nach der angegebenen Standzeit ohne weiteren Anstieg. Erkannte Fahrten unter der Mindest-Strecke werden verworfen.",
+        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung (Fahrtenbuch). Eine Fahrt beginnt, sobald sich der Kilometerstand nach einer Standzeit wieder erhöht, und endet nach der angegebenen Standzeit ohne weiteren Anstieg. Erkannte Fahrten unter der Mindest-Strecke werden verworfen. Optional: eine person-/device_tracker-Entität liefert einen Vorschlag für Start-/Zielort anhand ihrer HA-Zone.",
         "data": {
           "trip_min_km": "Mindest-Strecke (km, kürzer erkannte Fahrten werden verworfen)",
-          "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s, ohne neuen Kilometerstand gilt die Fahrt als beendet)"
+          "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s, ohne neuen Kilometerstand gilt die Fahrt als beendet)",
+          "gps_entity": "Orts-Vorschlag (optional, person- oder device_tracker-Entität, z.B. dein Handy)"
         }
       },
       "vergleich": {

@@ -333,3 +333,27 @@ def test_trip_as_dict_schema():
     samples = trip_stream([0.0, 0.0], step=60) + trip_stream([5.0], start_ts=120) + trip_stream([5.0], start_ts=300)
     d = run_trips(det, samples)[0].as_dict()
     assert set(d) == {"start_ts", "end_ts", "odo_start", "odo_end", "km", "duration_min"}
+
+
+def test_active_property_zeigt_idle_zu_fahrt_uebergang():
+    """Der Coordinator nutzt .active, um beim idle->aktiv-Uebergang einen
+    GPS-/Zonen-Schnappschuss als Start-Ort-Vorschlag einzufrieren (siehe
+    coordinator.py::_run_trip_detection) -- die Eigenschaft muss also genau
+    an diesem Uebergang und nur dort von False auf True kippen."""
+    det = TripDetector(min_km=0.5, idle_timeout_s=120)
+    assert det.active is False
+
+    det.update(TripSample(ts=0, odo_km=100.0))  # Anker-Initialisierung
+    assert det.active is False
+
+    det.update(TripSample(ts=60, odo_km=100.0))  # weiterhin Stillstand
+    assert det.active is False
+
+    det.update(TripSample(ts=120, odo_km=105.0))  # Fahrt beginnt
+    assert det.active is True
+
+    det.update(TripSample(ts=180, odo_km=110.0))  # faehrt weiter
+    assert det.active is True
+
+    det.update(TripSample(ts=310, odo_km=110.0))  # 130s Stillstand -> Fahrt endet
+    assert det.active is False

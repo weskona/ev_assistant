@@ -12,7 +12,7 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
 from .const import (
-    CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_ERSTZULASSUNG, CONF_HOME_ENTITY,
+    CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_ERSTZULASSUNG, CONF_GPS_ENTITY, CONF_HOME_ENTITY,
     CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE, CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT,
     CONF_NOISE, CONF_NOTIFY_SERVICE, CONF_ODO_ENTITY, CONF_POWER_ENTITY, CONF_POWER_IS_AC,
     CONF_POWER_TEMPLATE, CONF_POWER_TOPIC, CONF_PUBLISH_TOPIC,
@@ -57,6 +57,11 @@ _VERBRENNER_PRICE_ENTITY = selector.EntitySelector(
 )
 _HOME_PRICE_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor")
+)
+# Fahrtenbuch-Ortsvorschlag: person ODER device_tracker (z.B. Handy des
+# Fahrers, spaeter ggf. ein WiCAN-eigener GPS-device_tracker).
+_GPS_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain=["person", "device_tracker"])
 )
 
 
@@ -156,12 +161,18 @@ def build_detection_schema(cur: dict) -> vol.Schema:
 
 def build_trip_schema(cur: dict) -> vol.Schema:
     """Schritt 6: Feinjustierung der Fahrten-Erkennung (TripDetector), die
-    auf derselben Kilometerstand-Entitaet aus Schritt 1 basiert."""
+    auf derselben Kilometerstand-Entitaet aus Schritt 1 basiert. Die optionale
+    GPS-Entitaet (person/device_tracker) liefert nur einen VORSCHLAG fuer
+    Start-/Ziel-Ort -- log_trip bestaetigt/korrigiert weiterhin manuell."""
+    def sv(key):
+        return {"suggested_value": cur.get(key)}
+
     return vol.Schema({
         vol.Optional(CONF_TRIP_MIN_KM, default=cur.get(CONF_TRIP_MIN_KM, DEFAULT_TRIP_MIN_KM)): vol.Coerce(float),
         vol.Optional(
             CONF_TRIP_IDLE_TIMEOUT, default=cur.get(CONF_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_IDLE_TIMEOUT)
         ): vol.Coerce(float),
+        vol.Optional(CONF_GPS_ENTITY, description=sv(CONF_GPS_ENTITY)): _GPS_ENTITY,
     })
 
 

@@ -336,6 +336,14 @@ class TripDetector:
         self._last_odo = 0.0
         self._last_move_ts = 0.0
 
+    @property
+    def active(self) -> bool:
+        """Ob gerade eine Fahrt laeuft -- oeffentlich lesbar, damit der
+        Coordinator den idle->aktiv-Uebergang erkennen kann (z.B. um beim
+        Fahrtbeginn einen GPS-/Zonen-Schnappschuss als Start-Ort-Vorschlag
+        zu speichern, siehe coordinator.py::_run_trip_detection)."""
+        return self._active
+
     def update(self, s: TripSample) -> Optional[TripEvent]:
         if self._anchor_odo is None:
             self._anchor_odo = s.odo_km

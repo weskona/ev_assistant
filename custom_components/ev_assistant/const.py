@@ -37,6 +37,10 @@ CONF_ODO_ENTITY = "odo_entity"
 # basiert auf derselben Kilometerstand-Entitaet (CONF_ODO_ENTITY oben).
 CONF_TRIP_MIN_KM = "trip_min_km"
 CONF_TRIP_IDLE_TIMEOUT = "trip_idle_timeout_s"
+# Optional: person/device_tracker-Entitaet, deren Zone bei Fahrtbeginn/-ende
+# als Start-/Ziel-Ort-VORSCHLAG gespeichert wird (log_trip bestaetigt/
+# korrigiert weiterhin manuell -- siehe coordinator.py::_run_trip_detection).
+CONF_GPS_ENTITY = "gps_entity"
 
 # Kostenvergleich gegenueber einem Verbrenner (alle optional -- ohne sie
 # bleiben die Ersparnis-Sensoren unbekannt statt einen Fehler zu werfen).

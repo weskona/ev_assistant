@@ -2,6 +2,22 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.15.0] - 2026-07-24
+
+### Added
+
+- **Automatic start/end location suggestion for the Fahrtenbuch**: a new optional `gps_entity`
+  config field (step 6, "Fahrtenbuch") accepts a `person` or `device_tracker` entity (e.g. the
+  driver's phone). When a trip starts and ends, the entity's current HA zone (e.g. "Home") is
+  captured as a `start_ort_vorschlag`/`end_ort_vorschlag` suggestion on the pending trip —
+  exposed as attributes on the existing pending-trip sensor/binary sensor. This does **not**
+  replace manual confirmation via `log_trip`: it's a prefill suggestion, not an automatic
+  entry, so a typo-prone or momentarily out-of-zone location can still be corrected by hand.
+  Falls back to no suggestion (empty, as before) if `gps_entity` isn't configured or the
+  location isn't inside any known zone. `engine.py::TripDetector` gained a public `active`
+  property so the coordinator can detect the idle→driving transition and snapshot the location
+  at that exact moment, without teaching the (deliberately GPS-agnostic) detector about zones.
+
 ## [0.14.1] - 2026-07-20
 
 ### Added

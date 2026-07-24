@@ -18,7 +18,7 @@ from homeassistant.helpers.template import Template
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
-    CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_HOME_ENTITY, CONF_HOME_PRICE_ENTITY,
+    CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_GPS_ENTITY, CONF_HOME_ENTITY, CONF_HOME_PRICE_ENTITY,
     CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
     CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT, CONF_NOISE, CONF_NOTIFY_SERVICE,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE, CONF_POWER_TOPIC,
@@ -72,6 +72,7 @@ def _empty_data() -> dict:
         "pending_trips": [],
         "trip_totals": {"km": 0.0, "count": 0},
         "trip_detector_state": None,
+        "trip_start_zone": None,
     }
 
 
@@ -96,6 +97,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._wallbox_energy: Optional[float] = None
         self._verbrenner_price_live: Optional[float] = None
         self._home_price_live: Optional[float] = None
+        # Fahrtenbuch-GPS-Vorschlag: aktuelle Zone der optionalen person-/
+        # device_tracker-Entitaet, sowie die Zone, die beim Start der gerade
+        # laufenden Fahrt zuletzt bekannt war (siehe _run_trip_detection()).
+        self._person_zone: Optional[str] = None
+        self._trip_start_zone: Optional[str] = None
         self._detector: Optional[ChargeDetector] = None
         self._calibrator: Optional[EfficiencyCalibrator] = None
         self._trip_detector: Optional[TripDetector] = None
@@ -123,6 +129,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # _set_verbrenner_price/_set_home_price/savings()).
         self._verbrenner_price_live = self.data.get("verbrenner_price_last")
         self._home_price_live = self.data.get("home_price_last")
+        # Zone bei Fahrtbeginn ueberlebt einen HA-Neustart waehrend einer
+        # laufenden Fahrt, aus demselben Grund wie detector_state/trip_detector_state.
+        self._trip_start_zone = self.data.get("trip_start_zone")
         self._build_detector()
         self._build_trip_detector()
         await self._setup_sources()
@@ -186,6 +195,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._wire_odo()
         self._wire_verbrenner_price()
         self._wire_home_price()
+        self._wire_gps()
 
     def _wire_home_price(self) -> None:
         """Heimstrompreis: optionale Live-Entitaet (z.B. ein dynamischer
@@ -246,6 +256,28 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         state = self.hass.states.get(entity_id)
         if state is not None and state.state not in _INVALID:
             self._set_odo(state.state, state.attributes.get("unit_of_measurement"))
+
+    def _wire_gps(self) -> None:
+        """Fahrtenbuch-Ortsvorschlag: optionale person-/device_tracker-
+        Entitaet, deren Zone bei Fahrtbeginn/-ende als Start-/Ziel-Ort-
+        VORSCHLAG gespeichert wird (siehe _run_trip_detection()). Reine
+        Zusatz-Entitaet wie odo/Preis-Entitaeten, keine MQTT-Alternative --
+        person/device_tracker gibt es nur als HA-Entitaet."""
+        entity_id = self._opt(CONF_GPS_ENTITY)
+        if not entity_id:
+            return
+
+        @callback
+        def _on_state(event) -> None:
+            new = event.data.get("new_state")
+            if new is None or new.state in _INVALID:
+                return
+            self._set_person_zone(new.state)
+
+        self._unsub.append(async_track_state_change_event(self.hass, [entity_id], _on_state))
+        state = self.hass.states.get(entity_id)
+        if state is not None and state.state not in _INVALID:
+            self._set_person_zone(state.state)
 
     async def _wire(self, entity_key, topic_key, tmpl_key, setter: Callable[[object], None]) -> None:
         entity_id = self._opt(entity_key)
@@ -352,6 +384,23 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.hass.async_create_task(self._run_trip_detection())
 
     @callback
+    def _set_person_zone(self, raw) -> None:
+        """raw ist der Zustand der person-/device_tracker-Entitaet: entweder
+        eine Zonen-Objekt-ID (z.B. "home") oder "not_home", falls in keiner
+        Zone. Wird nur zwischengespeichert -- der eigentliche Schnappschuss
+        fuer Start-/Ziel-Ort-Vorschlag passiert in _run_trip_detection()."""
+        self._person_zone = self._zone_friendly_name(raw)
+
+    def _zone_friendly_name(self, raw: str) -> str:
+        """Loest eine Zonen-Objekt-ID zu ihrem Anzeigenamen auf (z.B. "home"
+        -> "Home"). Ohne passende Zone (z.B. "not_home") wird der Rohwert
+        unveraendert zurueckgegeben."""
+        zone_state = self.hass.states.get(f"zone.{raw}")
+        if zone_state is not None:
+            return zone_state.attributes.get("friendly_name", raw)
+        return raw
+
+    @callback
     def _set_verbrenner_price(self, raw) -> None:
         try:
             self._verbrenner_price_live = float(raw)
@@ -409,12 +458,23 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         km = self._odo_km()
         if km is None or self._trip_detector is None:
             return
+        was_active = self._trip_detector.active
         sample = TripSample(ts=time.time(), odo_km=km)
         event = self._trip_detector.update(sample)
         self.data["trip_detector_state"] = self._trip_detector.get_state()
+        # Fahrtbeginn erkannt (idle -> aktiv): aktuelle Zone als Start-Ort-
+        # Vorschlag einfrieren, bevor sich die Zone waehrend der Fahrt
+        # aendert. Persistiert, damit ein HA-Neustart waehrend der Fahrt
+        # den Vorschlag nicht verliert (siehe async_setup()).
+        if not was_active and self._trip_detector.active:
+            self._trip_start_zone = self._person_zone
+            self.data["trip_start_zone"] = self._trip_start_zone
         await self._save()
         if event is not None:
-            await self._handle_pending_trip(event.as_dict())
+            pend = event.as_dict()
+            pend["start_ort_vorschlag"] = self._trip_start_zone
+            pend["end_ort_vorschlag"] = self._person_zone
+            await self._handle_pending_trip(pend)
 
     async def _record_efficiency_sample(self, sample: float) -> None:
         """Neue Effizienz-Stichprobe aus einer abgeschlossenen Heim-
