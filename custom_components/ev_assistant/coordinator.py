@@ -64,7 +64,9 @@ def _empty_data() -> dict:
         "odo": None,
         "odo_unit": None,
         "odo_start": None,
+        "odo_start_source": None,
         "wallbox_energy_start": None,
+        "wallbox_energy_start_source": None,
         "detector_state": None,
         "verbrenner_price_last": None,
         "home_price_last": None,
@@ -352,6 +354,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         except (ValueError, TypeError):
             self._power = None
 
+    def _wallbox_energy_source(self) -> Optional[str]:
+        return self._opt(CONF_WALLBOX_ENERGY_ENTITY) or self._opt(CONF_WALLBOX_ENERGY_TOPIC)
+
     @callback
     def _set_wallbox_energy(self, raw) -> None:
         try:
@@ -361,10 +366,24 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return
         # Referenzwert fuer die Heimladen-kWh-Berechnung im Kostenvergleich
         # (Gesamt-kWh seit Einrichtung = aktueller Zaehlerstand - dieser
-        # Referenzwert). Nur beim allerersten gueltigen Wert gesetzt.
-        if self.data.get("wallbox_energy_start") is None:
+        # Referenzwert). Wird neu gesetzt, wenn noch keiner existiert ODER
+        # wenn die zugrunde liegende Entitaet/Topic seit dem letzten Mal
+        # gewechselt wurde -- sonst bezieht sich der alte Referenzwert auf
+        # einen anderen Zaehler und ergibt einen sinnlosen (oft stark
+        # negativen) Sprung. Ein unbekannter (None) gespeicherter Quellenwert
+        # gilt NICHT als Wechsel (Altbestand vor Einfuehrung dieses Felds) --
+        # dort bleibt der bestehende Referenzwert unangetastet, nur die
+        # Quelle wird nachtraeglich vermerkt.
+        source = self._wallbox_energy_source()
+        stored_source = self.data.get("wallbox_energy_start_source")
+        if self.data.get("wallbox_energy_start") is None or (
+            stored_source is not None and stored_source != source
+        ):
             self.data["wallbox_energy_start"] = self._wallbox_energy
+            self.data["wallbox_energy_start_source"] = source
             self.hass.async_create_task(self._save())
+        elif stored_source is None:
+            self.data["wallbox_energy_start_source"] = source
         self.async_set_updated_data(self.data)
 
     @callback
@@ -374,9 +393,19 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         except (ValueError, TypeError):
             return
         # Referenzwert fuer die gefahrene Strecke im Kostenvergleich (siehe
-        # async_savings). Nur beim allerersten gueltigen Wert gesetzt.
-        if self.data.get("odo_start") is None:
+        # savings()). Wird neu gesetzt, wenn noch keiner existiert ODER die
+        # Kilometerstand-Entitaet seit dem letzten Mal gewechselt wurde --
+        # siehe ausfuehrlichen Kommentar in _set_wallbox_energy() zum
+        # identischen Problem/derselben Loesung.
+        source = self._opt(CONF_ODO_ENTITY)
+        stored_source = self.data.get("odo_start_source")
+        if self.data.get("odo_start") is None or (
+            stored_source is not None and stored_source != source
+        ):
             self.data["odo_start"] = value
+            self.data["odo_start_source"] = source
+        elif stored_source is None:
+            self.data["odo_start_source"] = source
         self.data["odo"] = value
         self.data["odo_unit"] = unit or self.data.get("odo_unit") or "km"
         self.async_set_updated_data(self.data)
