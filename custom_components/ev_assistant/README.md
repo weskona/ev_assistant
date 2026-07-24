@@ -3,7 +3,7 @@
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
 [![Version](https://img.shields.io/github/v/release/weskona/ev_assistant)](https://github.com/weskona/ev_assistant/releases)
 
-Detects EV charging sessions **away from your home wallbox** ("Fremdladung") from SoC telemetry, lets you log the actual kWh/price from the receipt, and can automatically calibrate the vehicle's charge efficiency from your real home-charging sessions. Manufacturer-independent — works with any HA entity or MQTT source (WiCAN Pro, evcc/Warp, Stellantis/VW cloud sensors, ...).
+Detects EV charging sessions **away from your home wallbox** ("external charge") from SoC telemetry, lets you log the actual kWh/price from the receipt, and can automatically calibrate the vehicle's charge efficiency from your real home-charging sessions. Manufacturer-independent — works with any HA entity or MQTT source (WiCAN Pro, evcc/Warp, Stellantis/VW cloud sensors, ...).
 
 **[🇩🇪 Deutsche Version weiter unten](#-deutsch)**
 
@@ -18,12 +18,12 @@ EV Assistant never needs GPS, a specific manufacturer API, or a list of known ch
 1. **State of charge (SoC)** — the battery percentage, e.g. from a manufacturer cloud sensor or a cheap OBD dongle like WiCAN Pro.
 2. **Home-charging signal** — anything that tells you "the car is charging at my own wallbox right now" (e.g. from evcc, a Warp box, or any charger integration).
 
-The core idea is one sentence: **if the battery percentage goes up while the home-charging signal says "no", the car must be charging somewhere else** — a public charger, a hotel, a friend's house, work. That's a "Fremdladung" (external/away charge). Home charging is deliberately ignored by the detector — you already track that through your own wallbox/evcc setup, so EV Assistant only ever bothers you about charges *you'd otherwise lose track of*.
+The core idea is one sentence: **if the battery percentage goes up while the home-charging signal says "no", the car must be charging somewhere else** — a public charger, a hotel, a friend's house, work. That's an **external charge**. Home charging is deliberately ignored by the detector — you already track that through your own wallbox/evcc setup, so EV Assistant only ever bothers you about charges *you'd otherwise lose track of*.
 
 Internally, a small state machine (`engine.py::ChargeDetector`) watches every new SoC reading:
 
 - **Idle** — nothing is happening. It keeps remembering the lowest SoC value seen recently (the "anchor"). Every time the SoC dips back down (or the home-charging signal is on), the anchor resets to that value. This means the anchor always represents "the charge level right before whatever happens next".
-- **Start of a session** — as soon as SoC has climbed at least `start_delta` (default **1 %**) above the anchor *while home-charging is off*, a Fremdladung session begins. Its official start point is the anchor (the last known low point), not the moment the threshold was crossed — so the session correctly includes the very first bit of charging that triggered the detection.
+- **Start of a session** — as soon as SoC has climbed at least `start_delta` (default **1 %**) above the anchor *while home-charging is off*, an external-charge session begins. Its official start point is the anchor (the last known low point), not the moment the threshold was crossed — so the session correctly includes the very first bit of charging that triggered the detection.
 - **Active session** — as SoC keeps climbing, EV Assistant tracks the highest value seen ("peak"). A small `noise` tolerance (default **0.5 %**) absorbs sensor jitter (SoC readings occasionally wobble by a fraction of a percent without anything actually happening) so it doesn't get confused by measurement noise. Keep `start_delta` **above** `noise` — if they're equal (or `start_delta` is lower), ordinary jitter can look like a genuine rise and trigger false detections.
 - **End of a session** — whichever of these happens first:
   - the home-charging signal turns on (you've arrived home and plugged in — the away-charge that just happened is now finalized), or
@@ -37,7 +37,7 @@ At the end, EV Assistant has a `soc_start`, a `soc_end`, and needs to turn that 
 Say your car has a 45 kWh usable battery and the default 88 % charge efficiency (both configurable in step 1 of setup). You drive away from home with the battery at **32 %** and plug in at a public charger. No vehicle charging-power sensor is configured yet — just SoC and the home-charging signal.
 
 1. Before you left, the last few SoC readings were flat at 32 % with home-charging off (you weren't charging, just driving/parked away from home). The anchor sits at **32 %**.
-2. At the charger, the next SoC reading comes in at **35 %**. That's +3 percentage points above the anchor — exactly the `start_delta` threshold — so a Fremdladung session **starts**, officially from `soc_start = 32 %` (the anchor), at the timestamp of that last 32 % reading.
+2. At the charger, the next SoC reading comes in at **35 %**. That's +3 percentage points above the anchor — exactly the `start_delta` threshold — so an external-charge session **starts**, officially from `soc_start = 32 %` (the anchor), at the timestamp of that last 32 % reading.
 3. Over the next couple of hours, SoC keeps ticking up: 40 %, 55 %, 68 %, 74 %. Each new high becomes the tracked peak.
 4. You unplug at **74 %** and drive home. Ten minutes pass with the SoC entity reporting no further increase (it's not charging anymore) — the `idle_timeout_s` fires and the session **ends**.
 5. Delta = 74 % − 32 % = **42 percentage points**. Without a vehicle charging-power sensor, EV Assistant falls back to the SoC-only estimate:
@@ -47,8 +47,8 @@ Say your car has a 45 kWh usable battery and the default 88 % charge efficiency 
    - stores this as the **pending** charge,
    - publishes it to the configured MQTT topic,
    - fires the `ev_assistant_pending` event (with `config_entry_id` so you can tell which car, if you have more than one),
-   - sends a notification: *"+42 % (32 → 74 %), ~21.5 kWh geschätzt. kWh und Preis eintragen."* ("... estimated. Enter kWh and price.")
-   - turns on `binary_sensor ... Fremdladung Erfassung offen` and sets `sensor ... Fremdladung Schätzung` to 21.48 kWh.
+   - sends a notification: *"+42% (32 → 74%), ~21.5 kWh estimated. Enter kWh and price."* (shown in German instead if your HA UI language is set to German)
+   - turns on `binary_sensor ... External Charge Detection Open` and sets `sensor ... External Charge Estimate` to 21.48 kWh.
 7. A few days later the receipt arrives: **21.4 kWh** actually billed at **0.59 EUR/kWh** = **12.63 EUR**. You call `ev_assistant.log_charge` (or use the optional card) with these real numbers.
 8. EV Assistant writes a history entry containing **both** figures — the estimate (21.48 kWh, source `soc`) and the real one (21.4 kWh, 0.59 EUR/kWh, 12.63 EUR) — updates the running totals, clears the pending charge, and dismisses the notification.
 
@@ -81,12 +81,12 @@ A vehicle charging-power sensor (when available) is generally more accurate than
 
 Settings → Devices & Services → **Add integration** → "EV Assistant". Setup is a 7-step flow (also used identically when editing via **Configure**):
 
-1. **Vehicle** — Manufacturer + model (required, e.g. "Peugeot" / "e-2008" — together they become the HA device name), first registration date (optional, display only), odometer entity (optional, filtered to `sensor` + `device_class: distance` — mirrored onto the EV Assistant device as its own `... Kilometerstand` sensor, and used both as the basis for automatic trip detection (Fahrtenbuch, step 6) and as the distance basis for the cost comparison in step 7), usable battery capacity in kWh (required — the *net* value your car can actually use, not the often-larger gross/factory figure some manufacturers advertise; this directly determines how many kWh one percentage point of SoC represents, so getting it wrong throws off every energy estimate), charge efficiency (optional starting value only — replaced automatically once enough real home charges have been measured, see calibration below).
+1. **Vehicle** — Manufacturer + model (required, e.g. "Peugeot" / "e-2008" — together they become the HA device name), first registration date (optional, display only), odometer entity (optional, filtered to `sensor` + `device_class: distance` — mirrored onto the EV Assistant device as its own `... Odometer` sensor, and used both as the basis for automatic trip detection (trip log, step 6) and as the distance basis for the cost comparison in step 7), usable battery capacity in kWh (required — the *net* value your car can actually use, not the often-larger gross/factory figure some manufacturers advertise; this directly determines how many kWh one percentage point of SoC represents, so getting it wrong throws off every energy estimate), charge efficiency (optional starting value only — replaced automatically once enough real home charges have been measured, see calibration below).
 2. **Basic signals** — SoC and home-charging source, each as **HA entity OR MQTT topic** (entity takes priority). At least one source per signal is required (marked with `*`). The SoC entity picker is filtered to `sensor` + `device_class: battery`; the home-charging entity picker to `sensor` + `device_class: power` (e.g. a wallbox's charging-power sensor from evcc/Warp) — a numeric value **above 0.1 kW counts as "charging"**; a non-numeric value (e.g. evcc's own `"charging"`/`"on"` status string) falls back to a plain text match instead. **This is a yes/no "charging at home right now" signal only** — it is not the same charging-power reading as step 3 (that one deliberately comes from the vehicle, not the wallbox, so it still works away from home during an external charge). If your power sensor reports a different unit (e.g. Watts), convert it with the template field, e.g. `{{ value | float / 1000 }}`. If your setup doesn't fit those (e.g. a `binary_sensor`), use the MQTT-topic field instead.
 3. **Charging power** (optional) — two different sources for two different purposes. Charging power is a momentary power reading in W/kW, typically from vehicle telemetry rather than your wallbox (so it still reports data during an external charge, where the wallbox is idle); it improves the energy estimate of an external charge beyond plain SoC-delta (see "Energy estimation methods" above). The **wallbox energy meter**, on the other hand, is a cumulative kWh counter of your own wallbox (never momentary, only relevant while charging at home) — it's used for automatic efficiency calibration *and* for the home-charging cost tracked in step 7.
 4. **Output** (optional) — a persistent notification in Home Assistant's own notification panel always appears automatically for a detected charge, regardless of this step. The `notify.*` service additionally sends a push notification (e.g. to your phone); the MQTT publish topic additionally publishes the raw data as JSON for your own automations/integrations.
 5. **Detection fine-tuning** — thresholds of the underlying state machine described above (`start_delta`, `noise`, `idle_timeout_s`, `drop_ends`). A session starts once SoC rises by `start_delta` above its last resting value; it ends either when SoC drops by more than `drop_ends` below the tracked peak, or when `idle_timeout_s` passes with no new peak (e.g. battery full). `noise` tolerates ordinary sensor jitter while tracking the peak and must always be **smaller** than `start_delta`, or jitter alone could trigger a false detection. Defaults work for most vehicles; raise them for a car whose SoC only updates coarsely/infrequently (e.g. some cloud APIs).
-6. **Fahrtenbuch** (optional) — thresholds of the trip detector (`trip_min_km`, `trip_idle_timeout_s`) described in "Fahrtenbuch (trip log)" below. Defaults work for most odometer sensors. Also an optional location-suggestion source (`gps_entity`, a `person`/`device_tracker`).
+6. **Trip log** (optional) — thresholds of the trip detector (`trip_min_km`, `trip_idle_timeout_s`) described in "Trip log" below. Defaults work for most odometer sensors. Also an optional location-suggestion source (`gps_entity`, a `person`/`device_tracker`).
 7. **Cost comparison** (optional) — see "Cost comparison vs. a combustion car" below.
 
 ### Sources: manufacturer-independent
@@ -111,7 +111,7 @@ Instead of a fixed manual efficiency value, EV Assistant can learn the real AC�
 
 A single session isn't trusted blindly — implausible samples are discarded automatically (session too short: less than 5 percentage points of SoC gain; missing data; or a result outside the 50–100 % plausible range, which usually means a meter reset or a missed reading happened). Once **3 valid sessions** have been collected, EV Assistant averages the last 10 samples and **automatically starts using that measured value** for every calculation from then on — live, without a restart. If your car's real efficiency is, say, 0.847, 0.86, and 0.855 across three sessions, the new value in use becomes their average, **0.854 (85.4 %)** — replacing whichever value you originally typed in during setup.
 
-The manual value from step 1 remains the fallback the whole time until enough sessions exist. See sensor `... Ladewirkungsgrad (gemessen)` ("measured charge efficiency") below for the live status.
+The manual value from step 1 remains the fallback the whole time until enough sessions exist. See sensor `... Charge Efficiency (Measured)` below for the live status.
 
 ### Cost comparison vs. a combustion car
 
@@ -121,31 +121,31 @@ All fields in step 6 are optional — configure as many or as few as you like; t
 
 **Home-charging cost:** the wallbox energy meter from step 3 (the same cumulative counter used for efficiency calibration) is read the same way — first-seen value as reference, current value minus that reference gives total home-charged kWh. Multiplied by the home electricity price, that's your estimated home-charging spend. The price can be a fixed value (`home_price_kwh`) or a live entity (`home_price_entity`, e.g. a dynamic-tariff sensor) — if both are set, the entity wins, and its last known good value is remembered across restarts/outages the same way the fuel price is (see below). Without a wallbox meter configured, home-charging cost is simply treated as 0 — the comparison still works using only the (always-tracked) external-charging costs.
 
-**Combustion reference:** `(km driven ÷ 100) × verbrenner_l_100km × verbrenner_price_per_liter` — a straightforward "what would this distance have cost in fuel" estimate for the comparison vehicle you describe. The fuel price can also be linked to a live entity (e.g. a fuel-price tracker sensor) instead of typing in a fixed value — if both are set, the entity wins. Its last known good value is remembered and keeps being used if the entity ever goes `unavailable` (including across restarts), so the comparison doesn't silently drop out. The `... Ersparnis ggü. Verbrenner` sensor's `kraftstoffpreis_live` and `heimstrompreis_live` attributes tell you which price (fixed or live entity) is currently in effect for fuel and home electricity respectively.
+**Combustion reference:** `(km driven ÷ 100) × verbrenner_l_100km × verbrenner_price_per_liter` — a straightforward "what would this distance have cost in fuel" estimate for the comparison vehicle you describe. The fuel price can also be linked to a live entity (e.g. a fuel-price tracker sensor) instead of typing in a fixed value — if both are set, the entity wins. Its last known good value is remembered and keeps being used if the entity ever goes `unavailable` (including across restarts), so the comparison doesn't silently drop out. The `... Savings vs. Combustion Car` sensor's `kraftstoffpreis_live` and `heimstrompreis_live` attributes tell you which price (fixed or live entity) is currently in effect for fuel and home electricity respectively.
 
-**Worked example:** you've driven **1,000 km** since setting up EV Assistant. Your wallbox meter shows **150 kWh** charged at home, at a configured price of **0.30 EUR/kWh** → **45.00 EUR** home-charging cost. Your tracked external ("Fremdladung") charges total **50.00 EUR** so far. Total EV energy cost: `45.00 + 50.00 = 95.00 EUR`. Your reference combustion car uses 6.5 L/100km at a fuel price of 1.75 EUR/L: `(1,000 ÷ 100) × 6.5 × 1.75 = 113.75 EUR`. Your estimated savings: `113.75 − 95.00 = 18.75 EUR` over those 1,000 km.
+**Worked example:** you've driven **1,000 km** since setting up EV Assistant. Your wallbox meter shows **150 kWh** charged at home, at a configured price of **0.30 EUR/kWh** → **45.00 EUR** home-charging cost. Your tracked external charges total **50.00 EUR** so far. Total EV energy cost: `45.00 + 50.00 = 95.00 EUR`. Your reference combustion car uses 6.5 L/100km at a fuel price of 1.75 EUR/L: `(1,000 ÷ 100) × 6.5 × 1.75 = 113.75 EUR`. Your estimated savings: `113.75 − 95.00 = 18.75 EUR` over those 1,000 km.
 
 ### Sensors in detail
 
-The HA device is named after the vehicle (`{Manufacturer} {Model}`), so entity names below appear as `{Device} {Entity}`, e.g. "Peugeot e-2008 Fremdladung Anzahl".
+The HA device is named after the vehicle (`{Manufacturer} {Model}`), so entity names below appear as `{Device} {Entity}`, e.g. "Peugeot e-2008 External Charge Count".
 
 | Sensor | Meaning |
 |---|---|
-| `binary_sensor ... Fremdladung Erfassung offen` | **On** while at least one detected external charge is waiting for you to confirm the real kWh/price. More than one can be open at once — attributes: `anzahl_offen` (count), `offene_ladungen` (the full list, each with start/end time, SoC start/end, estimate, source), plus the oldest one's fields flattened directly at the top level for convenience. |
-| `sensor ... Fremdladung Schätzung` | The estimated kWh of the currently pending charge (see "Energy estimation methods"). `unknown` when nothing is pending. |
-| `sensor ... Fremdladung kWh (letzte)` | The `kwh` value you entered for the most recently confirmed external charge (i.e. from the receipt, not the estimate). |
-| `sensor ... Fremdladung Kosten (letzte)` | `kwh × price_kwh` for that same most recent confirmed charge. |
-| `sensor ... Fremdladung Preis (letzter)` | The price per kWh you entered for the most recent confirmed charge. |
-| `sensor ... Fremdladung Ladezeit (letzte)` | How long the detected charging session lasted (from detection start to end), in minutes. `unknown` for older history entries confirmed before this sensor existed, or for a manually logged charge with no underlying detection. |
-| `sensor ... Fremdladung kWh (gesamt)` | Running total of all confirmed external-charge kWh since setup (or since you last reset it — it's a `total_increasing` sensor, so the HA Energy dashboard can use it directly). |
-| `sensor ... Fremdladung Kosten (gesamt)` | Running total of all confirmed external-charge costs. |
-| `sensor ... Fremdladung Anzahl` | How many external charges have been confirmed in total. |
-| `sensor ... Ladewirkungsgrad (gemessen)` ("measured charge efficiency", diagnostic) | The live-calibrated efficiency from **home** charging sessions (see above) — **not** related to external charges at all. Shown as a percentage. Attributes: `anzahl_sessions` (samples collected so far), `benoetigte_sessions` (3, the minimum needed before it takes over), `einzelwerte_prozent` (each individual sample), `wird_verwendet` (whether the measured value is currently being used instead of the manual one), `manueller_wert_prozent` (the configured fallback value). |
-| `sensor ... Kilometerstand` (diagnostic) | Mirrors the odometer entity configured in step 1, if any, grouped onto the EV Assistant device. Pure display passthrough. |
-| `sensor ... Erstzulassung` (diagnostic) | The first-registration date entered in step 1, exposed as a proper `date`-typed sensor. |
-| `sensor ... Heimladen kWh (gesamt)` | Total home-charged kWh since setup, from the wallbox energy meter (step 3). `unknown` without a configured meter. |
-| `sensor ... Heimladen Kosten (gesamt)` | Home-charging kWh above × the home electricity price from step 6 (fixed value or live entity, see above). `unknown` without a configured meter or price. |
-| `sensor ... Ersparnis ggü. Verbrenner` | Estimated savings vs. the reference combustion car from step 6, over the distance driven since setup (see "Cost comparison" above). `unknown` until the odometer entity, combustion consumption, and fuel price are all configured. Attributes: `gefahrene_km`, `heimladen_kosten`, `fremdladen_kosten`, `kosten_ev_gesamt`, `kosten_verbrenner_geschaetzt`, `kraftstoffpreis_live` (whether the fuel-price entity is currently overriding its fixed value), `heimstrompreis_live` (same, for the home electricity price). |
+| `binary_sensor ... External Charge Detection Open` | **On** while at least one detected external charge is waiting for you to confirm the real kWh/price. More than one can be open at once — attributes: `anzahl_offen` (count), `offene_ladungen` (the full list, each with start/end time, SoC start/end, estimate, source), plus the oldest one's fields flattened directly at the top level for convenience. |
+| `sensor ... External Charge Estimate` | The estimated kWh of the currently pending charge (see "Energy estimation methods"). `unknown` when nothing is pending. |
+| `sensor ... External Charge kWh (Last)` | The `kwh` value you entered for the most recently confirmed external charge (i.e. from the receipt, not the estimate). |
+| `sensor ... External Charge Cost (Last)` | `kwh × price_kwh` for that same most recent confirmed charge. |
+| `sensor ... External Charge Price (Last)` | The price per kWh you entered for the most recent confirmed charge. |
+| `sensor ... External Charge Duration (Last)` | How long the detected charging session lasted (from detection start to end), in minutes. `unknown` for older history entries confirmed before this sensor existed, or for a manually logged charge with no underlying detection. |
+| `sensor ... External Charge kWh (Total)` | Running total of all confirmed external-charge kWh since setup (or since you last reset it — it's a `total_increasing` sensor, so the HA Energy dashboard can use it directly). |
+| `sensor ... External Charge Cost (Total)` | Running total of all confirmed external-charge costs. |
+| `sensor ... External Charge Count` | How many external charges have been confirmed in total. |
+| `sensor ... Charge Efficiency (Measured)` (diagnostic) | The live-calibrated efficiency from **home** charging sessions (see above) — **not** related to external charges at all. Shown as a percentage. Attributes: `anzahl_sessions` (samples collected so far), `benoetigte_sessions` (3, the minimum needed before it takes over), `einzelwerte_prozent` (each individual sample), `wird_verwendet` (whether the measured value is currently being used instead of the manual one), `manueller_wert_prozent` (the configured fallback value). |
+| `sensor ... Odometer` (diagnostic) | Mirrors the odometer entity configured in step 1, if any, grouped onto the EV Assistant device. Pure display passthrough. |
+| `sensor ... First Registration` (diagnostic) | The first-registration date entered in step 1, exposed as a proper `date`-typed sensor. |
+| `sensor ... Home Charging kWh (Total)` | Total home-charged kWh since setup, from the wallbox energy meter (step 3). `unknown` without a configured meter. |
+| `sensor ... Home Charging Cost (Total)` | Home-charging kWh above × the home electricity price from step 6 (fixed value or live entity, see above). `unknown` without a configured meter or price. |
+| `sensor ... Savings vs. Combustion Car` | Estimated savings vs. the reference combustion car from step 6, over the distance driven since setup (see "Cost comparison" above). `unknown` until the odometer entity, combustion consumption, and fuel price are all configured. Attributes: `gefahrene_km`, `heimladen_kosten`, `fremdladen_kosten`, `kosten_ev_gesamt`, `kosten_verbrenner_geschaetzt`, `kraftstoffpreis_live` (whether the fuel-price entity is currently overriding its fixed value), `heimstrompreis_live` (same, for the home electricity price). |
 
 ### Example calculations
 
@@ -171,9 +171,9 @@ A compact reference for the three calculations EV Assistant does, all using the 
 > `ev_assistant.log_charge` with `kwh: 21.4`, `price_kwh: 0.59` → cost = `21.4 × 0.59 = 12.63 EUR`.
 > The history entry keeps **both** numbers side by side (estimate 21.48 kWh via `soc`, actual 21.4 kWh/12.63 EUR) so you can see over time how close the estimate tends to get.
 
-### Fahrtenbuch (trip log)
+### Trip log
 
-Trips are detected automatically from the **same odometer entity** used for the cost comparison above (step 1) — no GPS needed. A trip is simply the stretch between two stationary periods: once the odometer starts increasing again after standing still, a trip has begun; once it stops increasing for longer than the configured timeout (step 6, "Fahrtenbuch"), the trip is finalized. Detected trips shorter than the configured minimum distance are silently dropped (filters out odometer rounding noise). This mirrors the external-charge detector architecture (`TripDetector` next to `ChargeDetector` in `engine.py`) — same idle-based state machine, same restart-safe persistence.
+Trips are detected automatically from the **same odometer entity** used for the cost comparison above (step 1) — no GPS needed. A trip is simply the stretch between two stationary periods: once the odometer starts increasing again after standing still, a trip has begun; once it stops increasing for longer than the configured timeout (step 6, "Trip log"), the trip is finalized. Detected trips shorter than the configured minimum distance are silently dropped (filters out odometer rounding noise). This mirrors the external-charge detector architecture (`TripDetector` next to `ChargeDetector` in `engine.py`) — same idle-based state machine, same restart-safe persistence.
 
 A detected trip only records start/end odometer, distance, and timestamps — you then confirm it manually with a start/end location via `ev_assistant.log_trip`, the same "detect automatically, confirm the human part manually" pattern as external charges. There is deliberately **no** business/private purpose field or comment field — this is a plain distance/location log, not a tax-compliance tool.
 
@@ -181,11 +181,11 @@ A detected trip only records start/end odometer, distance, and timestamps — yo
 
 | Sensor | Meaning |
 |---|---|
-| `binary_sensor ... Fahrt Erfassung offen` | **On** while at least one detected trip is waiting for a start/end location. Attributes analogous to the charge-pending binary sensor (`anzahl_offen`, `offene_fahrten`). |
-| `sensor ... Fahrt Schätzung` | Distance (km) of the oldest pending trip. `unknown` when nothing is pending. |
-| `sensor ... Fahrt km (letzte)` | Distance of the most recently confirmed trip, with the full `fahrtenbuch` history as an attribute. |
-| `sensor ... Fahrtenbuch Anzahl` | How many trips have been confirmed in total. |
-| `sensor ... Fahrtenbuch km (gesamt)` | Running total of all confirmed trip distances (`total_increasing`). |
+| `binary_sensor ... Trip Detection Open` | **On** while at least one detected trip is waiting for a start/end location. Attributes analogous to the charge-pending binary sensor (`anzahl_offen`, `offene_fahrten`). |
+| `sensor ... Trip Estimate` | Distance (km) of the oldest pending trip. `unknown` when nothing is pending. |
+| `sensor ... Trip km (Last)` | Distance of the most recently confirmed trip, with the full `fahrtenbuch` history as an attribute. |
+| `sensor ... Trip Log Count` | How many trips have been confirmed in total. |
+| `sensor ... Trip Log km (Total)` | Running total of all confirmed trip distances (`total_increasing`). |
 
 `ev_assistant.export_fahrtenbuch` writes the full trip history (chronological, oldest first) as a semicolon-separated CSV to `www/ev_assistant_fahrtenbuch_<entry_id>.csv`, downloadable at `/local/ev_assistant_fahrtenbuch_<entry_id>.csv` — handy for further processing (e.g. a tax filing) outside Home Assistant.
 
@@ -198,10 +198,10 @@ A detected trip only records start/end odometer, distance, and timestamps — yo
 - `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): generate a **test event without a car** (triggers notification, MQTT, sensors) — see "Testing" below.
 - `ev_assistant.log_trip` — `config_entry_id`, `start_ort`, `end_ort` (+ optional `start_ts`): confirm a pending trip with a start/end location. Same multiple-pending/`start_ts` selection rule as `log_charge`. Unlike `log_charge`, there is **no** fallback to a manual one-off entry without a pending trip — odometer values only ever come from the detector.
 - `ev_assistant.discard_pending_trip` — `config_entry_id` (+ optional `start_ts`): discard a pending trip (e.g. moving the car a few meters in the driveway).
-- `ev_assistant.export_fahrtenbuch` — `config_entry_id`: write the full trip history as CSV to `www/` (see "Fahrtenbuch" above).
+- `ev_assistant.export_fahrtenbuch` — `config_entry_id`: write the full trip history as CSV to `www/` (see "Trip log" above).
 - `ev_assistant.simulate_trip` — `config_entry_id`, `km`: generate a **test trip without a car**, same idea as `simulate_event`.
-- `ev_assistant.edit_trip` — `config_entry_id`, `erfasst_ts`, `start_ort`, `end_ort`: correct the start/end location of an already-confirmed Fahrtenbuch entry (e.g. a typo noticed after the fact), identified by its `erfasst_ts` attribute. Distance/odometer values are **not** editable — they only ever come from the detector.
-- `ev_assistant.delete_trip` — `config_entry_id`, `erfasst_ts`: fully removes an already-confirmed Fahrtenbuch entry (e.g. a falsely detected trip). Running totals are adjusted by the removed amount. **Not reversible.**
+- `ev_assistant.edit_trip` — `config_entry_id`, `erfasst_ts`, `start_ort`, `end_ort`: correct the start/end location of an already-confirmed trip log entry (e.g. a typo noticed after the fact), identified by its `erfasst_ts` attribute. Distance/odometer values are **not** editable — they only ever come from the detector.
+- `ev_assistant.delete_trip` — `config_entry_id`, `erfasst_ts`: fully removes an already-confirmed trip log entry (e.g. a falsely detected trip). Running totals are adjusted by the removed amount. **Not reversible.**
 
 All services require `config_entry_id` to target a specific vehicle if you run more than one EV Assistant instance.
 
@@ -222,9 +222,9 @@ All services require `config_entry_id` to target a specific vehicle if you run m
 cd <repo>
 python -m pytest tests -q
 ```
-**2) End-to-end in HA (no car needed):** Developer tools → Services → call `ev_assistant.simulate_event` with `config_entry_id`, `soc_start: 32`, `soc_end: 74`. Expect: a notification appears, `binary_sensor ... Fremdladung Erfassung offen` turns on, `sensor ... Fremdladung Schätzung` ≈ 21.48 kWh (see the worked example above). Then enter kWh/price and call `ev_assistant.log_charge` (or the save button) — history/totals update, and a publish happens to `ev_assistant/ladung/extern/<entry_id>/erfasst`.
+**2) End-to-end in HA (no car needed):** Developer tools → Services → call `ev_assistant.simulate_event` with `config_entry_id`, `soc_start: 32`, `soc_end: 74`. Expect: a notification appears, `binary_sensor ... External Charge Detection Open` turns on, `sensor ... External Charge Estimate` ≈ 21.48 kWh (see the worked example above). Then enter kWh/price and call `ev_assistant.log_charge` (or the save button) — history/totals update, and a publish happens to `ev_assistant/ladung/extern/<entry_id>/erfasst`.
 
-**3) Fahrtenbuch, end-to-end (no car needed):** call `ev_assistant.simulate_trip` with `config_entry_id`, `km: 12.5`. Expect: a notification appears, `binary_sensor ... Fahrt Erfassung offen` turns on, `sensor ... Fahrt Schätzung` shows `12.5`. Then call `ev_assistant.log_trip` with `start_ort`/`end_ort` — `sensor ... Fahrt km (letzte)` updates. Finally call `ev_assistant.export_fahrtenbuch` and check `www/ev_assistant_fahrtenbuch_<entry_id>.csv` was created.
+**3) Trip log, end-to-end (no car needed):** call `ev_assistant.simulate_trip` with `config_entry_id`, `km: 12.5`. Expect: a notification appears, `binary_sensor ... Trip Detection Open` turns on, `sensor ... Trip Estimate` shows `12.5`. Then call `ev_assistant.log_trip` with `start_ort`/`end_ort` — `sensor ... Trip km (Last)` updates. Finally call `ev_assistant.export_fahrtenbuch` and check `www/ev_assistant_fahrtenbuch_<entry_id>.csv` was created.
 
 ### Data record (history / MQTT `.../erfasst`)
 

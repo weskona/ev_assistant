@@ -545,6 +545,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         except Exception as err:  # noqa: BLE001
             _LOGGER.warning("MQTT publish auf %s fehlgeschlagen: %s", topic, err)
 
+    def _en(self) -> bool:
+        """Ob die HA-Oberflaeche auf Englisch eingestellt ist. Entity-/
+        Config-Flow-Texte laufen ueber strings.json/translations/*.json und
+        HA's eigenes Uebersetzungssystem -- das hier betrifft nur den freien
+        Benachrichtigungstext (persistent_notification/notify), den dieses
+        System nicht abdeckt, daher die Sprachwahl von Hand."""
+        return self.hass.config.language.startswith("en")
+
     async def _notify(self) -> None:
         """Baut EINE Benachrichtigung (gleiche notification_id, ersetzt sich
         selbst) fuer ALLE aktuell offenen Fremdladungen — nicht pro Ladung
@@ -553,21 +561,37 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         pending_list = self.data.get("pending") or []
         if not pending_list:
             return
+        en = self._en()
         if len(pending_list) == 1:
             p = pending_list[0]
-            title = "Fremdladung erkannt"
-            message = (
-                f"+{p['delta_soc']} % ({p['soc_start']} -> {p['soc_end']} %), "
-                f"~{round(p['energy_kwh'], 1)} kWh geschätzt. kWh und Preis eintragen."
-            )
+            title = "External charge detected" if en else "Fremdladung erkannt"
+            if en:
+                message = (
+                    f"+{p['delta_soc']}% ({p['soc_start']} → {p['soc_end']}%), "
+                    f"~{round(p['energy_kwh'], 1)} kWh estimated. Enter kWh and price."
+                )
+            else:
+                message = (
+                    f"+{p['delta_soc']} % ({p['soc_start']} -> {p['soc_end']} %), "
+                    f"~{round(p['energy_kwh'], 1)} kWh geschätzt. kWh und Preis eintragen."
+                )
         else:
-            title = f"{len(pending_list)} Fremdladungen erkannt"
-            lines = [
-                f"{i + 1}) +{p['delta_soc']} % ({p['soc_start']} -> {p['soc_end']} %), "
-                f"~{round(p['energy_kwh'], 1)} kWh"
-                for i, p in enumerate(pending_list)
-            ]
-            message = f"{len(pending_list)} offene Fremdladungen:\n" + "\n".join(lines) + "\nkWh und Preis eintragen."
+            if en:
+                title = f"{len(pending_list)} external charges detected"
+                lines = [
+                    f"{i + 1}) +{p['delta_soc']}% ({p['soc_start']} → {p['soc_end']}%), "
+                    f"~{round(p['energy_kwh'], 1)} kWh"
+                    for i, p in enumerate(pending_list)
+                ]
+                message = f"{len(pending_list)} open external charges:\n" + "\n".join(lines) + "\nEnter kWh and price."
+            else:
+                title = f"{len(pending_list)} Fremdladungen erkannt"
+                lines = [
+                    f"{i + 1}) +{p['delta_soc']} % ({p['soc_start']} -> {p['soc_end']} %), "
+                    f"~{round(p['energy_kwh'], 1)} kWh"
+                    for i, p in enumerate(pending_list)
+                ]
+                message = f"{len(pending_list)} offene Fremdladungen:\n" + "\n".join(lines) + "\nkWh und Preis eintragen."
 
         notify_service = self._opt(CONF_NOTIFY_SERVICE)
         if notify_service:
@@ -580,7 +604,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                         "data": {
                             "tag": self._notify_tag,
                             "persistent": True,
-                            "actions": [{"action": "URI", "title": "Eintragen", "uri": "/lovelace"}],
+                            "actions": [{"action": "URI", "title": "Enter" if en else "Eintragen", "uri": "/lovelace"}],
                         },
                     },
                     blocking=False,
@@ -614,14 +638,23 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         pending_list = self.data.get("pending_trips") or []
         if not pending_list:
             return
+        en = self._en()
         if len(pending_list) == 1:
             p = pending_list[0]
-            title = "Fahrt erkannt"
-            message = f"{p['km']} km gefahren. Start-/Zielort eintragen."
+            if en:
+                title = "Trip detected"
+                message = f"{p['km']} km driven. Enter start/end location."
+            else:
+                title = "Fahrt erkannt"
+                message = f"{p['km']} km gefahren. Start-/Zielort eintragen."
         else:
-            title = f"{len(pending_list)} Fahrten erkannt"
             lines = [f"{i + 1}) {p['km']} km" for i, p in enumerate(pending_list)]
-            message = f"{len(pending_list)} offene Fahrten:\n" + "\n".join(lines) + "\nStart-/Zielort eintragen."
+            if en:
+                title = f"{len(pending_list)} trips detected"
+                message = f"{len(pending_list)} open trips:\n" + "\n".join(lines) + "\nEnter start/end location."
+            else:
+                title = f"{len(pending_list)} Fahrten erkannt"
+                message = f"{len(pending_list)} offene Fahrten:\n" + "\n".join(lines) + "\nStart-/Zielort eintragen."
 
         try:
             await self.hass.services.async_call(
@@ -742,13 +775,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         path = self.hass.config.path("www", f"ev_assistant_fahrtenbuch_{self.entry.entry_id}.csv")
         await self.hass.async_add_executor_job(self._write_fahrtenbuch_csv, path, fahrten)
         filename = os.path.basename(path)
+        en = self._en()
         try:
             await self.hass.services.async_call(
                 "persistent_notification", "create",
                 {
                     "notification_id": f"{self._notify_tag}_export",
-                    "title": "Fahrtenbuch exportiert",
-                    "message": f"CSV-Export bereit: [{filename}](/local/{filename})",
+                    "title": "Trip log exported" if en else "Fahrtenbuch exportiert",
+                    "message": (
+                        f"CSV export ready: [{filename}](/local/{filename})" if en
+                        else f"CSV-Export bereit: [{filename}](/local/{filename})"
+                    ),
                 },
                 blocking=False,
             )
