@@ -2,6 +2,19 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.15.2] - 2026-07-24
+
+### Fixed
+
+- **`translations/en.json` was a byte-for-byte copy of the German `strings.json`/`de.json`**,
+  so English-locale HA installs saw German config-flow titles/descriptions and German entity
+  names (e.g. "Heimladen kWh (gesamt)" instead of "Home Charging kWh (Total)"). Replaced with an
+  actual English translation, same keys/structure as `strings.json`. Purely a display-text
+  change — `entity_id`/`unique_id` are unaffected (translation_key-based names resolve live per
+  UI language and are never baked into the registry unless manually renamed), so already-created
+  devices/entities keep working exactly as before, just with correct English labels for English
+  UI users.
+
 ## [0.15.1] - 2026-07-24
 
 ### Fixed

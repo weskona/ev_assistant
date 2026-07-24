@@ -2,234 +2,234 @@
   "config": {
     "step": {
       "fahrzeug": {
-        "title": "EV Assistant - Fahrzeug",
-        "description": "Schritt 1/7: Fahrzeug-Eckdaten. Hersteller, Modell und nutzbare Akku-Kapazität sind Pflicht — Hersteller und Modell ergeben zusammen den Gerätenamen in der HA-Geräteliste. Nutzbare Akku-Kapazität: der Wert, der tatsächlich zum Fahren/Laden zur Verfügung steht — NICHT die oft größere Brutto-/Werksangabe des Herstellers (z.B. viele Modelle: 58 kWh brutto, aber nur 52 kWh nutzbar). Dieser Wert bestimmt direkt, wie viele kWh ein Prozentpunkt SoC-Anstieg entspricht — falsch eingetragen, sind alle Energie-Schätzungen falsch. Der Ladewirkungsgrad ist nur ein Startwert (optional) — er wird automatisch ersetzt, sobald genug echte Heim-Ladesessions vorliegen (siehe Schritt 3). Erstzulassung ist rein informativ. Der Kilometerstand ist zusätzlich Grundlage für die automatische Fahrten-Erkennung (Fahrtenbuch, Schritt 6) sowie als Streckenbasis für den optionalen Kostenvergleich in Schritt 7.",
+        "title": "EV Assistant - Vehicle",
+        "description": "Step 1/7: vehicle basics. Manufacturer, model, and usable battery capacity are required — manufacturer and model together form the device name in the HA device list. Usable battery capacity: the value actually available for driving/charging — NOT the often larger gross/factory figure many manufacturers advertise (e.g. many models: 58 kWh gross, but only 52 kWh usable). This value directly determines how many kWh one percentage point of SoC increase represents — enter it wrong, and every energy estimate is wrong. Charge efficiency is only a starting value (optional) — it's replaced automatically once enough real home charging sessions are available (see step 3). First registration date is purely informational. The odometer is also the basis for automatic trip detection (Fahrtenbuch, step 6) and the distance basis for the optional cost comparison in step 7.",
         "data": {
-          "vehicle_hersteller": "Hersteller",
-          "vehicle_modell": "Modell",
-          "erstzulassung": "Erstzulassung (nur Anzeige, keine Berechnung)",
-          "odo_entity": "Kilometerstand-Entität (Fahrten-Erkennung in Schritt 6 + Streckenbasis für Kostenvergleich in Schritt 7)",
-          "usable_kwh": "Nutzbare Akku-Kapazität (kWh, netto — NICHT die Brutto-Werksangabe)",
-          "charge_efficiency": "Ladewirkungsgrad (AC->Batterie, nur Startwert bis zur automatischen Kalibrierung)"
+          "vehicle_hersteller": "Manufacturer",
+          "vehicle_modell": "Model",
+          "erstzulassung": "First registration (display only, no calculation)",
+          "odo_entity": "Odometer entity (trip detection in step 6 + distance basis for cost comparison in step 7)",
+          "usable_kwh": "Usable battery capacity (kWh, net — NOT the gross factory figure)",
+          "charge_efficiency": "Charge efficiency (AC->battery, starting value only until automatic calibration)"
         }
       },
       "grundsignale": {
-        "title": "EV Assistant - Grundsignale",
-        "description": "Schritt 2/7: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery. Heim-Laden-Entität als Leistungssensor (z.B. Wallbox-Ladeleistung von evcc/Warp): ab 0,1 kW gilt als \"lädt\". Wichtig: dient NUR der Ja/Nein-Erkennung \"lädt gerade zuhause\" — das ist NICHT dieselbe Ladeleistung wie in Schritt 3 (die kommt dort bewusst vom Fahrzeug statt der Wallbox, damit sie auch unterwegs bei einer Fremdladung funktioniert). Sensoren in anderer Einheit (z.B. Watt) über das Template-Feld in kW umrechnen, z.B. {{ value | float / 1000 }}.",
+        "title": "EV Assistant - Core Signals",
+        "description": "Step 2/7: the two mandatory signals. * At least one source is required per signal: HA entity (takes priority) OR MQTT topic. Stellantis example: SoC entity = sensor.mein_auto_battery. Home-charging entity as a power sensor (e.g. wallbox charging power from evcc/Warp): from 0.1 kW counts as \"charging\". Important: this ONLY provides the yes/no signal \"currently charging at home\" — it is NOT the same charging power as in step 3 (that one deliberately comes from the vehicle rather than the wallbox, so it also works away from home during an external charge). Convert sensors in a different unit (e.g. watts) to kW via the template field, e.g. {{ value | float / 1000 }}.",
         "data": {
-          "soc_entity": "SoC-Entität *",
-          "soc_topic": "SoC-Topic (MQTT) *",
-          "soc_template": "SoC-Template",
-          "home_entity": "Heim-Laden-Entität (evcc/Warp) *",
-          "home_topic": "Heim-Laden-Topic (MQTT) *",
-          "home_template": "Heim-Laden-Template"
+          "soc_entity": "SoC entity *",
+          "soc_topic": "SoC topic (MQTT) *",
+          "soc_template": "SoC template",
+          "home_entity": "Home-charging entity (evcc/Warp) *",
+          "home_topic": "Home-charging topic (MQTT) *",
+          "home_template": "Home-charging template"
         }
       },
       "ladeleistung": {
-        "title": "EV Assistant - Ladeleistung",
-        "description": "Schritt 3/7: optionale Ladeleistungs- und Wallbox-Energiemessung — zwei unterschiedliche Quellen für zwei unterschiedliche Zwecke. Die Ladeleistung ist die aktuelle Momentanleistung deines Fahrzeugs beim Laden in Watt oder kW (kein Zähler, typischerweise Fahrzeug-Telemetrie statt Wallbox-Sensor — sie liefert dadurch auch bei Fremdladungen unterwegs Werte, wo die eigene Wallbox naturgemäß nichts messen kann) — sie verbessert die Energie-Schätzung einer Fremdladung gegenüber der reinen SoC-Delta-Schätzung. Meldet dein Sensor die AC-seitige (Ladepunkt-)Leistung, lass \"Ladeleistung ist AC-seitig\" aktiviert (Standard); meldet er die DC-/Batterie-seitige Leistung, schalte es aus. Der Wallbox-Energiezähler ist dagegen genau umgekehrt gelagert: ein kumulativer kWh-Zähler deiner eigenen Wallbox (wie ein normaler Stromzähler, kein Momentanwert) — er ist nur beim Heim-Laden relevant und ermöglicht die automatische Kalibrierung des Ladewirkungsgrads aus echten Heim-Ladesessions sowie die Heimladen-Kosten in Schritt 7.",
+        "title": "EV Assistant - Charging Power",
+        "description": "Step 3/7: optional charging-power and wallbox-energy measurement — two different sources for two different purposes. Charging power is your vehicle's current instantaneous charging power in watts or kW (not a meter, typically vehicle telemetry rather than a wallbox sensor — which means it also reports values during an external charge away from home, where your own wallbox naturally can't measure anything) — it improves the energy estimate of an external charge over a pure SoC-delta estimate. If your sensor reports AC-side (charge-point) power, leave \"charging power is AC-side\" enabled (default); if it reports DC/battery-side power, disable it. The wallbox energy meter, by contrast, is the opposite: a cumulative kWh meter of your own wallbox (like a regular electricity meter, not an instantaneous value) — it's only relevant for home charging and enables automatic calibration of the charge efficiency from real home charging sessions, as well as the home-charging cost in step 7.",
         "data": {
-          "power_entity": "Fahrzeug-Ladeleistung in Watt/kW (optional)",
-          "power_topic": "Fahrzeug-Ladeleistung-Topic (MQTT, optional)",
-          "power_template": "Fahrzeug-Ladeleistung-Template",
-          "power_is_ac": "Ladeleistung ist AC-seitig (Ladepunkt) statt DC-seitig (Batterie)",
-          "wallbox_energy_entity": "Wallbox-Energiezähler (kumulativer kWh-Zähler deiner Wallbox, optional)",
-          "wallbox_energy_topic": "Wallbox-Energiezähler-Topic (MQTT, optional)",
-          "wallbox_energy_template": "Wallbox-Energiezähler-Template"
+          "power_entity": "Vehicle charging power in watts/kW (optional)",
+          "power_topic": "Vehicle charging power topic (MQTT, optional)",
+          "power_template": "Vehicle charging power template",
+          "power_is_ac": "Charging power is AC-side (charge point) rather than DC-side (battery)",
+          "wallbox_energy_entity": "Wallbox energy meter (cumulative kWh meter of your wallbox, optional)",
+          "wallbox_energy_topic": "Wallbox energy meter topic (MQTT, optional)",
+          "wallbox_energy_template": "Wallbox energy meter template"
         }
       },
       "ausgabe": {
-        "title": "EV Assistant - Ausgabe",
-        "description": "Schritt 4/7: wie du zusätzlich über eine erkannte Fremdladung informiert wirst. Eine Benachrichtigung im Home-Assistant-Bereich \"Benachrichtigungen\" erscheint IMMER automatisch, unabhängig von diesen beiden optionalen Feldern. notify-Service schickt zusätzlich eine Push-Nachricht (z.B. aufs Handy); das MQTT-Topic veröffentlicht die Rohdaten als JSON für eigene Automationen/Integrationen. Beide sind rein optional.",
+        "title": "EV Assistant - Output",
+        "description": "Step 4/7: how you're additionally notified about a detected external charge. A notification in Home Assistant's \"Notifications\" area ALWAYS appears automatically, regardless of these two optional fields. The notify service additionally sends a push notification (e.g. to your phone); the MQTT topic additionally publishes the raw data as JSON for your own automations/integrations. Both are entirely optional.",
         "data": {
-          "publish_topic": "MQTT-Topic für Events (optional, für eigene Automationen)",
-          "notify_service": "notify-Service für Push-Benachrichtigung (optional, zusätzlich zur automatischen Benachrichtigung)"
+          "publish_topic": "MQTT topic for events (optional, for your own automations)",
+          "notify_service": "notify service for push notification (optional, in addition to the automatic notification)"
         }
       },
       "erkennung": {
-        "title": "EV Assistant - Erkennung",
-        "description": "Schritt 5/7: Feinjustierung der Fremdlade-Erkennung. Die Standardwerte passen für die meisten Fälle — nur ändern, wenn du weißt was du tust. Ablauf: eine Ladung startet, sobald der SoC um die Start-Schwelle über den letzten Ruhewert steigt; sie endet entweder, wenn der SoC um mehr als \"SoC-Abfall\" unter den erreichten Höchststand fällt, oder wenn \"Timeout ohne neuen SoC-Höchstwert\" lang kein neuer Höchststand mehr erreicht wurde (z.B. weil der Akku voll ist). \"SoC-Rauschen\" toleriert normales Sensor-Zittern beim Verfolgen des Höchststands und muss deshalb IMMER kleiner sein als die Start-Schwelle — sonst kann schon normales Rauschen eine falsche Erkennung auslösen.",
+        "title": "EV Assistant - Detection",
+        "description": "Step 5/7: fine-tuning of external-charge detection. The default values work for most cases — only change them if you know what you're doing. Sequence: a charge starts once the SoC rises above the last resting value by the start threshold; it ends either when the SoC drops below the highest value reached by more than the \"SoC drop\", or when no new high has been reached for the \"timeout without a new SoC high\" duration (e.g. because the battery is full). \"SoC noise\" tolerates normal sensor jitter while tracking the high point and must therefore ALWAYS be smaller than the start threshold — otherwise ordinary noise alone can trigger a false detection.",
         "data": {
-          "start_delta": "Start-Schwelle (%, ab wie viel SoC-Anstieg eine Ladung als gestartet gilt)",
-          "noise": "SoC-Rauschen (%, Toleranz gegen Sensor-Zittern — muss kleiner sein als die Start-Schwelle!)",
-          "idle_timeout_s": "Timeout ohne neuen SoC-Höchstwert (s, beendet die Ladung auch ohne SoC-Abfall)",
-          "drop_ends": "SoC-Abfall beendet Ladung sofort (%, gegenüber dem bisherigen Höchststand)"
+          "start_delta": "Start threshold (%, how much SoC increase counts as a charge starting)",
+          "noise": "SoC noise (%, tolerance against sensor jitter — must be smaller than the start threshold!)",
+          "idle_timeout_s": "Timeout without a new SoC high (s, ends the charge even without a SoC drop)",
+          "drop_ends": "SoC drop ends charge immediately (%, relative to the highest value reached so far)"
         }
       },
       "fahrtenbuch": {
-        "title": "EV Assistant - Fahrtenbuch",
-        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung (Fahrtenbuch), die denselben Kilometerstand-Sensor aus Schritt 1 nutzt. Die Standardwerte passen für die meisten Fälle. Ablauf: eine Fahrt beginnt, sobald sich der Kilometerstand nach einer Standzeit wieder erhöht, und endet, sobald der Kilometerstand die angegebene Standzeit lang nicht mehr steigt (Auto parkt). Erkannte Fahrten unter der Mindest-Strecke werden verworfen (filtert Rundungsrauschen des Sensors). Erkannte Fahrten werden anschließend manuell mit Start-/Zielort bestätigt (Dienst ev_assistant.log_trip). Optional: eine person- oder device_tracker-Entität (z.B. dein Handy) liefert dabei einen Vorschlag für Start-/Zielort anhand ihrer HA-Zone (z.B. \"Home\") — ersetzt die manuelle Eingabe nicht, füllt sie nur vor.",
+        "title": "EV Assistant - Trip Log",
+        "description": "Step 6/7: fine-tuning of automatic trip detection (Fahrtenbuch), which uses the same odometer sensor from step 1. The default values work for most cases. Sequence: a trip begins as soon as the odometer increases again after a period of standing still, and ends once the odometer hasn't increased for the given standing-still duration (the car is parked). Detected trips shorter than the minimum distance are discarded (filters out sensor rounding noise). Detected trips are then confirmed manually with a start/end location (service ev_assistant.log_trip). Optional: a person or device_tracker entity (e.g. your phone) provides a suggestion for the start/end location based on its HA zone (e.g. \"Home\") — this doesn't replace the manual entry, it only prefills it.",
         "data": {
-          "trip_min_km": "Mindest-Strecke (km, kürzer erkannte Fahrten werden verworfen)",
-          "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s, ohne neuen Kilometerstand gilt die Fahrt als beendet)",
-          "gps_entity": "Orts-Vorschlag (optional, person- oder device_tracker-Entität, z.B. dein Handy)"
+          "trip_min_km": "Minimum distance (km, shorter detected trips are discarded)",
+          "trip_idle_timeout_s": "Standing-still duration until trip end (s, the trip is considered finished without a new odometer reading)",
+          "gps_entity": "Location suggestion (optional, person or device_tracker entity, e.g. your phone)"
         }
       },
       "vergleich": {
-        "title": "EV Assistant - Kostenvergleich",
-        "description": "Schritt 7/7: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional — ohne sie bleiben die Ersparnis-Sensoren unbekannt. Heimladen-Kosten setzen zusätzlich eine konfigurierte Wallbox-Energiemessung (Schritt 3) voraus. Heimstrompreis und Kraftstoffpreis: jeweils fester Wert ODER Entität (z.B. ein dynamischer Tarif- bzw. ein Tankstellenpreis-Sensor) — die Entität hat Vorrang, wenn beides gesetzt ist.",
+        "title": "EV Assistant - Cost Comparison",
+        "description": "Step 7/7: optional cost comparison against a combustion-engine car. All fields optional — without them the savings sensors stay unknown. Home-charging costs additionally require a configured wallbox energy measurement (step 3). Home electricity price and fuel price: each either a fixed value OR an entity (e.g. a dynamic tariff sensor or a fuel-price sensor) — the entity takes priority if both are set.",
         "data": {
-          "home_price_kwh": "Preis pro kWh (Heimladen)",
-          "home_price_entity": "Heimstrompreis-Entität (überschreibt den festen Preis, falls gesetzt)",
-          "verbrenner_l_100km": "Verbrauch Vergleichsfahrzeug (L/100km)",
-          "verbrenner_price_per_liter": "Kraftstoffpreis (EUR/Liter)",
-          "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis, falls gesetzt)"
+          "home_price_kwh": "Price per kWh (home charging)",
+          "home_price_entity": "Home electricity price entity (overrides the fixed price if set)",
+          "verbrenner_l_100km": "Consumption of comparison vehicle (L/100km)",
+          "verbrenner_price_per_liter": "Fuel price (EUR/liter)",
+          "verbrenner_price_entity": "Fuel price entity (overrides the fixed price if set)"
         }
       }
     },
     "error": {
-      "no_soc_source": "Bitte eine SoC-Quelle angeben: entweder eine Entität ODER ein MQTT-Topic.",
-      "no_home_source": "Bitte eine Heim-Laden-Quelle angeben: entweder eine Entität ODER ein MQTT-Topic. Ohne dieses Signal wird jede SoC-Zunahme fälschlich als Fremdladen erkannt, auch normales Laden zuhause.",
-      "vehicle_name_required": "Bitte Hersteller und Modell angeben."
+      "no_soc_source": "Please provide a SoC source: either an entity OR an MQTT topic.",
+      "no_home_source": "Please provide a home-charging source: either an entity OR an MQTT topic. Without this signal, every SoC increase is falsely detected as an external charge, including normal charging at home.",
+      "vehicle_name_required": "Please provide manufacturer and model."
     }
   },
   "options": {
     "step": {
       "fahrzeug": {
-        "title": "EV Assistant - Fahrzeug",
-        "description": "Schritt 1/7: Fahrzeug-Eckdaten. Hersteller, Modell und nutzbare Akku-Kapazität sind Pflicht. Nutzbare Akku-Kapazität: der Wert, der tatsächlich zum Fahren/Laden zur Verfügung steht — NICHT die oft größere Brutto-/Werksangabe des Herstellers.",
+        "title": "EV Assistant - Vehicle",
+        "description": "Step 1/7: vehicle basics. Manufacturer, model, and usable battery capacity are required. Usable battery capacity: the value actually available for driving/charging — NOT the often larger gross/factory figure many manufacturers advertise.",
         "data": {
-          "vehicle_hersteller": "Hersteller",
-          "vehicle_modell": "Modell",
-          "erstzulassung": "Erstzulassung (nur Anzeige, keine Berechnung)",
-          "odo_entity": "Kilometerstand-Entität (Fahrten-Erkennung in Schritt 6 + Streckenbasis für Kostenvergleich in Schritt 7)",
-          "usable_kwh": "Nutzbare Akku-Kapazität (kWh, netto — NICHT die Brutto-Werksangabe)",
-          "charge_efficiency": "Ladewirkungsgrad (AC->Batterie, nur Startwert bis zur automatischen Kalibrierung)"
+          "vehicle_hersteller": "Manufacturer",
+          "vehicle_modell": "Model",
+          "erstzulassung": "First registration (display only, no calculation)",
+          "odo_entity": "Odometer entity (trip detection in step 6 + distance basis for cost comparison in step 7)",
+          "usable_kwh": "Usable battery capacity (kWh, net — NOT the gross factory figure)",
+          "charge_efficiency": "Charge efficiency (AC->battery, starting value only until automatic calibration)"
         }
       },
       "grundsignale": {
-        "title": "EV Assistant - Grundsignale",
-        "description": "Schritt 2/7: die zwei zwingend notwendigen Signale. * Pro Signal ist mindestens eine Quelle Pflicht: HA-Entität (Vorrang) ODER MQTT-Topic. Beispiel Stellantis: SoC-Entität = sensor.mein_auto_battery. Heim-Laden-Entität als Leistungssensor (z.B. Wallbox-Ladeleistung von evcc/Warp): ab 0,1 kW gilt als \"lädt\". Wichtig: dient NUR der Ja/Nein-Erkennung \"lädt gerade zuhause\" — das ist NICHT dieselbe Ladeleistung wie in Schritt 3 (die kommt dort bewusst vom Fahrzeug statt der Wallbox, damit sie auch unterwegs bei einer Fremdladung funktioniert). Sensoren in anderer Einheit (z.B. Watt) über das Template-Feld in kW umrechnen, z.B. {{ value | float / 1000 }}.",
+        "title": "EV Assistant - Core Signals",
+        "description": "Step 2/7: the two mandatory signals. * At least one source is required per signal: HA entity (takes priority) OR MQTT topic. Stellantis example: SoC entity = sensor.mein_auto_battery. Home-charging entity as a power sensor (e.g. wallbox charging power from evcc/Warp): from 0.1 kW counts as \"charging\". Important: this ONLY provides the yes/no signal \"currently charging at home\" — it is NOT the same charging power as in step 3 (that one deliberately comes from the vehicle rather than the wallbox, so it also works away from home during an external charge). Convert sensors in a different unit (e.g. watts) to kW via the template field, e.g. {{ value | float / 1000 }}.",
         "data": {
-          "soc_entity": "SoC-Entität *",
-          "soc_topic": "SoC-Topic (MQTT) *",
-          "soc_template": "SoC-Template",
-          "home_entity": "Heim-Laden-Entität (evcc/Warp) *",
-          "home_topic": "Heim-Laden-Topic (MQTT) *",
-          "home_template": "Heim-Laden-Template"
+          "soc_entity": "SoC entity *",
+          "soc_topic": "SoC topic (MQTT) *",
+          "soc_template": "SoC template",
+          "home_entity": "Home-charging entity (evcc/Warp) *",
+          "home_topic": "Home-charging topic (MQTT) *",
+          "home_template": "Home-charging template"
         }
       },
       "ladeleistung": {
-        "title": "EV Assistant - Ladeleistung",
-        "description": "Schritt 3/7: optionale Ladeleistungs- und Wallbox-Energiemessung.",
+        "title": "EV Assistant - Charging Power",
+        "description": "Step 3/7: optional charging-power and wallbox-energy measurement.",
         "data": {
-          "power_entity": "Fahrzeug-Ladeleistung in Watt/kW (optional)",
-          "power_topic": "Fahrzeug-Ladeleistung-Topic (MQTT, optional)",
-          "power_template": "Fahrzeug-Ladeleistung-Template",
-          "power_is_ac": "Ladeleistung ist AC-seitig (Ladepunkt) statt DC-seitig (Batterie)",
-          "wallbox_energy_entity": "Wallbox-Energiezähler (kumulativer kWh-Zähler deiner Wallbox, optional)",
-          "wallbox_energy_topic": "Wallbox-Energiezähler-Topic (MQTT, optional)",
-          "wallbox_energy_template": "Wallbox-Energiezähler-Template"
+          "power_entity": "Vehicle charging power in watts/kW (optional)",
+          "power_topic": "Vehicle charging power topic (MQTT, optional)",
+          "power_template": "Vehicle charging power template",
+          "power_is_ac": "Charging power is AC-side (charge point) rather than DC-side (battery)",
+          "wallbox_energy_entity": "Wallbox energy meter (cumulative kWh meter of your wallbox, optional)",
+          "wallbox_energy_topic": "Wallbox energy meter topic (MQTT, optional)",
+          "wallbox_energy_template": "Wallbox energy meter template"
         }
       },
       "ausgabe": {
-        "title": "EV Assistant - Ausgabe",
-        "description": "Schritt 4/7: wie du zusätzlich über eine erkannte Fremdladung informiert wirst. Eine Benachrichtigung im Home-Assistant-Bereich \"Benachrichtigungen\" erscheint IMMER automatisch, unabhängig von diesen beiden optionalen Feldern. notify-Service schickt zusätzlich eine Push-Nachricht (z.B. aufs Handy); das MQTT-Topic veröffentlicht die Rohdaten als JSON für eigene Automationen/Integrationen. Beide sind rein optional.",
+        "title": "EV Assistant - Output",
+        "description": "Step 4/7: how you're additionally notified about a detected external charge. A notification in Home Assistant's \"Notifications\" area ALWAYS appears automatically, regardless of these two optional fields. The notify service additionally sends a push notification (e.g. to your phone); the MQTT topic additionally publishes the raw data as JSON for your own automations/integrations. Both are entirely optional.",
         "data": {
-          "publish_topic": "MQTT-Topic für Events (optional, für eigene Automationen)",
-          "notify_service": "notify-Service für Push-Benachrichtigung (optional, zusätzlich zur automatischen Benachrichtigung)"
+          "publish_topic": "MQTT topic for events (optional, for your own automations)",
+          "notify_service": "notify service for push notification (optional, in addition to the automatic notification)"
         }
       },
       "erkennung": {
-        "title": "EV Assistant - Erkennung",
-        "description": "Schritt 5/7: Feinjustierung der Fremdlade-Erkennung. Ablauf: eine Ladung startet, sobald der SoC um die Start-Schwelle über den letzten Ruhewert steigt; sie endet bei einem SoC-Abfall unter den Höchststand oder nach dem Timeout ohne neuen Höchstwert. SoC-Rauschen muss IMMER kleiner sein als die Start-Schwelle, sonst löst schon normales Sensor-Zittern eine falsche Erkennung aus.",
+        "title": "EV Assistant - Detection",
+        "description": "Step 5/7: fine-tuning of external-charge detection. Sequence: a charge starts once the SoC rises above the last resting value by the start threshold; it ends either on a SoC drop below the high point or after the timeout without a new high. SoC noise must ALWAYS be smaller than the start threshold, otherwise ordinary sensor jitter alone triggers a false detection.",
         "data": {
-          "start_delta": "Start-Schwelle (%, ab wie viel SoC-Anstieg eine Ladung als gestartet gilt)",
-          "noise": "SoC-Rauschen (%, Toleranz gegen Sensor-Zittern — muss kleiner sein als die Start-Schwelle!)",
-          "idle_timeout_s": "Timeout ohne neuen SoC-Höchstwert (s, beendet die Ladung auch ohne SoC-Abfall)",
-          "drop_ends": "SoC-Abfall beendet Ladung sofort (%, gegenüber dem bisherigen Höchststand)"
+          "start_delta": "Start threshold (%, how much SoC increase counts as a charge starting)",
+          "noise": "SoC noise (%, tolerance against sensor jitter — must be smaller than the start threshold!)",
+          "idle_timeout_s": "Timeout without a new SoC high (s, ends the charge even without a SoC drop)",
+          "drop_ends": "SoC drop ends charge immediately (%, relative to the highest value reached so far)"
         }
       },
       "fahrtenbuch": {
-        "title": "EV Assistant - Fahrtenbuch",
-        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung (Fahrtenbuch). Eine Fahrt beginnt, sobald sich der Kilometerstand nach einer Standzeit wieder erhöht, und endet nach der angegebenen Standzeit ohne weiteren Anstieg. Erkannte Fahrten unter der Mindest-Strecke werden verworfen. Optional: eine person-/device_tracker-Entität liefert einen Vorschlag für Start-/Zielort anhand ihrer HA-Zone.",
+        "title": "EV Assistant - Trip Log",
+        "description": "Step 6/7: fine-tuning of automatic trip detection (Fahrtenbuch). A trip begins as soon as the odometer increases again after a period of standing still, and ends after the given standing-still duration without further increase. Detected trips shorter than the minimum distance are discarded. Optional: a person/device_tracker entity provides a suggestion for the start/end location based on its HA zone.",
         "data": {
-          "trip_min_km": "Mindest-Strecke (km, kürzer erkannte Fahrten werden verworfen)",
-          "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s, ohne neuen Kilometerstand gilt die Fahrt als beendet)",
-          "gps_entity": "Orts-Vorschlag (optional, person- oder device_tracker-Entität, z.B. dein Handy)"
+          "trip_min_km": "Minimum distance (km, shorter detected trips are discarded)",
+          "trip_idle_timeout_s": "Standing-still duration until trip end (s, the trip is considered finished without a new odometer reading)",
+          "gps_entity": "Location suggestion (optional, person or device_tracker entity, e.g. your phone)"
         }
       },
       "vergleich": {
-        "title": "EV Assistant - Kostenvergleich",
-        "description": "Schritt 7/7: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional — ohne sie bleiben die Ersparnis-Sensoren unbekannt. Heimladen-Kosten setzen zusätzlich eine konfigurierte Wallbox-Energiemessung (Schritt 3) voraus. Heimstrompreis und Kraftstoffpreis: jeweils fester Wert ODER Entität (z.B. ein dynamischer Tarif- bzw. ein Tankstellenpreis-Sensor) — die Entität hat Vorrang, wenn beides gesetzt ist.",
+        "title": "EV Assistant - Cost Comparison",
+        "description": "Step 7/7: optional cost comparison against a combustion-engine car. All fields optional — without them the savings sensors stay unknown. Home-charging costs additionally require a configured wallbox energy measurement (step 3). Home electricity price and fuel price: each either a fixed value OR an entity (e.g. a dynamic tariff sensor or a fuel-price sensor) — the entity takes priority if both are set.",
         "data": {
-          "home_price_kwh": "Preis pro kWh (Heimladen)",
-          "home_price_entity": "Heimstrompreis-Entität (überschreibt den festen Preis, falls gesetzt)",
-          "verbrenner_l_100km": "Verbrauch Vergleichsfahrzeug (L/100km)",
-          "verbrenner_price_per_liter": "Kraftstoffpreis (EUR/Liter)",
-          "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis, falls gesetzt)"
+          "home_price_kwh": "Price per kWh (home charging)",
+          "home_price_entity": "Home electricity price entity (overrides the fixed price if set)",
+          "verbrenner_l_100km": "Consumption of comparison vehicle (L/100km)",
+          "verbrenner_price_per_liter": "Fuel price (EUR/liter)",
+          "verbrenner_price_entity": "Fuel price entity (overrides the fixed price if set)"
         }
       }
     },
     "error": {
-      "no_soc_source": "Bitte eine SoC-Quelle angeben: entweder eine Entität ODER ein MQTT-Topic.",
-      "no_home_source": "Bitte eine Heim-Laden-Quelle angeben: entweder eine Entität ODER ein MQTT-Topic. Ohne dieses Signal wird jede SoC-Zunahme fälschlich als Fremdladen erkannt, auch normales Laden zuhause.",
-      "vehicle_name_required": "Bitte Hersteller und Modell angeben."
+      "no_soc_source": "Please provide a SoC source: either an entity OR an MQTT topic.",
+      "no_home_source": "Please provide a home-charging source: either an entity OR an MQTT topic. Without this signal, every SoC increase is falsely detected as an external charge, including normal charging at home.",
+      "vehicle_name_required": "Please provide manufacturer and model."
     }
   },
   "entity": {
     "sensor": {
       "pending_estimate": {
-        "name": "Fremdladung Schätzung"
+        "name": "External Charge Estimate"
       },
       "last_cost": {
-        "name": "Fremdladung Kosten (letzte)"
+        "name": "External Charge Cost (Last)"
       },
       "last_kwh": {
-        "name": "Fremdladung kWh (letzte)"
+        "name": "External Charge kWh (Last)"
       },
       "total_kwh": {
-        "name": "Fremdladung kWh (gesamt)"
+        "name": "External Charge kWh (Total)"
       },
       "total_cost": {
-        "name": "Fremdladung Kosten (gesamt)"
+        "name": "External Charge Cost (Total)"
       },
       "count": {
-        "name": "Fremdladung Anzahl"
+        "name": "External Charge Count"
       },
       "last_price": {
-        "name": "Fremdladung Preis (letzter)"
+        "name": "External Charge Price (Last)"
       },
       "last_duration": {
-        "name": "Fremdladung Ladezeit (letzte)"
+        "name": "External Charge Duration (Last)"
       },
       "measured_efficiency": {
-        "name": "Ladewirkungsgrad (gemessen)"
+        "name": "Charge Efficiency (Measured)"
       },
       "odo": {
-        "name": "Kilometerstand"
+        "name": "Odometer"
       },
       "erstzulassung": {
-        "name": "Erstzulassung"
+        "name": "First Registration"
       },
       "home_kwh": {
-        "name": "Heimladen kWh (gesamt)"
+        "name": "Home Charging kWh (Total)"
       },
       "home_cost": {
-        "name": "Heimladen Kosten (gesamt)"
+        "name": "Home Charging Cost (Total)"
       },
       "savings": {
-        "name": "Ersparnis ggü. Verbrenner"
+        "name": "Savings vs. Combustion Car"
       },
       "trip_pending_estimate": {
-        "name": "Fahrt Schätzung"
+        "name": "Trip Estimate"
       },
       "last_trip_km": {
-        "name": "Fahrt km (letzte)"
+        "name": "Trip km (Last)"
       },
       "trip_count": {
-        "name": "Fahrtenbuch Anzahl"
+        "name": "Trip Log Count"
       },
       "total_trip_km": {
-        "name": "Fahrtenbuch km (gesamt)"
+        "name": "Trip Log km (Total)"
       }
     },
     "binary_sensor": {
       "pending": {
-        "name": "Fremdladung Erfassung offen"
+        "name": "External Charge Detection Open"
       },
       "trip_pending": {
-        "name": "Fahrt Erfassung offen"
+        "name": "Trip Detection Open"
       }
     }
   }
