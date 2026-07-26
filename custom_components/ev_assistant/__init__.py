@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
@@ -15,6 +16,79 @@ from .const import (
 from .coordinator import EvAssistantCoordinator
 
 _LOGGER = logging.getLogger(__name__)
+
+_PANEL_URL_PATH = "ev-assistant"
+_PANEL_STATIC_PATH = "/ev_assistant_static"
+_PANEL_TITLE = "EV Assistant"
+_PANEL_ICON = "mdi:car-electric"
+_STATIC_REGISTERED = "_ev_panel_static"
+_PANEL_REGISTERED = "_ev_panel"
+
+
+async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Sidebar-Panel registrieren. Fehler blockieren nie den Setup."""
+    try:
+        from homeassistant.components import frontend, panel_custom
+        from homeassistant.components.http import StaticPathConfig
+        from homeassistant.helpers import entity_registry as er
+
+        domain_data = hass.data.setdefault(DOMAIN, {})
+        frontend_dir = Path(__file__).parent / "frontend"
+
+        if not domain_data.get(_STATIC_REGISTERED):
+            await hass.http.async_register_static_paths(
+                [StaticPathConfig(_PANEL_STATIC_PATH, str(frontend_dir), cache_headers=False)]
+            )
+            domain_data[_STATIC_REGISTERED] = True
+
+        js_file = frontend_dir / "ev-assistant-panel.js"
+        try:
+            cache_bust = str(int(js_file.stat().st_mtime))
+        except Exception:
+            cache_bust = "1"
+
+        # Entity-IDs aus der Registry holen: unique_id = "{entry_id}_{key}"
+        ent_reg = er.async_get(hass)
+        entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
+        entity_map = {}
+        prefix = entry.entry_id + "_"
+        for e in entries:
+            if e.unique_id.startswith(prefix):
+                entity_map[e.unique_id[len(prefix):]] = e.entity_id
+
+        panel_config = {"title": entry.title, "entities": entity_map}
+
+        try:
+            frontend.async_remove_panel(hass, _PANEL_URL_PATH, warn_if_unknown=False)
+        except Exception:
+            pass
+
+        await panel_custom.async_register_panel(
+            hass,
+            frontend_url_path=_PANEL_URL_PATH,
+            webcomponent_name="ev-assistant-panel",
+            module_url=f"{_PANEL_STATIC_PATH}/ev-assistant-panel.js?v={cache_bust}",
+            sidebar_title=_PANEL_TITLE,
+            sidebar_icon=_PANEL_ICON,
+            require_admin=False,
+            config=panel_config,
+        )
+        domain_data[_PANEL_REGISTERED] = True
+        _LOGGER.info("EV Assistant Panel registriert (v=%s, %d entities)", cache_bust, len(entity_map))
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.warning("EV Assistant Panel konnte nicht registriert werden: %s", exc)
+
+
+def _async_unregister_panel(hass: HomeAssistant) -> None:
+    """Panel beim Entladen des letzten Entries entfernen."""
+    if not hass.data.get(DOMAIN, {}).get(_PANEL_REGISTERED):
+        return
+    try:
+        from homeassistant.components import frontend
+        frontend.async_remove_panel(hass, _PANEL_URL_PATH, warn_if_unknown=False)
+        hass.data[DOMAIN].pop(_PANEL_REGISTERED, None)
+    except Exception as exc:  # noqa: BLE001
+        _LOGGER.debug("Fehler beim Entfernen des Panels: %s", exc)
 
 LOG_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
@@ -88,6 +162,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     _register_services(hass)
+    await _async_register_panel(hass, entry)
     return True
 
 
@@ -190,6 +265,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator = hass.data[DOMAIN].pop(entry.entry_id)
         await coordinator.async_shutdown()
         if not hass.data[DOMAIN]:
+            _async_unregister_panel(hass)
             for service in (
                 SERVICE_LOG, SERVICE_DISCARD, SERVICE_SIMULATE, SERVICE_EDIT, SERVICE_DELETE,
                 SERVICE_LOG_TRIP, SERVICE_DISCARD_TRIP, SERVICE_EXPORT_TRIPS, SERVICE_SIMULATE_TRIP,

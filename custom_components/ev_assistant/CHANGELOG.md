@@ -2,6 +2,24 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.16.0] - 2026-07-26
+
+### Added
+
+- **Sidebar panel**: EV Assistant now registers a custom sidebar panel automatically when the
+  integration is set up — no manual dashboard setup required. The panel uses the same
+  registration approach as omnibattery (`panel_custom.async_register_panel`).
+  - **Übersicht tab**: Wallbox system status (WARP 3 Pro via evcc) — connection state,
+    charge mode badge, phase badge, SOC bar with limit marker, live KPIs (charge power,
+    session kWh, solar %, session price, duration), current tariff (grid / feed-in), and
+    all-time wallbox statistics.
+  - **Fahrzeuge tab**: Per-vehicle detail — external charging (totals + last session),
+    home charging totals, trip log (last trip, count, total km), vehicle info
+    (odometer, charging efficiency, savings vs. combustion), and a running-session
+    estimate card shown only when a charge or trip is actively being recorded.
+- **Panel cache-busting**: module URL includes the JS file's mtime so browser always
+  picks up updates after an integration reload without a version bump.
+
 ## [0.15.3] - 2026-07-24
 
 ### Fixed
