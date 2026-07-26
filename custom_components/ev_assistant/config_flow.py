@@ -22,6 +22,11 @@ from .const import (
     CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY, CONF_VERBRENNER_PRICE_PER_LITER,
     CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE, CONF_WALLBOX_ENERGY_TOPIC,
+    CONF_EVCC_CHARGE_POWER, CONF_EVCC_CHARGE_STATUS, CONF_EVCC_MODE,
+    CONF_EVCC_PHASES_ACTIVE, CONF_EVCC_VEHICLE_SOC, CONF_EVCC_LIMIT_SOC,
+    CONF_EVCC_SESSION_ENERGY, CONF_EVCC_SESSION_SOLAR_PCT, CONF_EVCC_SESSION_PRICE,
+    CONF_EVCC_CHARGE_DURATION, CONF_EVCC_TARIFF_GRID, CONF_EVCC_TARIFF_FEEDIN,
+    CONF_EVCC_STAT_TOTAL_KWH, CONF_EVCC_STAT_SOLAR_PCT, CONF_EVCC_STAT_AVG_PRICE,
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY, DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE,
     DEFAULT_POWER_IS_AC, DEFAULT_PUBLISH_TOPIC, DEFAULT_START_DELTA,
@@ -62,6 +67,23 @@ _HOME_PRICE_ENTITY = selector.EntitySelector(
 # Fahrers, spaeter ggf. ein WiCAN-eigener GPS-device_tracker).
 _GPS_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain=["person", "device_tracker"])
+)
+
+
+_EVCC_POWER_SENSOR = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="sensor", device_class="power")
+)
+_EVCC_ENERGY_SENSOR = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="sensor", device_class="energy")
+)
+_EVCC_SOC_SENSOR = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="sensor", device_class="battery")
+)
+_EVCC_ANY_SENSOR = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="sensor")
+)
+_EVCC_SELECT = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="select")
 )
 
 
@@ -198,6 +220,35 @@ def build_comparison_schema(cur: dict) -> vol.Schema:
     })
 
 
+def build_wallbox_schema(cur: dict) -> vol.Schema:
+    """Schritt 8/8: Wallbox-/evcc-Entitäten für das Dashboard-Panel (Übersicht-Tab).
+
+    Alle Felder optional — ohne sie zeigt das Panel — statt Werte. Der Schritt
+    wird zuletzt abgefragt (nach dem Kostenvergleich), da er kein
+    Pflichtfeld enthält und rein das Panel-Dashboard betrifft.
+    """
+    def sv(key):
+        return {"suggested_value": cur.get(key)}
+
+    return vol.Schema({
+        vol.Optional(CONF_EVCC_CHARGE_POWER,      description=sv(CONF_EVCC_CHARGE_POWER)):      _EVCC_POWER_SENSOR,
+        vol.Optional(CONF_EVCC_CHARGE_STATUS,     description=sv(CONF_EVCC_CHARGE_STATUS)):     _EVCC_ANY_SENSOR,
+        vol.Optional(CONF_EVCC_MODE,              description=sv(CONF_EVCC_MODE)):              _EVCC_SELECT,
+        vol.Optional(CONF_EVCC_PHASES_ACTIVE,     description=sv(CONF_EVCC_PHASES_ACTIVE)):     _EVCC_ANY_SENSOR,
+        vol.Optional(CONF_EVCC_VEHICLE_SOC,       description=sv(CONF_EVCC_VEHICLE_SOC)):       _EVCC_SOC_SENSOR,
+        vol.Optional(CONF_EVCC_LIMIT_SOC,         description=sv(CONF_EVCC_LIMIT_SOC)):         _EVCC_ANY_SENSOR,
+        vol.Optional(CONF_EVCC_SESSION_ENERGY,    description=sv(CONF_EVCC_SESSION_ENERGY)):    _EVCC_ENERGY_SENSOR,
+        vol.Optional(CONF_EVCC_SESSION_SOLAR_PCT, description=sv(CONF_EVCC_SESSION_SOLAR_PCT)): _EVCC_ANY_SENSOR,
+        vol.Optional(CONF_EVCC_SESSION_PRICE,     description=sv(CONF_EVCC_SESSION_PRICE)):     _EVCC_ANY_SENSOR,
+        vol.Optional(CONF_EVCC_CHARGE_DURATION,   description=sv(CONF_EVCC_CHARGE_DURATION)):   _EVCC_ANY_SENSOR,
+        vol.Optional(CONF_EVCC_TARIFF_GRID,       description=sv(CONF_EVCC_TARIFF_GRID)):       _EVCC_ANY_SENSOR,
+        vol.Optional(CONF_EVCC_TARIFF_FEEDIN,     description=sv(CONF_EVCC_TARIFF_FEEDIN)):     _EVCC_ANY_SENSOR,
+        vol.Optional(CONF_EVCC_STAT_TOTAL_KWH,    description=sv(CONF_EVCC_STAT_TOTAL_KWH)):    _EVCC_ENERGY_SENSOR,
+        vol.Optional(CONF_EVCC_STAT_SOLAR_PCT,    description=sv(CONF_EVCC_STAT_SOLAR_PCT)):    _EVCC_ANY_SENSOR,
+        vol.Optional(CONF_EVCC_STAT_AVG_PRICE,    description=sv(CONF_EVCC_STAT_AVG_PRICE)):    _EVCC_ANY_SENSOR,
+    })
+
+
 def _has_soc(data: dict) -> bool:
     return bool(data.get(CONF_SOC_ENTITY) or data.get(CONF_SOC_TOPIC))
 
@@ -310,6 +361,15 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_vergleich(self, user_input=None) -> FlowResult:
         if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            return await self.async_step_wallbox()
+
+        return self.async_show_form(
+            step_id="vergleich", data_schema=build_comparison_schema(user_input or {})
+        )
+
+    async def async_step_wallbox(self, user_input=None) -> FlowResult:
+        if user_input is not None:
             data = {**self._data, **_clean(user_input)}
             hersteller = data.get(CONF_VEHICLE_HERSTELLER)
             modell = data.get(CONF_VEHICLE_MODELL)
@@ -318,7 +378,7 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_create_entry(title=title, data=data)
 
         return self.async_show_form(
-            step_id="vergleich", data_schema=build_comparison_schema(user_input or {})
+            step_id="wallbox", data_schema=build_wallbox_schema(user_input or {})
         )
 
     @staticmethod
@@ -424,9 +484,18 @@ class EvAssistantOptionsFlow(OptionsFlow):
 
     async def async_step_vergleich(self, user_input=None) -> FlowResult:
         if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            return await self.async_step_wallbox()
+
+        return self.async_show_form(
+            step_id="vergleich", data_schema=build_comparison_schema(self._current())
+        )
+
+    async def async_step_wallbox(self, user_input=None) -> FlowResult:
+        if user_input is not None:
             data = {**self._data, **_clean(user_input)}
             return self.async_create_entry(title="", data=data)
 
         return self.async_show_form(
-            step_id="vergleich", data_schema=build_comparison_schema(self._current())
+            step_id="wallbox", data_schema=build_wallbox_schema(self._current())
         )

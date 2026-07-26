@@ -2,6 +2,14 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.17.1] - 2026-07-26
+
+### Added
+
+- **Config Flow: neuer Schritt 8/8 „Wallbox / evcc"** — alle evcc-Entitäten für das Dashboard-Panel sind jetzt konfigurierbar statt hardcoded. Im Options Flow jederzeit änderbar: Ladeleistung, Ladestatus, Lademodus (select), Aktive Phasen, Fahrzeug-SoC, Ladelimit, Session (Energie/Solar/Preis/Dauer), Tarife (Netz/Einspeisung), Gesamtstatistik (kWh/Solar/Ø-Preis).
+- **Panel: keine hardcodierten Entity-IDs mehr** — `_updateOverview()` liest alle evcc-Entitäten jetzt via `this._eid(key)` aus der Panel-Config. Funktioniert damit mit beliebigen evcc-Setups.
+- Strings + Übersetzungen (DE/EN) für den neuen Schritt ergänzt; Schrittzähler auf X/8 aktualisiert.
+
 ## [0.17.0] - 2026-07-26
 
 ### Changed

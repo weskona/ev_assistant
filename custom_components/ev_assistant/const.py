@@ -53,6 +53,31 @@ CONF_VERBRENNER_L_100KM = "verbrenner_l_100km"
 CONF_VERBRENNER_PRICE_PER_LITER = "verbrenner_price_per_liter"
 CONF_VERBRENNER_PRICE_ENTITY = "verbrenner_price_entity"
 
+# Evcc/Wallbox-Entitäten für das Dashboard-Panel (Übersicht-Tab)
+CONF_EVCC_CHARGE_POWER      = "evcc_charge_power"
+CONF_EVCC_CHARGE_STATUS     = "evcc_charge_status"
+CONF_EVCC_MODE              = "evcc_mode"
+CONF_EVCC_PHASES_ACTIVE     = "evcc_phases_active"
+CONF_EVCC_VEHICLE_SOC       = "evcc_vehicle_soc"
+CONF_EVCC_LIMIT_SOC         = "evcc_limit_soc"
+CONF_EVCC_SESSION_ENERGY    = "evcc_session_energy"
+CONF_EVCC_SESSION_SOLAR_PCT = "evcc_session_solar_pct"
+CONF_EVCC_SESSION_PRICE     = "evcc_session_price"
+CONF_EVCC_CHARGE_DURATION   = "evcc_charge_duration"
+CONF_EVCC_TARIFF_GRID       = "evcc_tariff_grid"
+CONF_EVCC_TARIFF_FEEDIN     = "evcc_tariff_feedin"
+CONF_EVCC_STAT_TOTAL_KWH    = "evcc_stat_total_kwh"
+CONF_EVCC_STAT_SOLAR_PCT    = "evcc_stat_solar_pct"
+CONF_EVCC_STAT_AVG_PRICE    = "evcc_stat_avg_price"
+
+EVCC_CONF_KEYS = [
+    CONF_EVCC_CHARGE_POWER, CONF_EVCC_CHARGE_STATUS, CONF_EVCC_MODE,
+    CONF_EVCC_PHASES_ACTIVE, CONF_EVCC_VEHICLE_SOC, CONF_EVCC_LIMIT_SOC,
+    CONF_EVCC_SESSION_ENERGY, CONF_EVCC_SESSION_SOLAR_PCT, CONF_EVCC_SESSION_PRICE,
+    CONF_EVCC_CHARGE_DURATION, CONF_EVCC_TARIFF_GRID, CONF_EVCC_TARIFF_FEEDIN,
+    CONF_EVCC_STAT_TOTAL_KWH, CONF_EVCC_STAT_SOLAR_PCT, CONF_EVCC_STAT_AVG_PRICE,
+]
+
 DEFAULT_TEMPLATE = "{{ value }}"
 DEFAULT_PUBLISH_TOPIC = "ev_assistant/ladung/extern"
 DEFAULT_USABLE_KWH = 45.0

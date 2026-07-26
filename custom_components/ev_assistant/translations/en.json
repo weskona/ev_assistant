@@ -151,13 +151,34 @@
       },
       "vergleich": {
         "title": "EV Assistant - Cost Comparison",
-        "description": "Step 7/7: optional cost comparison against a combustion-engine car. All fields optional — without them the savings sensors stay unknown. Home-charging costs additionally require a configured wallbox energy measurement (step 3). Home electricity price and fuel price: each either a fixed value OR an entity (e.g. a dynamic tariff sensor or a fuel-price sensor) — the entity takes priority if both are set.",
+        "description": "Step 7/8: optional cost comparison against a combustion-engine car. All fields optional — without them the savings sensors stay unknown. Home-charging costs additionally require a configured wallbox energy measurement (step 3). Home electricity price and fuel price: each either a fixed value OR an entity (e.g. a dynamic tariff sensor or a fuel-price sensor) — the entity takes priority if both are set.",
         "data": {
           "home_price_kwh": "Price per kWh (home charging)",
           "home_price_entity": "Home electricity price entity (overrides the fixed price if set)",
           "verbrenner_l_100km": "Consumption of comparison vehicle (L/100km)",
           "verbrenner_price_per_liter": "Fuel price (EUR/liter)",
           "verbrenner_price_entity": "Fuel price entity (overrides the fixed price if set)"
+        }
+      },
+      "wallbox": {
+        "title": "EV Assistant - Wallbox / evcc",
+        "description": "Step 8/8: entities for the dashboard panel (Overview tab). All fields optional — without them the panel shows \"—\" instead of values.",
+        "data": {
+          "evcc_charge_power": "Charge power (kW, wallbox)",
+          "evcc_charge_status": "Charge status (A=disconnected / B=connected / C=charging)",
+          "evcc_mode": "Charge mode (select: Immediate / Min+PV / PV only / Off)",
+          "evcc_phases_active": "Active phases (count)",
+          "evcc_vehicle_soc": "Vehicle SoC (%, wallbox reading)",
+          "evcc_limit_soc": "Charge limit SoC (%)",
+          "evcc_session_energy": "Session energy (kWh)",
+          "evcc_session_solar_pct": "Session solar share (%)",
+          "evcc_session_price": "Session cost (EUR)",
+          "evcc_charge_duration": "Charge duration (s)",
+          "evcc_tariff_grid": "Current grid tariff (EUR/kWh)",
+          "evcc_tariff_feedin": "Current feed-in tariff (EUR/kWh)",
+          "evcc_stat_total_kwh": "Total energy charged (kWh)",
+          "evcc_stat_solar_pct": "Total solar share (%)",
+          "evcc_stat_avg_price": "Average price (EUR/kWh)"
         }
       }
     },

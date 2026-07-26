@@ -151,13 +151,34 @@
       },
       "vergleich": {
         "title": "EV Assistant - Kostenvergleich",
-        "description": "Schritt 7/7: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional — ohne sie bleiben die Ersparnis-Sensoren unbekannt. Heimladen-Kosten setzen zusätzlich eine konfigurierte Wallbox-Energiemessung (Schritt 3) voraus. Heimstrompreis und Kraftstoffpreis: jeweils fester Wert ODER Entität (z.B. ein dynamischer Tarif- bzw. ein Tankstellenpreis-Sensor) — die Entität hat Vorrang, wenn beides gesetzt ist.",
+        "description": "Schritt 7/8: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional — ohne sie bleiben die Ersparnis-Sensoren unbekannt. Heimladen-Kosten setzen zusätzlich eine konfigurierte Wallbox-Energiemessung (Schritt 3) voraus. Heimstrompreis und Kraftstoffpreis: jeweils fester Wert ODER Entität (z.B. ein dynamischer Tarif- bzw. ein Tankstellenpreis-Sensor) — die Entität hat Vorrang, wenn beides gesetzt ist.",
         "data": {
           "home_price_kwh": "Preis pro kWh (Heimladen)",
           "home_price_entity": "Heimstrompreis-Entität (überschreibt den festen Preis, falls gesetzt)",
           "verbrenner_l_100km": "Verbrauch Vergleichsfahrzeug (L/100km)",
           "verbrenner_price_per_liter": "Kraftstoffpreis (EUR/Liter)",
           "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis, falls gesetzt)"
+        }
+      },
+      "wallbox": {
+        "title": "EV Assistant - Wallbox / evcc",
+        "description": "Schritt 8/8: Entitäten für das Dashboard-Panel (Übersicht-Tab). Alle Felder optional — ohne sie zeigt das Panel \"—\" statt Werte.",
+        "data": {
+          "evcc_charge_power": "Ladeleistung (kW, Wallbox)",
+          "evcc_charge_status": "Ladestatus (A=Getrennt / B=Verbunden / C=Lädt)",
+          "evcc_mode": "Lademodus (select: Sofort / Min+PV / Nur PV / Aus)",
+          "evcc_phases_active": "Aktive Phasen (Anzahl)",
+          "evcc_vehicle_soc": "Fahrzeug-SoC (%, Wallbox-Messung)",
+          "evcc_limit_soc": "Ladelimit SoC (%)",
+          "evcc_session_energy": "Session Energie (kWh)",
+          "evcc_session_solar_pct": "Session Solar-Anteil (%)",
+          "evcc_session_price": "Session Kosten (EUR)",
+          "evcc_charge_duration": "Ladedauer (s)",
+          "evcc_tariff_grid": "Netztarif aktuell (EUR/kWh)",
+          "evcc_tariff_feedin": "Einspeisevergütung aktuell (EUR/kWh)",
+          "evcc_stat_total_kwh": "Gesamte geladene Energie (kWh)",
+          "evcc_stat_solar_pct": "Solar-Anteil gesamt (%)",
+          "evcc_stat_avg_price": "Durchschnittspreis (EUR/kWh)"
         }
       }
     },

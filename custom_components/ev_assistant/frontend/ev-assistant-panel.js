@@ -105,8 +105,7 @@ class EVAssistantPanel extends HTMLElement {
     brand.innerHTML = `
       <div class="logo"><ha-icon icon="mdi:car-electric"></ha-icon></div>
       <div class="btext">
-        <div class="bt-name">${this._title()}</div>
-        <div class="bt-sub">EV Assistant</div>
+        <div class="bt-name">EV Assistant</div>
       </div>`;
     brand.querySelector(".logo").addEventListener("click", () =>
       this.dispatchEvent(new Event("hass-toggle-menu", { bubbles: true, composed: true }))
@@ -582,26 +581,25 @@ class EVAssistantPanel extends HTMLElement {
     const r = this._r;
     if (!r.stKw) return;
 
-    const WB = "evcc_warp_3_pro";
-
-    // Raw evcc values
-    const power    = parseFloat(this._raw(`sensor.${WB}_charge_power`) ?? NaN);
-    const phases   = this._raw(`sensor.${WB}_phases_active`);
+    // evcc values via configured entity IDs (set in config flow, step 8/8)
+    const ev = (key) => { const eid = this._eid(key); return eid ? this._raw(eid) : null; };
+    const power    = parseFloat(ev("evcc_charge_power")      ?? NaN);
+    const phases   = ev("evcc_phases_active");
     const phaseNum = parseInt(phases ?? "3", 10) || 3;
     const maxKw    = phaseNum * 3.68;
-    const solarPct = parseFloat(this._raw(`sensor.${WB}_session_solar_percentage`) ?? NaN);
-    const soc      = parseFloat(this._raw(`sensor.${WB}_vehicle_soc`) ?? NaN);
-    const socLim   = parseFloat(this._raw(`sensor.${WB}_effective_limit_soc`) ?? NaN);
-    const status   = this._raw(`sensor.${WB}_charge_status`) || "A";
-    const mode     = this._raw(`select.${WB}_mode`) || "";
-    const sessKwh  = parseFloat(this._raw(`sensor.${WB}_session_energy`) ?? NaN);
-    const sessEur  = parseFloat(this._raw(`sensor.${WB}_session_price`) ?? NaN);
-    const durSec   = parseFloat(this._raw(`sensor.${WB}_charge_duration`) ?? NaN);
-    const tGrid    = parseFloat(this._raw("sensor.evcc_tariff_grid") ?? NaN);
-    const tFeedin  = parseFloat(this._raw("sensor.evcc_tariff_feed_in") ?? NaN);
-    const totalKwh = parseFloat(this._raw("sensor.evcc_stat_total_charged_kwh") ?? NaN);
-    const totalSol = parseFloat(this._raw("sensor.evcc_stat_total_solar_percentage") ?? NaN);
-    const avgPrice = parseFloat(this._raw("sensor.evcc_stat_total_avg_price") ?? NaN);
+    const solarPct = parseFloat(ev("evcc_session_solar_pct") ?? NaN);
+    const soc      = parseFloat(ev("evcc_vehicle_soc")       ?? NaN);
+    const socLim   = parseFloat(ev("evcc_limit_soc")         ?? NaN);
+    const status   = ev("evcc_charge_status")                || "A";
+    const mode     = ev("evcc_mode")                         || "";
+    const sessKwh  = parseFloat(ev("evcc_session_energy")    ?? NaN);
+    const sessEur  = parseFloat(ev("evcc_session_price")     ?? NaN);
+    const durSec   = parseFloat(ev("evcc_charge_duration")   ?? NaN);
+    const tGrid    = parseFloat(ev("evcc_tariff_grid")       ?? NaN);
+    const tFeedin  = parseFloat(ev("evcc_tariff_feedin")     ?? NaN);
+    const totalKwh = parseFloat(ev("evcc_stat_total_kwh")    ?? NaN);
+    const totalSol = parseFloat(ev("evcc_stat_solar_pct")    ?? NaN);
+    const avgPrice = parseFloat(ev("evcc_stat_avg_price")    ?? NaN);
     const homeKwh  = parseFloat(this._state("home_kwh") ?? NaN);
     const homeCost = parseFloat(this._state("home_cost") ?? NaN);
 

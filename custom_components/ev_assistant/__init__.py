@@ -12,6 +12,7 @@ from .const import (
     DOMAIN, PLATFORMS, SERVICE_DELETE, SERVICE_DELETE_TRIP, SERVICE_DISCARD,
     SERVICE_DISCARD_TRIP, SERVICE_EDIT, SERVICE_EDIT_TRIP, SERVICE_EXPORT_TRIPS,
     SERVICE_LOG, SERVICE_LOG_TRIP, SERVICE_SIMULATE, SERVICE_SIMULATE_TRIP,
+    EVCC_CONF_KEYS,
 )
 from .coordinator import EvAssistantCoordinator
 
@@ -55,6 +56,12 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
         for e in entries:
             if e.unique_id.startswith(prefix):
                 entity_map[e.unique_id[len(prefix):]] = e.entity_id
+
+        # Evcc-Dashboard-Entitäten aus options/data ergänzen
+        for key in EVCC_CONF_KEYS:
+            eid = entry.options.get(key) or entry.data.get(key)
+            if eid:
+                entity_map[key] = eid
 
         panel_config = {"title": entry.title, "entities": entity_map}
 
