@@ -590,7 +590,7 @@ class EVAssistantPanel extends HTMLElement {
     const solarPct = parseFloat(ev("evcc_session_solar_pct") ?? NaN);
     const soc      = parseFloat(ev("evcc_vehicle_soc")       ?? NaN);
     const socLim   = parseFloat(ev("evcc_limit_soc")         ?? NaN);
-    const status   = ev("evcc_charge_status")                || "A";
+    const rawConn  = ev("evcc_charge_status");               // binary_sensor → "on"/"off"
     const mode     = ev("evcc_mode")                         || "";
     const sessKwh  = parseFloat(ev("evcc_session_energy")    ?? NaN);
     const sessEur  = parseFloat(ev("evcc_session_price")     ?? NaN);
@@ -604,6 +604,8 @@ class EVAssistantPanel extends HTMLElement {
     const homeCost = parseFloat(this._state("home_cost") ?? NaN);
 
     const isCharging  = !isNaN(power) && power > 0.05;
+    // Derive IEC 61851 status from connected binary_sensor + actual power
+    const status = rawConn === "on" ? (isCharging ? "C" : "B") : "A";
     const solarKw     = (isCharging && !isNaN(solarPct)) ? power * solarPct / 100 : 0;
     const gridKw      = isCharging ? power - solarKw : 0;
 
