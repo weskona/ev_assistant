@@ -184,53 +184,66 @@ class EVAssistantPanel extends HTMLElement {
 
       <!-- Status hero -->
       <div class="card status-card">
-        <div class="status-top">
-          <div class="status-left">
-            <div class="status-title">WARP 3 Pro</div>
-            <div class="status-conn" id="ov-conn-label">
+        <div class="hero-layout">
+
+          <!-- Donut: charge power -->
+          <div class="donut-wrap">
+            <svg class="donut-svg" viewBox="0 0 120 120">
+              <circle class="donut-track" cx="60" cy="60" r="50"/>
+              <circle class="donut-solar" id="ov-donut-solar" cx="60" cy="60" r="50"/>
+              <circle class="donut-grid"  id="ov-donut-grid"  cx="60" cy="60" r="50"/>
+            </svg>
+            <div class="donut-center">
+              <div class="donut-val" id="ov-charge-power">—</div>
+              <div class="donut-unit">kW</div>
+            </div>
+          </div>
+
+          <!-- Right: title, status, badges, KPIs -->
+          <div class="hero-right">
+            <div class="hero-head">
+              <div class="status-title">WARP 3 Pro</div>
+              <div class="status-badges">
+                <div class="mode-badge" id="ov-mode-badge">—</div>
+                <div class="phase-badge" id="ov-phase-badge">—</div>
+              </div>
+            </div>
+            <div class="status-conn">
               <span class="conn-dot" id="ov-conn-dot"></span>
               <span id="ov-conn-text">—</span>
             </div>
-          </div>
-          <div class="status-badges">
-            <div class="mode-badge" id="ov-mode-badge">—</div>
-            <div class="phase-badge" id="ov-phase-badge">—</div>
-          </div>
-        </div>
 
-        <!-- SOC bar -->
-        <div class="soc-wrap">
-          <div class="soc-bar-track">
-            <div class="soc-bar-fill" id="ov-soc-fill"></div>
-            <div class="soc-bar-limit" id="ov-soc-limit"></div>
-          </div>
-          <div class="soc-labels">
-            <span class="soc-val" id="ov-soc-val">—</span>
-            <span class="soc-limit-lbl" id="ov-soc-limit-lbl"></span>
-          </div>
-        </div>
+            <!-- SOC bar -->
+            <div class="soc-wrap">
+              <div class="soc-bar-track">
+                <div class="soc-bar-fill" id="ov-soc-fill"></div>
+                <div class="soc-bar-limit" id="ov-soc-limit"></div>
+              </div>
+              <div class="soc-labels">
+                <span class="soc-val" id="ov-soc-val">—</span>
+                <span class="soc-limit-lbl" id="ov-soc-limit-lbl"></span>
+              </div>
+            </div>
 
-        <!-- Live KPIs -->
-        <div class="kpi-row" style="margin-top:16px">
-          <div class="kpi">
-            <div class="kv accent" id="ov-charge-power">—</div>
-            <div class="kl">kW Ladeleistung</div>
-          </div>
-          <div class="kpi">
-            <div class="kv" id="ov-session-kwh">—</div>
-            <div class="kl">kWh Session</div>
-          </div>
-          <div class="kpi">
-            <div class="kv green" id="ov-solar-pct">—</div>
-            <div class="kl">% Solar</div>
-          </div>
-          <div class="kpi">
-            <div class="kv" id="ov-session-price">—</div>
-            <div class="kl">EUR Session</div>
-          </div>
-          <div class="kpi">
-            <div class="kv" id="ov-duration">—</div>
-            <div class="kl">Dauer</div>
+            <!-- KPIs -->
+            <div class="kpi-row" style="margin-top:14px; gap:10px 20px">
+              <div class="kpi">
+                <div class="kv" id="ov-session-kwh">—</div>
+                <div class="kl">kWh Session</div>
+              </div>
+              <div class="kpi">
+                <div class="kv green" id="ov-solar-pct">—</div>
+                <div class="kl">% Solar</div>
+              </div>
+              <div class="kpi">
+                <div class="kv" id="ov-session-price">—</div>
+                <div class="kl">EUR Session</div>
+              </div>
+              <div class="kpi">
+                <div class="kv" id="ov-duration">—</div>
+                <div class="kl">Dauer</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -284,11 +297,13 @@ class EVAssistantPanel extends HTMLElement {
       ovConnText:     q("#ov-conn-text"),
       ovModeBadge:    q("#ov-mode-badge"),
       ovPhaseBadge:   q("#ov-phase-badge"),
+      ovDonutSolar:   q("#ov-donut-solar"),
+      ovDonutGrid:    q("#ov-donut-grid"),
+      ovChargePower:  q("#ov-charge-power"),
       ovSocFill:      q("#ov-soc-fill"),
       ovSocLimit:     q("#ov-soc-limit"),
       ovSocVal:       q("#ov-soc-val"),
       ovSocLimitLbl:  q("#ov-soc-limit-lbl"),
-      ovChargePower:  q("#ov-charge-power"),
       ovSessionKwh:   q("#ov-session-kwh"),
       ovSolarPct:     q("#ov-solar-pct"),
       ovSessionPrice: q("#ov-session-price"),
@@ -526,9 +541,13 @@ class EVAssistantPanel extends HTMLElement {
       r.ovSocLimitLbl.textContent = "";
     }
 
-    // Live KPIs
-    const power = parseFloat(this._raw(`sensor.${WB}_charge_power`) ?? NaN);
-    r.ovChargePower.textContent  = isNaN(power) ? "—" : power.toFixed(1);
+    // Donut: charge power vs dynamic max (phases × 3.68 kW per phase at 16A)
+    const power  = parseFloat(this._raw(`sensor.${WB}_charge_power`) ?? NaN);
+    const phases = parseInt(this._raw(`sensor.${WB}_phases_active`) ?? "3", 10) || 3;
+    const maxKw  = phases * 3.68;
+    r.ovChargePower.textContent = isNaN(power) ? "—" : power.toFixed(1);
+    this._updateDonut(r.ovDonutSolar, r.ovDonutGrid, power, maxKw,
+      parseFloat(this._raw(`sensor.${WB}_session_solar_percentage`) ?? NaN));
     r.ovSessionKwh.textContent   = this._rawNum(`sensor.${WB}_session_energy`, 2);
     r.ovSolarPct.textContent     = this._rawNum(`sensor.${WB}_session_solar_percentage`, 0);
     r.ovSessionPrice.textContent = this._rawNum(`sensor.${WB}_session_price`, 2);
@@ -550,6 +569,38 @@ class EVAssistantPanel extends HTMLElement {
     r.ovTotalKwh.textContent   = this._rawNum("sensor.evcc_stat_total_charged_kwh", 1);
     r.ovTotalSolar.textContent = this._rawNum("sensor.evcc_stat_total_solar_percentage", 1);
     r.ovAvgPrice.textContent   = this._rawNum("sensor.evcc_stat_total_avg_price", 4);
+  }
+
+  _updateDonut(solarEl, gridEl, powerKw, maxKw, solarPct) {
+    // SVG donut: r=50, circumference = 2π×50 ≈ 314.16
+    // Stroke starts at top (rotate -90deg via transform on SVG or stroke-dashoffset)
+    const C = 314.16;
+    const GAP = 0.02 * C; // 2% gap between solar and grid arcs
+
+    if (isNaN(powerKw) || powerKw <= 0 || isNaN(maxKw) || maxKw <= 0) {
+      // No charge — empty ring
+      [solarEl, gridEl].forEach(el => {
+        el.style.strokeDasharray = `0 ${C}`;
+      });
+      return;
+    }
+
+    const fraction   = Math.min(powerKw / maxKw, 1);
+    const totalArc   = fraction * C;
+    const solarFrac  = isNaN(solarPct) ? 0 : Math.min(solarPct / 100, 1);
+    const solarArc   = totalArc * solarFrac;
+    const gridArc    = totalArc - solarArc;
+
+    // Solar arc: drawn first from top
+    const solarDraw = Math.max(solarArc - (solarArc > 0 && gridArc > 0 ? GAP / 2 : 0), 0);
+    solarEl.style.strokeDasharray  = `${solarDraw} ${C - solarDraw}`;
+    solarEl.style.strokeDashoffset = "0";
+
+    // Grid arc: offset by solar arc length
+    const gridOffset = -(solarArc);
+    const gridDraw   = Math.max(gridArc - (solarArc > 0 && gridArc > 0 ? GAP / 2 : 0), 0);
+    gridEl.style.strokeDasharray  = `${gridDraw} ${C - gridDraw}`;
+    gridEl.style.strokeDashoffset = String(gridOffset);
   }
 
   _updateVehicle() {
@@ -757,6 +808,58 @@ class EVAssistantPanel extends HTMLElement {
       @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.3} }
 
       .hidden { display: none !important; }
+
+      /* Hero layout: donut left, details right */
+      .hero-layout {
+        display: flex; align-items: flex-start; gap: 20px;
+      }
+      .hero-right { flex: 1; min-width: 0; }
+
+      /* Donut chart */
+      .donut-wrap {
+        position: relative;
+        width: 108px; height: 108px;
+        flex-shrink: 0;
+      }
+      .donut-svg {
+        width: 100%; height: 100%;
+        transform: rotate(-90deg);
+      }
+      .donut-track {
+        fill: none;
+        stroke: var(--bg-0);
+        stroke-width: 14;
+      }
+      .donut-solar {
+        fill: none;
+        stroke: #4ade80;
+        stroke-width: 14;
+        stroke-linecap: round;
+        stroke-dasharray: 0 314.16;
+        transition: stroke-dasharray 0.5s ease, stroke-dashoffset 0.5s ease;
+      }
+      .donut-grid {
+        fill: none;
+        stroke: var(--accent);
+        stroke-width: 14;
+        stroke-linecap: round;
+        stroke-dasharray: 0 314.16;
+        transition: stroke-dasharray 0.5s ease, stroke-dashoffset 0.5s ease;
+      }
+      .donut-center {
+        position: absolute; inset: 0;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        pointer-events: none;
+      }
+      .donut-val { font-size: 1.4rem; font-weight: 700; line-height: 1.1; }
+      .donut-unit { font-size: 0.65rem; color: var(--ink-dim); margin-top: 1px; }
+
+      /* Hero head: title + badges in a row */
+      .hero-head {
+        display: flex; align-items: flex-start; justify-content: space-between;
+        gap: 8px; margin-bottom: 6px;
+      }
 
       @media (max-width: 500px) {
         .appbar { padding: 0 14px; gap: 12px; }

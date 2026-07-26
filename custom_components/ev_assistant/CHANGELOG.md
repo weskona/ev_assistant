@@ -2,6 +2,15 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.16.1] - 2026-07-26
+
+### Added
+
+- **Donut charge power gauge** in the Übersicht hero card: an SVG ring shows the current
+  wallbox charge power relative to the dynamic maximum (`phases_active × 3.68 kW` at 16 A).
+  The arc is split into solar (green) and grid (blue) segments based on the session's
+  solar percentage. When the wallbox is idle the ring is empty.
+
 ## [0.16.0] - 2026-07-26
 
 ### Added
