@@ -2,6 +2,24 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.17.0] - 2026-07-26
+
+### Changed
+
+- **Übersicht tab completely redesigned** — new omnibattery-inspired layout replaces the old stacked cards:
+  - Full-width **Systemstatus card** at the top: large SVG donut ring (180 px, solar green + grid blue arcs) showing charge power, solar/grid power blocks, available-power bar, EV SOC bar with limit marker, and a 2-column chip grid with mode, connection, phases, SOC limit, tariff rates, and session details.
+  - Lower row: **Energiefluss** live SVG diagram on the left (Solar → Wallbox hub → EV, Netz → Wallbox hub, with animated snake flow lines) and a 2×2 chart grid on the right (Aktuelle Session, Gesamtstatistik, Aktueller Tarif, Heimladen).
+- Flow diagram uses CSS snake animation (`lead-flow`) for active edges and dims inactive edges.
+- Chip system (`.chip`, `.chip-good`, `.chip-warn`, `.chip-bad`) used throughout the diagnostics section.
+- Responsive breakpoints: lower row stacks to single column below 1080 px, 2×2 grid collapses to single column below 720 px.
+
+## [0.16.1] - 2026-07-26
+
+### Fixed
+
+- **`SyntaxError: redeclaration of const phases`** (Firefox) — the `phases` variable was declared twice in `_updateOverview()`: once for the phase badge display and again (re-declared with `const`) for the donut max-power calculation. Renamed the second use to `phaseNum` to resolve the scoping conflict. The dashboard was completely blank in Firefox as a result.
+- Added missing `_updateDonut()` method and donut/hero CSS that were referenced but absent after v0.16.0.
+
 ## [0.15.3] - 2026-07-24
 
 ### Fixed
