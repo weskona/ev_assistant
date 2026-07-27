@@ -312,9 +312,10 @@ class EVAssistantPanel extends HTMLElement {
     const GAP = 5;
     // (ex,ey) = hub connection point  (lx,ly) = label center
     const EDGES = [
-      { key:"nSolar", edge:"solar", cap:"Solar", ex:50, ey:47, lx:50, ly:7,  shape:"v" },
-      { key:"nGrid",  edge:"grid",  cap:"Netz",  ex:42, ey:55, lx:7,  ly:55, shape:"h" },
-      { key:"nEv",    edge:"ev",    cap:"EV",    ex:58, ey:55, lx:90, ly:55, shape:"h" },
+      { key:"nSolar", edge:"solar", cap:"Solar",   ex:50, ey:47, lx:50, ly:7,  shape:"v" },
+      { key:"nGrid",  edge:"grid",  cap:"Netz",    ex:42, ey:55, lx:7,  ly:55, shape:"h" },
+      { key:"nEv",    edge:"ev",    cap:"EV",      ex:58, ey:55, lx:90, ly:55, shape:"h" },
+      { key:"nBatt",  edge:"batt",  cap:"Speicher",ex:50, ey:63, lx:50, ly:93, shape:"v" },
     ];
 
     const leadPts = (e) => {
@@ -322,7 +323,6 @@ class EVAssistantPanel extends HTMLElement {
         const y2 = e.ly < e.ey ? e.ly + GAP : e.ly - GAP;
         return `${e.ex},${e.ey} ${e.ex},${y2}`;
       }
-      // "h" horizontal
       const x2 = e.lx < e.ex ? e.lx + GAP : e.lx - GAP;
       return `${e.ex},${e.ey} ${x2},${e.ey}`;
     };
@@ -331,11 +331,10 @@ class EVAssistantPanel extends HTMLElement {
     stage.className = "scene-stage";
     stage.innerHTML =
       `<svg class="lead-svg" viewBox="0 0 100 100" preserveAspectRatio="none">` +
-        // Node indicator circles (outer ends)
         `<circle class="node-dot" style="fill:#4ade80;filter:drop-shadow(0 0 2px #4ade80)" cx="50" cy="9" r="3.5"/>` +
         `<circle class="node-dot" style="fill:var(--accent);filter:drop-shadow(0 0 2px var(--accent))" cx="8" cy="55" r="3.5"/>` +
         `<circle class="node-dot" style="fill:oklch(0.72 0.19 290);filter:drop-shadow(0 0 2px oklch(0.72 0.19 290))" cx="89" cy="55" r="3.5"/>` +
-        // Hub circle (Wallbox)
+        `<circle class="node-dot batt-dot" style="fill:#fb923c;filter:drop-shadow(0 0 2px #fb923c)" cx="50" cy="91" r="3.5"/>` +
         `<circle class="hub-ring" cx="50" cy="55" r="8"/>` +
         EDGES.map(e =>
           `<polyline class="lead" data-edge="${e.edge}" points="${leadPts(e)}"/>` +
@@ -343,7 +342,6 @@ class EVAssistantPanel extends HTMLElement {
           `<circle class="lead-end" data-edge="${e.edge}" cx="${e.ex}" cy="${e.ey}" r="0.8"/>`
         ).join("") +
       `</svg>` +
-      // Hub center icon (HTML overlay)
       `<div class="scene-hub"><ha-icon icon="mdi:ev-station"></ha-icon></div>`;
 
     EDGES.forEach(e => {
@@ -603,11 +601,15 @@ class EVAssistantPanel extends HTMLElement {
     const homeKwh  = parseFloat(this._state("home_kwh") ?? NaN);
     const homeCost = parseFloat(this._state("home_cost") ?? NaN);
 
+    // Site-level power (W → kW). gridPower: positive = import, negative = export.
+    // battPower: positive = charging, negative = discharging (providing power).
+    const pvKw   = parseFloat(ev("evcc_pv_power")      ?? NaN) / 1000;
+    const gridPw = parseFloat(ev("evcc_grid_power")    ?? NaN) / 1000;
+    const battPw = parseFloat(ev("evcc_battery_power") ?? NaN) / 1000;
+
     const isCharging  = !isNaN(power) && power > 0.05;
     // Derive IEC 61851 status from connected binary_sensor + actual power
     const status = rawConn === "on" ? (isCharging ? "C" : "B") : "A";
-    const solarKw     = (isCharging && !isNaN(solarPct)) ? power * solarPct / 100 : 0;
-    const gridKw      = isCharging ? power - solarKw : 0;
 
     // ----- Status ring -----
     this._updateRing(r.stRingSolar, r.stRingGrid, power, maxKw, r.stCirc, solarPct);
@@ -616,8 +618,15 @@ class EVAssistantPanel extends HTMLElement {
     } else {
       r.stKw.innerHTML = `—<span>kW</span>`;
     }
-    r.stPwSolar.innerHTML = `${solarKw > 0 ? solarKw.toFixed(1) : "—"}<span class="stat-unit"> kW</span>`;
-    r.stPwGrid.innerHTML  = `${gridKw  > 0 ? gridKw.toFixed(1)  : "—"}<span class="stat-unit"> kW</span>`;
+    // Show actual site PV production and grid import/export
+    const pvShow   = !isNaN(pvKw)   && pvKw   > 0.01;
+    const gridShow = !isNaN(gridPw) && Math.abs(gridPw) > 0.01;
+    r.stPwSolar.innerHTML = pvShow
+      ? `${pvKw.toFixed(1)}<span class="stat-unit"> kW</span>`
+      : `—<span class="stat-unit"> kW</span>`;
+    r.stPwGrid.innerHTML  = gridShow
+      ? `${Math.abs(gridPw).toFixed(1)}<span class="stat-unit"> kW ${gridPw < 0 ? "↑" : "↓"}</span>`
+      : `—<span class="stat-unit"> kW</span>`;
     r.stPwBar.style.width = isCharging ? this._clamp(power / maxKw * 100, 0, 100) + "%" : "0%";
     r.stPwBar.style.background = (!isNaN(solarPct) && solarPct > 50) ? "#4ade80" : "var(--accent)";
     r.stPwAvail.textContent = `Max: ${maxKw.toFixed(1)} kW (${phaseNum}P)`;
@@ -664,7 +673,7 @@ class EVAssistantPanel extends HTMLElement {
     this._setChip(r.dgDur, durStr, "");
 
     // ----- Flow diagram -----
-    this._updateFlow(power, solarKw, gridKw, soc, status);
+    this._updateFlow(power, pvKw, gridPw, battPw, soc, status);
 
     // ----- Session bars -----
     const u = (s) => `<span class="dim" style="font-size:11px"> ${s}</span>`;
@@ -701,24 +710,43 @@ class EVAssistantPanel extends HTMLElement {
       !isNaN(homeCost) ? this._clamp(homeCost / 3000 * 100, 0, 100) : 0);
   }
 
-  _updateFlow(power, solarKw, gridKw, soc, status) {
+  // pvKw: PV production (always ≥ 0)
+  // gridPw: positive = importing from grid, negative = exporting
+  // battPw: positive = battery charging, negative = battery discharging (providing power)
+  _updateFlow(power, pvKw, gridPw, battPw, soc, status) {
     const r = this._r;
     if (!r.flowStage) return;
 
     const isCharging  = !isNaN(power) && power > 0.05;
     const isConnected = status && status !== "A";
-    const solActive   = solarKw > 0.05;
-    const gridActive  = gridKw  > 0.05;
+    const solActive   = !isNaN(pvKw)   && pvKw   > 0.05;
+    const gridImport  = !isNaN(gridPw) && gridPw > 0.05;   // importing from grid
+    const gridExport  = !isNaN(gridPw) && gridPw < -0.05;  // exporting to grid
+    const battDisc    = !isNaN(battPw) && battPw < -0.05;  // discharging (source)
+    const battChg     = !isNaN(battPw) && battPw > 0.05;   // charging (load)
 
-    // Node labels
+    // Solar node
     r.nSolar.node.classList.toggle("active", solActive);
-    r.nSolar.val.textContent  = solActive ? solarKw.toFixed(1) : "—";
+    r.nSolar.val.textContent  = solActive ? pvKw.toFixed(1) : "—";
     r.nSolar.unit.textContent = solActive ? " kW" : "";
 
+    // Grid node — shows import or export
+    const gridActive = gridImport || gridExport;
     r.nGrid.node.classList.toggle("active", gridActive);
-    r.nGrid.val.textContent   = gridActive ? gridKw.toFixed(1) : "—";
-    r.nGrid.unit.textContent  = gridActive ? " kW" : "";
+    r.nGrid.val.textContent  = gridActive ? Math.abs(gridPw).toFixed(1) : "—";
+    r.nGrid.unit.textContent = gridActive ? " kW" : "";
+    r.nGrid.badge.textContent = gridExport ? "↑ Einspeisung" : "";
 
+    // Battery node — orange when active
+    const battActive = battDisc || battChg;
+    if (r.nBatt) {
+      r.nBatt.node.classList.toggle("active", battActive);
+      r.nBatt.val.textContent  = battActive ? Math.abs(battPw).toFixed(1) : "—";
+      r.nBatt.unit.textContent = battActive ? " kW" : "";
+      r.nBatt.badge.textContent = battChg ? "Lädt" : battDisc ? "Entlädt" : "";
+    }
+
+    // EV node
     r.nEv.node.classList.toggle("active", isConnected);
     r.nEv.val.textContent  = !isNaN(soc) ? Math.round(soc) : "—";
     r.nEv.unit.textContent = !isNaN(soc) ? " %" : "";
@@ -730,6 +758,7 @@ class EVAssistantPanel extends HTMLElement {
     lead("solar", solActive);
     lead("grid",  gridActive);
     lead("ev",    isConnected);
+    lead("batt",  battActive);
 
     // Animated flow snakes
     const flow = (edge, on, color) =>
@@ -737,11 +766,12 @@ class EVAssistantPanel extends HTMLElement {
         el.classList.toggle("on", on);
         if (color) el.style.color = color;
       });
-    flow("solar", solActive,  "#4ade80");
-    flow("grid",  gridActive, "var(--accent)");
-    // EV edge color = dominant source
+    flow("solar", solActive,   "#4ade80");
+    flow("grid",  gridImport,  "var(--accent)");
+    flow("batt",  battDisc,    "#fb923c");
+    // EV edge: dominant color based on source mix
     const evColor = isCharging
-      ? (solarKw > gridKw ? "#4ade80" : "var(--accent)")
+      ? (solActive && !gridImport ? "#4ade80" : battDisc && !gridImport ? "#fb923c" : "var(--accent)")
       : "var(--ink-dim)";
     flow("ev", isCharging, evColor);
   }
