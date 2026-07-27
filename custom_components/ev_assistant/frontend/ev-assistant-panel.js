@@ -226,6 +226,7 @@ class EVAssistantPanel extends HTMLElement {
     const socSect = document.createElement("div");
     socSect.className = "soc-sect";
     socSect.innerHTML = `
+      <div class="soc-bar-hdr">Fahrzeug-Akku</div>
       <div class="soc-bar-track">
         <div class="soc-bar-fill" id="st-soc-fill"></div>
         <div class="soc-bar-limit" id="st-soc-limit"></div>
@@ -973,6 +974,7 @@ class EVAssistantPanel extends HTMLElement {
 
       /* SOC bar */
       .soc-sect { width: 100%; max-width: 260px; }
+      .soc-bar-hdr { font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: var(--dim); margin-bottom: 5px; }
       .soc-bar-track { position: relative; height: 10px; border-radius: 9999px; background: var(--bg-0); border: 1px solid var(--line-s); overflow: visible; }
       .soc-bar-fill  { height: 100%; border-radius: 9999px; background: linear-gradient(90deg, var(--accent), #34d399); transition: width 0.4s ease; }
       .soc-bar-limit { display: none; position: absolute; top: -3px; width: 2px; height: 16px; background: #f59e0b; border-radius: 2px; transform: translateX(-50%); }
