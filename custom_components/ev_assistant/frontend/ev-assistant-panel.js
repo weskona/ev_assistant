@@ -226,7 +226,7 @@ class EVAssistantPanel extends HTMLElement {
     const socSect = document.createElement("div");
     socSect.className = "soc-sect";
     socSect.innerHTML = `
-      <div class="soc-bar-hdr">Fahrzeug-Akku</div>
+      <div class="soc-bar-hdr">Fahrzeug-SOC</div>
       <div class="soc-bar-track">
         <div class="soc-bar-fill" id="st-soc-fill"></div>
         <div class="soc-bar-limit" id="st-soc-limit"></div>
