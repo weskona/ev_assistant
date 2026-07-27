@@ -82,6 +82,9 @@ _EVCC_SOC_SENSOR = selector.EntitySelector(
 _EVCC_ANY_SENSOR = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor")
 )
+_EVCC_BINARY_OR_SENSOR = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain=["sensor", "binary_sensor"])
+)
 _EVCC_SELECT = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="select")
 )
@@ -232,7 +235,7 @@ def build_wallbox_schema(cur: dict) -> vol.Schema:
 
     return vol.Schema({
         vol.Optional(CONF_EVCC_CHARGE_POWER,      description=sv(CONF_EVCC_CHARGE_POWER)):      _EVCC_POWER_SENSOR,
-        vol.Optional(CONF_EVCC_CHARGE_STATUS,     description=sv(CONF_EVCC_CHARGE_STATUS)):     _EVCC_ANY_SENSOR,
+        vol.Optional(CONF_EVCC_CHARGE_STATUS,     description=sv(CONF_EVCC_CHARGE_STATUS)):     _EVCC_BINARY_OR_SENSOR,
         vol.Optional(CONF_EVCC_MODE,              description=sv(CONF_EVCC_MODE)):              _EVCC_SELECT,
         vol.Optional(CONF_EVCC_PHASES_ACTIVE,     description=sv(CONF_EVCC_PHASES_ACTIVE)):     _EVCC_ANY_SENSOR,
         vol.Optional(CONF_EVCC_VEHICLE_SOC,       description=sv(CONF_EVCC_VEHICLE_SOC)):       _EVCC_SOC_SENSOR,
