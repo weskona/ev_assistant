@@ -3,7 +3,7 @@
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
 [![Version](https://img.shields.io/github/v/release/weskona/ev_assistant)](https://github.com/weskona/ev_assistant/releases)
 
-Detects EV charging sessions **away from your home wallbox** ("external charge") from SoC telemetry, lets you log the actual kWh/price from the receipt, and can automatically calibrate the vehicle's charge efficiency from your real home-charging sessions. Manufacturer-independent — works with any HA entity or MQTT source (WiCAN Pro, evcc/Warp, Stellantis/VW cloud sensors, ...).
+Detects EV charging sessions **away from your home wallbox** ("external charge") from SoC telemetry, lets you log the actual kWh/price from the receipt, and can automatically calibrate the vehicle's charge efficiency from your real home-charging sessions. Manufacturer-independent — works with any HA entity source (WiCAN Pro, evcc/Warp, Stellantis/VW cloud sensors, ...). Also registers its own sidebar panel with an evcc-powered Übersicht (overview) and a per-vehicle Fahrzeuge (vehicle) tab — see "Sidebar panel" below.
 
 **[🇩🇪 Deutsche Version weiter unten](#-deutsch)**
 
@@ -45,7 +45,6 @@ Say your car has a 45 kWh usable battery and the default 88 % charge efficiency 
    - AC-side (billed) estimate, accounting for charging losses: `18.9 kWh ÷ 0.88 = 21.48 kWh` — the notification rounds this to **≈ 21.5 kWh**.
 6. EV Assistant now:
    - stores this as the **pending** charge,
-   - publishes it to the configured MQTT topic,
    - fires the `ev_assistant_pending` event (with `config_entry_id` so you can tell which car, if you have more than one),
    - sends a notification: *"+42% (32 → 74%), ~21.5 kWh estimated. Enter kWh and price."* (shown in German instead if your HA UI language is set to German)
    - turns on `binary_sensor ... External Charge Detection Open` and sets `sensor ... External Charge Estimate` to 21.48 kWh.
@@ -79,25 +78,27 @@ A vehicle charging-power sensor (when available) is generally more accurate than
 
 ### Configuration
 
-Settings → Devices & Services → **Add integration** → "EV Assistant". Setup is a 7-step flow (also used identically when editing via **Configure**):
+Settings → Devices & Services → **Add integration** → "EV Assistant". Setup is a 9-step flow (also used identically when editing via **Configure**):
 
 1. **Vehicle** — Manufacturer + model (required, e.g. "Peugeot" / "e-2008" — together they become the HA device name), first registration date (optional, display only), odometer entity (optional, filtered to `sensor` + `device_class: distance` — mirrored onto the EV Assistant device as its own `... Odometer` sensor, and used both as the basis for automatic trip detection (trip log, step 6) and as the distance basis for the cost comparison in step 7), usable battery capacity in kWh (required — the *net* value your car can actually use, not the often-larger gross/factory figure some manufacturers advertise; this directly determines how many kWh one percentage point of SoC represents, so getting it wrong throws off every energy estimate), charge efficiency (optional starting value only — replaced automatically once enough real home charges have been measured, see calibration below).
-2. **Basic signals** — SoC and home-charging source, each as **HA entity OR MQTT topic** (entity takes priority). At least one source per signal is required (marked with `*`). The SoC entity picker is filtered to `sensor` + `device_class: battery`; the home-charging entity picker to `sensor` + `device_class: power` (e.g. a wallbox's charging-power sensor from evcc/Warp) — a numeric value **above 0.1 kW counts as "charging"**; a non-numeric value (e.g. evcc's own `"charging"`/`"on"` status string) falls back to a plain text match instead. **This is a yes/no "charging at home right now" signal only** — it is not the same charging-power reading as step 3 (that one deliberately comes from the vehicle, not the wallbox, so it still works away from home during an external charge). If your power sensor reports a different unit (e.g. Watts), convert it with the template field, e.g. `{{ value | float / 1000 }}`. If your setup doesn't fit those (e.g. a `binary_sensor`), use the MQTT-topic field instead.
+2. **Basic signals** — SoC and home-charging entities (both required). The SoC entity picker is filtered to `sensor` + `device_class: battery`; the home-charging entity picker to `sensor` + `device_class: power` (e.g. a wallbox's charging-power sensor from evcc/Warp) — a numeric value **above 0.1 kW counts as "charging"**; a non-numeric value (e.g. evcc's own `"charging"`/`"on"` status string) falls back to a plain text match instead. **This is a yes/no "charging at home right now" signal only** — it is not the same charging-power reading as step 3 (that one deliberately comes from the vehicle, not the wallbox, so it still works away from home during an external charge). If your sensor reports a different unit (e.g. Watts), convert it with the template field, e.g. `{{ value | float / 1000 }}`.
 3. **Charging power** (optional) — two different sources for two different purposes. Charging power is a momentary power reading in W/kW, typically from vehicle telemetry rather than your wallbox (so it still reports data during an external charge, where the wallbox is idle); it improves the energy estimate of an external charge beyond plain SoC-delta (see "Energy estimation methods" above). The **wallbox energy meter**, on the other hand, is a cumulative kWh counter of your own wallbox (never momentary, only relevant while charging at home) — it's used for automatic efficiency calibration *and* for the home-charging cost tracked in step 7.
-4. **Output** (optional) — a persistent notification in Home Assistant's own notification panel always appears automatically for a detected charge, regardless of this step. The `notify.*` service additionally sends a push notification (e.g. to your phone); the MQTT publish topic additionally publishes the raw data as JSON for your own automations/integrations.
+4. **Output** (optional) — a persistent notification in Home Assistant's own notification panel always appears automatically for a detected charge, regardless of this step. The `notify.*` service additionally sends a push notification (e.g. to your phone).
 5. **Detection fine-tuning** — thresholds of the underlying state machine described above (`start_delta`, `noise`, `idle_timeout_s`, `drop_ends`). A session starts once SoC rises by `start_delta` above its last resting value; it ends either when SoC drops by more than `drop_ends` below the tracked peak, or when `idle_timeout_s` passes with no new peak (e.g. battery full). `noise` tolerates ordinary sensor jitter while tracking the peak and must always be **smaller** than `start_delta`, or jitter alone could trigger a false detection. Defaults work for most vehicles; raise them for a car whose SoC only updates coarsely/infrequently (e.g. some cloud APIs).
 6. **Trip log** (optional) — thresholds of the trip detector (`trip_min_km`, `trip_idle_timeout_s`) described in "Trip log" below. Defaults work for most odometer sensors. Also an optional location-suggestion source (`gps_entity`, a `person`/`device_tracker`).
 7. **Cost comparison** (optional) — see "Cost comparison vs. a combustion car" below.
+8. **Wallbox** (optional) — this vehicle's live charging state at the evcc charge point for the sidebar panel's Übersicht tab (charge power, status, mode, phases, vehicle SoC, limit SoC, session energy/solar share/price, duration). Without these, the Übersicht tab just shows "—" instead of live values — everything else (detection, history, trip log) works independently of this step.
+9. **evcc** (optional) — site-level data that applies to your whole evcc installation, not just this charge point: PV/grid/home-battery power for the flow diagram, current tariffs, and all-time statistics. Also **vehicle name in evcc** — not a sensor, but the exact name as configured in evcc (the `vehicle` field in its charging log) — with multiple vehicles in evcc, this filters the panel's Heimladen-Historie (home-charging history, see "Sidebar panel" below) to this one.
 
 ### Sources: manufacturer-independent
 
-Each signal is fed from either an **HA entity** (e.g. a manufacturer integration) or **MQTT** (e.g. WiCAN Pro) — works with any manufacturer that exposes an SoC sensor in HA.
+Each signal is fed from an **HA entity** — works with any manufacturer that exposes an SoC sensor in HA, or any MQTT-based device (e.g. WiCAN Pro) once Home Assistant's own `mqtt` integration turns its topic into a sensor entity.
 
-- **WiCAN Pro (MQTT):** SoC topic `<your_prefix>/telemetry/soc` (template `{{ value }}` or `{{ value_json.soc }}`).
+- **WiCAN Pro:** set up HA's `mqtt` integration to expose its SoC topic as a `sensor` entity, then point EV Assistant's SoC entity at that sensor.
 - **Stellantis / VW / ... (entity):** SoC entity = `sensor.<car>_battery`. Cloud SoC is often coarse/infrequent — raise `start_delta` and `idle_timeout_s` accordingly; the power-based path is unavailable without real power data (falls back to SoC × efficiency).
-- **Mixed** is fine: SoC from an entity, `home_charging` from evcc MQTT, etc.
+- **Mixed** is fine: SoC from one manufacturer integration, `home_charging` from evcc, etc.
 
-An optional Jinja template per signal converts the raw value (`value` = state/payload, `value_json` = parsed JSON payload for MQTT).
+An optional Jinja template per signal converts the raw entity state (`value`), e.g. for a unit conversion.
 
 ### Automatic charge-efficiency calibration
 
@@ -195,7 +196,7 @@ A detected trip only records start/end odometer, distance, and timestamps — yo
 - `ev_assistant.discard_pending` — `config_entry_id` (+ optional `start_ts`): discard a pending charge (e.g. a false positive — it wasn't actually an external charge). Same `start_ts` selection rule as above.
 - `ev_assistant.edit_charge` — `config_entry_id`, `erfasst_ts`, `kwh`, `price_kwh`: correct the kWh/price of an already-confirmed history entry (e.g. a typo noticed after the fact), identified by its `erfasst_ts` attribute (see the `historie` attribute on the last-cost sensor, or the [EV Assistant Card](https://github.com/weskona/ev-assistant-card)'s History list). Running totals are adjusted by the difference, not recomputed from scratch.
 - `ev_assistant.delete_charge` — `config_entry_id`, `erfasst_ts`: fully removes an already-confirmed history entry (e.g. a falsely detected charge that wasn't actually external). Running totals are adjusted by the removed amount. **Not reversible.**
-- `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): generate a **test event without a car** (triggers notification, MQTT, sensors) — see "Testing" below.
+- `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): generate a **test event without a car** (triggers notification, sensors) — see "Testing" below.
 - `ev_assistant.log_trip` — `config_entry_id`, `start_ort`, `end_ort` (+ optional `start_ts`): confirm a pending trip with a start/end location. Same multiple-pending/`start_ts` selection rule as `log_charge`. Unlike `log_charge`, there is **no** fallback to a manual one-off entry without a pending trip — odometer values only ever come from the detector.
 - `ev_assistant.discard_pending_trip` — `config_entry_id` (+ optional `start_ts`): discard a pending trip (e.g. moving the car a few meters in the driveway).
 - `ev_assistant.export_fahrtenbuch` — `config_entry_id`: write the full trip history as CSV to `www/` (see "Trip log" above).
@@ -215,6 +216,18 @@ All services require `config_entry_id` to target a specific vehicle if you run m
 
 > **Known limitation:** the card's example entity IDs (e.g. `sensor.ev_assistant_letzte_kosten`) assume the old fixed device name "EV Assistant" — since v0.4.0 the device is named after your vehicle instead, so adjust the card's entity list to match your actual entity IDs. If you're setting this up fresh, use the [EV Assistant Card](https://github.com/weskona/ev-assistant-card) above instead.
 
+### Sidebar panel
+
+EV Assistant automatically registers its own sidebar panel — no dashboard setup needed — as soon as the integration is set up. Two tabs:
+
+- **Übersicht (Overview)** — an evcc-powered live view: connection state, charge-mode badge, phase badge, SoC bar with limit marker, live KPIs (charge power, session kWh, solar share, session price, duration), current tariffs (grid/feed-in), all-time statistics, and a donut charge-power gauge split into solar (green) and grid (blue) segments. Populated from the entities configured in steps 8 (Wallbox) and 9 (evcc) above — without them, this tab just shows "—" instead of values.
+- **Fahrzeuge (Vehicle)** — works independently of the Übersicht tab's evcc configuration: external-charge totals + last session, home-charging totals, trip log summary, vehicle info (odometer, efficiency, savings), and three history lists:
+  - **Fremdladung-Historie** — every confirmed external charge, with edit/delete via an expanding confirm panel (not an immediate action), the SoC range + delta for automatically detected charges, and end time/duration when available. Shows the last 5 by default, expandable to all with the list scrollable.
+  - **Heimladen-Historie** — evcc's own charging-session log, fetched live via evcc_intg's `sessions` websocket command (no separate configuration needed beyond evcc_intg itself being set up), read-only. If evcc has more than one vehicle, a dropdown filters the list to just this one (defaulting to the vehicle name configured in step 9, if set), plus an energy-weighted average solar-share summary across the visible sessions.
+  - **Fahrtenbuch-Historie** — every confirmed trip, same edit/delete and expand/scroll pattern as the charge history.
+
+The panel's design adapts across phone/tablet/desktop widths.
+
 ### Testing
 
 **1) Logic only (no HA):**
@@ -222,11 +235,11 @@ All services require `config_entry_id` to target a specific vehicle if you run m
 cd <repo>
 python -m pytest tests -q
 ```
-**2) End-to-end in HA (no car needed):** Developer tools → Services → call `ev_assistant.simulate_event` with `config_entry_id`, `soc_start: 32`, `soc_end: 74`. Expect: a notification appears, `binary_sensor ... External Charge Detection Open` turns on, `sensor ... External Charge Estimate` ≈ 21.48 kWh (see the worked example above). Then enter kWh/price and call `ev_assistant.log_charge` (or the save button) — history/totals update, and a publish happens to `ev_assistant/ladung/extern/<entry_id>/erfasst`.
+**2) End-to-end in HA (no car needed):** Developer tools → Services → call `ev_assistant.simulate_event` with `config_entry_id`, `soc_start: 32`, `soc_end: 74`. Expect: a notification appears, `binary_sensor ... External Charge Detection Open` turns on, `sensor ... External Charge Estimate` ≈ 21.48 kWh (see the worked example above). Then enter kWh/price and call `ev_assistant.log_charge` (or the save button) — history/totals update.
 
 **3) Trip log, end-to-end (no car needed):** call `ev_assistant.simulate_trip` with `config_entry_id`, `km: 12.5`. Expect: a notification appears, `binary_sensor ... Trip Detection Open` turns on, `sensor ... Trip Estimate` shows `12.5`. Then call `ev_assistant.log_trip` with `start_ort`/`end_ort` — `sensor ... Trip km (Last)` updates. Finally call `ev_assistant.export_fahrtenbuch` and check `www/ev_assistant_fahrtenbuch_<entry_id>.csv` was created.
 
-### Data record (history / MQTT `.../erfasst`)
+### Data record (history)
 
 Deliberately contains **both** the manually entered `kwh`/`preis_kwh`/`kosten` **and** the automatic `schaetzung_kwh` plus its `quelle` (`soc`/`power_ac`/`power_dc`) — so you can see over time how close the estimate gets, and adjust `charge_efficiency` accordingly (or just let the automatic calibration handle it).
 
@@ -234,18 +247,19 @@ Deliberately contains **both** the manually entered `kwh`/`preis_kwh`/`kosten` *
 
 ```
 custom_components/ev_assistant/
-  __init__.py        # setup, services, unload (reload-capable)
+  __init__.py        # setup, services, unload (reload-capable), sidebar panel registration
   manifest.json
   const.py
   engine.py           # pure logic (pytest-testable) — ChargeDetector + EfficiencyCalibrator + TripDetector
-  coordinator.py      # entity/MQTT wiring, detection, calibration, persistence, notification
-  config_flow.py      # config + options flow (7 steps)
+  coordinator.py      # entity wiring, detection, calibration, persistence, notification
+  config_flow.py      # config + options flow (9 steps)
   entity.py           # shared entity base (device grouping, vehicle-based device name)
   sensor.py
   binary_sensor.py
   services.yaml
   strings.json
   translations/{de,en}.json
+  frontend/           # sidebar panel (ev-assistant-panel.js) — see "Sidebar panel" below
 packages/             # optional UI glue + Lovelace card (see known limitation above)
 tests/                # pytest (engine.py)
 ```
@@ -253,7 +267,6 @@ tests/                # pytest (engine.py)
 ### Requirements
 
 - Home Assistant 2024.1+
-- `mqtt` integration set up (dependency), even if you only use HA-entity sources
 
 ---
 
@@ -293,7 +306,6 @@ Angenommen dein Auto hat einen nutzbaren Akku von 45 kWh und den Standard-Ladewi
    - AC-seitige (abgerechnete) Schätzung, unter Berücksichtigung der Ladeverluste: `18,9 kWh ÷ 0,88 = 21,48 kWh` — die Benachrichtigung rundet das auf **≈ 21,5 kWh**.
 6. EV Assistant tut jetzt Folgendes:
    - speichert dies als **offene** Ladung,
-   - veröffentlicht sie auf dem konfigurierten MQTT-Topic,
    - feuert das Event `ev_assistant_pending` (mit `config_entry_id`, damit du bei mehreren Autos weißt, welches gemeint ist),
    - schickt eine Benachrichtigung: *„+42 % (32 → 74 %), ~21,5 kWh geschätzt. kWh und Preis eintragen."*
    - schaltet `binary_sensor … Fremdladung Erfassung offen` ein und setzt `sensor … Fremdladung Schätzung` auf 21,48 kWh.
@@ -327,25 +339,27 @@ Ein Fahrzeug-Ladeleistungssensor (wenn vorhanden) ist meist genauer als die rein
 
 ### Konfiguration
 
-Einstellungen → Geräte & Dienste → **Integration hinzufügen** → „EV Assistant". Die Einrichtung läuft in 7 Schritten (identisch auch beim Bearbeiten über **Konfigurieren**):
+Einstellungen → Geräte & Dienste → **Integration hinzufügen** → „EV Assistant". Die Einrichtung läuft in 9 Schritten (identisch auch beim Bearbeiten über **Konfigurieren**):
 
 1. **Fahrzeug** — Hersteller + Modell (Pflicht, z.B. „Peugeot" / „e-2008" — ergeben zusammen den HA-Gerätenamen), Erstzulassung (optional, nur Anzeige), Kilometerstand-Entität (optional, gefiltert auf `sensor` + `device_class: distance` — wird als eigener `... Kilometerstand`-Sensor am EV-Assistant-Gerät gespiegelt und sowohl als Grundlage für die automatische Fahrten-Erkennung (Fahrtenbuch, Schritt 6) als auch als Streckenbasis für den Kostenvergleich in Schritt 7 genutzt), nutzbare Akku-Kapazität in kWh (Pflicht — der *netto* nutzbare Wert, nicht die oft größere Brutto-/Werksangabe mancher Hersteller; bestimmt direkt, wie viele kWh ein Prozentpunkt SoC-Anstieg entspricht, falsch eingetragen sind also alle Energie-Schätzungen falsch), Ladewirkungsgrad (nur ein Startwert — wird automatisch ersetzt, sobald genug echte Heim-Ladesessions vorliegen, siehe Kalibrierung unten).
-2. **Grundsignale** — SoC- und Heim-Laden-Quelle, jeweils als **HA-Entität ODER MQTT-Topic** (Entität hat Vorrang). Mindestens eine Quelle pro Signal ist Pflicht (mit `*` markiert). Der SoC-Entitäts-Picker ist auf `sensor` + `device_class: battery` gefiltert, der Heim-Laden-Picker auf `sensor` + `device_class: power` (z.B. die Ladeleistung einer Wallbox von evcc/Warp) — ein Zahlenwert **über 0,1 kW gilt als „lädt"**; ein nicht-numerischer Wert (z.B. evccs eigener `"charging"`/`"on"`-Status) fällt stattdessen auf einen reinen Text-Vergleich zurück. **Das ist nur ein Ja/Nein-Signal „lädt gerade zuhause"** — nicht dieselbe Ladeleistung wie in Schritt 3 (die kommt dort bewusst vom Fahrzeug statt der Wallbox, damit sie auch unterwegs bei einer Fremdladung funktioniert). Meldet dein Leistungssensor eine andere Einheit (z.B. Watt), rechne über das Template-Feld um, z.B. `{{ value | float / 1000 }}`. Passt das nicht zu deinem Setup (z.B. ein `binary_sensor`), nutze stattdessen das MQTT-Topic-Feld.
+2. **Grundsignale** — SoC- und Heim-Laden-Entität (beide Pflicht). Der SoC-Entitäts-Picker ist auf `sensor` + `device_class: battery` gefiltert, der Heim-Laden-Picker auf `sensor` + `device_class: power` (z.B. die Ladeleistung einer Wallbox von evcc/Warp) — ein Zahlenwert **über 0,1 kW gilt als „lädt"**; ein nicht-numerischer Wert (z.B. evccs eigener `"charging"`/`"on"`-Status) fällt stattdessen auf einen reinen Text-Vergleich zurück. **Das ist nur ein Ja/Nein-Signal „lädt gerade zuhause"** — nicht dieselbe Ladeleistung wie in Schritt 3 (die kommt dort bewusst vom Fahrzeug statt der Wallbox, damit sie auch unterwegs bei einer Fremdladung funktioniert). Meldet dein Sensor eine andere Einheit (z.B. Watt), rechne über das Template-Feld um, z.B. `{{ value | float / 1000 }}`.
 3. **Ladeleistung** (optional) — zwei unterschiedliche Quellen für zwei unterschiedliche Zwecke. Die Ladeleistung ist ein Momentanwert in W/kW, typischerweise aus der Fahrzeug-Telemetrie statt deiner Wallbox (liefert dadurch auch bei einer Fremdladung unterwegs Werte, wo die Wallbox nichts misst); sie verbessert die Energie-Schätzung einer Fremdladung gegenüber der reinen SoC-Delta-Schätzung (siehe „Energie-Schätzmethoden" oben). Der **Wallbox-Energiezähler** dagegen ist ein kumulativer kWh-Zähler deiner eigenen Wallbox (nie ein Momentanwert, nur beim Heim-Laden relevant) — er dient der automatischen Ladewirkungsgrad-Kalibrierung *und* den Heimladen-Kosten in Schritt 7.
-4. **Ausgabe** (optional) — eine Benachrichtigung im Home-Assistant-eigenen Benachrichtigungsbereich erscheint bei einer erkannten Ladung immer automatisch, unabhängig von diesem Schritt. Der `notify.*`-Dienst schickt zusätzlich eine Push-Nachricht (z.B. aufs Handy); das MQTT-Publish-Topic veröffentlicht zusätzlich die Rohdaten als JSON für eigene Automationen/Integrationen.
+4. **Ausgabe** (optional) — eine Benachrichtigung im Home-Assistant-eigenen Benachrichtigungsbereich erscheint bei einer erkannten Ladung immer automatisch, unabhängig von diesem Schritt. Der `notify.*`-Dienst schickt zusätzlich eine Push-Nachricht (z.B. aufs Handy).
 5. **Erkennungs-Feinjustierung** — Schwellwerte der oben beschriebenen Zustandsmaschine (`start_delta`, `noise`, `idle_timeout_s`, `drop_ends`). Eine Ladung startet, sobald der SoC um `start_delta` über den letzten Ruhewert steigt; sie endet entweder bei einem SoC-Abfall um mehr als `drop_ends` unter den erreichten Höchststand, oder wenn `idle_timeout_s` lang kein neuer Höchststand erreicht wurde (z.B. Akku voll). `noise` toleriert normales Sensor-Zittern beim Verfolgen des Höchststands und muss immer **kleiner** sein als `start_delta`, sonst kann schon Rauschen eine falsche Erkennung auslösen. Die Standardwerte passen für die meisten Fahrzeuge; bei einem Auto, dessen SoC nur grob/selten aktualisiert wird (manche Cloud-APIs), großzügiger einstellen.
 6. **Fahrtenbuch** (optional) — Schwellwerte der Fahrten-Erkennung (`trip_min_km`, `trip_idle_timeout_s`), siehe „Fahrtenbuch" unten. Die Standardwerte passen für die meisten Kilometerstand-Sensoren. Zusätzlich eine optionale Orts-Vorschlag-Quelle (`gps_entity`, eine person-/device_tracker-Entität).
 7. **Kostenvergleich** (optional) — siehe „Kostenvergleich gegenüber einem Verbrenner" unten.
+8. **Wallbox** (optional) — der Live-Ladezustand dieses Fahrzeugs am evcc-Ladepunkt für den Übersicht-Tab des Sidebar-Panels (Ladeleistung, Status, Modus, Phasen, Fahrzeug-SoC, Ladelimit, Session-Energie/-Solaranteil/-Preis, Ladedauer). Ohne diese Felder zeigt der Übersicht-Tab einfach „—" statt Werte — alles andere (Erkennung, Historie, Fahrtenbuch) funktioniert unabhängig von diesem Schritt.
+9. **evcc** (optional) — Standortdaten, die für die gesamte evcc-Installation gelten, nicht nur für diesen Ladepunkt: PV-/Netz-/Hausbatterie-Leistung für die Flussgrafik, aktuelle Tarife und Gesamtstatistik. Außerdem der **Fahrzeugname in evcc** — kein Sensor, sondern der exakte Name wie in evcc konfiguriert (Feld `vehicle` im Ladelogbuch) — bei mehreren Fahrzeugen in evcc filtert er die Heimladen-Historie des Panels (siehe „Sidebar-Panel" unten) auf dieses Fahrzeug.
 
 ### Quellen: herstellerunabhängig
 
-Jedes Signal wird aus einer **HA-Entität** (z.B. Hersteller-Integration) oder aus **MQTT** (z.B. WiCAN Pro) gespeist — funktioniert mit jedem Hersteller, der einen SoC-Sensor in HA bereitstellt.
+Jedes Signal wird aus einer **HA-Entität** gespeist — funktioniert mit jedem Hersteller, der einen SoC-Sensor in HA bereitstellt, oder mit jedem MQTT-basierten Gerät (z.B. WiCAN Pro), sobald Home Assistants eigene `mqtt`-Integration dessen Topic als Sensor-Entität bereitstellt.
 
-- **WiCAN Pro (MQTT):** SoC-Topic `<dein_prefix>/telemetrie/soc` (Template `{{ value }}` oder `{{ value_json.soc }}`).
+- **WiCAN Pro:** Home Assistants `mqtt`-Integration einrichten, damit das SoC-Topic als `sensor`-Entität erscheint, dann EV Assistants SoC-Entität auf diesen Sensor zeigen lassen.
 - **Stellantis / VW / … (Entität):** SoC-Entität = `sensor.<auto>_battery`. Cloud-SoC ist oft grob/selten — dann `start_delta` höher und `idle_timeout_s` großzügiger; der Leistungs-Pfad entfällt mangels echter Leistungsdaten (Fallback auf SoC × Wirkungsgrad).
-- **Gemischt** ist möglich: SoC aus Entität, `home_charging` aus evcc-MQTT usw.
+- **Gemischt** ist möglich: SoC aus einer Hersteller-Integration, `home_charging` aus evcc usw.
 
-Ein optionales Jinja-Template pro Signal rechnet den Rohwert um (`value` = Zustand/Payload, `value_json` = geparster JSON-Payload bei MQTT).
+Ein optionales Jinja-Template pro Signal rechnet den rohen Entitätszustand um (`value`), z.B. für eine Einheiten-Umrechnung.
 
 ### Automatische Ladewirkungsgrad-Kalibrierung
 
@@ -443,7 +457,7 @@ Eine erkannte Fahrt speichert nur Start-/End-Kilometerstand, Strecke und Zeitste
 - `ev_assistant.discard_pending` — `config_entry_id` (+ optional `start_ts`): eine offene Ladung verwerfen (z.B. ein Fehlalarm — es war gar keine Fremdladung). Gleiche `start_ts`-Auswahlregel wie oben.
 - `ev_assistant.edit_charge` — `config_entry_id`, `erfasst_ts`, `kwh`, `price_kwh`: korrigiert kWh/Preis eines bereits bestätigten Historien-Eintrags nachträglich (z.B. ein Tippfehler, der später auffällt), identifiziert über dessen `erfasst_ts`-Attribut (siehe das `historie`-Attribut am Kosten-Sensor, oder die Historie-Liste der [EV Assistant Card](https://github.com/weskona/ev-assistant-card)). Die laufenden Summen werden um die Differenz angepasst, nicht neu berechnet.
 - `ev_assistant.delete_charge` — `config_entry_id`, `erfasst_ts`: löscht einen bereits bestätigten Historien-Eintrag vollständig (z.B. eine fälschlich erkannte Ladung, die gar keine Fremdladung war). Die laufenden Summen werden um den gelöschten Betrag verringert. **Nicht rückgängig zu machen.**
-- `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): **Testereignis ohne Auto** erzeugen (löst Benachrichtigung, MQTT, Sensoren aus) — siehe „Testen" unten.
+- `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): **Testereignis ohne Auto** erzeugen (löst Benachrichtigung, Sensoren aus) — siehe „Testen" unten.
 - `ev_assistant.log_trip` — `config_entry_id`, `start_ort`, `end_ort` (+ optional `start_ts`): eine offene Fahrt mit Start-/Zielort bestätigen. Gleiche Mehrfach-/`start_ts`-Auswahlregel wie `log_charge`. Anders als `log_charge` gibt es **keinen** Fallback auf einen manuellen Einzeleintrag ohne offene Fahrt — Kilometerstand-Werte stammen ausschließlich aus der Erkennung.
 - `ev_assistant.discard_pending_trip` — `config_entry_id` (+ optional `start_ts`): eine offene Fahrt verwerfen (z.B. ein kurzes Rangieren in der Einfahrt).
 - `ev_assistant.export_fahrtenbuch` — `config_entry_id`: das komplette Fahrtenbuch als CSV nach `www/` schreiben (siehe „Fahrtenbuch" oben).
@@ -463,6 +477,18 @@ Alle Services benötigen `config_entry_id`, um bei mehreren EV-Assistant-Instanz
 
 > **Bekannte Einschränkung:** Die Beispiel-Entity-IDs der Karte (z.B. `sensor.ev_assistant_letzte_kosten`) gehen vom alten, festen Gerätenamen „EV Assistant" aus — seit v0.4.0 heißt das Gerät wie dein Fahrzeug, daher die Entity-Liste der Karte an deine tatsächlichen Entity-IDs anpassen. Bei einer Neueinrichtung stattdessen gleich die [EV Assistant Card](https://github.com/weskona/ev-assistant-card) oben verwenden.
 
+### Sidebar-Panel
+
+EV Assistant registriert automatisch sein eigenes Sidebar-Panel — kein Dashboard-Setup nötig — sobald die Integration eingerichtet ist. Zwei Tabs:
+
+- **Übersicht** — eine evcc-gestützte Live-Ansicht: Verbindungsstatus, Lademodus-Badge, Phasen-Badge, SoC-Balken mit Limit-Markierung, Live-KPIs (Ladeleistung, Session-kWh, Solaranteil, Session-Preis, Ladedauer), aktuelle Tarife (Netz/Einspeisung), Gesamtstatistik sowie eine Donut-Ladeleistungsanzeige, aufgeteilt in Solar (grün) und Netz (blau). Gespeist aus den Entitäten der Schritte 8 (Wallbox) und 9 (evcc) oben — ohne sie zeigt dieser Tab einfach „—" statt Werte.
+- **Fahrzeuge** — funktioniert unabhängig von der evcc-Konfiguration des Übersicht-Tabs: Fremdladung-Summen + letzte Session, Heimladen-Summen, Fahrtenbuch-Zusammenfassung, Fahrzeug-Infos (Kilometerstand, Wirkungsgrad, Ersparnis) sowie drei Historie-Listen:
+  - **Fremdladung-Historie** — jede bestätigte Fremdladung, mit Bearbeiten/Löschen über ein ausklappendes Bestätigungsfeld (keine sofortige Aktion), SoC-Spanne + Delta bei automatisch erkannten Ladungen, sowie Endzeit/Ladedauer, wenn verfügbar. Zeigt standardmäßig die letzten 5, aufklappbar auf alle mit scrollbarer Liste.
+  - **Heimladen-Historie** — evccs eigenes Ladelogbuch, live abgerufen über evcc_intgs `sessions`-Websocket-Befehl (keine separate Konfiguration nötig, außer dass evcc_intg selbst eingerichtet ist), nur lesend. Hat evcc mehr als ein Fahrzeug, filtert ein Dropdown die Liste auf dieses eine (Standardauswahl: der in Schritt 9 konfigurierte Fahrzeugname, falls gesetzt), plus eine energiegewichtete Durchschnitts-Solaranteil-Auswertung über die sichtbaren Ladungen.
+  - **Fahrtenbuch-Historie** — jede bestätigte Fahrt, gleiches Bearbeiten/Löschen- und Aufklapp-/Scroll-Muster wie die Ladehistorie.
+
+Das Panel-Design passt sich an Handy-, Tablet- und Desktop-Breiten an.
+
 ### Testen
 
 **1) Logik (ohne HA):**
@@ -474,7 +500,7 @@ python -m pytest tests -q
 
 **3) Fahrtenbuch, Ende-zu-Ende (ohne Auto):** `ev_assistant.simulate_trip` mit `config_entry_id`, `km: 12.5` aufrufen. Erwartung: Benachrichtigung erscheint, `binary_sensor … Fahrt Erfassung offen` = an, `sensor … Fahrt Schätzung` zeigt `12.5`. Dann `ev_assistant.log_trip` mit `start_ort`/`end_ort` aufrufen — `sensor … Fahrt km (letzte)` aktualisiert sich. Zuletzt `ev_assistant.export_fahrtenbuch` aufrufen und prüfen, dass `www/ev_assistant_fahrtenbuch_<entry_id>.csv` angelegt wurde.
 
-### Datensatz (Historie / MQTT `…/erfasst`)
+### Datensatz (Historie)
 
 Enthält bewusst **beides**: manuell `kwh`/`preis_kwh`/`kosten` **und** die Auto-`schaetzung_kwh` samt `quelle` (`soc`/`power_ac`/`power_dc`) — so siehst du über die Zeit, wie gut die Schätzung trifft, und kannst `charge_efficiency` nachziehen (oder die automatische Kalibrierung das übernehmen lassen).
 
@@ -482,18 +508,19 @@ Enthält bewusst **beides**: manuell `kwh`/`preis_kwh`/`kosten` **und** die Auto
 
 ```
 custom_components/ev_assistant/
-  __init__.py        # Setup, Services, Unload (reload-fähig)
+  __init__.py        # Setup, Services, Unload (reload-fähig), Sidebar-Panel-Registrierung
   manifest.json
   const.py
   engine.py          # reine Logik (pytest) — ChargeDetector + EfficiencyCalibrator + TripDetector
-  coordinator.py     # Entity-/MQTT-Verdrahtung, Erkennung, Kalibrierung, Persistenz, Notification
-  config_flow.py     # Config- + Options-Flow (7 Schritte)
+  coordinator.py     # Entity-Verdrahtung, Erkennung, Kalibrierung, Persistenz, Notification
+  config_flow.py     # Config- + Options-Flow (9 Schritte)
   entity.py          # gemeinsame Entity-Basis (Device-Gruppierung, fahrzeugbasierter Gerätename)
   sensor.py
   binary_sensor.py
   services.yaml
   strings.json
   translations/{de,en}.json
+  frontend/          # Sidebar-Panel (ev-assistant-panel.js) — siehe „Sidebar-Panel" oben
 packages/            # optionales UI-Glue + Lovelace-Karte (siehe bekannte Einschränkung oben)
 tests/               # pytest (engine.py)
 ```

@@ -1,7 +1,8 @@
 """Config- und Options-Flow fuer ev_assistant.
 
-Pro Signal waehlbar: HA-Entitaet (Vorrang) ODER MQTT-Topic. Dadurch nutzbar
-mit Hersteller-Integrationen (Stellantis, VW, ...) und mit WiCAN-MQTT.
+Pro Signal waehlbar: eine HA-Entitaet. Dadurch nutzbar mit Hersteller-
+Integrationen (Stellantis, VW, ...) und mit jeder anderen Integration,
+die ihre Werte als HA-Entitaet bereitstellt (z.B. WiCAN Pro).
 """
 from __future__ import annotations
 
@@ -13,24 +14,25 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_ERSTZULASSUNG, CONF_GPS_ENTITY, CONF_HOME_ENTITY,
-    CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE, CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT,
+    CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE, CONF_IDLE_TIMEOUT,
     CONF_NOISE, CONF_NOTIFY_SERVICE, CONF_ODO_ENTITY, CONF_POWER_ENTITY, CONF_POWER_IS_AC,
-    CONF_POWER_TEMPLATE, CONF_POWER_TOPIC, CONF_PUBLISH_TOPIC,
-    CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_TOPIC, CONF_START_DELTA,
+    CONF_POWER_TEMPLATE,
+    CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_START_DELTA,
     CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM,
     CONF_USABLE_KWH, CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL,
     CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY, CONF_VERBRENNER_PRICE_PER_LITER,
     CONF_WALLBOX_ENERGY_ENTITY,
-    CONF_WALLBOX_ENERGY_TEMPLATE, CONF_WALLBOX_ENERGY_TOPIC,
+    CONF_WALLBOX_ENERGY_TEMPLATE,
     CONF_EVCC_CHARGE_POWER, CONF_EVCC_CHARGE_STATUS, CONF_EVCC_MODE,
     CONF_EVCC_PHASES_ACTIVE, CONF_EVCC_VEHICLE_SOC, CONF_EVCC_LIMIT_SOC,
     CONF_EVCC_SESSION_ENERGY, CONF_EVCC_SESSION_SOLAR_PCT, CONF_EVCC_SESSION_PRICE,
     CONF_EVCC_CHARGE_DURATION, CONF_EVCC_TARIFF_GRID, CONF_EVCC_TARIFF_FEEDIN,
     CONF_EVCC_STAT_TOTAL_KWH, CONF_EVCC_STAT_SOLAR_PCT, CONF_EVCC_STAT_AVG_PRICE,
     CONF_EVCC_PV_POWER, CONF_EVCC_GRID_POWER, CONF_EVCC_BATTERY_POWER,
+    CONF_EVCC_VEHICLE_NAME,
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY, DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE,
-    DEFAULT_POWER_IS_AC, DEFAULT_PUBLISH_TOPIC, DEFAULT_START_DELTA,
+    DEFAULT_POWER_IS_AC, DEFAULT_START_DELTA,
     DEFAULT_TEMPLATE, DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH, DOMAIN,
 )
@@ -38,8 +40,7 @@ from .const import (
 # Entity-Picker je Signal auf den passenden device_class gefiltert, damit
 # beim Anlegen/Bearbeiten nicht durch alle Entitaeten der Instanz gescrollt
 # werden muss. Wer sein Signal ueber einen anderen device_class-losen
-# Sensor oder binary_sensor abbildet, nutzt stattdessen die MQTT-Topic-
-# Variante oder das Template-Feld zur Umrechnung.
+# Sensor oder binary_sensor abbildet, nutzt das Template-Feld zur Umrechnung.
 _SOC_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor", device_class="battery")
 )
@@ -89,6 +90,9 @@ _EVCC_BINARY_OR_SENSOR = selector.EntitySelector(
 _EVCC_SELECT = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="select")
 )
+_EVCC_VEHICLE_NAME = selector.TextSelector(
+    selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
+)
 
 
 def _clean(user_input: dict) -> dict:
@@ -107,13 +111,11 @@ def build_required_schema(cur: dict) -> vol.Schema:
         return {"suggested_value": cur.get(key)}
 
     return vol.Schema({
-        # --- SoC (Pflicht: Entity ODER Topic) ---
+        # --- SoC (Pflicht) ---
         vol.Optional(CONF_SOC_ENTITY, description=sv(CONF_SOC_ENTITY)): _SOC_ENTITY,
-        vol.Optional(CONF_SOC_TOPIC, description=sv(CONF_SOC_TOPIC)): str,
         vol.Optional(CONF_SOC_TEMPLATE, default=cur.get(CONF_SOC_TEMPLATE, DEFAULT_TEMPLATE)): str,
-        # --- Heim-Laden (Pflicht: Entity ODER Topic) ---
+        # --- Heim-Laden (Pflicht) ---
         vol.Optional(CONF_HOME_ENTITY, description=sv(CONF_HOME_ENTITY)): _HOME_ENTITY,
-        vol.Optional(CONF_HOME_TOPIC, description=sv(CONF_HOME_TOPIC)): str,
         vol.Optional(CONF_HOME_TEMPLATE, default=cur.get(CONF_HOME_TEMPLATE, DEFAULT_TEMPLATE)): str,
     })
 
@@ -129,8 +131,7 @@ def build_vehicle_schema(cur: dict) -> vol.Schema:
     sich weder Fremdladungen noch der Ladewirkungsgrad sinnvoll schaetzen).
     Ladewirkungsgrad bleibt optional, da er automatisch aus echten
     Heim-Ladesessions kalibriert werden kann (siehe EfficiencyCalibrator).
-    Kilometerstand ist eine reine Anzeige-Entitaet (kein Erkennungssignal),
-    daher nur als HA-Entitaet waehlbar, ohne MQTT-Topic-Alternative.
+    Kilometerstand ist eine reine Anzeige-Entitaet (kein Erkennungssignal).
     """
     def sv(key):
         return {"suggested_value": cur.get(key)}
@@ -158,19 +159,18 @@ def build_power_schema(cur: dict) -> vol.Schema:
 
     return vol.Schema({
         vol.Optional(CONF_POWER_ENTITY, description=sv(CONF_POWER_ENTITY)): _POWER_ENTITY,
-        vol.Optional(CONF_POWER_TOPIC, description=sv(CONF_POWER_TOPIC)): str,
         vol.Optional(CONF_POWER_TEMPLATE, default=cur.get(CONF_POWER_TEMPLATE, DEFAULT_TEMPLATE)): str,
         vol.Optional(CONF_POWER_IS_AC, default=cur.get(CONF_POWER_IS_AC, DEFAULT_POWER_IS_AC)): bool,
         vol.Optional(CONF_WALLBOX_ENERGY_ENTITY, description=sv(CONF_WALLBOX_ENERGY_ENTITY)): _WALLBOX_ENERGY_ENTITY,
-        vol.Optional(CONF_WALLBOX_ENERGY_TOPIC, description=sv(CONF_WALLBOX_ENERGY_TOPIC)): str,
         vol.Optional(CONF_WALLBOX_ENERGY_TEMPLATE, default=cur.get(CONF_WALLBOX_ENERGY_TEMPLATE, DEFAULT_TEMPLATE)): str,
     })
 
 
 def build_output_schema(cur: dict) -> vol.Schema:
-    """Schritt 4: wohin erkannte Fremdladungen gemeldet werden."""
+    """Schritt 4: zusaetzliche Push-Benachrichtigung bei einer erkannten
+    Fremdladung (die HA-interne Benachrichtigung + der EVENT_PENDING-
+    Eventbus-Event feuern in jedem Fall, unabhaengig von diesem Feld)."""
     return vol.Schema({
-        vol.Optional(CONF_PUBLISH_TOPIC, default=cur.get(CONF_PUBLISH_TOPIC, DEFAULT_PUBLISH_TOPIC)): str,
         vol.Optional(CONF_NOTIFY_SERVICE, default=cur.get(CONF_NOTIFY_SERVICE, "")): str,
     })
 
@@ -225,11 +225,13 @@ def build_comparison_schema(cur: dict) -> vol.Schema:
 
 
 def build_wallbox_schema(cur: dict) -> vol.Schema:
-    """Schritt 8/8: Wallbox-/evcc-Entitäten für das Dashboard-Panel (Übersicht-Tab).
+    """Schritt 8/9: Wallbox — Live-Ladezustand dieses Fahrzeugs an DIESEM
+    Ladepunkt für das Dashboard-Panel (Übersicht-Tab: SoC-Ring, Status-Badge).
 
-    Alle Felder optional — ohne sie zeigt das Panel — statt Werte. Der Schritt
-    wird zuletzt abgefragt (nach dem Kostenvergleich), da er kein
-    Pflichtfeld enthält und rein das Panel-Dashboard betrifft.
+    Alle Felder optional — ohne sie zeigt das Panel — statt Werte. Bewusst
+    getrennt vom Schritt "evcc" (Standort-/Tarifdaten), damit Wallbox-
+    Ladepunktzustand und evcc-Site-Daten nicht in einem Formular vermischt
+    werden.
     """
     def sv(key):
         return {"suggested_value": cur.get(key)}
@@ -245,6 +247,27 @@ def build_wallbox_schema(cur: dict) -> vol.Schema:
         vol.Optional(CONF_EVCC_SESSION_SOLAR_PCT, description=sv(CONF_EVCC_SESSION_SOLAR_PCT)): _EVCC_ANY_SENSOR,
         vol.Optional(CONF_EVCC_SESSION_PRICE,     description=sv(CONF_EVCC_SESSION_PRICE)):     _EVCC_ANY_SENSOR,
         vol.Optional(CONF_EVCC_CHARGE_DURATION,   description=sv(CONF_EVCC_CHARGE_DURATION)):   _EVCC_ANY_SENSOR,
+    })
+
+
+def build_evcc_schema(cur: dict) -> vol.Schema:
+    """Schritt 9/9: evcc — Standort-/Tarifdaten (PV, Netz, Hausbatterie,
+    Tarife, Gesamtstatistik) für die Flussgrafik/Charts im Dashboard-Panel,
+    plus der evcc-Fahrzeugname zum Filtern der Heimladen-Historie.
+
+    Alle Felder optional. Bewusst getrennt vom Schritt "wallbox" (Live-
+    Ladezustand DIESES Fahrzeugs) — hier geht es um Daten, die für die
+    gesamte evcc-Installation gelten, nicht nur für einen Ladepunkt.
+
+    evcc_vehicle_name ist kein Entity, sondern der Fahrzeugname wie in evcc
+    konfiguriert (Feld "vehicle" im Ladelogbuch) — filtert bei mehreren
+    Fahrzeugen in evcc die Heimladen-Historie im Panel auf dieses Fahrzeug.
+    """
+    def sv(key):
+        return {"suggested_value": cur.get(key)}
+
+    return vol.Schema({
+        vol.Optional(CONF_EVCC_VEHICLE_NAME,      description=sv(CONF_EVCC_VEHICLE_NAME)):      _EVCC_VEHICLE_NAME,
         vol.Optional(CONF_EVCC_TARIFF_GRID,       description=sv(CONF_EVCC_TARIFF_GRID)):       _EVCC_ANY_SENSOR,
         vol.Optional(CONF_EVCC_TARIFF_FEEDIN,     description=sv(CONF_EVCC_TARIFF_FEEDIN)):     _EVCC_ANY_SENSOR,
         vol.Optional(CONF_EVCC_STAT_TOTAL_KWH,    description=sv(CONF_EVCC_STAT_TOTAL_KWH)):    _EVCC_ENERGY_SENSOR,
@@ -257,11 +280,11 @@ def build_wallbox_schema(cur: dict) -> vol.Schema:
 
 
 def _has_soc(data: dict) -> bool:
-    return bool(data.get(CONF_SOC_ENTITY) or data.get(CONF_SOC_TOPIC))
+    return bool(data.get(CONF_SOC_ENTITY))
 
 
 def _has_home(data: dict) -> bool:
-    return bool(data.get(CONF_HOME_ENTITY) or data.get(CONF_HOME_TOPIC))
+    return bool(data.get(CONF_HOME_ENTITY))
 
 
 def _has_vehicle_name(data: dict) -> bool:
@@ -277,15 +300,22 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
     Schritt 2 (grundsignale): zwingend notwendige Signale (SoC + Heim-Laden).
     Schritt 3 (ladeleistung): optionale Ladeleistungs-Quelle fuer eine
     genauere Energie-Schaetzung statt reiner SoC-Delta-Schaetzung.
-    Schritt 4 (ausgabe): wohin erkannte Fremdladungen gemeldet werden
-    (MQTT-Topic, notify-Service).
+    Schritt 4 (ausgabe): zusaetzliche Push-Benachrichtigung (notify-Service)
+    bei einer erkannten Fremdladung.
     Schritt 5 (erkennung): Feinjustierung der Fremdlade-Erkennung
     (ChargeDetector-Schwellwerte).
     Schritt 6 (fahrtenbuch): Feinjustierung der Fahrten-Erkennung
     (TripDetector-Schwellwerte, basiert auf derselben Kilometerstand-
     Entitaet aus Schritt 1).
     Schritt 7 (vergleich): optionaler Kostenvergleich gegenueber einem
-    Verbrenner. Der Eintrag wird erst am Ende dieser Kette angelegt.
+    Verbrenner.
+    Schritt 8 (wallbox): optionaler Live-Ladezustand dieses Fahrzeugs am
+    Ladepunkt (evcc) fuer das Dashboard-Panel — SoC-Ring, Status-Badge.
+    Schritt 9 (evcc): optionale Standort-/Tarifdaten (PV, Netz, Haus-
+    batterie, Tarife, Gesamtstatistik, evcc-Fahrzeugname) fuer die
+    Flussgrafik/Charts im Panel. Bewusst getrennt von Schritt 8, damit
+    Ladepunkt- und Standort-Daten nicht in einem Formular vermischt werden.
+    Der Eintrag wird erst am Ende dieser Kette angelegt.
     """
 
     VERSION = 1
@@ -377,6 +407,15 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_wallbox(self, user_input=None) -> FlowResult:
         if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            return await self.async_step_evcc()
+
+        return self.async_show_form(
+            step_id="wallbox", data_schema=build_wallbox_schema(user_input or {})
+        )
+
+    async def async_step_evcc(self, user_input=None) -> FlowResult:
+        if user_input is not None:
             data = {**self._data, **_clean(user_input)}
             hersteller = data.get(CONF_VEHICLE_HERSTELLER)
             modell = data.get(CONF_VEHICLE_MODELL)
@@ -385,7 +424,7 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
             return self.async_create_entry(title=title, data=data)
 
         return self.async_show_form(
-            step_id="wallbox", data_schema=build_wallbox_schema(user_input or {})
+            step_id="evcc", data_schema=build_evcc_schema(user_input or {})
         )
 
     @staticmethod
@@ -397,11 +436,11 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
 class EvAssistantOptionsFlow(OptionsFlow):
     """Spiegelt dieselbe Schrittkette wie die Ersteinrichtung (siehe
     EvAssistantConfigFlow: Fahrzeug -> Grundsignale -> Ladeleistung ->
-    Ausgabe -> Erkennung -> Fahrtenbuch -> Vergleich), damit man gezielt nur
-    den betroffenen Bereich durchklicken kann statt eine Mammutseite mit
-    allen Feldern auszufuellen.
+    Ausgabe -> Erkennung -> Fahrtenbuch -> Vergleich -> Wallbox -> Evcc),
+    damit man gezielt nur den betroffenen Bereich durchklicken kann statt
+    eine Mammutseite mit allen Feldern auszufuellen.
 
-    Wichtig: die Optionen werden erst am Ende der Kette (async_step_vergleich)
+    Wichtig: die Optionen werden erst am Ende der Kette (async_step_evcc)
     EINMALIG geschrieben — mit dem ueber alle Schritte akkumulierten
     self._data. Wuerde man stattdessen bei jedem Zwischenschritt einzeln
     async_create_entry() aufrufen, wuerden die Felder der vorherigen Schritte
@@ -413,9 +452,7 @@ class EvAssistantOptionsFlow(OptionsFlow):
         self._data: dict = {}
 
     def _current(self) -> dict:
-        cur = {**self._entry.data, **self._entry.options, **self._data}
-        cur.setdefault(CONF_PUBLISH_TOPIC, f"{DEFAULT_PUBLISH_TOPIC}/{self._entry.entry_id}")
-        return cur
+        return {**self._entry.data, **self._entry.options, **self._data}
 
     async def async_step_init(self, user_input=None) -> FlowResult:
         """Von HA vorgegebener Einstiegspunkt-Name — reicht direkt an
@@ -500,9 +537,18 @@ class EvAssistantOptionsFlow(OptionsFlow):
 
     async def async_step_wallbox(self, user_input=None) -> FlowResult:
         if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            return await self.async_step_evcc()
+
+        return self.async_show_form(
+            step_id="wallbox", data_schema=build_wallbox_schema(self._current())
+        )
+
+    async def async_step_evcc(self, user_input=None) -> FlowResult:
+        if user_input is not None:
             data = {**self._data, **_clean(user_input)}
             return self.async_create_entry(title="", data=data)
 
         return self.async_show_form(
-            step_id="wallbox", data_schema=build_wallbox_schema(self._current())
+            step_id="evcc", data_schema=build_evcc_schema(self._current())
         )

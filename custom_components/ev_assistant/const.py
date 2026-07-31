@@ -4,20 +4,17 @@ DOMAIN = "ev_assistant"
 PLATFORMS = ["sensor", "binary_sensor"]
 
 # Config / Options Keys
-# Pro Signal: entweder eine HA-Entitaet (Vorrang) ODER ein MQTT-Topic.
+# Pro Signal: eine HA-Entitaet, optional per Template umgerechnet (z.B. andere
+# Einheit). Templates bleiben nuetzlich unabhaengig von der Quelle, MQTT-Topics
+# als Alternative wurden entfernt (siehe CHANGELOG).
 CONF_SOC_ENTITY = "soc_entity"
-CONF_SOC_TOPIC = "soc_topic"
 CONF_SOC_TEMPLATE = "soc_template"
 CONF_HOME_ENTITY = "home_entity"
-CONF_HOME_TOPIC = "home_topic"
 CONF_HOME_TEMPLATE = "home_template"
 CONF_POWER_ENTITY = "power_entity"
-CONF_POWER_TOPIC = "power_topic"
 CONF_POWER_TEMPLATE = "power_template"
 CONF_WALLBOX_ENERGY_ENTITY = "wallbox_energy_entity"
-CONF_WALLBOX_ENERGY_TOPIC = "wallbox_energy_topic"
 CONF_WALLBOX_ENERGY_TEMPLATE = "wallbox_energy_template"
-CONF_PUBLISH_TOPIC = "publish_topic"
 CONF_NOTIFY_SERVICE = "notify_service"
 CONF_USABLE_KWH = "usable_kwh"
 CONF_EFFICIENCY = "charge_efficiency"
@@ -53,6 +50,12 @@ CONF_VERBRENNER_L_100KM = "verbrenner_l_100km"
 CONF_VERBRENNER_PRICE_PER_LITER = "verbrenner_price_per_liter"
 CONF_VERBRENNER_PRICE_ENTITY = "verbrenner_price_entity"
 
+# Evcc-Fahrzeugname (String, kein Entity — muss dem "vehicle"-Feld in evcc's
+# Ladelogbuch entsprechen), zum Filtern der Heimladen-Historie bei mehreren
+# Fahrzeugen in evcc. Bewusst NICHT in EVCC_CONF_KEYS (das ist nur fuer
+# Entity-ID-Felder, die 1:1 ins Panel-"entities"-Mapping kopiert werden).
+CONF_EVCC_VEHICLE_NAME      = "evcc_vehicle_name"
+
 # Evcc/Wallbox-Entitäten für das Dashboard-Panel (Übersicht-Tab)
 CONF_EVCC_CHARGE_POWER      = "evcc_charge_power"
 CONF_EVCC_CHARGE_STATUS     = "evcc_charge_status"
@@ -84,7 +87,6 @@ EVCC_CONF_KEYS = [
 ]
 
 DEFAULT_TEMPLATE = "{{ value }}"
-DEFAULT_PUBLISH_TOPIC = "ev_assistant/ladung/extern"
 DEFAULT_USABLE_KWH = 45.0
 DEFAULT_EFFICIENCY = 0.88
 DEFAULT_POWER_IS_AC = True

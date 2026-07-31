@@ -2,6 +2,53 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.18.0] - 2026-07-31
+
+### Removed
+
+- **MQTT support removed entirely** — breaking change if you configured any signal (SoC,
+  home-charging, vehicle charging power, wallbox energy meter) via its MQTT-topic field, or
+  relied on the outbound event-publish MQTT topic. Every signal must now come from an HA entity
+  instead. If your source is MQTT-based (e.g. WiCAN Pro), set up Home Assistant's own `mqtt`
+  integration to expose it as a `sensor` entity first, then point EV Assistant at that entity —
+  the per-signal Jinja template field still works exactly as before for unit conversions. The
+  `mqtt` integration is no longer a hard dependency of EV Assistant.
+
+### Changed
+
+- **Config/options flow: "Wallbox" and "evcc" are now two separate steps** instead of one mixed
+  step — no more mixing this vehicle's live loadpoint state with site-wide evcc data in a single
+  form. **Wallbox** (step 8) covers this vehicle's live charging state at the evcc charge point
+  (power, status, mode, phases, vehicle SoC, limit SoC, session energy/solar/price, duration).
+  **evcc** (step 9) covers data that applies to the whole evcc installation, not just this charge
+  point (PV/grid/home-battery power, tariffs, all-time statistics), plus the new **vehicle name in
+  evcc** field (see below). All 9 steps are renumbered consistently.
+
+### Added
+
+- **Heimladen-Historie (home-charging history)** in the panel's Fahrzeuge tab: evcc's own
+  charging-session log, fetched live via evcc_intg's `sessions` websocket command — no new
+  backend service needed, and no separate configuration beyond evcc_intg itself being set up.
+  Read-only (evcc owns this data), same last-5/expand/scroll card layout as the external-charge
+  history.
+  - **Vehicle name in evcc** (new optional config field, step 9): if evcc manages more than one
+    vehicle, the panel's Heimladen-Historie gets a dropdown filter (defaulting to this configured
+    vehicle, still freely switchable in the panel itself) instead of showing every vehicle's home
+    charges mixed together.
+  - **Solar-share evaluation**: each session shows its own solar percentage (when evcc reports
+    one), plus an energy-weighted average across the currently visible/filtered sessions.
+- **Fremdladung-Historie (external-charge history)** in the panel gained several refinements:
+  - Start/end SoC shown per entry, with the delta (e.g. "41% → 82% (+41%)"), for automatically
+    detected charges.
+  - End time and charge duration shown next to the (start-time-based) date, when the underlying
+    detection data is available.
+  - Deleting an entry now opens an expanding confirm panel with explicit "Löschen"/"Abbrechen"
+    buttons, matching the editing interaction, instead of an inline double-click guard on the
+    delete icon.
+  - The list now shows the last 5 by default with an "show all / show less" toggle that expands
+    the list into a scrollable area — no entries are ever removed from the underlying history,
+    only the display is affected. Toggling no longer jumps the page/panel scroll position.
+
 ## [0.17.1] - 2026-07-26
 
 ### Added

@@ -155,7 +155,7 @@ simulate_event:
   name: Fremdladung simulieren (Test)
   description: >
     Erzeugt zum Testen eine offene Fremdladung (ohne Auto). Loest
-    Benachrichtigung, MQTT-Publish und Sensoren aus.
+    Benachrichtigung und Sensoren aus.
   fields:
     config_entry_id:
       name: Fahrzeug

@@ -12,7 +12,7 @@ from .const import (
     DOMAIN, PLATFORMS, SERVICE_DELETE, SERVICE_DELETE_TRIP, SERVICE_DISCARD,
     SERVICE_DISCARD_TRIP, SERVICE_EDIT, SERVICE_EDIT_TRIP, SERVICE_EXPORT_TRIPS,
     SERVICE_LOG, SERVICE_LOG_TRIP, SERVICE_SIMULATE, SERVICE_SIMULATE_TRIP,
-    EVCC_CONF_KEYS,
+    EVCC_CONF_KEYS, CONF_EVCC_VEHICLE_NAME,
 )
 from .coordinator import EvAssistantCoordinator
 
@@ -64,6 +64,11 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
                 entity_map[key] = eid
 
         panel_config = {"title": entry.title, "entities": entity_map}
+        # Kein Entity-ID — separat vom entity_map-Loop oben, sonst wuerde die
+        # obige Schleife den String faelschlich als entity_id behandeln.
+        evcc_vehicle_name = entry.options.get(CONF_EVCC_VEHICLE_NAME) or entry.data.get(CONF_EVCC_VEHICLE_NAME)
+        if evcc_vehicle_name:
+            panel_config["evcc_vehicle_name"] = evcc_vehicle_name
 
         try:
             frontend.async_remove_panel(hass, _PANEL_URL_PATH, warn_if_unknown=False)

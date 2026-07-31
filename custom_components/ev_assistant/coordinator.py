@@ -1,4 +1,4 @@
-"""Coordinator: Quellen (Entity ODER MQTT), Erkennung, Persistenz, Services."""
+"""Coordinator: Quellen (Entity), Erkennung, Persistenz, Services."""
 from __future__ import annotations
 
 import csv
@@ -9,7 +9,6 @@ import time
 from datetime import date, timedelta
 from typing import Callable, Optional
 
-from homeassistant.components import mqtt
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
@@ -20,16 +19,16 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import (
     CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_GPS_ENTITY, CONF_HOME_ENTITY, CONF_HOME_PRICE_ENTITY,
     CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
-    CONF_HOME_TOPIC, CONF_IDLE_TIMEOUT, CONF_NOISE, CONF_NOTIFY_SERVICE,
-    CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE, CONF_POWER_TOPIC,
-    CONF_ODO_ENTITY, CONF_PUBLISH_TOPIC, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_TOPIC,
+    CONF_IDLE_TIMEOUT, CONF_NOISE, CONF_NOTIFY_SERVICE,
+    CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE,
+    CONF_ODO_ENTITY, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE,
     CONF_START_DELTA, CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM, CONF_USABLE_KWH,
     CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY,
     CONF_VERBRENNER_PRICE_PER_LITER, CONF_WALLBOX_ENERGY_ENTITY,
-    CONF_WALLBOX_ENERGY_TEMPLATE, CONF_WALLBOX_ENERGY_TOPIC,
+    CONF_WALLBOX_ENERGY_TEMPLATE,
     DEFAULT_DROP_ENDS, DEFAULT_EFFICIENCY,
     DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE, DEFAULT_POWER_IS_AC,
-    DEFAULT_PUBLISH_TOPIC, DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
+    DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
     DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
     EFF_MAX_EFFICIENCY, EFF_MIN_SAMPLES, EFF_MIN_SOC_DELTA,
@@ -79,11 +78,11 @@ def _empty_data() -> dict:
 
 
 class EvAssistantCoordinator(DataUpdateCoordinator):
-    """Haelt Detector + Zustand, published Events, persistiert.
+    """Haelt Detector + Zustand, feuert Events, persistiert.
 
-    Jedes Signal wird entweder aus einer HA-Entitaet (Vorrang) oder einem
-    MQTT-Topic gespeist -> funktioniert mit Hersteller-Integrationen
-    (Stellantis, VW, ...) genauso wie mit WiCAN Pro ueber MQTT.
+    Jedes Signal wird aus einer HA-Entitaet gespeist -> funktioniert mit
+    Hersteller-Integrationen (Stellantis, VW, ...) genauso wie mit z.B.
+    WiCAN Pro, sofern dessen Werte als HA-Entitaet vorliegen.
     """
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
@@ -91,7 +90,6 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.entry = entry
         self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}_{entry.entry_id}")
         self._notify_tag = f"{NOTIFY_TAG}_{entry.entry_id}"
-        self._default_publish_topic = f"{DEFAULT_PUBLISH_TOPIC}/{entry.entry_id}"
         self._unsub: list[Callable] = []
         self._soc: Optional[float] = None
         self._home: bool = False
@@ -187,13 +185,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     # ----- Quellen-Verdrahtung -------------------------------------------
     async def _setup_sources(self) -> None:
-        await self._wire(CONF_SOC_ENTITY, CONF_SOC_TOPIC, CONF_SOC_TEMPLATE, self._set_soc)
-        await self._wire(
-            CONF_WALLBOX_ENERGY_ENTITY, CONF_WALLBOX_ENERGY_TOPIC,
-            CONF_WALLBOX_ENERGY_TEMPLATE, self._set_wallbox_energy,
-        )
-        await self._wire(CONF_HOME_ENTITY, CONF_HOME_TOPIC, CONF_HOME_TEMPLATE, self._set_home)
-        await self._wire(CONF_POWER_ENTITY, CONF_POWER_TOPIC, CONF_POWER_TEMPLATE, self._set_power)
+        self._wire(CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, self._set_soc)
+        self._wire(CONF_WALLBOX_ENERGY_ENTITY, CONF_WALLBOX_ENERGY_TEMPLATE, self._set_wallbox_energy)
+        self._wire(CONF_HOME_ENTITY, CONF_HOME_TEMPLATE, self._set_home)
+        self._wire(CONF_POWER_ENTITY, CONF_POWER_TEMPLATE, self._set_power)
         self._wire_odo()
         self._wire_verbrenner_price()
         self._wire_home_price()
@@ -202,7 +197,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     def _wire_home_price(self) -> None:
         """Heimstrompreis: optionale Live-Entitaet (z.B. ein dynamischer
         Tarif-Sensor), hat Vorrang vor dem festen Konfigurationswert (siehe
-        _home_price()). Reine Zusatz-Entitaet, keine MQTT-Topic-Alternative."""
+        _home_price())."""
         entity_id = self._opt(CONF_HOME_PRICE_ENTITY)
         if not entity_id:
             return
@@ -222,7 +217,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     def _wire_verbrenner_price(self) -> None:
         """Kraftstoffpreis: optionale Live-Entitaet (z.B. Tankstellenpreis-
         Sensor), hat Vorrang vor dem festen Konfigurationswert (siehe
-        savings()). Reine Zusatz-Entitaet, keine MQTT-Topic-Alternative."""
+        savings())."""
         entity_id = self._opt(CONF_VERBRENNER_PRICE_ENTITY)
         if not entity_id:
             return
@@ -240,9 +235,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self._set_verbrenner_price(state.state)
 
     def _wire_odo(self) -> None:
-        """Kilometerstand: reine Anzeige-Entitaet (kein Erkennungssignal),
-        daher nur als HA-Entitaet waehlbar, keine MQTT-Topic-Alternative
-        wie bei den Erkennungs-Signalen."""
+        """Kilometerstand: reine Anzeige-Entitaet (kein Erkennungssignal)."""
         entity_id = self._opt(CONF_ODO_ENTITY)
         if not entity_id:
             return
@@ -262,9 +255,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     def _wire_gps(self) -> None:
         """Fahrtenbuch-Ortsvorschlag: optionale person-/device_tracker-
         Entitaet, deren Zone bei Fahrtbeginn/-ende als Start-/Ziel-Ort-
-        VORSCHLAG gespeichert wird (siehe _run_trip_detection()). Reine
-        Zusatz-Entitaet wie odo/Preis-Entitaeten, keine MQTT-Alternative --
-        person/device_tracker gibt es nur als HA-Entitaet."""
+        VORSCHLAG gespeichert wird (siehe _run_trip_detection())."""
         entity_id = self._opt(CONF_GPS_ENTITY)
         if not entity_id:
             return
@@ -281,42 +272,29 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if state is not None and state.state not in _INVALID:
             self._set_person_zone(state.state)
 
-    async def _wire(self, entity_key, topic_key, tmpl_key, setter: Callable[[object], None]) -> None:
+    def _wire(self, entity_key, tmpl_key, setter: Callable[[object], None]) -> None:
         entity_id = self._opt(entity_key)
-        topic = self._opt(topic_key)
+        if not entity_id:
+            return
         template_str = self._opt(tmpl_key, DEFAULT_TEMPLATE)
 
-        if entity_id:  # Entitaet hat Vorrang
-            @callback
-            def _on_state(event, _setter=setter, _tmpl=template_str) -> None:
-                new = event.data.get("new_state")
-                if new is None or new.state in _INVALID:
-                    return
-                _setter(self._render(_tmpl, new.state, None))
+        @callback
+        def _on_state(event, _setter=setter, _tmpl=template_str) -> None:
+            new = event.data.get("new_state")
+            if new is None or new.state in _INVALID:
+                return
+            _setter(self._render(_tmpl, new.state))
 
-            self._unsub.append(async_track_state_change_event(self.hass, [entity_id], _on_state))
-            state = self.hass.states.get(entity_id)
-            if state is not None and state.state not in _INVALID:
-                setter(self._render(template_str, state.state, None))
-            return
+        self._unsub.append(async_track_state_change_event(self.hass, [entity_id], _on_state))
+        state = self.hass.states.get(entity_id)
+        if state is not None and state.state not in _INVALID:
+            setter(self._render(template_str, state.state))
 
-        if topic:
-            @callback
-            def _on_msg(msg, _setter=setter, _tmpl=template_str) -> None:
-                value_json = None
-                try:
-                    value_json = json.loads(msg.payload)
-                except (ValueError, TypeError):
-                    pass
-                _setter(self._render(_tmpl, msg.payload, value_json))
-
-            self._unsub.append(await mqtt.async_subscribe(self.hass, topic, _on_msg))
-
-    def _render(self, template_str, value, value_json):
+    def _render(self, template_str, value):
         if not template_str:
             return value
         return Template(template_str, self.hass).async_render(
-            {"value": value, "value_json": value_json}, parse_result=False
+            {"value": value}, parse_result=False
         )
 
     # ----- Setter (parsen + ggf. Erkennung anstossen) --------------------
@@ -336,7 +314,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # Schwellwert statt Text-Vergleich.
             self._home = float(raw) > _HOME_POWER_THRESHOLD_KW
         except (ValueError, TypeError):
-            # Text-/Boolean-artiges Signal (z.B. evcc-MQTT-Status "charging").
+            # Text-/Boolean-artiges Signal (z.B. Status-Text wie "charging").
             self._home = str(raw).strip().lower() in _HOME_TRUE
         if self._calibrator is None or self._soc is None:
             return
@@ -355,7 +333,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self._power = None
 
     def _wallbox_energy_source(self) -> Optional[str]:
-        return self._opt(CONF_WALLBOX_ENERGY_ENTITY) or self._opt(CONF_WALLBOX_ENERGY_TOPIC)
+        return self._opt(CONF_WALLBOX_ENERGY_ENTITY)
 
     @callback
     def _set_wallbox_energy(self, raw) -> None:
@@ -534,16 +512,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         pend["config_entry_id"] = self.entry.entry_id
         self.data.setdefault("pending", []).append(pend)
         await self._save()
-        await self._publish(self._opt(CONF_PUBLISH_TOPIC, self._default_publish_topic), pend, retain=False)
         self.hass.bus.async_fire(EVENT_PENDING, pend)
         await self._notify()
         self.async_set_updated_data(self.data)
-
-    async def _publish(self, topic: str, payload: dict, retain: bool) -> None:
-        try:
-            await mqtt.async_publish(self.hass, topic, json.dumps(payload), qos=1, retain=retain)
-        except Exception as err:  # noqa: BLE001
-            _LOGGER.warning("MQTT publish auf %s fehlgeschlagen: %s", topic, err)
 
     def _en(self) -> bool:
         """Ob die HA-Oberflaeche auf Englisch eingestellt ist. Entity-/
@@ -834,7 +805,6 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         totals["count"] = totals.get("count", 0) + 1
         self.data["last_price"] = price
         await self._save()
-        await self._publish(self._opt(CONF_PUBLISH_TOPIC, self._default_publish_topic) + "/erfasst", rec, retain=True)
         self.hass.bus.async_fire(EVENT_LOGGED, rec)
         if pending_list:
             await self._notify()

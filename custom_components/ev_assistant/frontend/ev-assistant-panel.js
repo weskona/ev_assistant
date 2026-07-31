@@ -20,6 +20,20 @@ class EVAssistantPanel extends HTMLElement {
     this._r = {};
     this._main = null;
     this._edgeSig = {};
+    this._formState = {};
+    this._pendChargeSig = null;
+    this._pendTripSig = null;
+    this._histChargeSig = null;
+    this._histTripSig = null;
+    this._histChargeExpanded = false;
+    this._histTripExpanded = false;
+    this._histHomeSig = null;
+    this._histHomeExpanded = false;
+    this._homeSessions = null;
+    this._homeSessionsFetching = false;
+    this._homeSessionsFetchedAt = 0;
+    this._homeVehicleFilter = null;
+    this._homeVehicleFilterInitialized = false;
   }
 
   set hass(hass) {
@@ -80,6 +94,39 @@ class EVAssistantPanel extends HTMLElement {
     return decimals === 0 ? Math.round(v).toString() : v.toFixed(decimals);
   }
   _clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+  // --- Service calls / config_entry_id -----------------------------------------
+
+  _configEntryId() {
+    const candidates = ["pending", "trip_pending", "count", "odo"];
+    for (const key of candidates) {
+      const eid = this._eid(key);
+      if (!eid || !this._hass || !this._hass.entities) continue;
+      const entry = this._hass.entities[eid];
+      if (entry && entry.config_entry_id) return entry.config_entry_id;
+    }
+    return null;
+  }
+
+  // config_entry_id of the evcc_intg integration (not this ev_assistant instance),
+  // needed to call evcc_intg's own "sessions" websocket command for Heimladen-Historie.
+  // Scans the entity registry for any entity owned by the evcc_intg platform, rather
+  // than relying on the optional evcc_* entity mapping (Übersicht-tab step 8/8, often
+  // left unconfigured) — evcc_intg is a single, HA-wide integration either way.
+  _evccEntryId() {
+    if (!this._hass || !this._hass.entities) return null;
+    for (const eid in this._hass.entities) {
+      const entry = this._hass.entities[eid];
+      if (entry && entry.platform === "evcc_intg" && entry.config_entry_id) return entry.config_entry_id;
+    }
+    return null;
+  }
+
+  _call(service, data) {
+    const config_entry_id = this._configEntryId();
+    if (!config_entry_id) return;
+    this._hass.callService("ev_assistant", service, { config_entry_id, ...data });
+  }
 
   // --- Shell ------------------------------------------------------------------
 
@@ -226,7 +273,7 @@ class EVAssistantPanel extends HTMLElement {
     const socSect = document.createElement("div");
     socSect.className = "soc-sect";
     socSect.innerHTML = `
-      <div class="soc-bar-hdr">Fahrzeug-SOC</div>
+      <div class="soc-bar-hdr">Fahrzeug-Akku</div>
       <div class="soc-bar-track">
         <div class="soc-bar-fill" id="st-soc-fill"></div>
         <div class="soc-bar-limit" id="st-soc-limit"></div>
@@ -480,16 +527,8 @@ class EVAssistantPanel extends HTMLElement {
           <h2>Laufende Erfassung</h2>
         </div>
         <div class="est-list">
-          <div class="est-item hidden" id="est-ext-item">
-            <ha-icon icon="mdi:ev-station" class="ci orange"></ha-icon>
-            <span>Fremdladung</span><strong id="est-ext-val">—</strong>
-            <span class="dim">kWh (Schätzung)</span>
-          </div>
-          <div class="est-item hidden" id="est-trip-item">
-            <ha-icon icon="mdi:road-variant" class="ci blue"></ha-icon>
-            <span>Fahrt</span><strong id="est-trip-val">—</strong>
-            <span class="dim">km (Schätzung)</span>
-          </div>
+          <div class="pend-list hidden" id="est-ext-item"></div>
+          <div class="pend-list hidden" id="est-trip-item"></div>
         </div>
       </div>
       <div class="card">
@@ -538,6 +577,24 @@ class EVAssistantPanel extends HTMLElement {
           <div class="kpi"><div class="kv vh-efficiency">—</div><div class="kl">% Ladewirkungsgrad</div></div>
           <div class="kpi"><div class="kv green vh-savings">—</div><div class="kl">EUR Ersparnis ggü. Verbrenner</div></div>
         </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:history"></ha-icon></span><h2>Fremdladung Historie</h2>
+        </div>
+        <div class="hist-list" id="hist-charge-list"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:history"></ha-icon></span><h2>Heimladen Historie</h2>
+        </div>
+        <div class="hist-list" id="hist-home-list"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:history"></ha-icon></span><h2>Fahrtenbuch Historie</h2>
+        </div>
+        <div class="hist-list" id="hist-trip-list"></div>
       </div>`;
 
     const q = (s) => wrap.querySelector(s);
@@ -564,7 +621,15 @@ class EVAssistantPanel extends HTMLElement {
       vhOdo:          q(".vh-odo"),
       vhEfficiency:   q(".vh-efficiency"),
       vhSavings:      q(".vh-savings"),
+      histChargeList: q("#hist-charge-list"),
+      histTripList:   q("#hist-trip-list"),
+      histHomeList:   q("#hist-home-list"),
     };
+    this._pendChargeSig = null;
+    this._pendTripSig = null;
+    this._histChargeSig = null;
+    this._histTripSig = null;
+    this._histHomeSig = null;
     return wrap;
   }
 
@@ -819,14 +884,24 @@ class EVAssistantPanel extends HTMLElement {
     r.vhBadgeExt.classList.toggle("hidden", !this._isOn("pending"));
     r.vhBadgeTrip.classList.toggle("hidden", !this._isOn("trip_pending"));
 
-    const estExt  = this._state("pending_estimate");
-    const estTrip = this._state("trip_pending_estimate");
-    const showEst = estExt !== null || estTrip !== null;
+    const pendingCharges = this._pendingList("pending", "offene_ladungen");
+    const pendingTrips = this._pendingList("trip_pending", "offene_fahrten");
+    const showEst = pendingCharges.length > 0 || pendingTrips.length > 0;
     r.estCard.classList.toggle("hidden", !showEst);
-    r.estExtItem.classList.toggle("hidden", estExt === null);
-    r.estTripItem.classList.toggle("hidden", estTrip === null);
-    if (estExt !== null)  r.estExtVal.textContent  = parseFloat(estExt).toFixed(2);
-    if (estTrip !== null) r.estTripVal.textContent = parseFloat(estTrip).toFixed(1);
+    r.estExtItem.classList.toggle("hidden", pendingCharges.length === 0);
+    r.estTripItem.classList.toggle("hidden", pendingTrips.length === 0);
+    this._renderPendingCharges(pendingCharges);
+    this._renderPendingTrips(pendingTrips);
+    this._renderChargeHistory();
+    this._renderTripHistory();
+    // evcc-Sessions kommen per WS-Abruf (keine reaktive hass.states-Aktualisierung wie
+    // sonst) — daher alle 5 Minuten neu holen, damit neu abgeschlossene Heimladungen
+    // auftauchen, ohne bei jedem hass-Update (praktisch dauernd) nachzufragen.
+    if (this._homeSessions === null || Date.now() - this._homeSessionsFetchedAt > 300000) {
+      this._fetchHomeSessions();
+    } else {
+      this._renderHomeHistory();
+    }
 
     r.vhExtKwhTotal.textContent  = this._num("total_kwh", 1);
     r.vhExtCostTotal.textContent = this._num("total_cost", 2);
@@ -843,6 +918,494 @@ class EVAssistantPanel extends HTMLElement {
     r.vhOdo.textContent          = this._num("odo", 0);
     r.vhEfficiency.textContent   = this._num("measured_efficiency", 1);
     r.vhSavings.textContent      = this._num("savings", 2);
+  }
+
+  // --- Pending items: confirm/discard ------------------------------------------
+
+  _pendingList(binaryKey, attrKey) {
+    const eid = this._eid(binaryKey);
+    if (!eid || !this._hass) return [];
+    const s = this._hass.states[eid];
+    if (!s) return [];
+    const list = (s.attributes || {})[attrKey];
+    return Array.isArray(list) ? list : [];
+  }
+
+  _fmtDate(ts) {
+    if (ts === null || ts === undefined) return "—";
+    const d = new Date(ts * 1000);
+    return d.toLocaleDateString("de-DE") + " " + d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  }
+
+  _fmtTime(ts) {
+    if (ts === null || ts === undefined) return null;
+    return new Date(ts * 1000).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+  }
+
+  _fmtDuration(minutes) {
+    const m = parseFloat(minutes);
+    if (isNaN(m) || m < 0) return null;
+    if (m < 60) return `${Math.round(m)} min`;
+    const h = Math.floor(m / 60);
+    const rem = Math.round(m % 60);
+    return rem ? `${h}h ${rem}min` : `${h}h`;
+  }
+
+  _renderPendingCharges(items) {
+    const el = this._r.estExtItem;
+    if (!el) return;
+    const sig = items.map((p) => p.start_ts).join(",");
+    if (sig === this._pendChargeSig && el.dataset.built === "1") return;
+    this._pendChargeSig = sig;
+    el.dataset.built = "1";
+    el.innerHTML = "";
+    items.forEach((p) => {
+      const key = p.start_ts;
+      const fs = (this._formState.charge ||= {});
+      const st = (fs[key] ||= { kwh: p.energy_kwh != null ? Number(p.energy_kwh).toFixed(2) : "", price: "" });
+
+      const row = document.createElement("div");
+      row.className = "pend-item";
+      row.innerHTML = `
+        <div class="pend-head">
+          <ha-icon icon="mdi:ev-station" class="ci orange"></ha-icon>
+          <span>Fremdladung</span>
+          <strong>${p.energy_kwh != null ? Number(p.energy_kwh).toFixed(2) : "—"}</strong>
+          <span class="dim">kWh geschätzt · ${this._fmtDate(p.start_ts)}</span>
+        </div>
+        <div class="pend-form">
+          <label>kWh<input type="number" step="0.1" class="pf-kwh" value="${st.kwh}"></label>
+          <label>EUR/kWh<input type="number" step="0.001" class="pf-price" value="${st.price}"></label>
+          <button class="btn btn-primary pf-confirm">Bestätigen</button>
+          <button class="btn btn-ghost pf-discard">Verwerfen</button>
+        </div>`;
+
+      row.querySelector(".pf-kwh").addEventListener("input", (e) => { st.kwh = e.target.value; });
+      row.querySelector(".pf-price").addEventListener("input", (e) => { st.price = e.target.value; });
+      row.querySelector(".pf-confirm").addEventListener("click", () => {
+        const kwh = parseFloat(st.kwh), price = parseFloat(st.price);
+        if (isNaN(kwh) || isNaN(price)) return;
+        this._call("log_charge", { kwh, price_kwh: price, start_ts: key });
+        delete fs[key];
+      });
+      row.querySelector(".pf-discard").addEventListener("click", () => {
+        this._call("discard_pending", { start_ts: key });
+        delete fs[key];
+      });
+      el.appendChild(row);
+    });
+  }
+
+  _renderPendingTrips(items) {
+    const el = this._r.estTripItem;
+    if (!el) return;
+    const sig = items.map((p) => p.start_ts).join(",");
+    if (sig === this._pendTripSig && el.dataset.built === "1") return;
+    this._pendTripSig = sig;
+    el.dataset.built = "1";
+    el.innerHTML = "";
+    items.forEach((p) => {
+      const key = p.start_ts;
+      const fs = (this._formState.trip ||= {});
+      const st = (fs[key] ||= { start_ort: "", end_ort: "" });
+
+      const row = document.createElement("div");
+      row.className = "pend-item";
+      row.innerHTML = `
+        <div class="pend-head">
+          <ha-icon icon="mdi:road-variant" class="ci blue"></ha-icon>
+          <span>Fahrt</span>
+          <strong>${p.km != null ? Number(p.km).toFixed(1) : "—"}</strong>
+          <span class="dim">km · ${this._fmtDate(p.start_ts)}</span>
+        </div>
+        <div class="pend-form">
+          <label>Startort<input type="text" class="pf-start" value="${st.start_ort}"></label>
+          <label>Zielort<input type="text" class="pf-end" value="${st.end_ort}"></label>
+          <button class="btn btn-primary pf-confirm">Bestätigen</button>
+          <button class="btn btn-ghost pf-discard">Verwerfen</button>
+        </div>`;
+
+      row.querySelector(".pf-start").addEventListener("input", (e) => { st.start_ort = e.target.value; });
+      row.querySelector(".pf-end").addEventListener("input", (e) => { st.end_ort = e.target.value; });
+      row.querySelector(".pf-confirm").addEventListener("click", () => {
+        if (!st.start_ort || !st.end_ort) return;
+        this._call("log_trip", { start_ort: st.start_ort, end_ort: st.end_ort, start_ts: key });
+        delete fs[key];
+      });
+      row.querySelector(".pf-discard").addEventListener("click", () => {
+        this._call("discard_pending_trip", { start_ts: key });
+        delete fs[key];
+      });
+      el.appendChild(row);
+    });
+  }
+
+  // --- History: edit/delete -----------------------------------------------------
+
+  _renderChargeHistory() {
+    const list = this._r.histChargeList;
+    if (!list) return;
+    const eid = this._eid("last_cost");
+    const s = eid && this._hass ? this._hass.states[eid] : null;
+    const full = (s && Array.isArray((s.attributes || {}).historie)) ? s.attributes.historie : [];
+    const expanded = this._histChargeExpanded;
+    const hist = expanded ? full : full.slice(0, 5);
+    const sig = expanded + "|" + full.map((h) => h.erfasst_ts).join(",");
+    if (sig === this._histChargeSig && list.dataset.built === "1") return;
+    this._histChargeSig = sig;
+    list.dataset.built = "1";
+    list.innerHTML = "";
+    if (full.length === 0) {
+      list.innerHTML = `<div class="dim">Noch keine bestätigten Fremdladungen.</div>`;
+      return;
+    }
+    const scroll = document.createElement("div");
+    scroll.className = "hist-scroll" + (expanded ? " expanded" : "");
+    hist.forEach((h) => {
+      const ts = h.erfasst_ts;
+      const row = document.createElement("div");
+      row.className = "hist-card";
+      const delta = (h.soc_start != null && h.soc_end != null) ? Math.round(h.soc_end - h.soc_start) : null;
+      const soc = (h.soc_start != null && h.soc_end != null)
+        ? `${Math.round(h.soc_start)}% → ${Math.round(h.soc_end)}%${delta != null ? ` (${delta >= 0 ? "+" : ""}${delta}%)` : ""}`
+        : "";
+      // Datum zeigt den tatsächlichen Ladebeginn (start_ts), nicht den Bestätigungs-
+      // zeitpunkt (erfasst_ts) — sonst kann "bis HH:MM" scheinbar vor dem Datum liegen,
+      // wenn die Bestätigung erst nach Ladeende erfolgte.
+      const displayTs = h.start_ts != null ? h.start_ts : ts;
+      const endTs = (h.start_ts != null && h.dauer_min != null) ? h.start_ts + h.dauer_min * 60 : null;
+      const endTime = this._fmtTime(endTs);
+      const durStr = this._fmtDuration(h.dauer_min);
+      const metaParts = [];
+      if (endTime) metaParts.push(`bis ${endTime}`);
+      if (durStr) metaParts.push(durStr);
+      const meta = metaParts.join(" · ");
+      row.innerHTML = `
+        <div class="hist-top">
+          <span class="hist-date">${this._fmtDate(displayTs)}${meta ? ` <span class="hist-meta">· ${meta}</span>` : ""}</span>
+          <div class="hist-actions">
+            <button class="btn-icon sm hist-edit" title="Bearbeiten"><ha-icon icon="mdi:pencil"></ha-icon></button>
+            <button class="btn-icon sm hist-delete" title="Löschen"><ha-icon icon="mdi:delete"></ha-icon></button>
+          </div>
+        </div>
+        <div class="hist-figures">
+          <div class="hist-figures-left">
+            ${soc ? `<span class="hist-soc">${soc}</span>` : ""}
+            <span class="hist-kwh">${Number(h.kwh).toFixed(2)}<small>kWh</small></span>
+            <span class="hist-price">${Number(h.preis_kwh).toFixed(3)} €/kWh</span>
+          </div>
+          <span class="hist-cost">${Number(h.kosten).toFixed(2)} €</span>
+        </div>
+        <div class="hist-edit-form hidden">
+          <label>kWh<input type="number" step="0.1" class="hf-kwh" value="${h.kwh}"></label>
+          <label>EUR/kWh<input type="number" step="0.001" class="hf-price" value="${h.preis_kwh}"></label>
+          <button class="btn btn-primary hf-save">Speichern</button>
+          <button class="btn btn-ghost hf-cancel">Abbrechen</button>
+        </div>
+        <div class="hist-delete-confirm hidden">
+          <span class="hist-delete-text">Diesen Eintrag dauerhaft löschen?</span>
+          <button class="btn btn-danger hd-confirm">Löschen</button>
+          <button class="btn btn-ghost hd-cancel">Abbrechen</button>
+        </div>`;
+      const form = row.querySelector(".hist-edit-form");
+      const delConfirm = row.querySelector(".hist-delete-confirm");
+      row.querySelector(".hist-edit").addEventListener("click", () => {
+        delConfirm.classList.add("hidden");
+        form.classList.toggle("hidden");
+      });
+      row.querySelector(".hf-cancel").addEventListener("click", () => form.classList.add("hidden"));
+      row.querySelector(".hf-save").addEventListener("click", () => {
+        const kwh = parseFloat(row.querySelector(".hf-kwh").value);
+        const price = parseFloat(row.querySelector(".hf-price").value);
+        if (isNaN(kwh) || isNaN(price)) return;
+        this._call("edit_charge", { erfasst_ts: ts, kwh, price_kwh: price });
+        form.classList.add("hidden");
+      });
+      row.querySelector(".hist-delete").addEventListener("click", () => {
+        form.classList.add("hidden");
+        delConfirm.classList.toggle("hidden");
+      });
+      row.querySelector(".hd-cancel").addEventListener("click", () => delConfirm.classList.add("hidden"));
+      row.querySelector(".hd-confirm").addEventListener("click", () => {
+        this._call("delete_charge", { erfasst_ts: ts });
+        delConfirm.classList.add("hidden");
+      });
+      scroll.appendChild(row);
+    });
+    list.appendChild(scroll);
+    if (full.length > 5) {
+      const toggle = document.createElement("button");
+      toggle.className = "hist-toggle";
+      toggle.textContent = expanded ? "Weniger anzeigen" : `Alle anzeigen (${full.length})`;
+      toggle.addEventListener("click", () => {
+        const scrollTop = this._main ? this._main.scrollTop : 0;
+        const winY = window.scrollY;
+        this._histChargeExpanded = !this._histChargeExpanded;
+        this._histChargeSig = null;
+        this._renderChargeHistory();
+        const restore = () => {
+          if (this._main) this._main.scrollTop = scrollTop;
+          window.scrollTo(window.scrollX, winY);
+        };
+        restore();
+        requestAnimationFrame(restore);
+      });
+      list.appendChild(toggle);
+    }
+  }
+
+  _renderTripHistory() {
+    const list = this._r.histTripList;
+    if (!list) return;
+    const eid = this._eid("last_trip_km");
+    const s = eid && this._hass ? this._hass.states[eid] : null;
+    const full = (s && Array.isArray((s.attributes || {}).fahrtenbuch)) ? s.attributes.fahrtenbuch : [];
+    const expanded = this._histTripExpanded;
+    const hist = expanded ? full : full.slice(0, 5);
+    const sig = expanded + "|" + full.map((h) => h.erfasst_ts).join(",");
+    if (sig === this._histTripSig && list.dataset.built === "1") return;
+    this._histTripSig = sig;
+    list.dataset.built = "1";
+    list.innerHTML = "";
+    if (full.length === 0) {
+      list.innerHTML = `<div class="dim">Noch keine bestätigten Fahrten.</div>`;
+      return;
+    }
+    const scroll = document.createElement("div");
+    scroll.className = "hist-scroll" + (expanded ? " expanded" : "");
+    hist.forEach((h) => {
+      const ts = h.erfasst_ts;
+      const row = document.createElement("div");
+      row.className = "hist-row";
+      row.innerHTML = `
+        <div class="hist-main">
+          <span class="hist-date">${h.datum || this._fmtDate(h.start_ts)}</span>
+          <span class="hist-val">${h.start_ort} → ${h.end_ort}</span>
+          <span class="hist-val">${Number(h.km).toFixed(1)} km</span>
+        </div>
+        <div class="hist-actions">
+          <button class="btn-icon hist-edit" title="Bearbeiten"><ha-icon icon="mdi:pencil"></ha-icon></button>
+          <button class="btn-icon hist-delete" title="Löschen"><ha-icon icon="mdi:delete"></ha-icon></button>
+        </div>
+        <div class="hist-edit-form hidden">
+          <label>Startort<input type="text" class="hf-start" value="${h.start_ort}"></label>
+          <label>Zielort<input type="text" class="hf-end" value="${h.end_ort}"></label>
+          <button class="btn btn-primary hf-save">Speichern</button>
+          <button class="btn btn-ghost hf-cancel">Abbrechen</button>
+        </div>
+        <div class="hist-delete-confirm hidden">
+          <span class="hist-delete-text">Diesen Eintrag dauerhaft löschen?</span>
+          <button class="btn btn-danger hd-confirm">Löschen</button>
+          <button class="btn btn-ghost hd-cancel">Abbrechen</button>
+        </div>`;
+      const form = row.querySelector(".hist-edit-form");
+      const delConfirm = row.querySelector(".hist-delete-confirm");
+      row.querySelector(".hist-edit").addEventListener("click", () => {
+        delConfirm.classList.add("hidden");
+        form.classList.toggle("hidden");
+      });
+      row.querySelector(".hf-cancel").addEventListener("click", () => form.classList.add("hidden"));
+      row.querySelector(".hf-save").addEventListener("click", () => {
+        const start_ort = row.querySelector(".hf-start").value;
+        const end_ort = row.querySelector(".hf-end").value;
+        if (!start_ort || !end_ort) return;
+        this._call("edit_trip", { erfasst_ts: ts, start_ort, end_ort });
+        form.classList.add("hidden");
+      });
+      row.querySelector(".hist-delete").addEventListener("click", () => {
+        form.classList.add("hidden");
+        delConfirm.classList.toggle("hidden");
+      });
+      row.querySelector(".hd-cancel").addEventListener("click", () => delConfirm.classList.add("hidden"));
+      row.querySelector(".hd-confirm").addEventListener("click", () => {
+        this._call("delete_trip", { erfasst_ts: ts });
+        delConfirm.classList.add("hidden");
+      });
+      scroll.appendChild(row);
+    });
+    list.appendChild(scroll);
+    if (full.length > 5) {
+      const toggle = document.createElement("button");
+      toggle.className = "hist-toggle";
+      toggle.textContent = expanded ? "Weniger anzeigen" : `Alle anzeigen (${full.length})`;
+      toggle.addEventListener("click", () => {
+        const scrollTop = this._main ? this._main.scrollTop : 0;
+        const winY = window.scrollY;
+        this._histTripExpanded = !this._histTripExpanded;
+        this._histTripSig = null;
+        this._renderTripHistory();
+        const restore = () => {
+          if (this._main) this._main.scrollTop = scrollTop;
+          window.scrollTo(window.scrollX, winY);
+        };
+        restore();
+        requestAnimationFrame(restore);
+      });
+      list.appendChild(toggle);
+    }
+  }
+
+  // --- Heimladen: evcc-Ladelogbuch (read-only, keine Bearbeitung/Löschung) -----
+
+  async _fetchHomeSessions() {
+    if (this._homeSessionsFetching) return;
+    this._homeSessionsFetching = true;
+    this._homeSessionsFetchedAt = Date.now();
+    const entryId = this._evccEntryId();
+    if (!entryId || !this._hass || !this._hass.callWS) {
+      // _homeSessions bleibt null (nicht []), damit ohne Dauerschleife erneut
+      // versucht wird, sobald z. B. die Entity-Registry nachträglich verfügbar ist.
+      this._homeSessionsFetching = false;
+      this._renderHomeHistory();
+      return;
+    }
+    try {
+      const res = await this._hass.callWS({ type: "evcc_intg/sessions", entry_id: entryId });
+      this._homeSessions = Array.isArray(res && res.sessions) ? res.sessions : [];
+    } catch (err) {
+      this._homeSessions = [];
+    } finally {
+      this._homeSessionsFetching = false;
+      this._renderHomeHistory();
+    }
+  }
+
+  _renderHomeHistory() {
+    const list = this._r.histHomeList;
+    if (!list) return;
+    const raw = Array.isArray(this._homeSessions) ? this._homeSessions : [];
+    const parsed = raw.map((s) => {
+      const startTs = s.created ? Date.parse(s.created) / 1000 : null;
+      const endTs = s.finished ? Date.parse(s.finished) / 1000 : null;
+      let durMin = null;
+      if (typeof s.chargeDuration === "number" && s.chargeDuration > 0) {
+        durMin = s.chargeDuration / 1e9 / 60;
+      } else if (startTs != null && endTs != null && endTs > startTs) {
+        durMin = (endTs - startTs) / 60;
+      }
+      const kwh = typeof s.chargedEnergy === "number" ? s.chargedEnergy : null;
+      const cost = typeof s.price === "number" ? s.price : null;
+      const solarPct = typeof s.solarPercentage === "number" ? s.solarPercentage : null;
+      const vehicle = typeof s.vehicle === "string" && s.vehicle.length > 0 ? s.vehicle : null;
+      return { startTs, endTs, durMin, kwh, cost, solarPct, vehicle };
+    }).filter((s) => s.startTs != null)
+      .sort((a, b) => b.startTs - a.startTs);
+
+    // Mehrere Fahrzeuge in evcc -> Auswahl anbieten; bei genau einem (oder keinem
+    // erkennbaren) Fahrzeugnamen ist ein Filter unnötige UI und bleibt weg.
+    const vehicles = [...new Set(parsed.map((p) => p.vehicle).filter(Boolean))].sort();
+    // Config-Vorgabe (Schritt 8/8: evcc_vehicle_name) als Default übernehmen —
+    // aber nur EINMAL und erst sobald echte Sessions da sind, sonst würde eine
+    // spätere bewusste Nutzerwahl ("Alle Fahrzeuge") bei jedem Re-Render wieder
+    // überschrieben werden.
+    if (!this._homeVehicleFilterInitialized && vehicles.length > 0) {
+      this._homeVehicleFilterInitialized = true;
+      const configured = this._config.evcc_vehicle_name;
+      if (configured && vehicles.includes(configured)) this._homeVehicleFilter = configured;
+    }
+    if (this._homeVehicleFilter && !vehicles.includes(this._homeVehicleFilter)) {
+      this._homeVehicleFilter = null;
+    }
+    const filtered = this._homeVehicleFilter
+      ? parsed.filter((p) => p.vehicle === this._homeVehicleFilter)
+      : parsed;
+
+    const expanded = this._histHomeExpanded;
+    const hist = expanded ? filtered : filtered.slice(0, 5);
+    const sig = expanded + "|" + (this._homeVehicleFilter || "") + "|" + filtered.map((h) => h.startTs).join(",");
+    if (sig === this._histHomeSig && list.dataset.built === "1") return;
+    this._histHomeSig = sig;
+    list.dataset.built = "1";
+    list.innerHTML = "";
+    if (parsed.length === 0) {
+      list.innerHTML = `<div class="dim">Noch keine Heimladungen im evcc-Logbuch.</div>`;
+      return;
+    }
+
+    // Solaranteil-Auswertung: energiegewichteter Mittelwert über die (ggf.
+    // fahrzeug-gefilterte) Menge, nicht nur über die aktuell sichtbaren letzten 5.
+    const withSolar = filtered.filter((p) => p.solarPct != null && p.kwh != null && p.kwh > 0);
+    const solarKwhSum = withSolar.reduce((sum, p) => sum + p.kwh, 0);
+    const avgSolar = solarKwhSum > 0
+      ? withSolar.reduce((sum, p) => sum + p.kwh * p.solarPct, 0) / solarKwhSum
+      : null;
+
+    if (avgSolar != null || vehicles.length > 1) {
+      const toolbar = document.createElement("div");
+      toolbar.className = "hist-toolbar";
+      toolbar.innerHTML = `
+        ${avgSolar != null
+          ? `<span class="hist-summary">Ø Solaranteil ${Math.round(avgSolar)}% · ${filtered.length} Heimladung${filtered.length === 1 ? "" : "en"}</span>`
+          : "<span></span>"}
+        ${vehicles.length > 1
+          ? `<select class="hist-vehicle-select">
+              <option value="">Alle Fahrzeuge</option>
+              ${vehicles.map((v) => `<option value="${v}"${v === this._homeVehicleFilter ? " selected" : ""}>${v}</option>`).join("")}
+            </select>`
+          : ""}`;
+      const select = toolbar.querySelector(".hist-vehicle-select");
+      if (select) {
+        select.addEventListener("change", () => {
+          this._homeVehicleFilter = select.value || null;
+          this._histHomeSig = null;
+          this._renderHomeHistory();
+        });
+      }
+      list.appendChild(toolbar);
+    }
+
+    if (filtered.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "dim";
+      empty.textContent = "Keine Heimladungen für dieses Fahrzeug.";
+      list.appendChild(empty);
+      return;
+    }
+
+    const scroll = document.createElement("div");
+    scroll.className = "hist-scroll" + (expanded ? " expanded" : "");
+    hist.forEach((h) => {
+      const row = document.createElement("div");
+      row.className = "hist-card";
+      const endTime = this._fmtTime(h.endTs);
+      const durStr = this._fmtDuration(h.durMin);
+      const metaParts = [];
+      if (endTime) metaParts.push(`bis ${endTime}`);
+      if (durStr) metaParts.push(durStr);
+      const meta = metaParts.join(" · ");
+      row.innerHTML = `
+        <div class="hist-top">
+          <span class="hist-date">${this._fmtDate(h.startTs)}${meta ? ` <span class="hist-meta">· ${meta}</span>` : ""}</span>
+        </div>
+        <div class="hist-figures">
+          <div class="hist-figures-left">
+            ${h.solarPct != null ? `<span class="hist-solar">☀ ${Math.round(h.solarPct)}%</span>` : ""}
+            <span class="hist-kwh">${h.kwh != null ? h.kwh.toFixed(2) : "—"}<small>kWh</small></span>
+          </div>
+          <span class="hist-cost">${h.cost != null ? h.cost.toFixed(2) + " €" : "—"}</span>
+        </div>`;
+      scroll.appendChild(row);
+    });
+    list.appendChild(scroll);
+    if (filtered.length > 5) {
+      const toggle = document.createElement("button");
+      toggle.className = "hist-toggle";
+      toggle.textContent = expanded ? "Weniger anzeigen" : `Alle anzeigen (${filtered.length})`;
+      toggle.addEventListener("click", () => {
+        const scrollTop = this._main ? this._main.scrollTop : 0;
+        const winY = window.scrollY;
+        this._histHomeExpanded = !this._histHomeExpanded;
+        this._histHomeSig = null;
+        this._renderHomeHistory();
+        const restore = () => {
+          if (this._main) this._main.scrollTop = scrollTop;
+          window.scrollTo(window.scrollX, winY);
+        };
+        restore();
+        requestAnimationFrame(restore);
+      });
+      list.appendChild(toggle);
+    }
   }
 
   // --- Styles -----------------------------------------------------------------
@@ -865,7 +1428,10 @@ class EVAssistantPanel extends HTMLElement {
         font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif);
         color: var(--ink); background: var(--bg-0);
       }
-      .app { display: flex; flex-direction: column; height: 100%; }
+      .app {
+        display: flex; flex-direction: column; height: 100%;
+        container-type: inline-size; container-name: panel;
+      }
 
       /* Appbar */
       .appbar {
@@ -931,8 +1497,16 @@ class EVAssistantPanel extends HTMLElement {
       .resumen-lower { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.55fr); gap: var(--gap); align-items: stretch; }
       .charts-2x2 { display: grid; grid-template-columns: 1fr 1fr; grid-template-rows: min-content min-content; gap: var(--gap); min-width: 0; }
       .charts-2x2 > .card { min-width: 0; }
+      /* Media-Query-Fallback fuer Browser ohne Container-Query-Unterstuetzung
+         (z.B. aeltere Handy-Browser) -- reagiert auf die Viewport-Breite. */
       @media (max-width: 1080px) { .resumen-lower { grid-template-columns: 1fr; } }
       @media (max-width: 720px)  { .charts-2x2 { grid-template-columns: 1fr; grid-template-rows: none; } }
+      /* Container-Query-Verbesserung: reagiert auf den tatsaechlich
+         verfuegbaren Platz des Panels selbst (z.B. bei auf-/zugeklappter
+         Sidebar), nicht nur auf die Bildschirmbreite. Ueberschreibt die
+         Media-Query-Fallbacks oben in unterstuetzenden Browsern. */
+      @container panel (max-width: 1080px) { .resumen-lower { grid-template-columns: 1fr; } }
+      @container panel (max-width: 720px)  { .charts-2x2 { grid-template-columns: 1fr; grid-template-rows: none; } }
 
       /* Status card (SOC analog) */
       .soc-card { display: flex; flex-direction: column; gap: 18px; }
@@ -951,6 +1525,11 @@ class EVAssistantPanel extends HTMLElement {
         .soc-diag { align-self: stretch; border-left: none; padding-left: 0; border-top: 1px solid var(--line); padding-top: 18px; }
       }
       @media (max-width: 560px) { .diag-grid { grid-template-columns: 1fr; } }
+      @container panel (max-width: 860px) {
+        .soc-inner { flex-direction: column; align-items: center; gap: 20px; }
+        .soc-diag { align-self: stretch; border-left: none; padding-left: 0; border-top: 1px solid var(--line); padding-top: 18px; }
+      }
+      @container panel (max-width: 560px) { .diag-grid { grid-template-columns: 1fr; } }
 
       /* Ring (SVG donut) */
       .ring { position: relative; }
@@ -1059,11 +1638,124 @@ class EVAssistantPanel extends HTMLElement {
       .ci.orange { color: #fb923c; }
       .ci.blue   { color: #60a5fa; }
 
+      /* Buttons */
+      .btn {
+        border: 1px solid var(--line-s); border-radius: 8px; padding: 7px 14px;
+        font-size: 12.5px; font-weight: 600; cursor: pointer; background: var(--bg-2); color: var(--ink);
+      }
+      .btn:hover { filter: brightness(1.15); }
+      .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      .btn-ghost   { background: transparent; }
+      .btn-danger  { background: oklch(0.58 0.2 25); border-color: oklch(0.58 0.2 25); color: #fff; }
+      .btn-icon {
+        border: 1px solid var(--line-s); background: var(--bg-2); border-radius: 8px;
+        width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center;
+        cursor: pointer; color: var(--ink-mid); --mdc-icon-size: 16px;
+      }
+      .btn-icon:hover { color: var(--ink); }
+      .btn-icon.confirm { background: oklch(0.7 0.18 25 / 0.15); border-color: oklch(0.7 0.18 25 / 0.5); color: oklch(0.7 0.18 25); }
+      .btn-icon.sm { width: 26px; height: 26px; --mdc-icon-size: 14px; }
+
+      /* Pending confirm/discard forms */
+      .pend-list { display: flex; flex-direction: column; gap: 10px; }
+      .pend-item { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--bg-2); }
+      .pend-head { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; margin-bottom: 10px; flex-wrap: wrap; }
+      .pend-head strong { font-size: 1rem; }
+      .pend-form { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+      .pend-form label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--ink-mid); }
+      .pend-form input {
+        border: 1px solid var(--line-s); border-radius: 7px; padding: 6px 9px; font-size: 13px;
+        background: var(--bg-0); color: var(--ink); width: 110px;
+      }
+      .pend-form input[type="text"] { width: 140px; }
+
+      /* History lists */
+      .hist-list { display: flex; flex-direction: column; gap: 8px; }
+      .hist-scroll { display: flex; flex-direction: column; gap: 8px; }
+      .hist-scroll.expanded {
+        max-height: 420px; overflow-y: auto; padding-right: 4px;
+      }
+      .hist-scroll.expanded::-webkit-scrollbar { width: 6px; }
+      .hist-scroll.expanded::-webkit-scrollbar-thumb { background: var(--line-s); border-radius: 6px; }
+      .hist-toggle {
+        border: none; background: none; color: var(--accent); font-size: 12.5px; font-weight: 600;
+        cursor: pointer; padding: 6px 2px; text-align: center; align-self: center;
+      }
+      .hist-toggle:hover { text-decoration: underline; }
+      .hist-toolbar {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 10px; flex-wrap: wrap; margin-bottom: 10px;
+      }
+      .hist-summary { font-size: 12px; color: var(--ink-mid); }
+      .hist-vehicle-select {
+        border: 1px solid var(--line-s); border-radius: 7px; padding: 5px 8px; font-size: 12px;
+        background: var(--bg-0); color: var(--ink);
+      }
+      .hist-row { border-bottom: 1px solid var(--line); padding-bottom: 8px; }
+      .hist-row:last-child { border-bottom: none; padding-bottom: 0; }
+      .hist-main { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; }
+      .hist-date { color: var(--ink-dim); min-width: 110px; }
+      .hist-val { font-weight: 600; }
+      .hist-val.dim { font-weight: 500; color: var(--ink-mid); }
+      /* Fremdladung-Historie: eigene Karte pro Eintrag statt flacher Liste,
+         mit klarer Hierarchie (Meta klein/dezent oben, Hauptzahlen betont
+         in der Mitte, Aktionen kompakt unten). */
+      .hist-card {
+        border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+        background: var(--bg-2);
+      }
+      .hist-top {
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 12px; font-size: 11.5px; color: var(--ink-dim); flex-wrap: wrap;
+      }
+      .hist-top .hist-date { min-width: 0; }
+      .hist-meta { color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+      .hist-figures {
+        display: flex; align-items: baseline; justify-content: space-between;
+        gap: 12px; margin-top: 4px;
+      }
+      .hist-figures-left { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
+      .hist-soc { font-size: 12px; color: var(--ink-mid); white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .hist-solar { font-size: 12px; color: var(--ink-mid); white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .hist-kwh { font-size: 1.05rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+      .hist-kwh small { font-size: 0.68em; font-weight: 500; color: var(--ink-dim); margin-left: 3px; }
+      .hist-price { font-size: 12px; color: var(--ink-mid); white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .hist-cost { font-size: 1.05rem; font-weight: 700; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .hist-card .hist-actions { display: flex; gap: 4px; }
+      .hist-row .hist-actions { display: flex; gap: 6px; margin-top: 6px; justify-content: flex-end; }
+      .hist-edit-form { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+      .hist-edit-form label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--ink-mid); }
+      .hist-edit-form input {
+        border: 1px solid var(--line-s); border-radius: 7px; padding: 6px 9px; font-size: 13px;
+        background: var(--bg-0); color: var(--ink); width: 110px;
+      }
+      .hist-edit-form input[type="text"] { width: 140px; }
+      .hist-delete-confirm {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px;
+      }
+      .hist-delete-text { font-size: 12px; color: var(--ink-mid); }
+
       @media (max-width: 500px) {
         .appbar { padding: 0 14px; gap: 12px; }
         .brand .btext { display: none; }
         .tab { padding: 0 12px; }
         .main { padding: 16px 14px 30px; }
+        .kv { font-size: 1.3rem; }
+        .kpi-row { gap: 10px 18px; }
+        .pend-form input { flex: 1 1 100px; width: auto; min-width: 90px; }
+        .hist-date { min-width: 0; }
+        .hist-main { gap: 8px 14px; }
+      }
+      @container panel (max-width: 500px) {
+        .appbar { padding: 0 14px; gap: 12px; }
+        .brand .btext { display: none; }
+        .tab { padding: 0 12px; }
+        .main { padding: 16px 14px 30px; }
+        .kv { font-size: 1.3rem; }
+        .kpi-row { gap: 10px 18px; }
+        .pend-form input { flex: 1 1 100px; width: auto; min-width: 90px; }
+        .hist-date { min-width: 0; }
+        .hist-main { gap: 8px 14px; }
       }
     `;
     return el;
