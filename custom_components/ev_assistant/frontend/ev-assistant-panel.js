@@ -34,6 +34,9 @@ class EVAssistantPanel extends HTMLElement {
     this._homeSessionsFetchedAt = 0;
     this._homeVehicleFilter = null;
     this._homeVehicleFilterInitialized = false;
+    this._vehicleIdx = 0;
+    this._vtBtns = [];
+    this._vehicleContent = null;
   }
 
   set hass(hass) {
@@ -50,7 +53,15 @@ class EVAssistantPanel extends HTMLElement {
 
   // --- Helpers ----------------------------------------------------------------
 
-  _eid(key)  { return (this._config.entities || {})[key]; }
+  // Gibt die Config des aktuell ausgewählten Fahrzeugs zurück.
+  // Fällt auf this._config zurück wenn kein vehicles-Array vorhanden (Rückwärtskompatibilität).
+  _vehicleConf() {
+    const vs = this._config.vehicles;
+    if (vs && vs.length > 0) return vs[Math.min(this._vehicleIdx, vs.length - 1)];
+    return this._config;
+  }
+
+  _eid(key)  { return (this._vehicleConf().entities || {})[key]; }
   _title()   { return this._config.title || "EV Assistant"; }
 
   _state(key) {
@@ -98,6 +109,8 @@ class EVAssistantPanel extends HTMLElement {
   // --- Service calls / config_entry_id -----------------------------------------
 
   _configEntryId() {
+    const vc = this._vehicleConf();
+    if (vc.config_entry_id) return vc.config_entry_id;
     const candidates = ["pending", "trip_pending", "count", "odo"];
     for (const key of candidates) {
       const eid = this._eid(key);
@@ -108,16 +121,38 @@ class EVAssistantPanel extends HTMLElement {
     return null;
   }
 
-  // config_entry_id of the evcc_intg integration (not this ev_assistant instance),
-  // needed to call evcc_intg's own "sessions" websocket command for Heimladen-Historie.
-  // Scans the entity registry for any entity owned by the evcc_intg platform, rather
-  // than relying on the optional evcc_* entity mapping (Übersicht-tab step 8/8, often
-  // left unconfigured) — evcc_intg is a single, HA-wide integration either way.
+  // config_entry_id of the evcc_intg integration — tries three routes:
+  // 1. Directly injected from panel config (Python sets this if evcc_intg is loaded)
+  // 2. hass.entities scan (only works if display-registry includes platform+config_entry_id)
+  // 3. Async entity registry lookup (see _resolveEvccEntryId)
   _evccEntryId() {
+    if (this._config.evcc_entry_id) return this._config.evcc_entry_id;
+    if (this._evccEntryIdCache) return this._evccEntryIdCache;
     if (!this._hass || !this._hass.entities) return null;
     for (const eid in this._hass.entities) {
       const entry = this._hass.entities[eid];
       if (entry && entry.platform === "evcc_intg" && entry.config_entry_id) return entry.config_entry_id;
+    }
+    return null;
+  }
+
+  // Resolves evcc entry_id via entity registry WS when hass.entities lacks platform info.
+  // Result is cached in this._evccEntryIdCache so subsequent calls are synchronous.
+  async _resolveEvccEntryId() {
+    if (this._evccEntryIdCache) return this._evccEntryIdCache;
+    if (!this._hass || !this._hass.callWS) return null;
+    const entities = this._vehicleConf().entities || {};
+    const keys = ["evcc_tariff_grid", "evcc_charge_power", "evcc_session_energy", "evcc_grid_power", "evcc_tariff_feedin"];
+    for (const key of keys) {
+      const eid = entities[key];
+      if (!eid) continue;
+      try {
+        const reg = await this._hass.callWS({ type: "config/entity_registry/get", entity_id: eid });
+        if (reg && reg.config_entry_id) {
+          this._evccEntryIdCache = reg.config_entry_id;
+          return reg.config_entry_id;
+        }
+      } catch (_) { /* try next key */ }
     }
     return null;
   }
@@ -507,12 +542,66 @@ class EVAssistantPanel extends HTMLElement {
     return card;
   }
 
-  // --- Tab: Fahrzeuge (unchanged) ---------------------------------------------
+  // --- Tab: Fahrzeuge ---------------------------------------------------------
+
+  _switchVehicle(idx) {
+    if (idx === this._vehicleIdx) return;
+    this._vehicleIdx = idx;
+    this._vtBtns.forEach((b, i) => b.classList.toggle("active", i === idx));
+    // Fahrzeug-State zurücksetzen (evcc-Cache bleibt — gleiche Integration)
+    this._homeVehicleFilter = null;
+    this._homeVehicleFilterInitialized = false;
+    this._histHomeSig = null;
+    this._histChargeExpanded = false;
+    this._histTripExpanded = false;
+    this._pendChargeSig = null;
+    this._pendTripSig = null;
+    this._histChargeSig = null;
+    this._histTripSig = null;
+    this._formState = {};
+    if (this._vehicleContent) {
+      this._vehicleContent.innerHTML = "";
+      this._fillVehicleContent(this._vehicleContent);
+      this._vehicleContent.classList.remove("vh-fade");
+      void this._vehicleContent.offsetWidth;
+      this._vehicleContent.classList.add("vh-fade");
+    }
+    this._updateVehicle();
+  }
 
   _buildVehicle() {
     const wrap = document.createElement("div");
     wrap.className = "tab-wrap";
-    wrap.innerHTML = `
+
+    const vehicles = this._config.vehicles;
+    if (vehicles && vehicles.length > 1) {
+      const pills = document.createElement("div");
+      pills.className = "vt-pills";
+      this._vtBtns = [];
+      vehicles.forEach((v, idx) => {
+        const btn = document.createElement("button");
+        btn.className = "vt-pill" + (idx === this._vehicleIdx ? " active" : "");
+        const label = v.title.replace(/^EV\s*Assistant\s*\(/i, "").replace(/\)\s*$/, "").trim() || v.title;
+        btn.textContent = label;
+        btn.addEventListener("click", () => this._switchVehicle(idx));
+        this._vtBtns.push(btn);
+        pills.appendChild(btn);
+      });
+      wrap.appendChild(pills);
+    } else {
+      this._vtBtns = [];
+    }
+
+    const content = document.createElement("div");
+    content.id = "vh-content";
+    this._vehicleContent = content;
+    wrap.appendChild(content);
+    this._fillVehicleContent(content);
+    return wrap;
+  }
+
+  _fillVehicleContent(container) {
+    container.innerHTML = `
       <div class="badge-row">
         <div class="badge badge-ext hidden" id="vh-badge-ext">
           <ha-icon icon="mdi:ev-station"></ha-icon> Fremdladung läuft
@@ -531,73 +620,114 @@ class EVAssistantPanel extends HTMLElement {
           <div class="pend-list hidden" id="est-trip-item"></div>
         </div>
       </div>
-      <div class="card">
-        <div class="card-head">
-          <span class="ic"><ha-icon icon="mdi:ev-station"></ha-icon></span><h2>Fremdladung</h2>
-        </div>
-        <div class="kpi-row">
-          <div class="kpi"><div class="kv vh-ext-kwh-total">—</div><div class="kl">kWh gesamt</div></div>
-          <div class="kpi"><div class="kv vh-ext-cost-total">—</div><div class="kl">EUR gesamt</div></div>
-          <div class="kpi"><div class="kv vh-ext-count">—</div><div class="kl">Ladevorgänge</div></div>
+
+      <div class="card card-vehicle">
+        <div class="veh-header">
+          <div class="veh-name-block">
+            <div class="card-head" style="margin-bottom:6px">
+              <span class="ic"><ha-icon icon="mdi:car-electric"></ha-icon></span><h2>Fahrzeug</h2>
+            </div>
+            <div class="veh-name vh-veh-name">—</div>
+          </div>
+          <div class="veh-soc-block">
+            <div class="veh-soc-pct"><span class="vh-soc-val">—</span><small>%</small></div>
+            <div class="veh-soc-bar-wrap">
+              <div class="veh-soc-bar-fill vh-soc-fill"></div>
+            </div>
+            <div class="veh-soc-label">SOC</div>
+          </div>
         </div>
         <div class="divider"></div>
-        <div class="sub-head">Letzte Fremdladung</div>
-        <div class="kpi-row">
-          <div class="kpi"><div class="kv vh-ext-kwh-last">—</div><div class="kl">kWh</div></div>
-          <div class="kpi"><div class="kv vh-ext-cost-last">—</div><div class="kl">EUR</div></div>
-          <div class="kpi"><div class="kv vh-ext-price-last">—</div><div class="kl">EUR/kWh</div></div>
-          <div class="kpi"><div class="kv vh-ext-duration-last">—</div><div class="kl">Dauer</div></div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-head">
-          <span class="ic"><ha-icon icon="mdi:home-lightning-bolt"></ha-icon></span><h2>Heimladen</h2>
-        </div>
-        <div class="kpi-row">
-          <div class="kpi"><div class="kv vh-home-kwh">—</div><div class="kl">kWh gesamt</div></div>
-          <div class="kpi"><div class="kv vh-home-cost">—</div><div class="kl">EUR gesamt</div></div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-head">
-          <span class="ic"><ha-icon icon="mdi:book-open-page-variant"></ha-icon></span><h2>Fahrtenbuch</h2>
-        </div>
-        <div class="kpi-row">
-          <div class="kpi"><div class="kv vh-trip-km-last">—</div><div class="kl">km letzte Fahrt</div></div>
-          <div class="kpi"><div class="kv vh-trip-count">—</div><div class="kl">Fahrten</div></div>
-          <div class="kpi"><div class="kv vh-trip-km-total">—</div><div class="kl">km gesamt</div></div>
-        </div>
-      </div>
-      <div class="card">
-        <div class="card-head">
-          <span class="ic"><ha-icon icon="mdi:car-info"></ha-icon></span><h2>Fahrzeug</h2>
-        </div>
         <div class="kpi-row">
           <div class="kpi"><div class="kv vh-odo">—</div><div class="kl">km Kilometerstand</div></div>
           <div class="kpi"><div class="kv vh-efficiency">—</div><div class="kl">% Ladewirkungsgrad</div></div>
           <div class="kpi"><div class="kv green vh-savings">—</div><div class="kl">EUR Ersparnis ggü. Verbrenner</div></div>
         </div>
       </div>
-      <div class="card">
-        <div class="card-head">
-          <span class="ic"><ha-icon icon="mdi:history"></ha-icon></span><h2>Fremdladung Historie</h2>
+
+      <div class="vh-3col">
+        <div class="vh-col">
+          <div class="card card-home">
+            <div class="card-head">
+              <span class="ic"><ha-icon icon="mdi:home-lightning-bolt"></ha-icon></span><h2>Heimladen</h2>
+            </div>
+            <div class="kpi-row">
+              <div class="kpi"><div class="kv vh-home-kwh">—</div><div class="kl">kWh gesamt</div></div>
+              <div class="kpi"><div class="kv vh-home-cost">—</div><div class="kl">EUR gesamt</div></div>
+              <div class="kpi"><div class="kv vh-home-count">—</div><div class="kl">Ladevorgänge</div></div>
+              <div class="kpi"><div class="kv vh-home-solar">—</div><div class="kl">% Solar Ø</div></div>
+            </div>
+            <div class="letzte-section">
+              <div class="sub-head">Letzte Heimladung</div>
+              <div class="kpi-row">
+                <div class="kpi"><div class="kv vh-home-kwh-last">—</div><div class="kl">kWh</div></div>
+                <div class="kpi"><div class="kv vh-home-cost-last">—</div><div class="kl">EUR</div></div>
+                <div class="kpi"><div class="kv vh-home-solar-last">—</div><div class="kl">% Solar</div></div>
+                <div class="kpi"><div class="kv vh-home-dur-last">—</div><div class="kl">Dauer</div></div>
+              </div>
+            </div>
+            <div class="hist-section">
+              <div class="hist-section-head">
+                <span>Historie</span>
+              </div>
+              <div class="hist-list" id="hist-home-list"></div>
+            </div>
+          </div>
         </div>
-        <div class="hist-list" id="hist-charge-list"></div>
-      </div>
-      <div class="card">
-        <div class="card-head">
-          <span class="ic"><ha-icon icon="mdi:history"></ha-icon></span><h2>Heimladen Historie</h2>
+        <div class="vh-col">
+          <div class="card card-ext">
+            <div class="card-head">
+              <span class="ic"><ha-icon icon="mdi:ev-station"></ha-icon></span><h2>Fremdladung</h2>
+            </div>
+            <div class="kpi-row">
+              <div class="kpi"><div class="kv vh-ext-kwh-total">—</div><div class="kl">kWh gesamt</div></div>
+              <div class="kpi"><div class="kv vh-ext-cost-total">—</div><div class="kl">EUR gesamt</div></div>
+              <div class="kpi"><div class="kv vh-ext-count">—</div><div class="kl">Ladevorgänge</div></div>
+            </div>
+            <div class="letzte-section">
+              <div class="sub-head">Letzte Fremdladung</div>
+              <div class="kpi-row">
+                <div class="kpi"><div class="kv vh-ext-kwh-last">—</div><div class="kl">kWh</div></div>
+                <div class="kpi"><div class="kv vh-ext-cost-last">—</div><div class="kl">EUR</div></div>
+                <div class="kpi"><div class="kv vh-ext-price-last">—</div><div class="kl">EUR/kWh</div></div>
+                <div class="kpi"><div class="kv vh-ext-duration-last">—</div><div class="kl">Dauer</div></div>
+              </div>
+            </div>
+            <div class="hist-section">
+              <div class="hist-section-head">
+                <span>Historie</span>
+              </div>
+              <div class="hist-list" id="hist-charge-list"></div>
+            </div>
+          </div>
         </div>
-        <div class="hist-list" id="hist-home-list"></div>
-      </div>
-      <div class="card">
-        <div class="card-head">
-          <span class="ic"><ha-icon icon="mdi:history"></ha-icon></span><h2>Fahrtenbuch Historie</h2>
+        <div class="vh-col">
+          <div class="card card-trip">
+            <div class="card-head">
+              <span class="ic"><ha-icon icon="mdi:book-open-page-variant"></ha-icon></span><h2>Fahrtenbuch</h2>
+            </div>
+            <div class="kpi-row">
+              <div class="kpi"><div class="kv vh-trip-count">—</div><div class="kl">Fahrten</div></div>
+              <div class="kpi"><div class="kv vh-trip-km-total">—</div><div class="kl">km gesamt</div></div>
+            </div>
+            <div class="letzte-section">
+              <div class="sub-head">Letzte Fahrt</div>
+              <div class="kpi-row">
+                <div class="kpi"><div class="kv vh-trip-km-last">—</div><div class="kl">km</div></div>
+                <div class="kpi"><div class="kv-sm vh-trip-route-last">—</div><div class="kl">Route</div></div>
+              </div>
+            </div>
+            <div class="hist-section">
+              <div class="hist-section-head">
+                <span>Historie</span>
+              </div>
+              <div class="hist-list" id="hist-trip-list"></div>
+            </div>
+          </div>
         </div>
-        <div class="hist-list" id="hist-trip-list"></div>
       </div>`;
 
-    const q = (s) => wrap.querySelector(s);
+    const q = (s) => container.querySelector(s);
     this._r = {
       vhBadgeExt:     q("#vh-badge-ext"),
       vhBadgeTrip:    q("#vh-badge-trip"),
@@ -613,14 +743,24 @@ class EVAssistantPanel extends HTMLElement {
       vhExtCostLast:  q(".vh-ext-cost-last"),
       vhExtPriceLast: q(".vh-ext-price-last"),
       vhExtDurLast:   q(".vh-ext-duration-last"),
-      vhHomeKwh:      q(".vh-home-kwh"),
-      vhHomeCost:     q(".vh-home-cost"),
-      vhTripKmLast:   q(".vh-trip-km-last"),
-      vhTripCount:    q(".vh-trip-count"),
-      vhTripKmTotal:  q(".vh-trip-km-total"),
+      vhHomeKwh:       q(".vh-home-kwh"),
+      vhHomeCost:      q(".vh-home-cost"),
+      vhHomeCount:     q(".vh-home-count"),
+      vhHomeSolar:     q(".vh-home-solar"),
+      vhHomeKwhLast:   q(".vh-home-kwh-last"),
+      vhHomeCostLast:  q(".vh-home-cost-last"),
+      vhHomeSolarLast: q(".vh-home-solar-last"),
+      vhHomeDurLast:   q(".vh-home-dur-last"),
+      vhTripKmLast:    q(".vh-trip-km-last"),
+      vhTripCount:     q(".vh-trip-count"),
+      vhTripKmTotal:   q(".vh-trip-km-total"),
+      vhTripRouteLast: q(".vh-trip-route-last"),
       vhOdo:          q(".vh-odo"),
       vhEfficiency:   q(".vh-efficiency"),
       vhSavings:      q(".vh-savings"),
+      vhVehName:      q(".vh-veh-name"),
+      vhSocVal:       q(".vh-soc-val"),
+      vhSocFill:      q(".vh-soc-fill"),
       histChargeList: q("#hist-charge-list"),
       histTripList:   q("#hist-trip-list"),
       histHomeList:   q("#hist-home-list"),
@@ -630,7 +770,6 @@ class EVAssistantPanel extends HTMLElement {
     this._histChargeSig = null;
     this._histTripSig = null;
     this._histHomeSig = null;
-    return wrap;
   }
 
   // --- Update loop ------------------------------------------------------------
@@ -912,12 +1051,36 @@ class EVAssistantPanel extends HTMLElement {
     r.vhExtDurLast.textContent   = this._duration("last_duration");
     r.vhHomeKwh.textContent      = this._num("home_kwh", 1);
     r.vhHomeCost.textContent     = this._num("home_cost", 2);
-    r.vhTripKmLast.textContent   = this._num("last_trip_km", 0);
     r.vhTripCount.textContent    = this._num("trip_count", 0);
     r.vhTripKmTotal.textContent  = this._num("total_trip_km", 0);
     r.vhOdo.textContent          = this._num("odo", 0);
     r.vhEfficiency.textContent   = this._num("measured_efficiency", 1);
     r.vhSavings.textContent      = this._num("savings", 2);
+
+    // Fahrzeugname
+    if (r.vhVehName) {
+      const label = (this._vehicleConf().title || "").replace(/^EV\s*Assistant\s*\(/i, "").replace(/\)\s*$/, "").trim();
+      r.vhVehName.textContent = label || "—";
+    }
+
+    // SOC
+    const socEid = this._eid("evcc_vehicle_soc");
+    const socState = socEid && this._hass ? this._hass.states[socEid] : null;
+    const soc = socState ? parseFloat(socState.state) : null;
+    if (r.vhSocVal) r.vhSocVal.textContent = soc != null && !isNaN(soc) ? Math.round(soc) : "—";
+    if (r.vhSocFill && soc != null && !isNaN(soc)) {
+      r.vhSocFill.style.width = `${Math.max(0, Math.min(100, soc))}%`;
+      r.vhSocFill.style.background = soc < 20 ? "#ef4444" : soc < 40 ? "#f97316" : "var(--accent)";
+    }
+
+    // Letzte Fahrt aus Fahrtenbuch-Attribut
+    const tripEid = this._eid("last_trip_km");
+    const tripState = tripEid && this._hass ? this._hass.states[tripEid] : null;
+    const trips = tripState && Array.isArray((tripState.attributes || {}).fahrtenbuch)
+      ? tripState.attributes.fahrtenbuch : [];
+    const lastTrip = trips.length > 0 ? trips[0] : null;
+    r.vhTripKmLast.textContent   = lastTrip ? Number(lastTrip.km).toFixed(1) : "—";
+    r.vhTripRouteLast.textContent = lastTrip ? `${lastTrip.start_ort} → ${lastTrip.end_ort}` : "—";
   }
 
   // --- Pending items: confirm/discard ------------------------------------------
@@ -985,8 +1148,8 @@ class EVAssistantPanel extends HTMLElement {
           ${soc ? `<span class="pend-estimate-sub">${soc}</span>` : ""}
         </div>
         <div class="pend-inputs">
-          <label>kWh (Beleg)<input type="number" step="0.1" class="pf-kwh" value="${st.kwh}"></label>
-          <label>EUR/kWh (Beleg)<input type="number" step="0.001" class="pf-price" value="${st.price}" placeholder="0,00"></label>
+          <label>kWh (Beleg)<input type="text" inputmode="decimal" class="pf-kwh" value="${st.kwh}"></label>
+          <label>EUR/kWh (Beleg)<input type="text" inputmode="decimal" class="pf-price" value="${st.price}" placeholder="0,000"></label>
         </div>
         <div class="pend-actions">
           <button class="btn btn-ghost pf-discard">Verwerfen</button>
@@ -1003,8 +1166,8 @@ class EVAssistantPanel extends HTMLElement {
       };
       updateValidity();
 
-      kwhInput.addEventListener("input", (e) => { st.kwh = e.target.value; updateValidity(); });
-      priceInput.addEventListener("input", (e) => { st.price = e.target.value; updateValidity(); });
+      kwhInput.addEventListener("input", (e) => { st.kwh = e.target.value.replace(",", "."); updateValidity(); });
+      priceInput.addEventListener("input", (e) => { st.price = e.target.value.replace(",", "."); updateValidity(); });
       confirmBtn.addEventListener("click", () => {
         const kwh = parseFloat(st.kwh), price = parseFloat(st.price);
         if (isNaN(kwh) || isNaN(price)) return;
@@ -1142,9 +1305,10 @@ class EVAssistantPanel extends HTMLElement {
           </div>
           <span class="hist-cost">${Number(h.kosten).toFixed(2)} €</span>
         </div>
+        ${(h.soc_start != null && h.soc_end != null) ? `<div class="soc-bar-wrap"><div class="soc-bar-fill ext" style="--soc-w:${Math.min(100, Math.max(0, h.soc_end - h.soc_start) * 2).toFixed(1)}%"></div></div>` : ""}
         <div class="hist-edit-form hidden">
-          <label>kWh<input type="number" step="0.1" class="hf-kwh" value="${h.kwh}"></label>
-          <label>EUR/kWh<input type="number" step="0.001" class="hf-price" value="${h.preis_kwh}"></label>
+          <label>kWh<input type="text" inputmode="decimal" class="hf-kwh" value="${h.kwh}"></label>
+          <label>EUR/kWh<input type="text" inputmode="decimal" class="hf-price" value="${h.preis_kwh}"></label>
           <button class="btn btn-primary hf-save">Speichern</button>
           <button class="btn btn-ghost hf-cancel">Abbrechen</button>
         </div>
@@ -1161,8 +1325,8 @@ class EVAssistantPanel extends HTMLElement {
       });
       row.querySelector(".hf-cancel").addEventListener("click", () => form.classList.add("hidden"));
       row.querySelector(".hf-save").addEventListener("click", () => {
-        const kwh = parseFloat(row.querySelector(".hf-kwh").value);
-        const price = parseFloat(row.querySelector(".hf-price").value);
+        const kwh = parseFloat(row.querySelector(".hf-kwh").value.replace(",", "."));
+        const price = parseFloat(row.querySelector(".hf-price").value.replace(",", "."));
         if (isNaN(kwh) || isNaN(price)) return;
         this._call("edit_charge", { erfasst_ts: ts, kwh, price_kwh: price });
         form.classList.add("hidden");
@@ -1297,7 +1461,9 @@ class EVAssistantPanel extends HTMLElement {
     if (this._homeSessionsFetching) return;
     this._homeSessionsFetching = true;
     this._homeSessionsFetchedAt = Date.now();
-    const entryId = this._evccEntryId();
+    // Try fast synchronous lookup first; fall back to async entity registry WS call
+    let entryId = this._evccEntryId();
+    if (!entryId && this._hass && this._hass.callWS) entryId = await this._resolveEvccEntryId();
     if (!entryId || !this._hass || !this._hass.callWS) {
       // _homeSessions bleibt null (nicht []), damit ohne Dauerschleife erneut
       // versucht wird, sobald z. B. die Entity-Registry nachträglich verfügbar ist.
@@ -1333,7 +1499,10 @@ class EVAssistantPanel extends HTMLElement {
       const cost = typeof s.price === "number" ? s.price : null;
       const solarPct = typeof s.solarPercentage === "number" ? s.solarPercentage : null;
       const vehicle = typeof s.vehicle === "string" && s.vehicle.length > 0 ? s.vehicle : null;
-      return { startTs, endTs, durMin, kwh, cost, solarPct, vehicle };
+      const socStart = typeof s.socStart === "number" ? s.socStart : null;
+      const socEnd = typeof s.socEnd === "number" ? s.socEnd : null;
+      const pricePerKwh = typeof s.pricePerKWh === "number" ? s.pricePerKWh : null;
+      return { startTs, endTs, durMin, kwh, cost, solarPct, vehicle, socStart, socEnd, pricePerKwh };
     }).filter((s) => s.startTs != null)
       .sort((a, b) => b.startTs - a.startTs);
 
@@ -1346,8 +1515,11 @@ class EVAssistantPanel extends HTMLElement {
     // überschrieben werden.
     if (!this._homeVehicleFilterInitialized && vehicles.length > 0) {
       this._homeVehicleFilterInitialized = true;
-      const configured = this._config.evcc_vehicle_name;
-      if (configured && vehicles.includes(configured)) this._homeVehicleFilter = configured;
+      const configured = this._vehicleConf().evcc_vehicle_name;
+      if (configured) {
+        const match = vehicles.find((v) => v.toLowerCase() === configured.toLowerCase());
+        if (match) this._homeVehicleFilter = match;
+      }
     }
     if (this._homeVehicleFilter && !vehicles.includes(this._homeVehicleFilter)) {
       this._homeVehicleFilter = null;
@@ -1355,6 +1527,25 @@ class EVAssistantPanel extends HTMLElement {
     const filtered = this._homeVehicleFilter
       ? parsed.filter((p) => p.vehicle === this._homeVehicleFilter)
       : parsed;
+
+    // Solaranteil-Auswertung vor Sig-Check, damit KPIs immer aktuell sind.
+    const withSolar = filtered.filter((p) => p.solarPct != null && p.kwh != null && p.kwh > 0);
+    const solarKwhSum = withSolar.reduce((sum, p) => sum + p.kwh, 0);
+    const avgSolar = solarKwhSum > 0
+      ? withSolar.reduce((sum, p) => sum + p.kwh * p.solarPct, 0) / solarKwhSum
+      : null;
+
+    // KPI-Zellen synchron befüllen (Übersicht + Letzte Heimladung)
+    const lastHome = filtered[0] || null;
+    const r = this._r;
+    if (r.vhHomeKwhLast) {
+      r.vhHomeKwhLast.textContent   = lastHome && lastHome.kwh != null      ? lastHome.kwh.toFixed(2)              : "—";
+      r.vhHomeCostLast.textContent  = lastHome && lastHome.cost != null     ? lastHome.cost.toFixed(2)             : "—";
+      r.vhHomeSolarLast.textContent = lastHome && lastHome.solarPct != null ? Math.round(lastHome.solarPct)        : "—";
+      r.vhHomeDurLast.textContent   = lastHome && lastHome.durMin != null   ? this._fmtDuration(lastHome.durMin)   : "—";
+      r.vhHomeCount.textContent     = filtered.length > 0 ? String(filtered.length)       : "—";
+      r.vhHomeSolar.textContent     = avgSolar != null    ? String(Math.round(avgSolar))   : "—";
+    }
 
     const expanded = this._histHomeExpanded;
     const hist = expanded ? filtered : filtered.slice(0, 5);
@@ -1368,27 +1559,18 @@ class EVAssistantPanel extends HTMLElement {
       return;
     }
 
-    // Solaranteil-Auswertung: energiegewichteter Mittelwert über die (ggf.
-    // fahrzeug-gefilterte) Menge, nicht nur über die aktuell sichtbaren letzten 5.
-    const withSolar = filtered.filter((p) => p.solarPct != null && p.kwh != null && p.kwh > 0);
-    const solarKwhSum = withSolar.reduce((sum, p) => sum + p.kwh, 0);
-    const avgSolar = solarKwhSum > 0
-      ? withSolar.reduce((sum, p) => sum + p.kwh * p.solarPct, 0) / solarKwhSum
-      : null;
-
-    if (avgSolar != null || vehicles.length > 1) {
+    // Dropdown nur zeigen wenn mehrere evcc-Fahrzeuge vorhanden UND kein Fahrzeug
+    // per Config voreingestellt ist.
+    const configuredVehicle = this._vehicleConf().evcc_vehicle_name;
+    const showVehicleSelect = vehicles.length > 1 && !configuredVehicle;
+    if (showVehicleSelect) {
       const toolbar = document.createElement("div");
       toolbar.className = "hist-toolbar";
       toolbar.innerHTML = `
-        ${avgSolar != null
-          ? `<span class="hist-summary">Ø Solaranteil ${Math.round(avgSolar)}% · ${filtered.length} Heimladung${filtered.length === 1 ? "" : "en"}</span>`
-          : "<span></span>"}
-        ${vehicles.length > 1
-          ? `<select class="hist-vehicle-select">
-              <option value="">Alle Fahrzeuge</option>
-              ${vehicles.map((v) => `<option value="${v}"${v === this._homeVehicleFilter ? " selected" : ""}>${v}</option>`).join("")}
-            </select>`
-          : ""}`;
+        <select class="hist-vehicle-select">
+          <option value="">Alle Fahrzeuge</option>
+          ${vehicles.map((v) => `<option value="${v}"${v === this._homeVehicleFilter ? " selected" : ""}>${v}</option>`).join("")}
+        </select>`;
       const select = toolbar.querySelector(".hist-vehicle-select");
       if (select) {
         select.addEventListener("change", () => {
@@ -1413,23 +1595,28 @@ class EVAssistantPanel extends HTMLElement {
     hist.forEach((h) => {
       const row = document.createElement("div");
       row.className = "hist-card";
-      const endTime = this._fmtTime(h.endTs);
       const durStr = this._fmtDuration(h.durMin);
-      const metaParts = [];
-      if (endTime) metaParts.push(`bis ${endTime}`);
-      if (durStr) metaParts.push(durStr);
-      const meta = metaParts.join(" · ");
+      const socDelta = (h.socStart != null && h.socEnd != null) ? Math.round(h.socEnd - h.socStart) : null;
+      const socStr = (h.socStart != null && h.socEnd != null)
+        ? `${Math.round(h.socStart)}% → ${Math.round(h.socEnd)}%${socDelta != null ? ` (${socDelta >= 0 ? "+" : ""}${socDelta}%)` : ""}`
+        : null;
+      const socBarHtml = (h.socStart != null && h.socEnd != null)
+        ? `<div class="soc-bar-wrap"><div class="soc-bar-fill" style="--soc-w:${Math.min(100, Math.max(0, h.socEnd - h.socStart) * 2).toFixed(1)}%"></div></div>`
+        : "";
       row.innerHTML = `
         <div class="hist-top">
-          <span class="hist-date">${this._fmtDate(h.startTs)}${meta ? ` <span class="hist-meta">· ${meta}</span>` : ""}</span>
+          <span class="hist-date">${this._fmtDate(h.startTs)}${durStr ? ` · ${durStr}` : ""}</span>
+          ${h.solarPct != null ? `<span class="hist-solar">☀ ${Math.round(h.solarPct)}%</span>` : ""}
         </div>
         <div class="hist-figures">
           <div class="hist-figures-left">
-            ${h.solarPct != null ? `<span class="hist-solar">☀ ${Math.round(h.solarPct)}%</span>` : ""}
+            ${socStr ? `<span class="hist-soc">${socStr}</span>` : ""}
             <span class="hist-kwh">${h.kwh != null ? h.kwh.toFixed(2) : "—"}<small>kWh</small></span>
+            ${h.pricePerKwh != null ? `<span class="hist-price">${h.pricePerKwh.toFixed(3)} €/kWh</span>` : ""}
           </div>
           <span class="hist-cost">${h.cost != null ? h.cost.toFixed(2) + " €" : "—"}</span>
-        </div>`;
+        </div>
+        ${socBarHtml}`;
       scroll.appendChild(row);
     });
     list.appendChild(scroll);
@@ -1667,15 +1854,117 @@ class EVAssistantPanel extends HTMLElement {
 
       /* Fahrzeuge tab */
       .tab-wrap { display: flex; flex-direction: column; gap: var(--gap); }
+      #vh-content { display: flex; flex-direction: column; gap: var(--gap); }
+      .vh-3col { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap); align-items: start; }
+      .vh-col  { display: flex; flex-direction: column; gap: var(--gap); }
+      .vt-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+      .vt-pill {
+        border: 1px solid var(--line-s); border-radius: 9999px; padding: 5px 16px;
+        font-size: 12.5px; font-weight: 600; cursor: pointer;
+        background: var(--bg-2); color: var(--ink-mid); transition: all 0.15s;
+      }
+      .vt-pill:hover { background: var(--bg-0); color: var(--ink); border-color: var(--accent); }
+      .vt-pill.active { background: var(--accent); border-color: var(--accent); color: #fff; }
       .badge-row { display: flex; gap: 8px; flex-wrap: wrap; }
       .badge { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; font-weight: 700; padding: 5px 12px; border-radius: 9999px; --mdc-icon-size: 14px; }
       .badge-ext  { background: #7c2d12; color: #fed7aa; border: 1px solid #9a3412; }
       .badge-trip { background: #1e3a5f; color: #bfdbfe; border: 1px solid #1d4ed8; }
-      .kpi-row { display: flex; flex-wrap: wrap; gap: 12px 28px; }
-      .kpi     { min-width: 60px; }
+      .kpi-row { display: flex; flex-wrap: wrap; gap: 12px 0; }
+      .kpi     { flex: 1; min-width: 60px; text-align: center; }
       .kv      { font-size: 1.55rem; font-weight: 700; line-height: 1.1; }
+      .kv-sm   { font-size: 0.9rem;  font-weight: 600; line-height: 1.3; color: var(--ink); }
       .kl      { font-size: 0.7rem; color: var(--ink-mid); margin-top: 2px; }
       .kv.green { color: #4ade80; }
+
+      /* Farbige Summary-Cards — HA Energiedashboard-Farben */
+      :host { --c-home: #ff9800; --c-ext: #488fc2; --c-trip: #14b8a6; }
+
+      /* Fahrzeug-Card */
+      .card-vehicle { border-top: 3px solid var(--accent); }
+      .card-vehicle .card-head .ic {
+        width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+        background: color-mix(in oklab, var(--accent) 15%, transparent); color: var(--accent);
+        --mdc-icon-size: 18px;
+      }
+      .veh-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+      .veh-name-block { flex: 1; min-width: 0; }
+      .veh-name { font-size: 1.4rem; font-weight: 800; color: var(--ink); line-height: 1.1; }
+      .veh-soc-block { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; flex-shrink: 0; }
+      .veh-soc-pct { font-size: 2.2rem; font-weight: 800; line-height: 1; color: var(--accent); font-variant-numeric: tabular-nums; }
+      .veh-soc-pct small { font-size: 0.45em; font-weight: 600; color: var(--ink-mid); margin-left: 1px; }
+      .veh-soc-bar-wrap { width: 120px; height: 7px; border-radius: 4px; background: var(--line); overflow: hidden; }
+      .veh-soc-bar-fill { height: 100%; border-radius: 4px; background: var(--accent); transition: width 0.6s ease; width: 0; }
+      .veh-soc-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--ink-dim); font-weight: 700; }
+
+      /* Summary-Card Akzente */
+      .card-home:not(.card-hist) { border-top: 3px solid var(--c-home); }
+      .card-ext:not(.card-hist)  { border-top: 3px solid var(--c-ext); }
+      .card-trip:not(.card-hist) { border-top: 3px solid var(--c-trip); }
+
+      /* Icon-Hintergrund */
+      .card-home .card-head .ic {
+        width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+        background: color-mix(in oklab, var(--c-home) 15%, transparent); color: var(--c-home);
+        --mdc-icon-size: 18px;
+      }
+      .card-ext .card-head .ic {
+        width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+        background: color-mix(in oklab, var(--c-ext) 15%, transparent); color: var(--c-ext);
+        --mdc-icon-size: 18px;
+      }
+      .card-trip .card-head .ic {
+        width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+        background: color-mix(in oklab, var(--c-trip) 15%, transparent); color: var(--c-trip);
+        --mdc-icon-size: 18px;
+      }
+
+      /* KPI-Werte in Spaltenfarbe, "Letzte"-Werte neutral kleiner */
+      .card-home:not(.card-hist) .kpi-row:first-of-type .kv { color: var(--c-home); }
+      .card-ext:not(.card-hist)  .kpi-row:first-of-type .kv { color: var(--c-ext); }
+      .card-trip:not(.card-hist) .kpi-row:first-of-type .kv { color: var(--c-trip); }
+      .letzte-section .kv { color: var(--ink) !important; font-size: 1.25rem; }
+
+      /* KPI vertikale Trennlinie */
+      .kpi:not(:last-child) { border-right: 1px solid var(--line); }
+
+      /* "Letzte"-Sektion als getönter Block */
+      .letzte-section {
+        margin-top: 14px; background: var(--bg-2);
+        border-radius: 10px; padding: 12px 14px;
+      }
+      .letzte-section .sub-head { margin-bottom: 10px; }
+      .card-home .letzte-section .sub-head { color: var(--c-home); opacity: 0.8; }
+      .card-ext  .letzte-section .sub-head { color: var(--c-ext);  opacity: 0.8; }
+      .card-trip .letzte-section .sub-head { color: var(--c-trip); opacity: 0.8; }
+
+      /* Historie-Sektion innerhalb der Karte */
+      .hist-section { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+      .hist-section-head {
+        display: flex; align-items: center; justify-content: space-between;
+        margin-bottom: 10px;
+      }
+      .hist-section-head span {
+        font-size: 11px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.06em; color: var(--ink-dim);
+      }
+      .card-home .hist-section-head span { color: var(--c-home); opacity: 0.7; }
+      .card-ext  .hist-section-head span { color: var(--c-ext);  opacity: 0.7; }
+      .card-trip .hist-section-head span { color: var(--c-trip); opacity: 0.7; }
+
+      /* Hover auf History-Einträgen */
+      .hist-card { transition: background 0.15s; }
+      .hist-card:hover { background: var(--bg-0); }
+      .hist-row  { transition: background 0.15s; border-radius: 6px; }
+      .hist-row:hover { background: color-mix(in oklab, var(--ink) 4%, transparent); }
+
+      /* SOC-Balken in Heimladen-Historie */
+      .soc-bar-wrap { height: 3px; border-radius: 2px; background: var(--line); margin-top: 5px; position: relative; overflow: hidden; max-width: 100px; }
+      .soc-bar-fill { position: absolute; height: 100%; border-radius: 2px; background: var(--c-home); left: 0; width: var(--soc-w); }
+      .soc-bar-fill.ext { background: var(--c-ext); }
+
+      /* Tab-Wechsel Fade-In */
+      @keyframes vh-fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+      .vh-fade { animation: vh-fadein 0.22s ease; }
       .est-card { border-color: rgba(251,146,60,0.25); }
       .est-list  { display: flex; flex-direction: column; gap: 8px; }
       .est-item  { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; }
@@ -1770,6 +2059,7 @@ class EVAssistantPanel extends HTMLElement {
       .hist-top {
         display: flex; align-items: center; justify-content: space-between;
         gap: 12px; font-size: 11.5px; color: var(--ink-dim); flex-wrap: wrap;
+        min-height: 26px;
       }
       .hist-top .hist-date { min-width: 0; }
       .hist-meta { color: var(--ink-dim); font-variant-numeric: tabular-nums; }
@@ -1778,6 +2068,7 @@ class EVAssistantPanel extends HTMLElement {
         gap: 12px; margin-top: 4px;
       }
       .hist-figures-left { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex-wrap: wrap; }
+      .hist-figures-right { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
       .hist-soc { font-size: 12px; color: var(--ink-mid); white-space: nowrap; font-variant-numeric: tabular-nums; }
       .hist-solar { font-size: 12px; color: var(--ink-mid); white-space: nowrap; font-variant-numeric: tabular-nums; }
       .hist-kwh { font-size: 1.05rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
@@ -1798,6 +2089,9 @@ class EVAssistantPanel extends HTMLElement {
       }
       .hist-delete-text { font-size: 12px; color: var(--ink-mid); }
 
+      @media (max-width: 700px) {
+        .vh-3col { grid-template-columns: 1fr; }
+      }
       @media (max-width: 500px) {
         .appbar { padding: 0 14px; gap: 12px; }
         .brand .btext { display: none; }
@@ -1808,6 +2102,9 @@ class EVAssistantPanel extends HTMLElement {
         .pend-inputs label { flex: 1 1 90px; }
         .hist-date { min-width: 0; }
         .hist-main { gap: 8px 14px; }
+      }
+      @container panel (max-width: 700px) {
+        .vh-3col { grid-template-columns: 1fr; }
       }
       @container panel (max-width: 500px) {
         .appbar { padding: 0 14px; gap: 12px; }

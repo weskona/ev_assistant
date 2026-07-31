@@ -2,6 +2,31 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.19.0] - 2026-08-01
+
+### Added
+
+- **Vollständig überarbeitetes Fahrzeuge-Panel — ein vollwertiges EV-Dashboard**: Der Fahrzeuge-Tab ist jetzt ein umfassendes Fahrzeug-Dashboard in drei Spalten: Heimladen (evcc-Ladesessions), Fremdladung und Fahrtenbuch. Jede Spalte zeigt Gesamtwerte, die letzte Session und die vollständige Historie — alles in einer zusammengefassten Karte. Bei mehreren konfigurierten Fahrzeugen erscheinen Pill-Tabs zum Wechseln.
+- **Fahrzeugkarte mit SOC und Name**: Die Fahrzeugübersicht zeigt nun den Fahrzeugnamen und den aktuellen SOC als große Zahl mit farbcodiertem Balken (rot < 20 %, orange < 40 %, grün sonst), gespeist aus der konfigurierten evcc-Fahrzeug-SOC-Entität.
+- **Heimladen-Historie** (evcc-Sessions) enthält jetzt SOC (Start → Ende + Delta), Preis pro kWh und einen SOC-Fortschrittsbalken pro Eintrag.
+- **SOC-Fortschrittsbalken in der Fremdladung-Historie**: gleicher Balken wie bei Heimladen, in Grid-Blau eingefärbt.
+- **Farbcodiertes Kartendesign** nach HA-Energiedashboard-Farben: PV-Amber (`#ff9800`) für Heimladen, Grid-Blau (`#488fc2`) für Fremdladung, Teal (`#14b8a6`) für Fahrtenbuch — mit farbigem Top-Balken, Icon-Hintergrund und eingefärbten KPI-Werten.
+- **„Letzte"-Sektion als getönter Block**: Die KPIs der letzten Session sind innerhalb der Übersichtskarte in einem abgegrenzten `--bg-2`-Block zusammengefasst.
+- **KPI-Verbesserungen**: Werte sind zentriert und nutzen die volle Kartenbreite gleichmäßig; vertikale Trennlinien zwischen den einzelnen KPIs.
+- **Tab-Wechsel-Animation**: Beim Fahrzeugwechsel blendet der Inhalt weich ein.
+- **Hover-Effekte** auf allen Historien-Einträgen.
+- **Übersicht und Historie in einer Karte zusammengefasst**: Keine separate Historien-Karte mehr — der Historien-Bereich fließt direkt unterhalb der Übersicht in derselben Karte.
+
+### Changed
+
+- Fahrzeugkarten-Icon von `mdi:car-info` auf `mdi:car-electric` geändert.
+
+## [0.18.2] - 2026-08-01
+
+### Added
+
+- **Multi-vehicle tab support in the Fahrzeuge view**: when more than one EV Assistant config entry is configured, pill-style tabs appear at the top of the Fahrzeuge view to switch between vehicles. Each tab shows the vehicle name (extracted from the entry title). Switching tabs resets per-vehicle state (pending forms, history, filters) while keeping shared state (evcc session cache). The backend now collects all ev_assistant config entries into a `vehicles` array in the panel config so the frontend has complete entity maps and config IDs for each vehicle. Unloading one entry re-registers the panel with the remaining entries.
+
 ## [0.18.1] - 2026-07-31
 
 ### Fixed
@@ -43,7 +68,8 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
   (power, status, mode, phases, vehicle SoC, limit SoC, session energy/solar/price, duration).
   **evcc** (step 9) covers data that applies to the whole evcc installation, not just this charge
   point (PV/grid/home-battery power, tariffs, all-time statistics), plus the new **vehicle name in
-  evcc** field (see below). All 9 steps are renumbered consistently.
+  evcc** field (see below). All 9 steps are renumbered consistently (previously drifted between
+  "N/7" and "N/8" after the trip-log step was added in an earlier release).
 
 ### Added
 
@@ -70,31 +96,32 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
     the list into a scrollable area — no entries are ever removed from the underlying history,
     only the display is affected. Toggling no longer jumps the page/panel scroll position.
 
-## [0.17.1] - 2026-07-26
+## [0.16.1] - 2026-07-26
 
 ### Added
 
-- **Config Flow: neuer Schritt 8/8 „Wallbox / evcc"** — alle evcc-Entitäten für das Dashboard-Panel sind jetzt konfigurierbar statt hardcoded. Im Options Flow jederzeit änderbar: Ladeleistung, Ladestatus, Lademodus (select), Aktive Phasen, Fahrzeug-SoC, Ladelimit, Session (Energie/Solar/Preis/Dauer), Tarife (Netz/Einspeisung), Gesamtstatistik (kWh/Solar/Ø-Preis).
-- **Panel: keine hardcodierten Entity-IDs mehr** — `_updateOverview()` liest alle evcc-Entitäten jetzt via `this._eid(key)` aus der Panel-Config. Funktioniert damit mit beliebigen evcc-Setups.
-- Strings + Übersetzungen (DE/EN) für den neuen Schritt ergänzt; Schrittzähler auf X/8 aktualisiert.
+- **Donut charge power gauge** in the Übersicht hero card: an SVG ring shows the current
+  wallbox charge power relative to the dynamic maximum (`phases_active × 3.68 kW` at 16 A).
+  The arc is split into solar (green) and grid (blue) segments based on the session's
+  solar percentage. When the wallbox is idle the ring is empty.
 
-## [0.17.0] - 2026-07-26
+## [0.16.0] - 2026-07-26
 
-### Changed
+### Added
 
-- **Übersicht tab completely redesigned** — new omnibattery-inspired layout replaces the old stacked cards:
-  - Full-width **Systemstatus card** at the top: large SVG donut ring (180 px, solar green + grid blue arcs) showing charge power, solar/grid power blocks, available-power bar, EV SOC bar with limit marker, and a 2-column chip grid with mode, connection, phases, SOC limit, tariff rates, and session details.
-  - Lower row: **Energiefluss** live SVG diagram on the left (Solar → Wallbox hub → EV, Netz → Wallbox hub, with animated snake flow lines) and a 2×2 chart grid on the right (Aktuelle Session, Gesamtstatistik, Aktueller Tarif, Heimladen).
-- Flow diagram uses CSS snake animation (`lead-flow`) for active edges and dims inactive edges.
-- Chip system (`.chip`, `.chip-good`, `.chip-warn`, `.chip-bad`) used throughout the diagnostics section.
-- Responsive breakpoints: lower row stacks to single column below 1080 px, 2×2 grid collapses to single column below 720 px.
-
-## [0.16.1] - 2026-07-26
-
-### Fixed
-
-- **`SyntaxError: redeclaration of const phases`** (Firefox) — the `phases` variable was declared twice in `_updateOverview()`: once for the phase badge display and again (re-declared with `const`) for the donut max-power calculation. Renamed the second use to `phaseNum` to resolve the scoping conflict. The dashboard was completely blank in Firefox as a result.
-- Added missing `_updateDonut()` method and donut/hero CSS that were referenced but absent after v0.16.0.
+- **Sidebar panel**: EV Assistant now registers a custom sidebar panel automatically when the
+  integration is set up — no manual dashboard setup required. The panel uses the same
+  registration approach as omnibattery (`panel_custom.async_register_panel`).
+  - **Übersicht tab**: Wallbox system status (WARP 3 Pro via evcc) — connection state,
+    charge mode badge, phase badge, SOC bar with limit marker, live KPIs (charge power,
+    session kWh, solar %, session price, duration), current tariff (grid / feed-in), and
+    all-time wallbox statistics.
+  - **Fahrzeuge tab**: Per-vehicle detail — external charging (totals + last session),
+    home charging totals, trip log (last trip, count, total km), vehicle info
+    (odometer, charging efficiency, savings vs. combustion), and a running-session
+    estimate card shown only when a charge or trip is actively being recorded.
+- **Panel cache-busting**: module URL includes the JS file's mtime so browser always
+  picks up updates after an integration reload without a version bump.
 
 ## [0.15.3] - 2026-07-24
 

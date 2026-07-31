@@ -26,6 +26,22 @@ _STATIC_REGISTERED = "_ev_panel_static"
 _PANEL_REGISTERED = "_ev_panel"
 
 
+def _build_entity_map(ent_reg, ev_entry, evcc_conf_keys) -> dict:
+    """Entity-Map für einen einzelnen Config-Entry aufbauen."""
+    from homeassistant.helpers import entity_registry as er_mod
+    entries = er_mod.async_entries_for_config_entry(ent_reg, ev_entry.entry_id)
+    entity_map: dict = {}
+    prefix = ev_entry.entry_id + "_"
+    for e in entries:
+        if e.unique_id.startswith(prefix):
+            entity_map[e.unique_id[len(prefix):]] = e.entity_id
+    for key in evcc_conf_keys:
+        eid = ev_entry.options.get(key) or ev_entry.data.get(key)
+        if eid:
+            entity_map[key] = eid
+    return entity_map
+
+
 async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Sidebar-Panel registrieren. Fehler blockieren nie den Setup."""
     try:
@@ -48,27 +64,39 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
         except Exception:
             cache_bust = "1"
 
-        # Entity-IDs aus der Registry holen: unique_id = "{entry_id}_{key}"
         ent_reg = er.async_get(hass)
-        entries = er.async_entries_for_config_entry(ent_reg, entry.entry_id)
-        entity_map = {}
-        prefix = entry.entry_id + "_"
-        for e in entries:
-            if e.unique_id.startswith(prefix):
-                entity_map[e.unique_id[len(prefix):]] = e.entity_id
 
-        # Evcc-Dashboard-Entitäten aus options/data ergänzen
-        for key in EVCC_CONF_KEYS:
-            eid = entry.options.get(key) or entry.data.get(key)
-            if eid:
-                entity_map[key] = eid
+        # Alle ev_assistant-Entries sammeln → vehicles-Array für das Panel
+        vehicles = []
+        for ev_entry in hass.config_entries.async_entries(DOMAIN):
+            ev_map = _build_entity_map(ent_reg, ev_entry, EVCC_CONF_KEYS)
+            vehicle: dict = {
+                "config_entry_id": ev_entry.entry_id,
+                "title": ev_entry.title,
+                "entities": ev_map,
+            }
+            evcc_vname = ev_entry.options.get(CONF_EVCC_VEHICLE_NAME) or ev_entry.data.get(CONF_EVCC_VEHICLE_NAME)
+            if evcc_vname:
+                vehicle["evcc_vehicle_name"] = evcc_vname
+            vehicles.append(vehicle)
 
-        panel_config = {"title": entry.title, "entities": entity_map}
-        # Kein Entity-ID — separat vom entity_map-Loop oben, sonst wuerde die
-        # obige Schleife den String faelschlich als entity_id behandeln.
+        # Aufrufenden Entry als Top-Level-Kontext setzen (Rückwärtskompatibilität)
+        entity_map = _build_entity_map(ent_reg, entry, EVCC_CONF_KEYS)
+        panel_config: dict = {
+            "title": entry.title,
+            "entities": entity_map,
+            "config_entry_id": entry.entry_id,
+            "vehicles": vehicles,
+        }
         evcc_vehicle_name = entry.options.get(CONF_EVCC_VEHICLE_NAME) or entry.data.get(CONF_EVCC_VEHICLE_NAME)
         if evcc_vehicle_name:
             panel_config["evcc_vehicle_name"] = evcc_vehicle_name
+
+        # evcc_intg config_entry_id direkt mitgeben, damit _evccEntryId() im Panel
+        # nicht auf hass.entities.platform angewiesen ist (in panel_custom unzuverlaessig).
+        for evcc_entry in hass.config_entries.async_entries("evcc_intg"):
+            panel_config["evcc_entry_id"] = evcc_entry.entry_id
+            break
 
         try:
             frontend.async_remove_panel(hass, _PANEL_URL_PATH, warn_if_unknown=False)
@@ -86,7 +114,7 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
             config=panel_config,
         )
         domain_data[_PANEL_REGISTERED] = True
-        _LOGGER.info("EV Assistant Panel registriert (v=%s, %d entities)", cache_bust, len(entity_map))
+        _LOGGER.info("EV Assistant Panel registriert (v=%s, %d Fahrzeuge)", cache_bust, len(vehicles))
     except Exception as exc:  # noqa: BLE001
         _LOGGER.warning("EV Assistant Panel konnte nicht registriert werden: %s", exc)
 
@@ -284,4 +312,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_EDIT_TRIP, SERVICE_DELETE_TRIP,
             ):
                 hass.services.async_remove(DOMAIN, service)
+        else:
+            # Panel mit verbleibenden Fahrzeugen neu registrieren
+            remaining = next(
+                (e for e in hass.config_entries.async_entries(DOMAIN) if e.entry_id in hass.data[DOMAIN]),
+                None,
+            )
+            if remaining:
+                await _async_register_panel(hass, remaining)
     return unload_ok
