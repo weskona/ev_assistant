@@ -2,6 +2,27 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.18.1] - 2026-07-31
+
+### Fixed
+
+- **Confirming a pending external charge in the panel could silently do nothing**: clicking
+  "Bestätigen" while the price field was still empty (only kWh gets prefilled with the
+  estimate, price never does) just no-op'd with zero feedback — easy to mistake for a broken
+  button. The confirm button is now disabled until both kWh and price are valid numbers (with
+  a tooltip explaining why), for both the pending-charge and pending-trip forms, instead of
+  silently rejecting the click.
+
+### Changed
+
+- **Redesigned the pending-charge/pending-trip capture cards** ("Laufende Erfassung") to match
+  the visual polish of the history cards: icon + title + date/duration at the top, the
+  estimate (kWh + SoC range, or km) shown prominently, then the input fields, then clearly
+  separated actions — replacing the previous plain single-row layout.
+- **Wired up the GPS/zone location suggestion for pending trips** in the panel
+  (`start_ort_vorschlag`/`end_ort_vorschlag`, added in 0.15.0) — previously only used by the
+  Lovelace card, the panel's trip form now prefills Start-/Zielort from it too when available.
+
 ## [0.18.0] - 2026-07-31
 
 ### Removed

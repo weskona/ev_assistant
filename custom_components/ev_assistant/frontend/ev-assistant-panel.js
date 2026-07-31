@@ -964,25 +964,48 @@ class EVAssistantPanel extends HTMLElement {
       const fs = (this._formState.charge ||= {});
       const st = (fs[key] ||= { kwh: p.energy_kwh != null ? Number(p.energy_kwh).toFixed(2) : "", price: "" });
 
+      const soc = (p.soc_start != null && p.soc_end != null)
+        ? `${Math.round(p.soc_start)}% → ${Math.round(p.soc_end)}%` : "";
+      const durStr = this._fmtDuration(p.duration_min);
+      const metaParts = [this._fmtDate(p.start_ts)];
+      if (durStr) metaParts.push(durStr);
+
       const row = document.createElement("div");
-      row.className = "pend-item";
+      row.className = "pend-card";
       row.innerHTML = `
-        <div class="pend-head">
-          <ha-icon icon="mdi:ev-station" class="ci orange"></ha-icon>
-          <span>Fremdladung</span>
-          <strong>${p.energy_kwh != null ? Number(p.energy_kwh).toFixed(2) : "—"}</strong>
-          <span class="dim">kWh geschätzt · ${this._fmtDate(p.start_ts)}</span>
+        <div class="pend-top">
+          <span class="pend-icon"><ha-icon icon="mdi:ev-station"></ha-icon></span>
+          <div class="pend-top-text">
+            <span class="pend-title">Fremdladung erkannt</span>
+            <span class="pend-meta">${metaParts.join(" · ")}</span>
+          </div>
         </div>
-        <div class="pend-form">
-          <label>kWh<input type="number" step="0.1" class="pf-kwh" value="${st.kwh}"></label>
-          <label>EUR/kWh<input type="number" step="0.001" class="pf-price" value="${st.price}"></label>
-          <button class="btn btn-primary pf-confirm">Bestätigen</button>
+        <div class="pend-estimate">
+          <span class="pend-estimate-val">${p.energy_kwh != null ? Number(p.energy_kwh).toFixed(2) : "—"}<small>kWh geschätzt</small></span>
+          ${soc ? `<span class="pend-estimate-sub">${soc}</span>` : ""}
+        </div>
+        <div class="pend-inputs">
+          <label>kWh (Beleg)<input type="number" step="0.1" class="pf-kwh" value="${st.kwh}"></label>
+          <label>EUR/kWh (Beleg)<input type="number" step="0.001" class="pf-price" value="${st.price}" placeholder="0,00"></label>
+        </div>
+        <div class="pend-actions">
           <button class="btn btn-ghost pf-discard">Verwerfen</button>
+          <button class="btn btn-primary pf-confirm" disabled>Bestätigen</button>
         </div>`;
 
-      row.querySelector(".pf-kwh").addEventListener("input", (e) => { st.kwh = e.target.value; });
-      row.querySelector(".pf-price").addEventListener("input", (e) => { st.price = e.target.value; });
-      row.querySelector(".pf-confirm").addEventListener("click", () => {
+      const kwhInput = row.querySelector(".pf-kwh");
+      const priceInput = row.querySelector(".pf-price");
+      const confirmBtn = row.querySelector(".pf-confirm");
+      const updateValidity = () => {
+        const valid = !isNaN(parseFloat(st.kwh)) && !isNaN(parseFloat(st.price));
+        confirmBtn.disabled = !valid;
+        confirmBtn.title = valid ? "" : "Bitte kWh und Preis eintragen";
+      };
+      updateValidity();
+
+      kwhInput.addEventListener("input", (e) => { st.kwh = e.target.value; updateValidity(); });
+      priceInput.addEventListener("input", (e) => { st.price = e.target.value; updateValidity(); });
+      confirmBtn.addEventListener("click", () => {
         const kwh = parseFloat(st.kwh), price = parseFloat(st.price);
         if (isNaN(kwh) || isNaN(price)) return;
         this._call("log_charge", { kwh, price_kwh: price, start_ts: key });
@@ -1007,27 +1030,50 @@ class EVAssistantPanel extends HTMLElement {
     items.forEach((p) => {
       const key = p.start_ts;
       const fs = (this._formState.trip ||= {});
-      const st = (fs[key] ||= { start_ort: "", end_ort: "" });
+      const st = (fs[key] ||= {
+        start_ort: p.start_ort_vorschlag || "",
+        end_ort: p.end_ort_vorschlag || "",
+      });
+
+      const durStr = this._fmtDuration(p.duration_min);
+      const metaParts = [this._fmtDate(p.start_ts)];
+      if (durStr) metaParts.push(durStr);
 
       const row = document.createElement("div");
-      row.className = "pend-item";
+      row.className = "pend-card";
       row.innerHTML = `
-        <div class="pend-head">
-          <ha-icon icon="mdi:road-variant" class="ci blue"></ha-icon>
-          <span>Fahrt</span>
-          <strong>${p.km != null ? Number(p.km).toFixed(1) : "—"}</strong>
-          <span class="dim">km · ${this._fmtDate(p.start_ts)}</span>
+        <div class="pend-top">
+          <span class="pend-icon"><ha-icon icon="mdi:road-variant"></ha-icon></span>
+          <div class="pend-top-text">
+            <span class="pend-title">Fahrt erkannt</span>
+            <span class="pend-meta">${metaParts.join(" · ")}</span>
+          </div>
         </div>
-        <div class="pend-form">
+        <div class="pend-estimate">
+          <span class="pend-estimate-val">${p.km != null ? Number(p.km).toFixed(1) : "—"}<small>km</small></span>
+        </div>
+        <div class="pend-inputs">
           <label>Startort<input type="text" class="pf-start" value="${st.start_ort}"></label>
           <label>Zielort<input type="text" class="pf-end" value="${st.end_ort}"></label>
-          <button class="btn btn-primary pf-confirm">Bestätigen</button>
+        </div>
+        <div class="pend-actions">
           <button class="btn btn-ghost pf-discard">Verwerfen</button>
+          <button class="btn btn-primary pf-confirm" disabled>Bestätigen</button>
         </div>`;
 
-      row.querySelector(".pf-start").addEventListener("input", (e) => { st.start_ort = e.target.value; });
-      row.querySelector(".pf-end").addEventListener("input", (e) => { st.end_ort = e.target.value; });
-      row.querySelector(".pf-confirm").addEventListener("click", () => {
+      const startInput = row.querySelector(".pf-start");
+      const endInput = row.querySelector(".pf-end");
+      const confirmBtn = row.querySelector(".pf-confirm");
+      const updateValidity = () => {
+        const valid = !!st.start_ort && !!st.end_ort;
+        confirmBtn.disabled = !valid;
+        confirmBtn.title = valid ? "" : "Bitte Start- und Zielort eintragen";
+      };
+      updateValidity();
+
+      startInput.addEventListener("input", (e) => { st.start_ort = e.target.value; updateValidity(); });
+      endInput.addEventListener("input", (e) => { st.end_ort = e.target.value; updateValidity(); });
+      confirmBtn.addEventListener("click", () => {
         if (!st.start_ort || !st.end_ort) return;
         this._call("log_trip", { start_ort: st.start_ort, end_ort: st.end_ort, start_ts: key });
         delete fs[key];
@@ -1658,16 +1704,33 @@ class EVAssistantPanel extends HTMLElement {
 
       /* Pending confirm/discard forms */
       .pend-list { display: flex; flex-direction: column; gap: 10px; }
-      .pend-item { border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; background: var(--bg-2); }
-      .pend-head { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; margin-bottom: 10px; flex-wrap: wrap; }
-      .pend-head strong { font-size: 1rem; }
-      .pend-form { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
-      .pend-form label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--ink-mid); }
-      .pend-form input {
-        border: 1px solid var(--line-s); border-radius: 7px; padding: 6px 9px; font-size: 13px;
-        background: var(--bg-0); color: var(--ink); width: 110px;
+      .pend-card {
+        border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px;
+        background: var(--bg-2); display: flex; flex-direction: column; gap: 12px;
       }
-      .pend-form input[type="text"] { width: 140px; }
+      .pend-top { display: flex; align-items: center; gap: 10px; }
+      .pend-icon {
+        display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+        width: 34px; height: 34px; border-radius: 9px;
+        background: color-mix(in oklab, var(--accent) 16%, transparent);
+        color: var(--accent); --mdc-icon-size: 18px;
+      }
+      .pend-top-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+      .pend-title { font-size: 13px; font-weight: 700; color: var(--ink); }
+      .pend-meta { font-size: 11.5px; color: var(--ink-dim); }
+      .pend-estimate { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+      .pend-estimate-val { font-size: 1.3rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+      .pend-estimate-val small { font-size: 0.6em; font-weight: 500; color: var(--ink-dim); margin-left: 4px; }
+      .pend-estimate-sub { font-size: 12.5px; color: var(--ink-mid); font-variant-numeric: tabular-nums; }
+      .pend-inputs { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+      .pend-inputs label { display: flex; flex-direction: column; gap: 4px; font-size: 11px; color: var(--ink-mid); flex: 1 1 110px; }
+      .pend-inputs input {
+        border: 1px solid var(--line-s); border-radius: 7px; padding: 7px 9px; font-size: 13.5px;
+        background: var(--bg-0); color: var(--ink); width: 100%; box-sizing: border-box;
+      }
+      .pend-inputs input:focus { outline: none; border-color: var(--accent); }
+      .pend-actions { display: flex; gap: 8px; justify-content: flex-end; }
+      .btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
       /* History lists */
       .hist-list { display: flex; flex-direction: column; gap: 8px; }
@@ -1742,7 +1805,7 @@ class EVAssistantPanel extends HTMLElement {
         .main { padding: 16px 14px 30px; }
         .kv { font-size: 1.3rem; }
         .kpi-row { gap: 10px 18px; }
-        .pend-form input { flex: 1 1 100px; width: auto; min-width: 90px; }
+        .pend-inputs label { flex: 1 1 90px; }
         .hist-date { min-width: 0; }
         .hist-main { gap: 8px 14px; }
       }
@@ -1753,7 +1816,7 @@ class EVAssistantPanel extends HTMLElement {
         .main { padding: 16px 14px 30px; }
         .kv { font-size: 1.3rem; }
         .kpi-row { gap: 10px 18px; }
-        .pend-form input { flex: 1 1 100px; width: auto; min-width: 90px; }
+        .pend-inputs label { flex: 1 1 90px; }
         .hist-date { min-width: 0; }
         .hist-main { gap: 8px 14px; }
       }
