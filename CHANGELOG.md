@@ -6,20 +6,20 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 
 ### Added
 
-- **Vollständig überarbeitetes Fahrzeuge-Panel — ein vollwertiges EV-Dashboard**: Der Fahrzeuge-Tab ist jetzt ein umfassendes Fahrzeug-Dashboard in drei Spalten: Heimladen (evcc-Ladesessions), Fremdladung und Fahrtenbuch. Jede Spalte zeigt Gesamtwerte, die letzte Session und die vollständige Historie — alles in einer zusammengefassten Karte. Bei mehreren konfigurierten Fahrzeugen erscheinen Pill-Tabs zum Wechseln.
-- **Fahrzeugkarte mit SOC und Name**: Die Fahrzeugübersicht zeigt nun den Fahrzeugnamen und den aktuellen SOC als große Zahl mit farbcodiertem Balken (rot < 20 %, orange < 40 %, grün sonst), gespeist aus der konfigurierten evcc-Fahrzeug-SOC-Entität.
-- **Heimladen-Historie** (evcc-Sessions) enthält jetzt SOC (Start → Ende + Delta), Preis pro kWh und einen SOC-Fortschrittsbalken pro Eintrag.
-- **SOC-Fortschrittsbalken in der Fremdladung-Historie**: gleicher Balken wie bei Heimladen, in Grid-Blau eingefärbt.
-- **Farbcodiertes Kartendesign** nach HA-Energiedashboard-Farben: PV-Amber (`#ff9800`) für Heimladen, Grid-Blau (`#488fc2`) für Fremdladung, Teal (`#14b8a6`) für Fahrtenbuch — mit farbigem Top-Balken, Icon-Hintergrund und eingefärbten KPI-Werten.
-- **„Letzte"-Sektion als getönter Block**: Die KPIs der letzten Session sind innerhalb der Übersichtskarte in einem abgegrenzten `--bg-2`-Block zusammengefasst.
-- **KPI-Verbesserungen**: Werte sind zentriert und nutzen die volle Kartenbreite gleichmäßig; vertikale Trennlinien zwischen den einzelnen KPIs.
-- **Tab-Wechsel-Animation**: Beim Fahrzeugwechsel blendet der Inhalt weich ein.
-- **Hover-Effekte** auf allen Historien-Einträgen.
-- **Übersicht und Historie in einer Karte zusammengefasst**: Keine separate Historien-Karte mehr — der Historien-Bereich fließt direkt unterhalb der Übersicht in derselben Karte.
+- **Fully redesigned Fahrzeuge panel — a complete EV dashboard**: the Fahrzeuge tab is now a three-column vehicle dashboard: home charging (evcc sessions), external charging, and trip log. Each column shows overall totals, the last session, and the full history — all in one merged card. When more than one vehicle is configured, pill-style tabs appear to switch between them.
+- **Vehicle card with SOC and name**: the vehicle overview now shows the vehicle name and current SOC as a large number with a color-coded bar (red < 20 %, orange < 40 %, green otherwise), sourced from the configured evcc vehicle SoC entity.
+- **Home charging history** (evcc sessions) now includes SOC (start → end + delta), price per kWh, and a SOC progress bar per entry.
+- **SOC progress bar in external charging history**: same bar as in home charging, colored in grid blue.
+- **Color-coded card design** following HA energy dashboard colors: PV amber (`#ff9800`) for home charging, grid blue (`#488fc2`) for external charging, teal (`#14b8a6`) for the trip log — with a color top border, icon background, and tinted KPI values.
+- **"Last session" section as a tinted block**: the last session's KPIs are grouped in a distinct `--bg-2` block within the summary card.
+- **KPI improvements**: values are centered and distributed evenly across the full card width; vertical dividers between individual KPIs.
+- **Tab switch animation**: switching between vehicles triggers a smooth fade-in transition.
+- **Hover effects** on all history entries.
+- **Summary and history merged into one card**: no separate history card — the history section flows directly below the summary within the same card.
 
 ### Changed
 
-- Fahrzeugkarten-Icon von `mdi:car-info` auf `mdi:car-electric` geändert.
+- Vehicle card icon changed from `mdi:car-info` to `mdi:car-electric`.
 
 ## [0.18.2] - 2026-08-01
 
