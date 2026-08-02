@@ -199,9 +199,12 @@ class LastChargePowerSensor(EvAssistantEntity, SensorEntity):
         h = hist[0]
         kwh = h.get("kwh")
         dauer_min = h.get("dauer_min")
-        if not kwh or not dauer_min or dauer_min <= 0:
+        if not kwh or not dauer_min or dauer_min < 5:
             return None
-        return round(kwh / (dauer_min / 60), 2)
+        power = kwh / (dauer_min / 60)
+        if not 1 <= power <= 350:
+            return None
+        return round(power, 2)
 
 
 class MeasuredEfficiencySensor(EvAssistantEntity, SensorEntity):
