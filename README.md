@@ -63,7 +63,7 @@ The HA device is named `{Manufacturer} {Model}` (e.g. "VW ID.4"), so entity name
 
 | Key | Name | Description |
 |-----|------|-------------|
-| `pending` | External Charge Detection Open | Binary sensor — **on** while ≥ 1 charge awaits confirmation. Attributes: `anzahl_offen`, `offene_ladungen`. |
+| `pending` | External Charge Detection Open | Binary sensor — **on** while ≥ 1 charge awaits confirmation. Attributes: `anzahl_offen` (count), `offene_ladungen` (list). |
 | `pending_estimate` | External Charge Pending | Estimated kWh of the oldest pending charge. `unknown` when nothing is pending. |
 | `last_kwh` | External Charge kWh (last) | kWh from the receipt for the most recently confirmed charge. |
 | `last_cost` | External Charge Cost (last) | Cost of the most recently confirmed charge (kWh × price). |
@@ -80,7 +80,7 @@ The HA device is named `{Manufacturer} {Model}` (e.g. "VW ID.4"), so entity name
 |-----|------|-------------|
 | `home_kwh` | Home Charging kWh (total) | Total kWh charged at home since setup, from the wallbox energy meter. `unknown` without a configured meter. |
 | `home_cost` | Home Charging Cost (total) | Home-charging kWh × home electricity price. `unknown` without meter or price. |
-| `measured_efficiency` | Charge Efficiency (measured) | Live-calibrated AC→battery efficiency from home sessions. Attributes: `anzahl_sessions`, `benoetigte_sessions` (3), `einzelwerte_prozent`, `wird_verwendet`, `manueller_wert_prozent`. Diagnostic. |
+| `measured_efficiency` | Charge Efficiency (measured) | Live-calibrated AC→battery efficiency from home sessions. Attributes: `anzahl_sessions` (sample count), `benoetigte_sessions` (threshold: 3), `einzelwerte_prozent` (individual readings), `wird_verwendet` (active), `manueller_wert_prozent` (configured fallback). Diagnostic. |
 
 ### Odometer & Driven Kilometres
 
@@ -106,7 +106,7 @@ All odometer sensors are `entity_category: diagnostic`. The period and LTS senso
 |-----|------|-------------|
 | `trip_pending` | Trip Capture Open | Binary sensor — **on** while ≥ 1 detected trip awaits a start/end location. |
 | `trip_pending_estimate` | Trip Pending | Distance (km) of the oldest pending trip. |
-| `last_trip_km` | Trip km (last) | Distance of the most recently confirmed trip. Attribute `fahrtenbuch` contains the full history. |
+| `last_trip_km` | Trip km (last) | Distance of the most recently confirmed trip. Attribute `fahrtenbuch` contains the full trip history list. |
 | `trip_count` | Trip Log Count | Total number of confirmed trips (`state_class: total_increasing`). |
 | `total_trip_km` | Trip Log km (total) | Running total of all confirmed trip distances (`state_class: total_increasing`). |
 
@@ -114,7 +114,7 @@ All odometer sensors are `entity_category: diagnostic`. The period and LTS senso
 
 | Key | Name | Description |
 |-----|------|-------------|
-| `savings` | Savings vs. ICE Vehicle | Estimated savings vs. the combustion reference over km driven since setup. `unknown` until odometer, combustion consumption, and fuel price are all configured. Attributes: `gefahrene_km`, `heimladen_kosten`, `kosten_ev_gesamt`, `kosten_verbrenner_geschaetzt`, `kraftstoffpreis_live`, `heimstrompreis_live`. |
+| `savings` | Savings vs. ICE Vehicle | Estimated savings vs. the combustion reference over km driven since setup. `unknown` until odometer, combustion consumption, and fuel price are all configured. Attributes: `gefahrene_km` (km driven), `heimladen_kosten` (home-charging cost), `kosten_ev_gesamt` (total EV cost), `kosten_verbrenner_geschaetzt` (estimated combustion cost), `kraftstoffpreis_live` (live fuel price active), `heimstrompreis_live` (live electricity price active). |
 | `erstzulassung` | First Registration | First-registration date from step 1, exposed as a `date`-typed sensor. Diagnostic. |
 
 ---
@@ -123,21 +123,21 @@ All odometer sensors are `entity_category: diagnostic`. The period and LTS senso
 
 EV Assistant registers a **sidebar panel** automatically — no extra setup beyond the integration itself.
 
-### Übersicht tab
+### Overview tab
 
 Live energy-flow diagram showing current PV, grid, home, battery, and wallbox power. Displays the active charging session (mode, SOC, session energy, solar share, tariff) and any pending charges or trips waiting for confirmation.
 
-### Fahrzeuge tab
+### Vehicles tab
 
 Per-vehicle dashboard in a three-column layout:
 
 | Column | Content |
 |--------|---------|
-| **Heimladen** | Home charging totals (kWh, EUR, session count, avg. solar share), last session KPIs, full evcc session history. Each entry shows SOC start→end, kWh, Ø charge power, EUR/kWh, cost, solar share, duration, and a SOC bar. |
-| **Fremdladung** | External charge totals, last session KPIs, editable history. Each entry shows kWh, Ø charge power, cost, and a SOC bar. |
-| **Fahrtenbuch** | Trip totals, last trip KPIs (km, route), editable trip history. |
+| **Home Charging** | Home charging totals (kWh, EUR, session count, avg. solar share), last session KPIs, full evcc session history. Each entry shows SOC start→end, kWh, Ø charge power, EUR/kWh, cost, solar share, duration, and a SOC bar. |
+| **External Charging** | External charge totals, last session KPIs, editable history. Each entry shows kWh, Ø charge power, cost, and a SOC bar. |
+| **Trip Log** | Trip totals, last trip KPIs (km, route), editable trip history. |
 
-**Vehicle card** (above the three columns): vehicle name, current SOC with colour-coded bar (red < 20 %, orange < 40 %, green otherwise), odometer, and charge efficiency. Below that: a compact km grid (driven km today/week/month/year on the left, rolling averages and projections on the right) and the Verbrenner-Vergleich section (savings, EV cost, combustion cost, cost per 100 km).
+**Vehicle card** (above the three columns): vehicle name, current SOC with colour-coded bar (red < 20 %, orange < 40 %, green otherwise), odometer, and charge efficiency. Below that: a compact km grid (driven km today/week/month/year on the left, rolling averages and projections on the right) and the ICE Comparison section (savings, EV cost, estimated combustion cost, cost per 100 km).
 
 **Bar charts**: charging overview, cost overview, and solar share — switchable between week / month / year view with prev/next navigation. Mobile-responsive: on screens ≤ 600 px the three charts stack vertically.
 
