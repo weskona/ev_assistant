@@ -31,6 +31,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         LastChargePowerSensor(coordinator, entry),
         MeasuredEfficiencySensor(coordinator, entry),
         OdoSensor(coordinator, entry),
+        OdoDayKmSensor(coordinator, entry),
+        OdoWeekKmSensor(coordinator, entry),
+        OdoMonthKmSensor(coordinator, entry),
+        OdoYearKmSensor(coordinator, entry),
         ErstzulassungSensor(coordinator, entry),
         HomeKwhSensor(coordinator, entry),
         HomeCostSensor(coordinator, entry),
@@ -264,6 +268,77 @@ class OdoSensor(EvAssistantEntity, SensorEntity):
     @property
     def native_unit_of_measurement(self):
         return self.coordinator.data.get("odo_unit") or UnitOfLength.KILOMETERS
+
+
+class _OdoPeriodSensor(EvAssistantEntity, SensorEntity):
+    """Basis fuer Tag/Woche/Monat/Jahr-km-Sensoren."""
+    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
+    _attr_device_class = SensorDeviceClass.DISTANCE
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_suggested_display_precision = 0
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    _PERIOD: str = ""
+    _MAX_KM: float = 0.0
+
+    def __init__(self, coordinator, entry, unique_suffix):
+        super().__init__(coordinator, entry, unique_suffix)
+
+    @property
+    def native_value(self):
+        odo = self.coordinator.data.get("odo")
+        if odo is None:
+            return None
+        unit = self.coordinator.data.get("odo_unit", "km")
+        from .const import MILES_TO_KM
+        odo_km = odo * MILES_TO_KM if unit == "mi" else float(odo)
+        entry = self.coordinator.data.get("odo_periods", {}).get(self._PERIOD)
+        if not entry:
+            return None
+        delta = round(odo_km - entry["odo_km"], 1)
+        if delta < 0 or delta > self._MAX_KM:
+            return None
+        return delta
+
+
+class OdoDayKmSensor(_OdoPeriodSensor):
+    _attr_translation_key = "odo_day_km"
+    _attr_icon = "mdi:calendar-today"
+    _PERIOD = "day"
+    _MAX_KM = 1500.0
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "odo_day_km")
+
+
+class OdoWeekKmSensor(_OdoPeriodSensor):
+    _attr_translation_key = "odo_week_km"
+    _attr_icon = "mdi:calendar-week"
+    _PERIOD = "week"
+    _MAX_KM = 5000.0
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "odo_week_km")
+
+
+class OdoMonthKmSensor(_OdoPeriodSensor):
+    _attr_translation_key = "odo_month_km"
+    _attr_icon = "mdi:calendar-month"
+    _PERIOD = "month"
+    _MAX_KM = 15000.0
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "odo_month_km")
+
+
+class OdoYearKmSensor(_OdoPeriodSensor):
+    _attr_translation_key = "odo_year_km"
+    _attr_icon = "mdi:calendar-blank"
+    _PERIOD = "year"
+    _MAX_KM = 150000.0
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "odo_year_km")
 
 
 class ErstzulassungSensor(EvAssistantEntity, SensorEntity):

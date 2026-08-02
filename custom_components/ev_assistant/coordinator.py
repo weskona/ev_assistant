@@ -7,6 +7,7 @@ import logging
 import os
 import time
 from datetime import date, timedelta
+from homeassistant.util import dt as dt_util
 from typing import Callable, Optional
 
 from homeassistant.config_entries import ConfigEntry
@@ -74,6 +75,7 @@ def _empty_data() -> dict:
         "trip_totals": {"km": 0.0, "count": 0},
         "trip_detector_state": None,
         "trip_start_zone": None,
+        "odo_periods": {},
     }
 
 
@@ -370,6 +372,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             value = float(raw)
         except (ValueError, TypeError):
             return
+        unit = unit or self.data.get("odo_unit") or "km"
+        value_km = value * MILES_TO_KM if unit == "mi" else value
+
+        # Plausibilitaetscheck: Kilometerstand faellt nie signifikant zurueck
+        # (Sensor-Glitch), und ein einzelner Update-Sprung > 1500 km ist
+        # unrealistisch (z.B. falscher Initialisierungswert oder Einheitenfehler).
+        prev_km = self._odo_km()
+        if prev_km is not None:
+            if value_km < prev_km - 10:
+                _LOGGER.debug("ODO-Glitch ignoriert: %.1f -> %.1f km", prev_km, value_km)
+                return
+            if value_km - prev_km > 1500:
+                _LOGGER.warning("ODO-Sprung zu groß, ignoriert: %.1f -> %.1f km", prev_km, value_km)
+                return
+
         # Referenzwert fuer die gefahrene Strecke im Kostenvergleich (siehe
         # savings()). Wird neu gesetzt, wenn noch keiner existiert ODER die
         # Kilometerstand-Entitaet seit dem letzten Mal gewechselt wurde --
@@ -385,10 +402,30 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         elif stored_source is None:
             self.data["odo_start_source"] = source
         self.data["odo"] = value
-        self.data["odo_unit"] = unit or self.data.get("odo_unit") or "km"
+        self.data["odo_unit"] = unit
+        self._update_odo_periods(value_km)
         self.async_set_updated_data(self.data)
         self.hass.async_create_task(self._save())
         self.hass.async_create_task(self._run_trip_detection())
+
+    def _update_odo_periods(self, odo_km: float) -> None:
+        """Perioden-Baselines (Tag/Woche/Monat/Jahr) aktualisieren.
+        Bei Periodenrollover wird der aktuelle Kilometerstand als neuer
+        Startwert gesetzt."""
+        now = dt_util.now()
+        today = now.date()
+        iso = today.isocalendar()
+        keys = {
+            "day":   str(today),
+            "week":  f"{iso.year}-W{iso.week:02d}",
+            "month": f"{today.year}-{today.month:02d}",
+            "year":  str(today.year),
+        }
+        periods = self.data.setdefault("odo_periods", {})
+        for period, key in keys.items():
+            entry = periods.get(period)
+            if entry is None or entry.get("key") != key:
+                periods[period] = {"key": key, "odo_km": odo_km}
 
     @callback
     def _set_person_zone(self, raw) -> None:
