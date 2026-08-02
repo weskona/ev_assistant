@@ -157,6 +157,7 @@
       "count": { "name": "External Charge Count" },
       "last_price": { "name": "External Charge Price (last)" },
       "last_duration": { "name": "External Charge Duration (last)" },
+      "last_charge_power": { "name": "External Charge Avg Power (last)" },
       "measured_efficiency": { "name": "Charging Efficiency (measured)" },
       "odo": { "name": "Odometer" },
       "erstzulassung": { "name": "First Registration" },

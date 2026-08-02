@@ -5,7 +5,7 @@ from datetime import date
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfEnergy, UnitOfLength, UnitOfTime
+from homeassistant.const import UnitOfEnergy, UnitOfLength, UnitOfPower, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -28,6 +28,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         CountSensor(coordinator, entry),
         LastPriceSensor(coordinator, entry),
         LastDurationSensor(coordinator, entry),
+        LastChargePowerSensor(coordinator, entry),
         MeasuredEfficiencySensor(coordinator, entry),
         OdoSensor(coordinator, entry),
         ErstzulassungSensor(coordinator, entry),
@@ -179,6 +180,28 @@ class LastDurationSensor(EvAssistantEntity, SensorEntity):
     def native_value(self):
         hist = self.coordinator.data.get("history") or []
         return hist[0].get("dauer_min") if hist else None
+
+
+class LastChargePowerSensor(EvAssistantEntity, SensorEntity):
+    _attr_translation_key = "last_charge_power"
+    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
+    _attr_icon = "mdi:flash"
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "last_charge_power")
+
+    @property
+    def native_value(self):
+        hist = self.coordinator.data.get("history") or []
+        if not hist:
+            return None
+        h = hist[0]
+        kwh = h.get("kwh")
+        dauer_min = h.get("dauer_min")
+        if not kwh or not dauer_min or dauer_min <= 0:
+            return None
+        return round(kwh / (dauer_min / 60), 2)
 
 
 class MeasuredEfficiencySensor(EvAssistantEntity, SensorEntity):
