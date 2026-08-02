@@ -3,7 +3,7 @@
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
 [![Version](https://img.shields.io/github/v/release/weskona/ev_assistant)](https://github.com/weskona/ev_assistant/releases)
 
-Detects EV charging sessions **away from your home wallbox** ("external charge") from SoC telemetry, lets you log the actual kWh/price from the receipt, and can automatically calibrate the vehicle's charge efficiency from your real home-charging sessions. Manufacturer-independent — works with any HA entity or MQTT source (WiCAN Pro, evcc/Warp, Stellantis/VW cloud sensors, ...).
+Detects EV charging sessions **away from your home wallbox** ("external charge") from SoC telemetry, lets you log the actual kWh/price from the receipt, and can automatically calibrate the vehicle's charge efficiency from your real home-charging sessions. Manufacturer-independent — works with any HA entity (WiCAN Pro via mqtt integration, evcc/Warp, Stellantis/VW cloud sensors, ...).
 
 **[🇩🇪 Deutsche Version weiter unten](#-deutsch)**
 
@@ -45,7 +45,6 @@ Say your car has a 45 kWh usable battery and the default 88 % charge efficiency 
    - AC-side (billed) estimate, accounting for charging losses: `18.9 kWh ÷ 0.88 = 21.48 kWh` — the notification rounds this to **≈ 21.5 kWh**.
 6. EV Assistant now:
    - stores this as the **pending** charge,
-   - publishes it to the configured MQTT topic,
    - fires the `ev_assistant_pending` event (with `config_entry_id` so you can tell which car, if you have more than one),
    - sends a notification: *"+42% (32 → 74%), ~21.5 kWh estimated. Enter kWh and price."* (shown in German instead if your HA UI language is set to German)
    - turns on `binary_sensor ... External Charge Detection Open` and sets `sensor ... External Charge Estimate` to 21.48 kWh.
@@ -81,23 +80,20 @@ A vehicle charging-power sensor (when available) is generally more accurate than
 
 Settings → Devices & Services → **Add integration** → "EV Assistant". Setup is a 7-step flow (also used identically when editing via **Configure**):
 
-1. **Vehicle** — Manufacturer + model (required, e.g. "Peugeot" / "e-2008" — together they become the HA device name), first registration date (optional, display only), odometer entity (optional, filtered to `sensor` + `device_class: distance` — mirrored onto the EV Assistant device as its own `... Odometer` sensor, and used both as the basis for automatic trip detection (trip log, step 6) and as the distance basis for the cost comparison in step 7), usable battery capacity in kWh (required — the *net* value your car can actually use, not the often-larger gross/factory figure some manufacturers advertise; this directly determines how many kWh one percentage point of SoC represents, so getting it wrong throws off every energy estimate), charge efficiency (optional starting value only — replaced automatically once enough real home charges have been measured, see calibration below).
-2. **Basic signals** — SoC and home-charging source, each as **HA entity OR MQTT topic** (entity takes priority). At least one source per signal is required (marked with `*`). The SoC entity picker is filtered to `sensor` + `device_class: battery`; the home-charging entity picker to `sensor` + `device_class: power` (e.g. a wallbox's charging-power sensor from evcc/Warp) — a numeric value **above 0.1 kW counts as "charging"**; a non-numeric value (e.g. evcc's own `"charging"`/`"on"` status string) falls back to a plain text match instead. **This is a yes/no "charging at home right now" signal only** — it is not the same charging-power reading as step 3 (that one deliberately comes from the vehicle, not the wallbox, so it still works away from home during an external charge). If your power sensor reports a different unit (e.g. Watts), convert it with the template field, e.g. `{{ value | float / 1000 }}`. If your setup doesn't fit those (e.g. a `binary_sensor`), use the MQTT-topic field instead.
+1. **Vehicle** — Manufacturer + model (required, e.g. "Peugeot" / "e-2008" — together they become the HA device name), first registration date (optional, display only), odometer entity (optional, filtered to `sensor` + `device_class: distance`), **SoC entity** (required, filtered to `sensor` + `device_class: battery` — the vehicle's battery percentage from your manufacturer integration, OBD dongle, etc.), usable battery capacity in kWh (required — the *net* value your car can actually use, not the often-larger gross/factory figure some manufacturers advertise; this directly determines how many kWh one percentage point of SoC represents, so getting it wrong throws off every energy estimate), charge efficiency (optional starting value only — replaced automatically once enough real home charges have been measured, see calibration below).
+2. **evcc & Wallbox** — all evcc site and loadpoint entities (PV power, grid power, home battery, tariffs, statistics, charge power, charge status, mode, session energy, etc.) are **automatically discovered** from the installed evcc integration — no manual entity selection needed. Only two optional fields remain: the vehicle name in evcc (filters the home-charging history to this vehicle when multiple EVs share one evcc instance) and the **wallbox charge power entity** (filtered to `sensor` + `device_class: power` — used as the yes/no signal "currently charging at home"; a value **above 0.1 kW counts as "charging"**). Without the wallbox charge power entity every SoC increase is falsely detected as an external charge. Requires the `evcc_intg` integration to be installed.
 3. **Charging power** (optional) — two different sources for two different purposes. Charging power is a momentary power reading in W/kW, typically from vehicle telemetry rather than your wallbox (so it still reports data during an external charge, where the wallbox is idle); it improves the energy estimate of an external charge beyond plain SoC-delta (see "Energy estimation methods" above). The **wallbox energy meter**, on the other hand, is a cumulative kWh counter of your own wallbox (never momentary, only relevant while charging at home) — it's used for automatic efficiency calibration *and* for the home-charging cost tracked in step 7.
-4. **Output** (optional) — a persistent notification in Home Assistant's own notification panel always appears automatically for a detected charge, regardless of this step. The `notify.*` service additionally sends a push notification (e.g. to your phone); the MQTT publish topic additionally publishes the raw data as JSON for your own automations/integrations.
+4. **Output** (optional) — a persistent notification in Home Assistant's own notification panel always appears automatically for a detected charge, regardless of this step. The `notify.*` service additionally sends a push notification (e.g. to your phone).
 5. **Detection fine-tuning** — thresholds of the underlying state machine described above (`start_delta`, `noise`, `idle_timeout_s`, `drop_ends`). A session starts once SoC rises by `start_delta` above its last resting value; it ends either when SoC drops by more than `drop_ends` below the tracked peak, or when `idle_timeout_s` passes with no new peak (e.g. battery full). `noise` tolerates ordinary sensor jitter while tracking the peak and must always be **smaller** than `start_delta`, or jitter alone could trigger a false detection. Defaults work for most vehicles; raise them for a car whose SoC only updates coarsely/infrequently (e.g. some cloud APIs).
 6. **Trip log** (optional) — thresholds of the trip detector (`trip_min_km`, `trip_idle_timeout_s`) described in "Trip log" below. Defaults work for most odometer sensors. Also an optional location-suggestion source (`gps_entity`, a `person`/`device_tracker`).
 7. **Cost comparison** (optional) — see "Cost comparison vs. a combustion car" below.
 
 ### Sources: manufacturer-independent
 
-Each signal is fed from either an **HA entity** (e.g. a manufacturer integration) or **MQTT** (e.g. WiCAN Pro) — works with any manufacturer that exposes an SoC sensor in HA.
+The SoC signal is fed from any **HA entity** — works with any manufacturer or dongle that exposes an SoC sensor in HA.
 
-- **WiCAN Pro (MQTT):** SoC topic `<your_prefix>/telemetry/soc` (template `{{ value }}` or `{{ value_json.soc }}`).
-- **Stellantis / VW / ... (entity):** SoC entity = `sensor.<car>_battery`. Cloud SoC is often coarse/infrequent — raise `start_delta` and `idle_timeout_s` accordingly; the power-based path is unavailable without real power data (falls back to SoC × efficiency).
-- **Mixed** is fine: SoC from an entity, `home_charging` from evcc MQTT, etc.
-
-An optional Jinja template per signal converts the raw value (`value` = state/payload, `value_json` = parsed JSON payload for MQTT).
+- **WiCAN Pro:** set up the HA `mqtt` integration and use the MQTT SoC sensor it exposes.
+- **Stellantis / VW / ...:** SoC entity = `sensor.<car>_battery`. Cloud SoC is often coarse/infrequent — raise `start_delta` and `idle_timeout_s` accordingly; the power-based path is unavailable without real power data (falls back to SoC × efficiency).
 
 ### Automatic charge-efficiency calibration
 
@@ -195,7 +191,7 @@ A detected trip only records start/end odometer, distance, and timestamps — yo
 - `ev_assistant.discard_pending` — `config_entry_id` (+ optional `start_ts`): discard a pending charge (e.g. a false positive — it wasn't actually an external charge). Same `start_ts` selection rule as above.
 - `ev_assistant.edit_charge` — `config_entry_id`, `erfasst_ts`, `kwh`, `price_kwh`: correct the kWh/price of an already-confirmed history entry (e.g. a typo noticed after the fact), identified by its `erfasst_ts` attribute (see the `historie` attribute on the last-cost sensor, or the [EV Assistant Card](https://github.com/weskona/ev-assistant-card)'s History list). Running totals are adjusted by the difference, not recomputed from scratch.
 - `ev_assistant.delete_charge` — `config_entry_id`, `erfasst_ts`: fully removes an already-confirmed history entry (e.g. a falsely detected charge that wasn't actually external). Running totals are adjusted by the removed amount. **Not reversible.**
-- `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): generate a **test event without a car** (triggers notification, MQTT, sensors) — see "Testing" below.
+- `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): generate a **test event without a car** (triggers notification and sensors) — see "Testing" below.
 - `ev_assistant.log_trip` — `config_entry_id`, `start_ort`, `end_ort` (+ optional `start_ts`): confirm a pending trip with a start/end location. Same multiple-pending/`start_ts` selection rule as `log_charge`. Unlike `log_charge`, there is **no** fallback to a manual one-off entry without a pending trip — odometer values only ever come from the detector.
 - `ev_assistant.discard_pending_trip` — `config_entry_id` (+ optional `start_ts`): discard a pending trip (e.g. moving the car a few meters in the driveway).
 - `ev_assistant.export_fahrtenbuch` — `config_entry_id`: write the full trip history as CSV to `www/` (see "Trip log" above).
@@ -226,7 +222,7 @@ python -m pytest tests -q
 
 **3) Trip log, end-to-end (no car needed):** call `ev_assistant.simulate_trip` with `config_entry_id`, `km: 12.5`. Expect: a notification appears, `binary_sensor ... Trip Detection Open` turns on, `sensor ... Trip Estimate` shows `12.5`. Then call `ev_assistant.log_trip` with `start_ort`/`end_ort` — `sensor ... Trip km (Last)` updates. Finally call `ev_assistant.export_fahrtenbuch` and check `www/ev_assistant_fahrtenbuch_<entry_id>.csv` was created.
 
-### Data record (history / MQTT `.../erfasst`)
+### Data record (history)
 
 Deliberately contains **both** the manually entered `kwh`/`preis_kwh`/`kosten` **and** the automatic `schaetzung_kwh` plus its `quelle` (`soc`/`power_ac`/`power_dc`) — so you can see over time how close the estimate gets, and adjust `charge_efficiency` accordingly (or just let the automatic calibration handle it).
 
@@ -238,7 +234,7 @@ custom_components/ev_assistant/
   manifest.json
   const.py
   engine.py           # pure logic (pytest-testable) — ChargeDetector + EfficiencyCalibrator + TripDetector
-  coordinator.py      # entity/MQTT wiring, detection, calibration, persistence, notification
+  coordinator.py      # entity wiring, detection, calibration, persistence, notification
   config_flow.py      # config + options flow (7 steps)
   entity.py           # shared entity base (device grouping, vehicle-based device name)
   sensor.py
@@ -253,7 +249,7 @@ tests/                # pytest (engine.py)
 ### Requirements
 
 - Home Assistant 2024.1+
-- `mqtt` integration set up (dependency), even if you only use HA-entity sources
+- [`evcc_intg`](https://github.com/marq24/ha-evcc) integration installed (required — evcc entities are auto-discovered from it)
 
 ---
 
@@ -293,7 +289,6 @@ Angenommen dein Auto hat einen nutzbaren Akku von 45 kWh und den Standard-Ladewi
    - AC-seitige (abgerechnete) Schätzung, unter Berücksichtigung der Ladeverluste: `18,9 kWh ÷ 0,88 = 21,48 kWh` — die Benachrichtigung rundet das auf **≈ 21,5 kWh**.
 6. EV Assistant tut jetzt Folgendes:
    - speichert dies als **offene** Ladung,
-   - veröffentlicht sie auf dem konfigurierten MQTT-Topic,
    - feuert das Event `ev_assistant_pending` (mit `config_entry_id`, damit du bei mehreren Autos weißt, welches gemeint ist),
    - schickt eine Benachrichtigung: *„+42 % (32 → 74 %), ~21,5 kWh geschätzt. kWh und Preis eintragen."*
    - schaltet `binary_sensor … Fremdladung Erfassung offen` ein und setzt `sensor … Fremdladung Schätzung` auf 21,48 kWh.
@@ -329,23 +324,20 @@ Ein Fahrzeug-Ladeleistungssensor (wenn vorhanden) ist meist genauer als die rein
 
 Einstellungen → Geräte & Dienste → **Integration hinzufügen** → „EV Assistant". Die Einrichtung läuft in 7 Schritten (identisch auch beim Bearbeiten über **Konfigurieren**):
 
-1. **Fahrzeug** — Hersteller + Modell (Pflicht, z.B. „Peugeot" / „e-2008" — ergeben zusammen den HA-Gerätenamen), Erstzulassung (optional, nur Anzeige), Kilometerstand-Entität (optional, gefiltert auf `sensor` + `device_class: distance` — wird als eigener `... Kilometerstand`-Sensor am EV-Assistant-Gerät gespiegelt und sowohl als Grundlage für die automatische Fahrten-Erkennung (Fahrtenbuch, Schritt 6) als auch als Streckenbasis für den Kostenvergleich in Schritt 7 genutzt), nutzbare Akku-Kapazität in kWh (Pflicht — der *netto* nutzbare Wert, nicht die oft größere Brutto-/Werksangabe mancher Hersteller; bestimmt direkt, wie viele kWh ein Prozentpunkt SoC-Anstieg entspricht, falsch eingetragen sind also alle Energie-Schätzungen falsch), Ladewirkungsgrad (nur ein Startwert — wird automatisch ersetzt, sobald genug echte Heim-Ladesessions vorliegen, siehe Kalibrierung unten).
-2. **Grundsignale** — SoC- und Heim-Laden-Quelle, jeweils als **HA-Entität ODER MQTT-Topic** (Entität hat Vorrang). Mindestens eine Quelle pro Signal ist Pflicht (mit `*` markiert). Der SoC-Entitäts-Picker ist auf `sensor` + `device_class: battery` gefiltert, der Heim-Laden-Picker auf `sensor` + `device_class: power` (z.B. die Ladeleistung einer Wallbox von evcc/Warp) — ein Zahlenwert **über 0,1 kW gilt als „lädt"**; ein nicht-numerischer Wert (z.B. evccs eigener `"charging"`/`"on"`-Status) fällt stattdessen auf einen reinen Text-Vergleich zurück. **Das ist nur ein Ja/Nein-Signal „lädt gerade zuhause"** — nicht dieselbe Ladeleistung wie in Schritt 3 (die kommt dort bewusst vom Fahrzeug statt der Wallbox, damit sie auch unterwegs bei einer Fremdladung funktioniert). Meldet dein Leistungssensor eine andere Einheit (z.B. Watt), rechne über das Template-Feld um, z.B. `{{ value | float / 1000 }}`. Passt das nicht zu deinem Setup (z.B. ein `binary_sensor`), nutze stattdessen das MQTT-Topic-Feld.
+1. **Fahrzeug** — Hersteller + Modell (Pflicht, z.B. „Peugeot" / „e-2008" — ergeben zusammen den HA-Gerätenamen), Erstzulassung (optional, nur Anzeige), Kilometerstand-Entität (optional, gefiltert auf `sensor` + `device_class: distance`), **Fahrzeug-SoC** (Pflicht, gefiltert auf `sensor` + `device_class: battery` — der Akkustand aus der Hersteller-Integration, dem OBD-Dongle usw.), nutzbare Akku-Kapazität in kWh (Pflicht — der *netto* nutzbare Wert, nicht die oft größere Brutto-/Werksangabe mancher Hersteller; bestimmt direkt, wie viele kWh ein Prozentpunkt SoC-Anstieg entspricht, falsch eingetragen sind also alle Energie-Schätzungen falsch), Ladewirkungsgrad (nur ein Startwert — wird automatisch ersetzt, sobald genug echte Heim-Ladesessions vorliegen, siehe Kalibrierung unten).
+2. **evcc & Wallbox** — alle evcc-Standort- und Ladepunkt-Entitäten (PV-Leistung, Netz, Hausspeicher, Tarife, Statistiken, Ladeleistung, Ladestatus, Modus, Session-Energie usw.) werden **automatisch erkannt** aus der installierten evcc-Integration — keine manuelle Entitäts-Auswahl nötig. Nur zwei optionale Felder bleiben: der Fahrzeugname in evcc (filtert die Heimladen-Historie auf dieses Fahrzeug, wenn mehrere EVs eine evcc-Instanz teilen) und die **Wallbox-Ladeleistungs-Entität** (gefiltert auf `sensor` + `device_class: power` — dient als Ja/Nein-Signal „lädt gerade zuhause"; ein Wert **über 0,1 kW gilt als „lädt"**). Ohne die Wallbox-Leistungsentität wird jeder SoC-Anstieg fälschlich als Fremdladung erkannt. Setzt die `evcc_intg`-Integration voraus.
 3. **Ladeleistung** (optional) — zwei unterschiedliche Quellen für zwei unterschiedliche Zwecke. Die Ladeleistung ist ein Momentanwert in W/kW, typischerweise aus der Fahrzeug-Telemetrie statt deiner Wallbox (liefert dadurch auch bei einer Fremdladung unterwegs Werte, wo die Wallbox nichts misst); sie verbessert die Energie-Schätzung einer Fremdladung gegenüber der reinen SoC-Delta-Schätzung (siehe „Energie-Schätzmethoden" oben). Der **Wallbox-Energiezähler** dagegen ist ein kumulativer kWh-Zähler deiner eigenen Wallbox (nie ein Momentanwert, nur beim Heim-Laden relevant) — er dient der automatischen Ladewirkungsgrad-Kalibrierung *und* den Heimladen-Kosten in Schritt 7.
-4. **Ausgabe** (optional) — eine Benachrichtigung im Home-Assistant-eigenen Benachrichtigungsbereich erscheint bei einer erkannten Ladung immer automatisch, unabhängig von diesem Schritt. Der `notify.*`-Dienst schickt zusätzlich eine Push-Nachricht (z.B. aufs Handy); das MQTT-Publish-Topic veröffentlicht zusätzlich die Rohdaten als JSON für eigene Automationen/Integrationen.
+4. **Ausgabe** (optional) — eine Benachrichtigung im Home-Assistant-eigenen Benachrichtigungsbereich erscheint bei einer erkannten Ladung immer automatisch, unabhängig von diesem Schritt. Der `notify.*`-Dienst schickt zusätzlich eine Push-Nachricht (z.B. aufs Handy).
 5. **Erkennungs-Feinjustierung** — Schwellwerte der oben beschriebenen Zustandsmaschine (`start_delta`, `noise`, `idle_timeout_s`, `drop_ends`). Eine Ladung startet, sobald der SoC um `start_delta` über den letzten Ruhewert steigt; sie endet entweder bei einem SoC-Abfall um mehr als `drop_ends` unter den erreichten Höchststand, oder wenn `idle_timeout_s` lang kein neuer Höchststand erreicht wurde (z.B. Akku voll). `noise` toleriert normales Sensor-Zittern beim Verfolgen des Höchststands und muss immer **kleiner** sein als `start_delta`, sonst kann schon Rauschen eine falsche Erkennung auslösen. Die Standardwerte passen für die meisten Fahrzeuge; bei einem Auto, dessen SoC nur grob/selten aktualisiert wird (manche Cloud-APIs), großzügiger einstellen.
 6. **Fahrtenbuch** (optional) — Schwellwerte der Fahrten-Erkennung (`trip_min_km`, `trip_idle_timeout_s`), siehe „Fahrtenbuch" unten. Die Standardwerte passen für die meisten Kilometerstand-Sensoren. Zusätzlich eine optionale Orts-Vorschlag-Quelle (`gps_entity`, eine person-/device_tracker-Entität).
 7. **Kostenvergleich** (optional) — siehe „Kostenvergleich gegenüber einem Verbrenner" unten.
 
 ### Quellen: herstellerunabhängig
 
-Jedes Signal wird aus einer **HA-Entität** (z.B. Hersteller-Integration) oder aus **MQTT** (z.B. WiCAN Pro) gespeist — funktioniert mit jedem Hersteller, der einen SoC-Sensor in HA bereitstellt.
+Das SoC-Signal kommt aus einer beliebigen **HA-Entität** — funktioniert mit jedem Hersteller oder Dongle, der einen SoC-Sensor in HA bereitstellt.
 
-- **WiCAN Pro (MQTT):** SoC-Topic `<dein_prefix>/telemetrie/soc` (Template `{{ value }}` oder `{{ value_json.soc }}`).
-- **Stellantis / VW / … (Entität):** SoC-Entität = `sensor.<auto>_battery`. Cloud-SoC ist oft grob/selten — dann `start_delta` höher und `idle_timeout_s` großzügiger; der Leistungs-Pfad entfällt mangels echter Leistungsdaten (Fallback auf SoC × Wirkungsgrad).
-- **Gemischt** ist möglich: SoC aus Entität, `home_charging` aus evcc-MQTT usw.
-
-Ein optionales Jinja-Template pro Signal rechnet den Rohwert um (`value` = Zustand/Payload, `value_json` = geparster JSON-Payload bei MQTT).
+- **WiCAN Pro:** HA-`mqtt`-Integration einrichten und den daraus entstehenden MQTT-SoC-Sensor verwenden.
+- **Stellantis / VW / …:** SoC-Entität = `sensor.<auto>_battery`. Cloud-SoC ist oft grob/selten — dann `start_delta` höher und `idle_timeout_s` großzügiger einstellen; der Leistungs-Pfad entfällt mangels echter Leistungsdaten (Fallback auf SoC × Wirkungsgrad).
 
 ### Automatische Ladewirkungsgrad-Kalibrierung
 
@@ -443,7 +435,7 @@ Eine erkannte Fahrt speichert nur Start-/End-Kilometerstand, Strecke und Zeitste
 - `ev_assistant.discard_pending` — `config_entry_id` (+ optional `start_ts`): eine offene Ladung verwerfen (z.B. ein Fehlalarm — es war gar keine Fremdladung). Gleiche `start_ts`-Auswahlregel wie oben.
 - `ev_assistant.edit_charge` — `config_entry_id`, `erfasst_ts`, `kwh`, `price_kwh`: korrigiert kWh/Preis eines bereits bestätigten Historien-Eintrags nachträglich (z.B. ein Tippfehler, der später auffällt), identifiziert über dessen `erfasst_ts`-Attribut (siehe das `historie`-Attribut am Kosten-Sensor, oder die Historie-Liste der [EV Assistant Card](https://github.com/weskona/ev-assistant-card)). Die laufenden Summen werden um die Differenz angepasst, nicht neu berechnet.
 - `ev_assistant.delete_charge` — `config_entry_id`, `erfasst_ts`: löscht einen bereits bestätigten Historien-Eintrag vollständig (z.B. eine fälschlich erkannte Ladung, die gar keine Fremdladung war). Die laufenden Summen werden um den gelöschten Betrag verringert. **Nicht rückgängig zu machen.**
-- `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): **Testereignis ohne Auto** erzeugen (löst Benachrichtigung, MQTT, Sensoren aus) — siehe „Testen" unten.
+- `ev_assistant.simulate_event` — `config_entry_id`, `soc_start`, `soc_end` (+ `energy_source`): **Testereignis ohne Auto** erzeugen (löst Benachrichtigung und Sensoren aus) — siehe „Testen" unten.
 - `ev_assistant.log_trip` — `config_entry_id`, `start_ort`, `end_ort` (+ optional `start_ts`): eine offene Fahrt mit Start-/Zielort bestätigen. Gleiche Mehrfach-/`start_ts`-Auswahlregel wie `log_charge`. Anders als `log_charge` gibt es **keinen** Fallback auf einen manuellen Einzeleintrag ohne offene Fahrt — Kilometerstand-Werte stammen ausschließlich aus der Erkennung.
 - `ev_assistant.discard_pending_trip` — `config_entry_id` (+ optional `start_ts`): eine offene Fahrt verwerfen (z.B. ein kurzes Rangieren in der Einfahrt).
 - `ev_assistant.export_fahrtenbuch` — `config_entry_id`: das komplette Fahrtenbuch als CSV nach `www/` schreiben (siehe „Fahrtenbuch" oben).
@@ -474,7 +466,7 @@ python -m pytest tests -q
 
 **3) Fahrtenbuch, Ende-zu-Ende (ohne Auto):** `ev_assistant.simulate_trip` mit `config_entry_id`, `km: 12.5` aufrufen. Erwartung: Benachrichtigung erscheint, `binary_sensor … Fahrt Erfassung offen` = an, `sensor … Fahrt Schätzung` zeigt `12.5`. Dann `ev_assistant.log_trip` mit `start_ort`/`end_ort` aufrufen — `sensor … Fahrt km (letzte)` aktualisiert sich. Zuletzt `ev_assistant.export_fahrtenbuch` aufrufen und prüfen, dass `www/ev_assistant_fahrtenbuch_<entry_id>.csv` angelegt wurde.
 
-### Datensatz (Historie / MQTT `…/erfasst`)
+### Datensatz (Historie)
 
 Enthält bewusst **beides**: manuell `kwh`/`preis_kwh`/`kosten` **und** die Auto-`schaetzung_kwh` samt `quelle` (`soc`/`power_ac`/`power_dc`) — so siehst du über die Zeit, wie gut die Schätzung trifft, und kannst `charge_efficiency` nachziehen (oder die automatische Kalibrierung das übernehmen lassen).
 
@@ -486,7 +478,7 @@ custom_components/ev_assistant/
   manifest.json
   const.py
   engine.py          # reine Logik (pytest) — ChargeDetector + EfficiencyCalibrator + TripDetector
-  coordinator.py     # Entity-/MQTT-Verdrahtung, Erkennung, Kalibrierung, Persistenz, Notification
+  coordinator.py     # Entity-Verdrahtung, Erkennung, Kalibrierung, Persistenz, Notification
   config_flow.py     # Config- + Options-Flow (7 Schritte)
   entity.py          # gemeinsame Entity-Basis (Device-Gruppierung, fahrzeugbasierter Gerätename)
   sensor.py
@@ -501,7 +493,7 @@ tests/               # pytest (engine.py)
 ### Anforderungen
 
 - Home Assistant 2024.1+
-- `mqtt`-Integration eingerichtet (Dependency), auch wenn nur HA-Entitäten als Quelle genutzt werden
+- [`evcc_intg`](https://github.com/marq24/ha-evcc)-Integration installiert (Pflicht — evcc-Entitäten werden daraus automatisch erkannt)
 
 ---
 
