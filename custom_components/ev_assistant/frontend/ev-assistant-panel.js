@@ -45,7 +45,25 @@ class EVAssistantPanel extends HTMLElement {
     const first = !this._hass;
     this._hass = hass;
     if (first || !this._built) { this._renderShell(); this._built = true; }
+    // hass wird sehr haeufig neu gesetzt (praktisch bei jeder Sensor-Aenderung
+    // im System) und _update() baut Listen-Inhalte per innerHTML neu auf, wenn
+    // sich deren sig aendert -- das kann den Scroll-Container zuruecksetzen.
+    // Aber: NUR eingreifen, wenn sich die Scrollposition durch _update()
+    // tatsaechlich veraendert hat (seltener Rebuild-Fall) -- ein Schreiben auf
+    // scrollTop bei JEDEM Tick (auch auf denselben Wert) unterbricht sonst die
+    // native Traegheits-/Momentum-Scroll-Animation des Browsers -> Ruckeln.
+    // JS ist single-threaded, also kann sich scrollTop zwischen den beiden
+    // Messungen nur durch _update() selbst geaendert haben, nie durch
+    // gleichzeitiges Scrollen der Nutzerin.
+    const mainScroll = this._main ? this._main.scrollTop : null;
+    const winY = window.scrollY;
     this._update();
+    if (mainScroll !== null && this._main && this._main.scrollTop !== mainScroll) {
+      this._main.scrollTop = mainScroll;
+    }
+    if (window.scrollY !== winY) {
+      window.scrollTo(window.scrollX, winY);
+    }
   }
   get hass() { return this._hass; }
 

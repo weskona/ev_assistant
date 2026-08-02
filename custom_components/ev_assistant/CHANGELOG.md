@@ -2,6 +2,23 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.21.3] - 2026-08-02
+
+### Fixed
+
+- **Scrolling any history card in the panel could still jump the page back to the top** —
+  the 0.21.2 `overscroll-behavior` fix addressed scroll-chaining at a list's boundary, but the
+  actual root cause was that `hass` is set extremely often (near-every sensor change in the
+  whole HA instance), and each update rebuilds list DOM when its content changed — including
+  mid-scroll, which reset the scroll container. Scroll position is now captured before every
+  reactive update and corrected back **only when it actually changed** as a side effect of that
+  update, not written unconditionally on every tick.
+- **First attempt at the above fixed the jump but introduced scroll stutter/jank**: writing
+  `scrollTop`/`window.scrollY` back on every single `hass` update — even unchanged — was
+  fighting the browser's native momentum-scroll animation on mobile. Now a no-op on the vast
+  majority of updates (nothing rebuilt), only intervening on the rare tick that actually reset
+  the scroll position.
+
 ## [0.21.2] - 2026-08-02
 
 ### Fixed
