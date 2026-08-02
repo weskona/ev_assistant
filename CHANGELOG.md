@@ -2,6 +2,24 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.21.0] - 2026-08-02
+
+### Added
+
+- **`last_charge_power` sensor** — average charge power (kW) for the most recently confirmed external charge, calculated from kWh ÷ duration. Sessions shorter than 5 minutes are excluded; implausible values outside 1–350 kW are suppressed and the sensor returns `unknown`.
+- **Ø charge power in external charging history** — each external charge history entry in the panel now shows the average charge power (kW) next to the kWh figure, computed from the same kWh/duration data.
+- **Ø charge power in home charging history** — same Ø power column added to the evcc home-charging session history in the panel.
+- **Odometer period sensors** (all `entity_category: diagnostic`, `state_class` set for LTS): `odo_day_km`, `odo_week_km`, `odo_month_km`, `odo_year_km` — km driven since the start of the current day / ISO week / calendar month / calendar year. Period baselines are stored persistently in coordinator storage and update on rollover. Glitch-protected: backwards odometer jumps and implausibly large forward jumps are silently rejected.
+- **LTS-based average and projection sensors** (all `entity_category: diagnostic`, `state_class: measurement`): `odo_avg_day`, `odo_avg_week`, `odo_avg_month`, `odo_avg_year` (rolling averages from 30/30/90/365-day LTS sum deltas), `odo_year_projected` (calendar-year extrapolation from Jan 1; returns `unknown` until ≥ 7 days into the year), `odo_annual_from_reg` (annual rate since the first-registration date configured in step 1). These sensors query `statistics_during_period` from the HA recorder at 00:05 each day; they require the configured odometer entity to have recorded Long-Term Statistics in HA.
+- **All sensors now carry `state_class`** — enabling Long-Term Statistics recording for every EV Assistant sensor. Previously several sensors lacked a `state_class` and were therefore not included in LTS.
+- **Verbrenner-Vergleich section in vehicle card** — below the km grid, a second column now shows Ersparnis (total savings, green), EV costs, estimated combustion cost, and cost per 100 km for both EV and combustion reference. Values are read directly from the `savings` sensor attributes; no new backend sensors required.
+
+### Changed
+
+- **Renamed sensors**: `pending_estimate` (previously "Fremdladung Schätzung") is now **"Fremdladung ausstehend"**; `trip_pending_estimate` (previously "Fahrt Schätzung") is now **"Fahrt ausstehend"**. Translation keys are unchanged; HA entity IDs are unaffected.
+- **Vehicle card km section redesigned** — replaced the three stacked KPI rows with a compact 2-column grid: driven km per period (today / week / month / year) on the left, average and projected km on the right. The overall vehicle card now uses a side-by-side layout with km on the left and the Verbrenner-Vergleich on the right, separated by a vertical divider.
+- **Chart card is now mobile-responsive** — on screens ≤ 600 px the three charts (charging overview, cost overview, solar share) stack vertically with horizontal dividers between them. The chart card header is reorganised: period pills and the week/month navigation now sit in a flex-column block, keeping the header compact on narrow screens.
+
 ## [0.19.0] - 2026-08-01
 
 ### Added
