@@ -645,21 +645,59 @@ class EVAssistantPanel extends HTMLElement {
           <div class="kpi"><div class="kv vh-efficiency">—</div><div class="kl">% Ladewirkungsgrad</div></div>
           <div class="kpi"><div class="kv green vh-savings">—</div><div class="kl">EUR Ersparnis ggü. Verbrenner</div></div>
         </div>
+        <div class="divider"></div>
+        <div class="vh-bottom-grid">
+          <div class="vh-bottom-col">
+            <div class="sub-head">Kilometerleistung</div>
+            <div class="km-grid">
+              <div class="km-col">
+                <div class="km-item"><span class="km-label">Heute</span><span class="km-val vh-odo-day">—</span><span class="km-unit">km</span></div>
+                <div class="km-item"><span class="km-label">Woche</span><span class="km-val vh-odo-week">—</span><span class="km-unit">km</span></div>
+                <div class="km-item"><span class="km-label">Monat</span><span class="km-val vh-odo-month">—</span><span class="km-unit">km</span></div>
+                <div class="km-item"><span class="km-label">Jahr</span><span class="km-val vh-odo-year">—</span><span class="km-unit">km</span></div>
+              </div>
+              <div class="km-col">
+                <div class="km-item"><span class="km-label">Ø / Tag</span><span class="km-val vh-avg-day">—</span><span class="km-unit">km</span></div>
+                <div class="km-item"><span class="km-label">Ø / Woche</span><span class="km-val vh-avg-week">—</span><span class="km-unit">km</span></div>
+                <div class="km-item"><span class="km-label">Ø / Monat</span><span class="km-val vh-avg-month">—</span><span class="km-unit">km</span></div>
+                <div class="km-item"><span class="km-label">Ø / Jahr</span><span class="km-val vh-avg-year">—</span><span class="km-unit">km</span></div>
+                <div class="km-sep"></div>
+                <div class="km-item"><span class="km-label">Erwartet KJ</span><span class="km-val vh-year-proj">—</span><span class="km-unit">km</span></div>
+                <div class="km-item"><span class="km-label">Seit EZ</span><span class="km-val vh-annual-reg">—</span><span class="km-unit">km/J</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="vh-bottom-divider"></div>
+          <div class="vh-bottom-col">
+            <div class="sub-head">Verbrenner-Vergleich</div>
+            <div class="sav-grid">
+              <div class="km-item"><span class="km-label">Ersparnis</span><span class="km-val green vh-sav-ersparnis">—</span><span class="km-unit">EUR</span></div>
+              <div class="km-sep"></div>
+              <div class="km-item"><span class="km-label">EV-Kosten</span><span class="km-val vh-sav-ev-cost">—</span><span class="km-unit">EUR</span></div>
+              <div class="km-item"><span class="km-label">Verbrenner</span><span class="km-val vh-sav-verb-cost">—</span><span class="km-unit">EUR</span></div>
+              <div class="km-sep"></div>
+              <div class="km-item"><span class="km-label">/100km EV</span><span class="km-val vh-sav-ev-per100">—</span><span class="km-unit">EUR</span></div>
+              <div class="km-item"><span class="km-label">/100km Verb.</span><span class="km-val vh-sav-verb-per100">—</span><span class="km-unit">EUR</span></div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="card card-charts">
-        <div class="card-head">
+        <div class="card-head card-head-charts">
           <span class="ic"><ha-icon icon="mdi:chart-bar"></ha-icon></span>
           <h2>Diagramme</h2>
-          <div class="chart-pills">
-            <button class="pill${this._chartPeriod === "woche" ? " active" : ""}" data-period="woche">Woche</button>
-            <button class="pill${this._chartPeriod === "monat" ? " active" : ""}" data-period="monat">Monat</button>
-            <button class="pill${this._chartPeriod === "jahr"  ? " active" : ""}" data-period="jahr">Jahr</button>
-          </div>
-          <div class="chart-nav" id="chart-nav">
-            <button class="nav-arrow" id="chart-nav-prev">&#8249;</button>
-            <span class="nav-label" id="chart-nav-label"></span>
-            <button class="nav-arrow" id="chart-nav-next">&#8250;</button>
+          <div class="chart-controls">
+            <div class="chart-pills">
+              <button class="pill${this._chartPeriod === "woche" ? " active" : ""}" data-period="woche">Woche</button>
+              <button class="pill${this._chartPeriod === "monat" ? " active" : ""}" data-period="monat">Monat</button>
+              <button class="pill${this._chartPeriod === "jahr"  ? " active" : ""}" data-period="jahr">Jahr</button>
+            </div>
+            <div class="chart-nav" id="chart-nav">
+              <button class="nav-arrow" id="chart-nav-prev">&#8249;</button>
+              <span class="nav-label" id="chart-nav-label"></span>
+              <button class="nav-arrow" id="chart-nav-next">&#8250;</button>
+            </div>
           </div>
         </div>
         <div class="charts-grid">
@@ -800,8 +838,24 @@ class EVAssistantPanel extends HTMLElement {
       vhTripKmTotal:   q(".vh-trip-km-total"),
       vhTripRouteLast: q(".vh-trip-route-last"),
       vhOdo:          q(".vh-odo"),
-      vhEfficiency:   q(".vh-efficiency"),
-      vhSavings:      q(".vh-savings"),
+      vhOdoDay:       q(".vh-odo-day"),
+      vhOdoWeek:      q(".vh-odo-week"),
+      vhOdoMonth:     q(".vh-odo-month"),
+      vhOdoYear:      q(".vh-odo-year"),
+      vhAvgDay:       q(".vh-avg-day"),
+      vhAvgWeek:      q(".vh-avg-week"),
+      vhAvgMonth:     q(".vh-avg-month"),
+      vhAvgYear:      q(".vh-avg-year"),
+      vhYearProj:     q(".vh-year-proj"),
+      vhAnnualReg:    q(".vh-annual-reg"),
+
+      vhEfficiency:    q(".vh-efficiency"),
+      vhSavings:       q(".vh-savings"),
+      vhSavErsparnis:  q(".vh-sav-ersparnis"),
+      vhSavEvCost:     q(".vh-sav-ev-cost"),
+      vhSavVerbCost:   q(".vh-sav-verb-cost"),
+      vhSavEvPer100:   q(".vh-sav-ev-per100"),
+      vhSavVerbPer100: q(".vh-sav-verb-per100"),
       vhVehName:      q(".vh-veh-name"),
       vhSocVal:       q(".vh-soc-val"),
       vhSocFill:      q(".vh-soc-fill"),
@@ -1130,8 +1184,37 @@ class EVAssistantPanel extends HTMLElement {
     this._renderAllCharts();
     r.vhTripKmTotal.textContent  = this._num("total_trip_km", 0);
     r.vhOdo.textContent          = this._num("odo", 0);
+    r.vhOdoDay.textContent       = this._num("odo_day_km", 0);
+    r.vhOdoWeek.textContent      = this._num("odo_week_km", 0);
+    r.vhOdoMonth.textContent     = this._num("odo_month_km", 0);
+    r.vhOdoYear.textContent      = this._num("odo_year_km", 0);
+    r.vhAvgDay.textContent       = this._num("odo_avg_day", 0);
+    r.vhAvgWeek.textContent      = this._num("odo_avg_week", 0);
+    r.vhAvgMonth.textContent     = this._num("odo_avg_month", 0);
+    r.vhAvgYear.textContent      = this._num("odo_avg_year", 0);
+    r.vhYearProj.textContent     = this._num("odo_year_projected", 0);
+    r.vhAnnualReg.textContent    = this._num("odo_annual_from_reg", 0);
     r.vhEfficiency.textContent   = this._num("measured_efficiency", 1);
     r.vhSavings.textContent      = this._num("savings", 2);
+
+    // Verbrenner-Vergleich aus savings-Sensor-Attributen
+    {
+      const savEid = this._eid("savings");
+      const savState = savEid && this._hass ? this._hass.states[savEid] : null;
+      const attr = savState ? (savState.attributes || {}) : {};
+      const ersparnis   = parseFloat(savState ? savState.state : NaN);
+      const evCost      = parseFloat(attr.kosten_ev_gesamt);
+      const verbCost    = parseFloat(attr.kosten_verbrenner_geschaetzt);
+      const tripKm      = parseFloat(this._state("total_trip_km"));
+      const fmt2 = (v) => isNaN(v) ? "—" : v.toFixed(2);
+      r.vhSavErsparnis.textContent  = fmt2(ersparnis);
+      r.vhSavEvCost.textContent     = fmt2(evCost);
+      r.vhSavVerbCost.textContent   = fmt2(verbCost);
+      r.vhSavEvPer100.textContent   = (!isNaN(evCost) && !isNaN(tripKm) && tripKm > 0)
+        ? (evCost / tripKm * 100).toFixed(2) : "—";
+      r.vhSavVerbPer100.textContent = (!isNaN(verbCost) && !isNaN(tripKm) && tripKm > 0)
+        ? (verbCost / tripKm * 100).toFixed(2) : "—";
+    }
 
     // Fahrzeugname
     if (r.vhVehName) {
@@ -2118,14 +2201,15 @@ class EVAssistantPanel extends HTMLElement {
       }
 
       /* Ladeübersicht Chart */
-      .card-charts .card-head { align-items: center; }
+      .card-head-charts { align-items: flex-start; }
       .charts-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin-top: 10px; }
       .chart-col { padding: 0 var(--gap); }
       .chart-col:first-child { padding-left: 0; }
       .chart-col:last-child  { padding-right: 0; }
       .chart-col + .chart-col { border-left: 1px solid var(--line); }
       .chart-col-title { font-size: 0.78rem; font-weight: 500; color: var(--ink-mid); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
-      .chart-pills { display: flex; gap: 4px; margin-left: auto; }
+      .chart-controls { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; margin-left: auto; }
+      .chart-pills { display: flex; gap: 4px; }
       .chart-pills .pill {
         padding: 4px 12px; border-radius: 20px;
         border: 1px solid var(--line-s); background: transparent;
@@ -2134,14 +2218,20 @@ class EVAssistantPanel extends HTMLElement {
       }
       .chart-pills .pill:hover { background: var(--bg-0); color: var(--ink); }
       .chart-pills .pill.active { background: var(--accent); color: #fff; border-color: transparent; }
-      .vh-chart-controls { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
-      .vh-chart-controls .chart-nav { margin: 0; }
-      .chart-nav { display: none; align-items: center; justify-content: center; gap: 8px; margin: 4px 0 6px; }
-      .nav-label { font-size: 0.85rem; font-weight: 500; color: var(--ink); min-width: 120px; text-align: center; }
+      .chart-nav { display: none; align-items: center; justify-content: flex-end; gap: 8px; }
+      .nav-label { font-size: 0.85rem; font-weight: 500; color: var(--ink); min-width: 100px; text-align: center; }
       .nav-arrow { background: none; border: 1px solid var(--line-s); border-radius: 50%; width: 26px; height: 26px; display: grid; place-items: center; cursor: pointer; color: var(--ink-mid); font-size: 1.1rem; line-height: 1; transition: background 0.15s, color 0.15s; font-family: inherit; padding: 0; }
       .nav-arrow:hover:not(:disabled) { background: var(--bg-0); color: var(--ink); }
       .nav-arrow:disabled { opacity: 0.3; cursor: default; }
       .chart-legend { display: flex; gap: 14px; margin: 4px 0 10px; font-size: 0.82rem; color: var(--ink-mid); }
+      @media (max-width: 600px) {
+        .charts-grid { grid-template-columns: 1fr; }
+        .chart-col { padding: var(--gap) 0; border-left: none !important; border-top: 1px solid var(--line); }
+        .chart-col:first-child { padding-top: 0; border-top: none; }
+        .card-head-charts { flex-wrap: wrap; gap: 10px; }
+        .chart-controls { margin-left: 0; align-items: flex-start; width: 100%; }
+        .chart-nav { justify-content: flex-start; }
+      }
       .cleg { display: flex; align-items: center; gap: 5px; }
       .cleg-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
       .cleg-dot.home  { background: var(--c-home); }
@@ -2174,6 +2264,26 @@ class EVAssistantPanel extends HTMLElement {
 
       /* Farbige Summary-Cards — HA Energiedashboard-Farben */
       :host { --c-home: #ff9800; --c-ext: #488fc2; --c-trip: #14b8a6; --c-solar: #4ade80; }
+
+      /* Fahrzeug-Card Unterer Bereich: 2-Spalten-Grid */
+      .vh-bottom-grid { display: grid; grid-template-columns: 1fr auto 1fr; gap: 0; margin-top: 0; }
+      .vh-bottom-col { min-width: 0; }
+      .vh-bottom-divider { width: 1px; background: var(--line); margin: 0 16px; }
+      @media (max-width: 500px) {
+        .vh-bottom-grid { grid-template-columns: 1fr; }
+        .vh-bottom-divider { width: auto; height: 1px; margin: 12px 0; }
+      }
+
+      /* Kilometerleistungs-Grid */
+      .km-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; margin-top: 8px; }
+      .km-col { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+      .km-item { display: flex; align-items: baseline; gap: 5px; font-size: 0.82rem; min-width: 0; }
+      .km-item--full { grid-column: 1 / -1; }
+      .km-label { color: var(--ink-mid); flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .km-val { font-weight: 700; color: var(--ink); }
+      .km-unit { font-size: 0.72rem; color: var(--ink-dim); flex-shrink: 0; }
+      .km-sep { height: 6px; }
+      .sav-grid { display: flex; flex-direction: column; gap: 3px; margin-top: 8px; }
 
       /* Fahrzeug-Card */
       .card-vehicle { border-top: 3px solid var(--accent); }
