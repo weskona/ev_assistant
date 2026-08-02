@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.20.1] - 2026-08-02
+
+### Fixed
+
+- External charge history and trip log no longer drop old entries — the 100-entry cap (`HISTORY_MAX`) has been removed. All records are kept indefinitely in HA storage.
+
 ## [0.20.0] - 2026-08-02
 
 ### Changed

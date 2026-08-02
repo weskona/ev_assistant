@@ -33,7 +33,7 @@ from .const import (
     DEFAULT_USABLE_KWH, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
     EFF_MAX_EFFICIENCY, EFF_MIN_SAMPLES, EFF_MIN_SOC_DELTA,
     EVENT_DELETED, EVENT_EDITED, EVENT_LOGGED, EVENT_PENDING, EVENT_TRIP_DELETED,
-    EVENT_TRIP_EDITED, EVENT_TRIP_LOGGED, EVENT_TRIP_PENDING, HISTORY_MAX,
+    EVENT_TRIP_EDITED, EVENT_TRIP_LOGGED, EVENT_TRIP_PENDING,
     MILES_TO_KM, NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
 )
 from .engine import (
@@ -667,7 +667,6 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "erfasst_ts": int(time.time()),
         }
         self.data.setdefault("fahrten", []).insert(0, rec)
-        self.data["fahrten"] = self.data["fahrten"][:HISTORY_MAX]
         totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
         totals["km"] = round(totals.get("km", 0.0) + rec["km"], 2)
         totals["count"] = totals.get("count", 0) + 1
@@ -798,7 +797,6 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["pending"] = pending_list
 
         self.data.setdefault("history", []).insert(0, rec)
-        self.data["history"] = self.data["history"][:HISTORY_MAX]
         totals = self.data["totals"]
         totals["kwh"] = round(totals.get("kwh", 0.0) + kwh, 2)
         totals["kosten"] = round(totals.get("kosten", 0.0) + rec["kosten"], 2)
@@ -816,9 +814,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         """Korrigiert einen bereits bestaetigten Historien-Eintrag (z.B.
         Tippfehler bei kWh/Preis beim Erfassen bemerkt). Passt die
         laufenden Summen um die Differenz an statt sie aus der Historie neu
-        zu berechnen, da aeltere, nicht mehr in der Historie gespeicherte
-        Eintraege (siehe HISTORY_MAX) sonst aus den Summen herausfallen
-        wuerden. Gibt False zurueck, wenn kein Eintrag mit erfasst_ts
+        zu berechnen. Gibt False zurueck, wenn kein Eintrag mit erfasst_ts
         gefunden wurde."""
         history = self.data.get("history") or []
         for rec in history:
