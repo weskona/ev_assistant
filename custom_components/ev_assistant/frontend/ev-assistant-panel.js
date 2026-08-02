@@ -1699,6 +1699,7 @@ class EVAssistantPanel extends HTMLElement {
           <div class="hist-figures-left">
             ${socStr ? `<span class="hist-soc">${socStr}</span>` : ""}
             <span class="hist-kwh">${h.kwh != null ? h.kwh.toFixed(2) : "—"}<small>kWh</small></span>
+            ${(() => { const p = h.durMin >= 5 && h.kwh ? h.kwh / (h.durMin / 60) : null; return (p >= 1 && p <= 350) ? `<span class="hist-power">${p.toFixed(1)}<small>kW</small></span>` : ""; })()}
             ${h.pricePerKwh != null ? `<span class="hist-price">${h.pricePerKwh.toFixed(3)} €/kWh</span>` : ""}
           </div>
           <span class="hist-cost">${h.cost != null ? h.cost.toFixed(2) + " €" : "—"}</span>
