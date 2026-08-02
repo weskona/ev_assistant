@@ -1546,17 +1546,36 @@ class EVAssistantPanel extends HTMLElement {
     hist.forEach((h) => {
       const ts = h.erfasst_ts;
       const row = document.createElement("div");
-      row.className = "hist-row";
+      row.className = "hist-card";
+      const tSocStr = (h.soc_start != null && h.soc_end != null)
+        ? `${h.soc_start} → ${h.soc_end}% (−${Math.abs(Math.round(h.soc_start - h.soc_end))}%)`
+        : null;
+      const tDurMin = (h.end_ts && h.start_ts) ? (h.end_ts - h.start_ts) / 60 : null;
+      const tDurStr = tDurMin ? this._fmtDuration(tDurMin) : null;
+      const tSpeed = (tDurMin && tDurMin > 0 && h.km) ? h.km / (tDurMin / 60) : null;
+      const tDisplayTs = h.start_ts != null ? h.start_ts : h.erfasst_ts;
+      const tEndTime = this._fmtTime(h.end_ts);
+      const tMetaParts = [];
+      if (tEndTime) tMetaParts.push(`bis ${tEndTime}`);
+      if (tDurStr) tMetaParts.push(tDurStr);
+      const tMeta = tMetaParts.join(" · ");
       row.innerHTML = `
-        <div class="hist-main">
-          <span class="hist-date">${h.datum || this._fmtDate(h.start_ts)}</span>
-          <span class="hist-val">${h.start_ort} → ${h.end_ort}</span>
-          <span class="hist-val">${Number(h.km).toFixed(1)} km</span>
+        <div class="hist-top">
+          <span class="hist-date">${this._fmtDate(tDisplayTs)}${tMeta ? ` <span class="hist-meta">· ${tMeta}</span>` : ""}</span>
+          <div class="hist-actions">
+            <button class="btn-icon sm hist-edit" title="Bearbeiten"><ha-icon icon="mdi:pencil"></ha-icon></button>
+            <button class="btn-icon sm hist-delete" title="Löschen"><ha-icon icon="mdi:delete"></ha-icon></button>
+          </div>
         </div>
-        <div class="hist-actions">
-          <button class="btn-icon hist-edit" title="Bearbeiten"><ha-icon icon="mdi:pencil"></ha-icon></button>
-          <button class="btn-icon hist-delete" title="Löschen"><ha-icon icon="mdi:delete"></ha-icon></button>
+        <div class="hist-figures">
+          <div class="hist-figures-left">
+            ${tSocStr ? `<span class="hist-soc">${tSocStr}</span>` : ""}
+            <span class="hist-kwh">${Number(h.km).toFixed(1)}<small>km</small></span>
+            ${(tSpeed && tSpeed > 0 && tSpeed < 300) ? `<span class="hist-power">Ø ${tSpeed.toFixed(0)}<small>km/h</small></span>` : ""}
+          </div>
         </div>
+        ${(h.soc_start != null && h.soc_end != null) ? `<div class="soc-bar-wrap"><div class="soc-bar-fill trip" style="--soc-w:${Math.min(100, Math.max(0, h.soc_start - h.soc_end) * 2).toFixed(1)}%"></div></div>` : ""}
+        <div class="hist-route">${h.start_ort} → ${h.end_ort}</div>
         <div class="hist-edit-form hidden">
           <label>Startort<input type="text" class="hf-start" value="${h.start_ort}"></label>
           <label>Zielort<input type="text" class="hf-end" value="${h.end_ort}"></label>
@@ -2367,6 +2386,8 @@ class EVAssistantPanel extends HTMLElement {
       .soc-bar-wrap { height: 3px; border-radius: 2px; background: var(--line); margin-top: 5px; position: relative; overflow: hidden; max-width: 100px; }
       .soc-bar-fill { position: absolute; height: 100%; border-radius: 2px; background: var(--c-home); left: 0; width: var(--soc-w); }
       .soc-bar-fill.ext { background: var(--c-ext); }
+      .soc-bar-fill.trip { background: var(--c-trip); }
+      .hist-route { font-size: 0.8rem; color: var(--ink-mid); margin-top: 4px; }
 
       /* Tab-Wechsel Fade-In */
       @keyframes vh-fadein { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }

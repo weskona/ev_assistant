@@ -771,6 +771,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "km": pend["km"], "start_ort": start_ort, "end_ort": end_ort,
             "erfasst_ts": int(time.time()),
         }
+        if pend.get("soc_start") is not None:
+            rec["soc_start"] = pend["soc_start"]
+            rec["soc_end"] = pend.get("soc_end")
+            rec["delta_soc"] = pend.get("delta_soc")
         self.data.setdefault("fahrten", []).insert(0, rec)
         totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
         totals["km"] = round(totals.get("km", 0.0) + rec["km"], 2)
