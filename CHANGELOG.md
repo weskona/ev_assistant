@@ -2,6 +2,19 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.21.1] - 2026-08-02
+
+### Fixed
+
+- **Trip log history entries** now display correctly as cards — matching the visual style of home and external charging history entries (card background, border, border-radius).
+- **Date/time formatting** in trip entries now uses the proper German locale format (`dd.MM.yyyy HH:mm`) from the actual `start_ts` Unix timestamp, replacing the raw ISO date string. The end time (`bis HH:MM`) and trip duration are shown inline.
+- **Trip route** (`start_ort → end_ort`) moved to its own last line, consistent with the requested layout.
+
+### Added
+
+- **SOC consumption in trip history**: confirmed trip records now store `soc_start`, `soc_end`, and `delta_soc` from the detected pending trip. The history entry shows the SOC drop (e.g. `85 → 63% (−22%)`), a teal SOC consumption bar, and average speed (km/h) computed from start/end timestamps.
+- **German README** (`README.de.md`) — full German translation with language switcher. The English `README.md` links to it below the badge row.
+
 ## [0.21.0] - 2026-08-02
 
 ### Added
