@@ -3,286 +3,174 @@
     "step": {
       "fahrzeug": {
         "title": "EV Assistant - Vehicle",
-        "description": "Step 1/9: vehicle basics. Manufacturer, model, and usable battery capacity are required — manufacturer and model together form the device name in the HA device list. Usable battery capacity: the value actually available for driving/charging — NOT the often larger gross/factory figure many manufacturers advertise (e.g. many models: 58 kWh gross, but only 52 kWh usable). This value directly determines how many kWh one percentage point of SoC increase represents — enter it wrong, and every energy estimate is wrong. Charge efficiency is only a starting value (optional) — it's replaced automatically once enough real home charging sessions are available (see step 3). First registration date is purely informational. The odometer is also the basis for automatic trip detection (Fahrtenbuch, step 6) and the distance basis for the optional cost comparison in step 7.",
+        "description": "Step 1/7: Vehicle details. Usable battery capacity: the value actually available for driving/charging — NOT the larger gross/factory spec (e.g. 58 kWh gross, but only 52 kWh usable). This value directly determines how many kWh one SoC percentage point equals — if entered incorrectly, all energy estimates will be wrong.",
         "data": {
           "vehicle_hersteller": "Manufacturer",
           "vehicle_modell": "Model",
-          "erstzulassung": "First registration (display only, no calculation)",
-          "odo_entity": "Odometer entity (trip detection in step 6 + distance basis for cost comparison in step 7)",
-          "usable_kwh": "Usable battery capacity (kWh, net — NOT the gross factory figure)",
-          "charge_efficiency": "Charge efficiency (AC->battery, starting value only until automatic calibration)"
+          "erstzulassung": "First registration",
+          "odo_entity": "Odometer",
+          "soc_entity": "Vehicle SOC",
+          "usable_kwh": "Usable battery capacity (kWh, net)",
+          "charge_efficiency": "Charging efficiency (AC→battery, initial value)"
         }
       },
-      "grundsignale": {
-        "title": "EV Assistant - Core Signals",
-        "description": "Step 2/9: the two mandatory signals. Stellantis example: SoC entity = sensor.mein_auto_battery. Home-charging entity as a power sensor (e.g. wallbox charging power from evcc/Warp): from 0.1 kW counts as \"charging\". Important: this ONLY provides the yes/no signal \"currently charging at home\" — it is NOT the same charging power as in step 3 (that one deliberately comes from the vehicle rather than the wallbox, so it also works away from home during an external charge). Convert sensors in a different unit (e.g. watts) to kW via the template field, e.g. {{ value | float / 1000 }}.",
+      "evcc": {
+        "title": "EV Assistant - evcc & Wallbox",
+        "description": "Step 2/7: Wallbox and site entities (charge power, PV, grid, tariffs, statistics) are automatically imported from the evcc integration. Only needed here: the vehicle name in evcc (filters home-charging history) and the power entity of your wallbox. The wallbox power entity is used for yes/no detection of 'currently charging at home' — without it, every SoC increase will be incorrectly classified as external charging.",
         "data": {
-          "soc_entity": "SoC entity (required)",
-          "soc_template": "SoC template",
-          "home_entity": "Home-charging entity (evcc/Warp) (required)",
-          "home_template": "Home-charging template"
+          "evcc_vehicle_name": "Vehicle name in evcc",
+          "home_entity": "Wallbox charge power"
         }
       },
       "ladeleistung": {
-        "title": "EV Assistant - Charging Power",
-        "description": "Step 3/9: optional charging-power and wallbox-energy measurement — two different sources for two different purposes. Charging power is your vehicle's current instantaneous charging power in watts or kW (not a meter, typically vehicle telemetry rather than a wallbox sensor — which means it also reports values during an external charge away from home, where your own wallbox naturally can't measure anything) — it improves the energy estimate of an external charge over a pure SoC-delta estimate. If your sensor reports AC-side (charge-point) power, leave \"charging power is AC-side\" enabled (default); if it reports DC/battery-side power, disable it. The wallbox energy meter, by contrast, is the opposite: a cumulative kWh meter of your own wallbox (like a regular electricity meter, not an instantaneous value) — it's only relevant for home charging and enables automatic calibration of the charge efficiency from real home charging sessions, as well as the home-charging cost in step 7.",
+        "title": "EV Assistant - Charge Power",
+        "description": "Step 3/7: optional vehicle charge power and wallbox energy measurement. The vehicle charge power improves energy estimates for external charging sessions. The wallbox energy meter is a cumulative kWh counter — it enables charging efficiency calibration and home-charging cost tracking in step 7.",
         "data": {
-          "power_entity": "Vehicle charging power in watts/kW (optional)",
-          "power_template": "Vehicle charging power template",
-          "power_is_ac": "Charging power is AC-side (charge point) rather than DC-side (battery)",
-          "wallbox_energy_entity": "Wallbox energy meter (cumulative kWh meter of your wallbox, optional)",
-          "wallbox_energy_template": "Wallbox energy meter template"
+          "power_entity": "Vehicle charge power (W/kW)",
+          "power_is_ac": "Charge power is AC-side (charge point) not DC-side (battery)",
+          "wallbox_energy_entity": "Wallbox energy meter (cumulative kWh counter)"
         }
       },
       "ausgabe": {
-        "title": "EV Assistant - Output",
-        "description": "Step 4/9: how you're additionally notified about a detected external charge. A notification in Home Assistant's \"Notifications\" area ALWAYS appears automatically, regardless of this optional field — a notify service additionally sends a push notification (e.g. to your phone).",
+        "title": "EV Assistant - Notifications",
+        "description": "Step 4/7: how you get notified about a detected external charging session. A notification in the HA 'Notifications' area appears AUTOMATICALLY — a notify service additionally sends a push message (e.g. to your phone).",
         "data": {
-          "notify_service": "notify service for push notification (optional, in addition to the automatic notification)"
+          "notify_service": "notify service for push notification"
         }
       },
       "erkennung": {
         "title": "EV Assistant - Detection",
-        "description": "Step 5/9: fine-tuning of external-charge detection. The default values work for most cases — only change them if you know what you're doing. Sequence: a charge starts once the SoC rises above the last resting value by the start threshold; it ends either when the SoC drops below the highest value reached by more than the \"SoC drop\", or when no new high has been reached for the \"timeout without a new SoC high\" duration (e.g. because the battery is full). \"SoC noise\" tolerates normal sensor jitter while tracking the high point and must therefore ALWAYS be smaller than the start threshold — otherwise ordinary noise alone can trigger a false detection.",
+        "description": "Step 5/7: fine-tuning of external charging detection. Default values work for most cases. Flow: charging starts when SoC rises by the start threshold; ends on SoC drop below the peak or after timeout. SoC noise must ALWAYS be smaller than the start threshold.",
         "data": {
-          "start_delta": "Start threshold (%, how much SoC increase counts as a charge starting)",
-          "noise": "SoC noise (%, tolerance against sensor jitter — must be smaller than the start threshold!)",
-          "idle_timeout_s": "Timeout without a new SoC high (s, ends the charge even without a SoC drop)",
-          "drop_ends": "SoC drop ends charge immediately (%, relative to the highest value reached so far)"
+          "start_delta": "Start threshold (%, minimum SoC rise to count as charging)",
+          "noise": "SoC noise (%, tolerance — must be smaller than the start threshold!)",
+          "idle_timeout_s": "Timeout without new SoC peak (s)",
+          "drop_ends": "SoC drop ends charging immediately (%)"
         }
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Trip Log",
-        "description": "Step 6/9: fine-tuning of automatic trip detection (Fahrtenbuch), which uses the same odometer sensor from step 1. The default values work for most cases. Sequence: a trip begins as soon as the odometer increases again after a period of standing still, and ends once the odometer hasn't increased for the given standing-still duration (the car is parked). Detected trips shorter than the minimum distance are discarded (filters out sensor rounding noise). Detected trips are then confirmed manually with a start/end location (service ev_assistant.log_trip). Optional: a person or device_tracker entity (e.g. your phone) provides a suggestion for the start/end location based on its HA zone (e.g. \"Home\") — this doesn't replace the manual entry, it only prefills it.",
+        "description": "Step 6/7: fine-tuning of automatic trip detection, which uses the same odometer sensor from step 1. Default values work for most cases.",
         "data": {
-          "trip_min_km": "Minimum distance (km, shorter detected trips are discarded)",
-          "trip_idle_timeout_s": "Standing-still duration until trip end (s, the trip is considered finished without a new odometer reading)",
-          "gps_entity": "Location suggestion (optional, person or device_tracker entity, e.g. your phone)"
+          "trip_min_km": "Minimum distance (km)",
+          "trip_idle_timeout_s": "Idle time until trip end (s)",
+          "gps_entity": "Location suggestion (person or device_tracker entity)"
         }
       },
       "vergleich": {
         "title": "EV Assistant - Cost Comparison",
-        "description": "Step 7/9: optional cost comparison against a combustion-engine car. All fields optional — without them the savings sensors stay unknown. Home-charging costs additionally require a configured wallbox energy measurement (step 3). Home electricity price and fuel price: each either a fixed value OR an entity (e.g. a dynamic tariff sensor or a fuel-price sensor) — the entity takes priority if both are set.",
+        "description": "Step 7/7: Optional cost comparison against a combustion vehicle. All fields optional. Home-charging costs require a wallbox energy meter from step 3. Fixed value OR entity — the entity takes precedence.",
         "data": {
           "home_price_kwh": "Price per kWh (home charging)",
-          "home_price_entity": "Home electricity price entity (overrides the fixed price if set)",
-          "verbrenner_l_100km": "Consumption of comparison vehicle (L/100km)",
+          "home_price_entity": "Home electricity price entity (overrides fixed price)",
+          "verbrenner_l_100km": "Comparison vehicle consumption (L/100km)",
           "verbrenner_price_per_liter": "Fuel price (EUR/liter)",
-          "verbrenner_price_entity": "Fuel price entity (overrides the fixed price if set)"
-        }
-      },
-      "wallbox": {
-        "title": "EV Assistant - Wallbox",
-        "description": "Step 8/9: this vehicle's live charging state at the charge point (evcc) for the dashboard panel (Overview tab: SoC ring, status badge). All fields optional — without them the panel shows \"—\" instead of values. Charge mode is a select entity (evcc); all others are sensor entities. Site-level/tariff data (PV, grid, home battery, tariffs) follows in the next step.",
-        "data": {
-          "evcc_charge_power": "Charge power (kW, wallbox)",
-          "evcc_charge_status": "Charge status (A=disconnected / B=connected / C=charging)",
-          "evcc_mode": "Charge mode (select: Immediate / Min+PV / PV only / Off)",
-          "evcc_phases_active": "Active phases (count)",
-          "evcc_vehicle_soc": "Vehicle SoC (%, wallbox reading)",
-          "evcc_limit_soc": "Charge limit SoC (%)",
-          "evcc_session_energy": "Session energy (kWh)",
-          "evcc_session_solar_pct": "Session solar share (%)",
-          "evcc_session_price": "Session cost (EUR)",
-          "evcc_charge_duration": "Charge duration (s)"
-        }
-      },
-      "evcc": {
-        "title": "EV Assistant - evcc",
-        "description": "Step 9/9: site-level/tariff data (applies to the whole evcc installation, not just this charge point) for the flow diagram/charts in the dashboard panel. All fields optional — without them the panel shows \"—\" instead of values. The vehicle name in evcc isn't a sensor, but the name as configured in evcc (the \"vehicle\" field in the charging log) — with multiple vehicles, it filters the panel's home-charging history to this vehicle.",
-        "data": {
-          "evcc_vehicle_name": "Vehicle name in evcc (with multiple vehicles, filters the home-charging history)",
-          "evcc_tariff_grid": "Current grid tariff (EUR/kWh)",
-          "evcc_tariff_feedin": "Current feed-in tariff (EUR/kWh)",
-          "evcc_stat_total_kwh": "Total energy charged (kWh)",
-          "evcc_stat_solar_pct": "Total solar share (%)",
-          "evcc_stat_avg_price": "Average price (EUR/kWh)",
-          "evcc_pv_power": "PV power (W, site)",
-          "evcc_grid_power": "Grid power (W, site)",
-          "evcc_battery_power": "Home battery power (W, site)"
+          "verbrenner_price_entity": "Fuel price entity (overrides fixed price)"
         }
       }
     },
     "error": {
-      "no_soc_source": "Please provide a SoC entity.",
-      "no_home_source": "Please provide a home-charging entity. Without this signal, every SoC increase is falsely detected as an external charge, including normal charging at home.",
-      "vehicle_name_required": "Please provide manufacturer and model."
+      "vehicle_name_required": "Please enter manufacturer and model."
     }
   },
   "options": {
     "step": {
       "fahrzeug": {
         "title": "EV Assistant - Vehicle",
-        "description": "Step 1/9: vehicle basics. Manufacturer, model, and usable battery capacity are required. Usable battery capacity: the value actually available for driving/charging — NOT the often larger gross/factory figure many manufacturers advertise.",
+        "description": "Step 1/7: Vehicle details.",
         "data": {
           "vehicle_hersteller": "Manufacturer",
           "vehicle_modell": "Model",
-          "erstzulassung": "First registration (display only, no calculation)",
-          "odo_entity": "Odometer entity (trip detection in step 6 + distance basis for cost comparison in step 7)",
-          "usable_kwh": "Usable battery capacity (kWh, net — NOT the gross factory figure)",
-          "charge_efficiency": "Charge efficiency (AC->battery, starting value only until automatic calibration)"
+          "erstzulassung": "First registration",
+          "odo_entity": "Odometer",
+          "soc_entity": "Vehicle SOC",
+          "usable_kwh": "Usable battery capacity (kWh, net)",
+          "charge_efficiency": "Charging efficiency (AC→battery, initial value)"
         }
       },
-      "grundsignale": {
-        "title": "EV Assistant - Core Signals",
-        "description": "Step 2/9: the two mandatory signals. Stellantis example: SoC entity = sensor.mein_auto_battery. Home-charging entity as a power sensor (e.g. wallbox charging power from evcc/Warp): from 0.1 kW counts as \"charging\". Important: this ONLY provides the yes/no signal \"currently charging at home\" — it is NOT the same charging power as in step 3 (that one deliberately comes from the vehicle rather than the wallbox, so it also works away from home during an external charge). Convert sensors in a different unit (e.g. watts) to kW via the template field, e.g. {{ value | float / 1000 }}.",
+      "evcc": {
+        "title": "EV Assistant - evcc & Wallbox",
+        "description": "Step 2/7: Wallbox and site entities are automatically imported from the evcc integration.",
         "data": {
-          "soc_entity": "SoC entity (required)",
-          "soc_template": "SoC template",
-          "home_entity": "Home-charging entity (evcc/Warp) (required)",
-          "home_template": "Home-charging template"
+          "evcc_vehicle_name": "Vehicle name in evcc",
+          "home_entity": "Wallbox charge power"
         }
       },
       "ladeleistung": {
-        "title": "EV Assistant - Charging Power",
-        "description": "Step 3/9: optional charging-power and wallbox-energy measurement.",
+        "title": "EV Assistant - Charge Power",
+        "description": "Step 3/7: optional vehicle charge power and wallbox energy meter.",
         "data": {
-          "power_entity": "Vehicle charging power in watts/kW (optional)",
-          "power_template": "Vehicle charging power template",
-          "power_is_ac": "Charging power is AC-side (charge point) rather than DC-side (battery)",
-          "wallbox_energy_entity": "Wallbox energy meter (cumulative kWh meter of your wallbox, optional)",
-          "wallbox_energy_template": "Wallbox energy meter template"
+          "power_entity": "Vehicle charge power (W/kW)",
+          "power_is_ac": "Charge power is AC-side (charge point) not DC-side (battery)",
+          "wallbox_energy_entity": "Wallbox energy meter (cumulative kWh counter)"
         }
       },
       "ausgabe": {
-        "title": "EV Assistant - Output",
-        "description": "Step 4/9: how you're additionally notified about a detected external charge. A notification in Home Assistant's \"Notifications\" area ALWAYS appears automatically, regardless of this optional field — a notify service additionally sends a push notification (e.g. to your phone).",
+        "title": "EV Assistant - Notifications",
+        "description": "Step 4/7: push notification for detected external charging sessions.",
         "data": {
-          "notify_service": "notify service for push notification (optional, in addition to the automatic notification)"
+          "notify_service": "notify service for push notification"
         }
       },
       "erkennung": {
         "title": "EV Assistant - Detection",
-        "description": "Step 5/9: fine-tuning of external-charge detection. Sequence: a charge starts once the SoC rises above the last resting value by the start threshold; it ends either on a SoC drop below the high point or after the timeout without a new high. SoC noise must ALWAYS be smaller than the start threshold, otherwise ordinary sensor jitter alone triggers a false detection.",
+        "description": "Step 5/7: fine-tuning of external charging detection.",
         "data": {
-          "start_delta": "Start threshold (%, how much SoC increase counts as a charge starting)",
-          "noise": "SoC noise (%, tolerance against sensor jitter — must be smaller than the start threshold!)",
-          "idle_timeout_s": "Timeout without a new SoC high (s, ends the charge even without a SoC drop)",
-          "drop_ends": "SoC drop ends charge immediately (%, relative to the highest value reached so far)"
+          "start_delta": "Start threshold (%, minimum SoC rise to count as charging)",
+          "noise": "SoC noise (%, tolerance — must be smaller than the start threshold!)",
+          "idle_timeout_s": "Timeout without new SoC peak (s)",
+          "drop_ends": "SoC drop ends charging immediately (%)"
         }
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Trip Log",
-        "description": "Step 6/9: fine-tuning of automatic trip detection (Fahrtenbuch). A trip begins as soon as the odometer increases again after a period of standing still, and ends after the given standing-still duration without further increase. Detected trips shorter than the minimum distance are discarded. Optional: a person/device_tracker entity provides a suggestion for the start/end location based on its HA zone.",
+        "description": "Step 6/7: fine-tuning of automatic trip detection.",
         "data": {
-          "trip_min_km": "Minimum distance (km, shorter detected trips are discarded)",
-          "trip_idle_timeout_s": "Standing-still duration until trip end (s, the trip is considered finished without a new odometer reading)",
-          "gps_entity": "Location suggestion (optional, person or device_tracker entity, e.g. your phone)"
+          "trip_min_km": "Minimum distance (km)",
+          "trip_idle_timeout_s": "Idle time until trip end (s)",
+          "gps_entity": "Location suggestion (person or device_tracker entity)"
         }
       },
       "vergleich": {
         "title": "EV Assistant - Cost Comparison",
-        "description": "Step 7/9: optional cost comparison against a combustion-engine car. All fields optional — without them the savings sensors stay unknown. Home-charging costs additionally require a configured wallbox energy measurement (step 3). Home electricity price and fuel price: each either a fixed value OR an entity (e.g. a dynamic tariff sensor or a fuel-price sensor) — the entity takes priority if both are set.",
+        "description": "Step 7/7: Optional cost comparison against a combustion vehicle.",
         "data": {
           "home_price_kwh": "Price per kWh (home charging)",
-          "home_price_entity": "Home electricity price entity (overrides the fixed price if set)",
-          "verbrenner_l_100km": "Consumption of comparison vehicle (L/100km)",
+          "home_price_entity": "Home electricity price entity (overrides fixed price)",
+          "verbrenner_l_100km": "Comparison vehicle consumption (L/100km)",
           "verbrenner_price_per_liter": "Fuel price (EUR/liter)",
-          "verbrenner_price_entity": "Fuel price entity (overrides the fixed price if set)"
-        }
-      },
-      "wallbox": {
-        "title": "EV Assistant - Wallbox",
-        "description": "Step 8/9: this vehicle's live charging state at the charge point (evcc) for the dashboard panel (Overview tab). All fields optional — without them the panel shows \"—\" instead of values.",
-        "data": {
-          "evcc_charge_power": "Charge power (kW, wallbox)",
-          "evcc_charge_status": "Charge status (A=disconnected / B=connected / C=charging)",
-          "evcc_mode": "Charge mode (select: Immediate / Min+PV / PV only / Off)",
-          "evcc_phases_active": "Active phases (count)",
-          "evcc_vehicle_soc": "Vehicle SoC (%, wallbox reading)",
-          "evcc_limit_soc": "Charge limit SoC (%)",
-          "evcc_session_energy": "Session energy (kWh)",
-          "evcc_session_solar_pct": "Session solar share (%)",
-          "evcc_session_price": "Session cost (EUR)",
-          "evcc_charge_duration": "Charge duration (s)"
-        }
-      },
-      "evcc": {
-        "title": "EV Assistant - evcc",
-        "description": "Step 9/9: site-level/tariff data (applies to the whole evcc installation, not just this charge point) for the flow diagram/charts in the dashboard panel. All fields optional.",
-        "data": {
-          "evcc_vehicle_name": "Vehicle name in evcc (with multiple vehicles, filters the home-charging history)",
-          "evcc_tariff_grid": "Current grid tariff (EUR/kWh)",
-          "evcc_tariff_feedin": "Current feed-in tariff (EUR/kWh)",
-          "evcc_stat_total_kwh": "Total energy charged (kWh)",
-          "evcc_stat_solar_pct": "Total solar share (%)",
-          "evcc_stat_avg_price": "Average price (EUR/kWh)",
-          "evcc_pv_power": "PV power (W, site)",
-          "evcc_grid_power": "Grid power (W, site)",
-          "evcc_battery_power": "Home battery power (W, site)"
+          "verbrenner_price_entity": "Fuel price entity (overrides fixed price)"
         }
       }
     },
     "error": {
-      "no_soc_source": "Please provide a SoC entity.",
-      "no_home_source": "Please provide a home-charging entity. Without this signal, every SoC increase is falsely detected as an external charge, including normal charging at home.",
-      "vehicle_name_required": "Please provide manufacturer and model."
+      "vehicle_name_required": "Please enter manufacturer and model."
     }
   },
   "entity": {
     "sensor": {
-      "pending_estimate": {
-        "name": "External Charge Estimate"
-      },
-      "last_cost": {
-        "name": "External Charge Cost (Last)"
-      },
-      "last_kwh": {
-        "name": "External Charge kWh (Last)"
-      },
-      "total_kwh": {
-        "name": "External Charge kWh (Total)"
-      },
-      "total_cost": {
-        "name": "External Charge Cost (Total)"
-      },
-      "count": {
-        "name": "External Charge Count"
-      },
-      "last_price": {
-        "name": "External Charge Price (Last)"
-      },
-      "last_duration": {
-        "name": "External Charge Duration (Last)"
-      },
-      "measured_efficiency": {
-        "name": "Charge Efficiency (Measured)"
-      },
-      "odo": {
-        "name": "Odometer"
-      },
-      "erstzulassung": {
-        "name": "First Registration"
-      },
-      "home_kwh": {
-        "name": "Home Charging kWh (Total)"
-      },
-      "home_cost": {
-        "name": "Home Charging Cost (Total)"
-      },
-      "savings": {
-        "name": "Savings vs. Combustion Car"
-      },
-      "trip_pending_estimate": {
-        "name": "Trip Estimate"
-      },
-      "last_trip_km": {
-        "name": "Trip km (Last)"
-      },
-      "trip_count": {
-        "name": "Trip Log Count"
-      },
-      "total_trip_km": {
-        "name": "Trip Log km (Total)"
-      }
+      "pending_estimate": { "name": "External Charge Estimate" },
+      "last_cost": { "name": "External Charge Cost (last)" },
+      "last_kwh": { "name": "External Charge kWh (last)" },
+      "total_kwh": { "name": "External Charge kWh (total)" },
+      "total_cost": { "name": "External Charge Cost (total)" },
+      "count": { "name": "External Charge Count" },
+      "last_price": { "name": "External Charge Price (last)" },
+      "last_duration": { "name": "External Charge Duration (last)" },
+      "measured_efficiency": { "name": "Charging Efficiency (measured)" },
+      "odo": { "name": "Odometer" },
+      "erstzulassung": { "name": "First Registration" },
+      "home_kwh": { "name": "Home Charging kWh (total)" },
+      "home_cost": { "name": "Home Charging Cost (total)" },
+      "savings": { "name": "Savings vs. ICE Vehicle" },
+      "trip_pending_estimate": { "name": "Trip Estimate" },
+      "last_trip_km": { "name": "Trip km (last)" },
+      "trip_count": { "name": "Trip Log Count" },
+      "total_trip_km": { "name": "Trip Log km (total)" }
     },
     "binary_sensor": {
-      "pending": {
-        "name": "External Charge Detection Open"
-      },
-      "trip_pending": {
-        "name": "Trip Detection Open"
-      }
+      "pending": { "name": "External Charge Capture Open" },
+      "trip_pending": { "name": "Trip Capture Open" }
     }
   }
 }

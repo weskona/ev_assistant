@@ -2,6 +2,50 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.20.0] - 2026-08-02
+
+### Changed
+
+- **Config flow reduced from 9 to 7 steps**: the `grundsignale` step (SOC entity, home-charging entity) and the `wallbox` step (evcc live entities) have been removed. SOC entity is now in step 1 (vehicle details) and is a **required** field; home-charging entity (wallbox charge power) moved to step 2 alongside the evcc vehicle name.
+- **All evcc entities auto-discovered**: `evcc_intg` is now declared as a Home Assistant dependency. During setup the integration automatically reads all enabled entities from the evcc integration config entry and maps them to the corresponding `CONF_EVCC_*` keys — no manual entity selection needed for PV, grid, battery, tariff, and loadpoint entities.
+- **Step 2 (evcc) simplified**: only two optional fields remain — the vehicle name in evcc (for filtering home-charging history) and the wallbox charge power entity (yes/no signal for "currently charging at home").
+- **All template fields removed** (`soc_template`, `home_template`, `power_template`, `wallbox_energy_template`) — direct entity selection is now used exclusively.
+- Translation files (`de.json`, `en.json`, `strings.json`) completely rewritten to match the new 7-step structure with updated step numbers and labels.
+
+### Added
+
+- **Home charging kWh via evcc vehicle statistics**: the coordinator now reads `sensor.evcc_charging_sessions_vehicles` to get per-vehicle total home-charging energy directly from evcc. Falls back to wallbox energy meter delta if the evcc vehicle key cannot be resolved.
+- **Auto-detection of evcc vehicle key**: if no vehicle name is configured manually, the coordinator attempts to match the config entry title (e.g. `EV Assistant (VW ID4)`) against the vehicle keys in the evcc charging-sessions sensor attributes.
+
+### Fixed
+
+- `verbrenner_price_entity` in the cost-comparison step was using the home-price entity selector instead of its own dedicated entity selector.
+
+## [0.19.0] - 2026-08-01
+
+### Added
+
+- **Fully redesigned Fahrzeuge panel — a complete EV dashboard**: the Fahrzeuge tab is now a three-column vehicle dashboard: home charging (evcc sessions), external charging, and trip log. Each column shows overall totals, the last session, and the full history — all in one merged card. When more than one vehicle is configured, pill-style tabs appear to switch between them.
+- **Vehicle card with SOC and name**: the vehicle overview now shows the vehicle name and current SOC as a large number with a color-coded bar (red < 20 %, orange < 40 %, green otherwise), sourced from the configured evcc vehicle SoC entity.
+- **Home charging history** (evcc sessions) now includes SOC (start → end + delta), price per kWh, and a SOC progress bar per entry.
+- **SOC progress bar in external charging history**: same bar as in home charging, colored in grid blue.
+- **Color-coded card design** following HA energy dashboard colors: PV amber (`#ff9800`) for home charging, grid blue (`#488fc2`) for external charging, teal (`#14b8a6`) for the trip log — with a color top border, icon background, and tinted KPI values.
+- **"Last session" section as a tinted block**: the last session's KPIs are grouped in a distinct `--bg-2` block within the summary card.
+- **KPI improvements**: values are centered and distributed evenly across the full card width; vertical dividers between individual KPIs.
+- **Tab switch animation**: switching between vehicles triggers a smooth fade-in transition.
+- **Hover effects** on all history entries.
+- **Summary and history merged into one card**: no separate history card — the history section flows directly below the summary within the same card.
+
+### Changed
+
+- Vehicle card icon changed from `mdi:car-info` to `mdi:car-electric`.
+
+## [0.18.2] - 2026-08-01
+
+### Added
+
+- **Multi-vehicle tab support in the Fahrzeuge view**: when more than one EV Assistant config entry is configured, pill-style tabs appear at the top of the Fahrzeuge view to switch between vehicles. Each tab shows the vehicle name (extracted from the entry title). Switching tabs resets per-vehicle state (pending forms, history, filters) while keeping shared state (evcc session cache). The backend now collects all ev_assistant config entries into a `vehicles` array in the panel config so the frontend has complete entity maps and config IDs for each vehicle. Unloading one entry re-registers the panel with the remaining entries.
+
 ## [0.18.1] - 2026-07-31
 
 ### Fixed

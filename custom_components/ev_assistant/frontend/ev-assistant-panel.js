@@ -37,6 +37,8 @@ class EVAssistantPanel extends HTMLElement {
     this._vehicleIdx = 0;
     this._vtBtns = [];
     this._vehicleContent = null;
+    this._chartPeriod = "woche";
+    this._chartNavOffset = 0;
   }
 
   set hass(hass) {
@@ -645,6 +647,48 @@ class EVAssistantPanel extends HTMLElement {
         </div>
       </div>
 
+      <div class="card card-charts">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:chart-bar"></ha-icon></span>
+          <h2>Diagramme</h2>
+          <div class="chart-pills">
+            <button class="pill${this._chartPeriod === "woche" ? " active" : ""}" data-period="woche">Woche</button>
+            <button class="pill${this._chartPeriod === "monat" ? " active" : ""}" data-period="monat">Monat</button>
+            <button class="pill${this._chartPeriod === "jahr"  ? " active" : ""}" data-period="jahr">Jahr</button>
+          </div>
+          <div class="chart-nav" id="chart-nav">
+            <button class="nav-arrow" id="chart-nav-prev">&#8249;</button>
+            <span class="nav-label" id="chart-nav-label"></span>
+            <button class="nav-arrow" id="chart-nav-next">&#8250;</button>
+          </div>
+        </div>
+        <div class="charts-grid">
+          <div class="chart-col">
+            <div class="chart-col-title">Ladeübersicht</div>
+            <div class="chart-legend">
+              <span class="cleg"><span class="cleg-dot home"></span>Heimladen</span>
+              <span class="cleg"><span class="cleg-dot ext"></span>Fremdladung</span>
+            </div>
+            <div id="overview-chart"></div>
+          </div>
+          <div class="chart-col">
+            <div class="chart-col-title">Kostenübersicht</div>
+            <div class="chart-legend">
+              <span class="cleg"><span class="cleg-dot home"></span>Heimladen</span>
+              <span class="cleg"><span class="cleg-dot ext"></span>Fremdladung</span>
+            </div>
+            <div id="kosten-chart"></div>
+          </div>
+          <div class="chart-col">
+            <div class="chart-col-title">Solaranteil</div>
+            <div class="chart-legend">
+              <span class="cleg"><span class="cleg-dot solar"></span>Solar Ø</span>
+            </div>
+            <div id="solar-chart"></div>
+          </div>
+        </div>
+      </div>
+
       <div class="vh-3col">
         <div class="vh-col">
           <div class="card card-home">
@@ -764,7 +808,38 @@ class EVAssistantPanel extends HTMLElement {
       histChargeList: q("#hist-charge-list"),
       histTripList:   q("#hist-trip-list"),
       histHomeList:   q("#hist-home-list"),
+      overviewChart:  q("#overview-chart"),
+      kostenChart:    q("#kosten-chart"),
+      solarChart:     q("#solar-chart"),
+      chartNav:       q("#chart-nav"),
+      chartNavLabel:  q("#chart-nav-label"),
+      chartNavPrev:   q("#chart-nav-prev"),
+      chartNavNext:   q("#chart-nav-next"),
     };
+    container.querySelectorAll(".chart-pills .pill").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        this._chartPeriod = btn.dataset.period;
+        this._chartNavOffset = 0;
+        container.querySelectorAll(".chart-pills .pill").forEach((b) => b.classList.toggle("active", b === btn));
+        this._updateChartNav();
+        this._renderAllCharts();
+      });
+    });
+    const navPrev = q("#chart-nav-prev");
+    const navNext = q("#chart-nav-next");
+    if (navPrev) navPrev.addEventListener("click", () => {
+      this._chartNavOffset--;
+      this._updateChartNav();
+      this._renderAllCharts();
+    });
+    if (navNext) navNext.addEventListener("click", () => {
+      if (this._chartNavOffset < 0) {
+        this._chartNavOffset++;
+        this._updateChartNav();
+        this._renderAllCharts();
+      }
+    });
+    this._updateChartNav();
     this._pendChargeSig = null;
     this._pendTripSig = null;
     this._histChargeSig = null;
@@ -1052,6 +1127,7 @@ class EVAssistantPanel extends HTMLElement {
     r.vhHomeKwh.textContent      = this._num("home_kwh", 1);
     r.vhHomeCost.textContent     = this._num("home_cost", 2);
     r.vhTripCount.textContent    = this._num("trip_count", 0);
+    this._renderAllCharts();
     r.vhTripKmTotal.textContent  = this._num("total_trip_km", 0);
     r.vhOdo.textContent          = this._num("odo", 0);
     r.vhEfficiency.textContent   = this._num("measured_efficiency", 1);
@@ -1519,6 +1595,14 @@ class EVAssistantPanel extends HTMLElement {
       if (configured) {
         const match = vehicles.find((v) => v.toLowerCase() === configured.toLowerCase());
         if (match) this._homeVehicleFilter = match;
+      } else if (vehicles.length > 1) {
+        // Auto-Erkennung: Tab-Bezeichnung gegen evcc-Fahrzeugnamen abgleichen
+        const label = (this._vehicleConf().title || "")
+          .replace(/^EV\s*Assistant\s*\(/i, "").replace(/\)\s*$/, "").trim().toLowerCase();
+        const match = vehicles.find((v) =>
+          label.includes(v.toLowerCase()) || v.toLowerCase().split(/\s+/).every((w) => label.includes(w))
+        );
+        if (match) this._homeVehicleFilter = match;
       }
     }
     if (this._homeVehicleFilter && !vehicles.includes(this._homeVehicleFilter)) {
@@ -1546,6 +1630,7 @@ class EVAssistantPanel extends HTMLElement {
       r.vhHomeCount.textContent     = filtered.length > 0 ? String(filtered.length)       : "—";
       r.vhHomeSolar.textContent     = avgSolar != null    ? String(Math.round(avgSolar))   : "—";
     }
+    this._renderAllCharts();
 
     const expanded = this._histHomeExpanded;
     const hist = expanded ? filtered : filtered.slice(0, 5);
@@ -1577,6 +1662,7 @@ class EVAssistantPanel extends HTMLElement {
           this._homeVehicleFilter = select.value || null;
           this._histHomeSig = null;
           this._renderHomeHistory();
+          this._renderAllCharts();
         });
       }
       list.appendChild(toolbar);
@@ -1639,6 +1725,183 @@ class EVAssistantPanel extends HTMLElement {
       });
       list.appendChild(toggle);
     }
+  }
+
+  // --- Ladeübersicht Balkendiagramm -------------------------------------------
+
+  _updateChartNav() {
+    const nav  = this._r && this._r.chartNav;
+    const lbl  = this._r && this._r.chartNavLabel;
+    const next = this._r && this._r.chartNavNext;
+    if (!nav) return;
+    const period = this._chartPeriod || "woche";
+    nav.style.display = "flex";
+    if (!lbl) return;
+    const now = new Date();
+    const offset = this._chartNavOffset || 0;
+    if (period === "monat") {
+      const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+      lbl.textContent = d.toLocaleDateString("de-DE", { month: "long", year: "numeric" });
+    } else if (period === "jahr") {
+      lbl.textContent = String(now.getFullYear() + offset);
+    } else {
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const daysToMon = today.getDay() === 0 ? 6 : today.getDay() - 1;
+      const mon = new Date(today.getTime() + (offset * 7 - daysToMon) * 86400000);
+      const utc = new Date(Date.UTC(mon.getFullYear(), mon.getMonth(), mon.getDate()));
+      utc.setUTCDate(utc.getUTCDate() + 4 - (utc.getUTCDay() || 7));
+      const yearStart = new Date(Date.UTC(utc.getUTCFullYear(), 0, 1));
+      const kw = Math.ceil((((utc - yearStart) / 86400000) + 1) / 7);
+      lbl.textContent = `KW ${kw}`;
+    }
+    if (next) next.disabled = offset >= 0;
+  }
+
+  _buildBuckets() {
+    const period = this._chartPeriod || "woche";
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const offset = this._chartNavOffset || 0;
+    const buckets = [];
+    if (period === "woche") {
+      const daysToMon = today.getDay() === 0 ? 6 : today.getDay() - 1;
+      const weekMonday = new Date(today.getTime() + (offset * 7 - daysToMon) * 86400000);
+      for (let i = 0; i < 7; i++) {
+        const d = new Date(weekMonday.getTime() + i * 86400000);
+        const start = d.getTime() / 1000;
+        buckets.push({ start, end: start + 86400, label: d.toLocaleDateString("de-DE", { weekday: "short" }).replace(".", "") });
+      }
+    } else if (period === "monat") {
+      const base = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+      const year = base.getFullYear(), month = base.getMonth();
+      const daysInMonth = new Date(year, month + 1, 0).getDate();
+      for (let d = 1; d <= daysInMonth; d++) {
+        const start = new Date(year, month, d).getTime() / 1000;
+        buckets.push({ start, end: start + 86400, label: (d === 1 || d % 5 === 0) ? String(d) : "" });
+      }
+    } else {
+      const yr = now.getFullYear() + offset;
+      for (let m = 0; m < 12; m++) {
+        const d = new Date(yr, m, 1), end = new Date(yr, m + 1, 1);
+        buckets.push({ start: d.getTime() / 1000, end: end.getTime() / 1000, label: d.toLocaleDateString("de-DE", { month: "short" }).replace(".", "") });
+      }
+    }
+    return buckets;
+  }
+
+  _homeSessionsFiltered() {
+    const raw = Array.isArray(this._homeSessions) ? this._homeSessions : [];
+    const cfg = (this._vehicleConf().evcc_vehicle_name || "").toLowerCase();
+    return raw.filter((s) => {
+      if (cfg && typeof s.vehicle === "string" && s.vehicle && s.vehicle.toLowerCase() !== cfg) return false;
+      if (!cfg && this._homeVehicleFilter && s.vehicle !== this._homeVehicleFilter) return false;
+      return true;
+    });
+  }
+
+  _extHist() {
+    const eid = this._eid("last_cost");
+    const st  = eid && this._hass ? this._hass.states[eid] : null;
+    return (st && Array.isArray((st.attributes || {}).historie)) ? st.attributes.historie : [];
+  }
+
+  _svgBarChart(wrap, buckets, series, opts = {}) {
+    if (!wrap) return;
+    const svgW = 500, svgH = 170;
+    const padL = 40, padR = 8, padT = 20, padB = 28;
+    const chartW = svgW - padL - padR, chartH = svgH - padT - padB;
+    const n = buckets.length, slotW = chartW / n, barW = Math.max(6, slotW * 0.55);
+    const totalVal = (b) => series.reduce((s, {key}) => s + (b[key] || 0), 0);
+    let roundedMax;
+    if (opts.fixedMax != null) {
+      roundedMax = opts.fixedMax;
+    } else {
+      const rawMax = Math.max(...buckets.map(totalVal), 0.1);
+      const mag = Math.pow(10, Math.floor(Math.log10(rawMax)));
+      const step = mag >= 10 ? mag : mag / 2;
+      roundedMax = Math.ceil(rawMax / step) * step;
+    }
+    const toH = (v) => Math.max(0, (v / roundedMax) * chartH);
+    const fmtVal = opts.fmtVal || ((v) => v >= 10 ? v.toFixed(1) : v.toFixed(2));
+    let yAxis = "", grid = "";
+    [0, 0.5, 1].forEach((f) => {
+      const val = roundedMax * f;
+      const yPos = padT + chartH - f * chartH;
+      const lbl = opts.fmtAxis ? opts.fmtAxis(val) : (val >= 10 ? Math.round(val) : val.toFixed(1));
+      yAxis += `<text x="${padL - 5}" y="${yPos + 4}" text-anchor="end" class="ca">${lbl}</text>`;
+      if (f > 0) grid += `<line x1="${padL}" y1="${yPos}" x2="${svgW - padR}" y2="${yPos}" class="cg"/>`;
+    });
+    let bars = "", xlabels = "";
+    buckets.forEach((b, i) => {
+      const xC = padL + slotW * i + slotW / 2, xL = xC - barW / 2, yBot = padT + chartH;
+      let yTop = yBot;
+      series.forEach(({key, color}) => {
+        const h = toH(b[key] || 0);
+        if (h > 0) { bars += `<rect x="${xL.toFixed(1)}" y="${(yTop-h).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}" rx="2"/>`; yTop -= h; }
+      });
+      const tot = totalVal(b), hTot = yBot - yTop;
+      if (hTot > 14) bars += `<text x="${xC.toFixed(1)}" y="${(yTop-3).toFixed(1)}" text-anchor="middle" class="cv">${fmtVal(tot)}</text>`;
+      xlabels += `<text x="${xC.toFixed(1)}" y="${svgH - 4}" text-anchor="middle" class="ca">${b.label}</text>`;
+    });
+    wrap.innerHTML = `<svg viewBox="0 0 ${svgW} ${svgH}" width="100%" style="display:block;overflow:visible">
+      <style>.ca{font-size:11px;fill:var(--ink-dim);font-family:inherit}.cv{font-size:10px;fill:var(--ink-mid);font-family:inherit}.cg{stroke:var(--line);stroke-width:1}</style>
+      <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT+chartH}" stroke="var(--line-s)" stroke-width="1"/>
+      ${grid}${yAxis}${bars}${xlabels}</svg>`;
+  }
+
+  _renderAllCharts() {
+    this._renderChart();
+    this._renderChartKosten();
+    this._renderChartSolar();
+  }
+
+  _renderChart() {
+    const buckets = this._buildBuckets().map(b => ({...b, home: 0, ext: 0}));
+    this._homeSessionsFiltered().forEach((s) => {
+      const ts = s.created ? Date.parse(s.created) / 1000 : null;
+      const kwh = typeof s.chargedEnergy === "number" ? s.chargedEnergy : 0;
+      if (ts != null && kwh > 0) buckets.forEach((b) => { if (ts >= b.start && ts < b.end) b.home += kwh; });
+    });
+    this._extHist().forEach((h) => {
+      const ts = h.start_ts != null ? h.start_ts : h.erfasst_ts;
+      const kwh = typeof h.kwh === "number" ? h.kwh : 0;
+      if (ts != null && kwh > 0) buckets.forEach((b) => { if (ts >= b.start && ts < b.end) b.ext += kwh; });
+    });
+    this._svgBarChart(this._r && this._r.overviewChart, buckets,
+      [{key: "home", color: "var(--c-home)"}, {key: "ext", color: "var(--c-ext)"}]);
+  }
+
+  _renderChartKosten() {
+    const buckets = this._buildBuckets().map(b => ({...b, home: 0, ext: 0}));
+    this._homeSessionsFiltered().forEach((s) => {
+      const ts   = s.created ? Date.parse(s.created) / 1000 : null;
+      const cost = typeof s.price === "number" ? s.price : 0;
+      if (ts != null && cost > 0) buckets.forEach((b) => { if (ts >= b.start && ts < b.end) b.home += cost; });
+    });
+    this._extHist().forEach((h) => {
+      const ts   = h.start_ts != null ? h.start_ts : h.erfasst_ts;
+      const cost = typeof h.kosten === "number" ? h.kosten : 0;
+      if (ts != null && cost > 0) buckets.forEach((b) => { if (ts >= b.start && ts < b.end) b.ext += cost; });
+    });
+    this._svgBarChart(this._r && this._r.kostenChart, buckets,
+      [{key: "home", color: "var(--c-home)"}, {key: "ext", color: "var(--c-ext)"}],
+      {fmtVal: (v) => v.toFixed(2)});
+  }
+
+  _renderChartSolar() {
+    const buckets = this._buildBuckets().map(b => ({...b, solar: 0, _kwh: 0, _skwh: 0}));
+    this._homeSessionsFiltered().forEach((s) => {
+      const ts  = s.created ? Date.parse(s.created) / 1000 : null;
+      const kwh = typeof s.chargedEnergy === "number" ? s.chargedEnergy : 0;
+      const pct = typeof s.solarPercentage === "number" ? s.solarPercentage : null;
+      if (ts != null && kwh > 0 && pct != null) {
+        buckets.forEach((b) => { if (ts >= b.start && ts < b.end) { b._kwh += kwh; b._skwh += kwh * pct; } });
+      }
+    });
+    buckets.forEach((b) => { b.solar = b._kwh > 0 ? b._skwh / b._kwh : 0; });
+    this._svgBarChart(this._r && this._r.solarChart, buckets,
+      [{key: "solar", color: "var(--c-solar)"}],
+      {fixedMax: 100, fmtAxis: (v) => Math.round(v), fmtVal: (v) => Math.round(v) + " %"});
   }
 
   // --- Styles -----------------------------------------------------------------
@@ -1852,6 +2115,37 @@ class EVAssistantPanel extends HTMLElement {
         color: var(--accent); --mdc-icon-size: 6cqw;
       }
 
+      /* Ladeübersicht Chart */
+      .card-charts .card-head { align-items: center; }
+      .charts-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin-top: 10px; }
+      .chart-col { padding: 0 var(--gap); }
+      .chart-col:first-child { padding-left: 0; }
+      .chart-col:last-child  { padding-right: 0; }
+      .chart-col + .chart-col { border-left: 1px solid var(--line); }
+      .chart-col-title { font-size: 0.78rem; font-weight: 500; color: var(--ink-mid); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+      .chart-pills { display: flex; gap: 4px; margin-left: auto; }
+      .chart-pills .pill {
+        padding: 4px 12px; border-radius: 20px;
+        border: 1px solid var(--line-s); background: transparent;
+        color: var(--ink-mid); font-size: 0.8rem; cursor: pointer;
+        font-family: inherit; transition: background 0.15s, color 0.15s;
+      }
+      .chart-pills .pill:hover { background: var(--bg-0); color: var(--ink); }
+      .chart-pills .pill.active { background: var(--accent); color: #fff; border-color: transparent; }
+      .vh-chart-controls { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; flex-wrap: wrap; }
+      .vh-chart-controls .chart-nav { margin: 0; }
+      .chart-nav { display: none; align-items: center; justify-content: center; gap: 8px; margin: 4px 0 6px; }
+      .nav-label { font-size: 0.85rem; font-weight: 500; color: var(--ink); min-width: 120px; text-align: center; }
+      .nav-arrow { background: none; border: 1px solid var(--line-s); border-radius: 50%; width: 26px; height: 26px; display: grid; place-items: center; cursor: pointer; color: var(--ink-mid); font-size: 1.1rem; line-height: 1; transition: background 0.15s, color 0.15s; font-family: inherit; padding: 0; }
+      .nav-arrow:hover:not(:disabled) { background: var(--bg-0); color: var(--ink); }
+      .nav-arrow:disabled { opacity: 0.3; cursor: default; }
+      .chart-legend { display: flex; gap: 14px; margin: 4px 0 10px; font-size: 0.82rem; color: var(--ink-mid); }
+      .cleg { display: flex; align-items: center; gap: 5px; }
+      .cleg-dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+      .cleg-dot.home  { background: var(--c-home); }
+      .cleg-dot.ext   { background: var(--c-ext); }
+      .cleg-dot.solar { background: var(--c-solar); }
+
       /* Fahrzeuge tab */
       .tab-wrap { display: flex; flex-direction: column; gap: var(--gap); }
       #vh-content { display: flex; flex-direction: column; gap: var(--gap); }
@@ -1877,7 +2171,7 @@ class EVAssistantPanel extends HTMLElement {
       .kv.green { color: #4ade80; }
 
       /* Farbige Summary-Cards — HA Energiedashboard-Farben */
-      :host { --c-home: #ff9800; --c-ext: #488fc2; --c-trip: #14b8a6; }
+      :host { --c-home: #ff9800; --c-ext: #488fc2; --c-trip: #14b8a6; --c-solar: #4ade80; }
 
       /* Fahrzeug-Card */
       .card-vehicle { border-top: 3px solid var(--accent); }

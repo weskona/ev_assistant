@@ -17,8 +17,8 @@ from homeassistant.helpers.template import Template
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
-    CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_GPS_ENTITY, CONF_HOME_ENTITY, CONF_HOME_PRICE_ENTITY,
-    CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
+    CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_EVCC_VEHICLE_NAME, CONF_GPS_ENTITY, CONF_HOME_ENTITY,
+    CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
     CONF_IDLE_TIMEOUT, CONF_NOISE, CONF_NOTIFY_SERVICE,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE,
     CONF_ODO_ENTITY, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE,
@@ -908,7 +908,38 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             delta *= MILES_TO_KM
         return round(delta, 1)
 
+    def _evcc_vehicle_key(self) -> Optional[str]:
+        """Fahrzeugname in evcc: aus Konfiguration oder via Auto-Erkennung
+        anhand des Entry-Titels (z.B. 'EV Assistant (VW ID4)' → 'ID4')."""
+        configured = self._opt(CONF_EVCC_VEHICLE_NAME)
+        if configured:
+            return configured
+        state = self.hass.states.get("sensor.evcc_charging_sessions_vehicles")
+        if not state:
+            return None
+        import re
+        label = re.sub(r"^EV\s*Assistant\s*\(", "", self.entry.title or "", flags=re.IGNORECASE)
+        label = re.sub(r"\)\s*$", "", label).strip().lower()
+        _skip = {"state_class", "icon", "friendly_name", "unit_of_measurement", "device_class"}
+        for key, val in state.attributes.items():
+            if key in _skip or not isinstance(val, dict):
+                continue
+            k = key.lower()
+            if label.find(k) != -1 or all(w in label for w in k.split()):
+                return key
+        return None
+
     def _home_kwh(self) -> Optional[float]:
+        """Heimladen kWh: bevorzugt evcc-Fahrzeugstatistik, Fallback auf Wallbox-Zähler-Delta."""
+        veh = self._evcc_vehicle_key()
+        if veh:
+            state = self.hass.states.get("sensor.evcc_charging_sessions_vehicles")
+            if state:
+                veh_data = state.attributes.get(veh)
+                if isinstance(veh_data, dict):
+                    energy = veh_data.get("chargedEnergy")
+                    if energy is not None:
+                        return round(float(energy), 2)
         start = self.data.get("wallbox_energy_start")
         if self._wallbox_energy is None or start is None:
             return None
