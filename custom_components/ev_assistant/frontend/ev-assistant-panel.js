@@ -1377,6 +1377,7 @@ class EVAssistantPanel extends HTMLElement {
           <div class="hist-figures-left">
             ${soc ? `<span class="hist-soc">${soc}</span>` : ""}
             <span class="hist-kwh">${Number(h.kwh).toFixed(2)}<small>kWh</small></span>
+            ${(() => { const p = h.dauer_min >= 5 ? h.kwh / (h.dauer_min / 60) : null; return (p >= 1 && p <= 350) ? `<span class="hist-power">${p.toFixed(1)}<small>kW</small></span>` : ""; })()}
             <span class="hist-price">${Number(h.preis_kwh).toFixed(3)} €/kWh</span>
           </div>
           <span class="hist-cost">${Number(h.kosten).toFixed(2)} €</span>
@@ -2367,6 +2368,8 @@ class EVAssistantPanel extends HTMLElement {
       .hist-solar { font-size: 12px; color: var(--ink-mid); white-space: nowrap; font-variant-numeric: tabular-nums; }
       .hist-kwh { font-size: 1.05rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
       .hist-kwh small { font-size: 0.68em; font-weight: 500; color: var(--ink-dim); margin-left: 3px; }
+      .hist-power { font-size: 0.85rem; font-weight: 500; color: var(--ink-mid); font-variant-numeric: tabular-nums; }
+      .hist-power small { font-size: 0.75em; font-weight: 400; color: var(--ink-dim); margin-left: 2px; }
       .hist-price { font-size: 12px; color: var(--ink-mid); white-space: nowrap; font-variant-numeric: tabular-nums; }
       .hist-cost { font-size: 1.05rem; font-weight: 700; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
       .hist-card .hist-actions { display: flex; gap: 4px; }
