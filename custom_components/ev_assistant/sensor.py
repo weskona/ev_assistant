@@ -13,6 +13,7 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_EFFICIENCY, CONF_ERSTZULASSUNG, DEFAULT_EFFICIENCY,
+    CONF_TANKERKOENIG_FUEL_TYPE, CONF_VERBRENNER_PRICE_ENTITY, CONF_VERBRENNER_PRICE_PER_LITER,
     DOMAIN, EFF_MIN_SAMPLES,
 )
 from .entity import EvAssistantEntity
@@ -46,6 +47,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         HomeKwhSensor(coordinator, entry),
         HomeCostSensor(coordinator, entry),
         SavingsSensor(coordinator, entry),
+        VerbrennerPriceSelectedSensor(coordinator, entry),
         PendingTripSensor(coordinator, entry),
         LastTripSensor(coordinator, entry),
         TripCountSensor(coordinator, entry),
@@ -579,6 +581,40 @@ class SavingsSensor(EvAssistantEntity, SensorEntity):
         attrs["kraftstoffpreis_live"] = self.coordinator._verbrenner_price_live is not None
         attrs["heimstrompreis_live"] = self.coordinator._home_price_live is not None
         return attrs
+
+
+class VerbrennerPriceSelectedSensor(EvAssistantEntity, SensorEntity):
+    """Der aktuell fuer den Verbrenner-Vergleich verwendete Kraftstoffpreis
+    (Rohwert, nicht der intern zeitgewichtete Durchschnitt aus
+    coordinator.py::_price_average() -- der bleibt ein reines Detail der
+    savings()-Berechnung). state_class macht diesen Wert per Long-Term
+    Statistics historisierbar, unabhaengig davon, welche der drei Quellen
+    (Tankerkoenig-Auto-Erkennung > eigene Entitaet > fester Wert) aktiv ist."""
+
+    _attr_translation_key = "verbrenner_price_selected"
+    _attr_native_unit_of_measurement = "EUR/L"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:gas-station"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "verbrenner_price_selected")
+
+    @property
+    def native_value(self):
+        if self.coordinator._verbrenner_price_live is not None:
+            return self.coordinator._verbrenner_price_live
+        price = self.coordinator._opt(CONF_VERBRENNER_PRICE_PER_LITER)
+        return float(price) if price is not None else None
+
+    @property
+    def extra_state_attributes(self):
+        if self.coordinator._opt(CONF_TANKERKOENIG_FUEL_TYPE):
+            quelle = "tankerkoenig"
+        elif self.coordinator._opt(CONF_VERBRENNER_PRICE_ENTITY):
+            quelle = "entity"
+        else:
+            quelle = "fixed"
+        return {"quelle": quelle}
 
 
 class PendingTripSensor(EvAssistantEntity, SensorEntity):

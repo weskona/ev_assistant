@@ -25,7 +25,7 @@ from .const import (
     CONF_ODO_ENTITY, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE,
     CONF_START_DELTA, CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM, CONF_USABLE_KWH,
     CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY,
-    CONF_VERBRENNER_PRICE_PER_LITER, CONF_WALLBOX_ENERGY_ENTITY,
+    CONF_VERBRENNER_PRICE_PER_LITER, CONF_TANKERKOENIG_FUEL_TYPE, CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE,
     DEFAULT_DROP_ENDS, DEFAULT_EFFICIENCY,
     DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE, DEFAULT_POWER_IS_AC,
@@ -70,6 +70,16 @@ def _empty_data() -> dict:
         "detector_state": None,
         "verbrenner_price_last": None,
         "home_price_last": None,
+        # Zeitgewichtete Durchschnittsbildung fuer schwankende Preis-Live-
+        # Entitaeten (siehe _price_average()/savings()): Summe(Preis * Dauer)
+        # und Gesamtdauer seit Einrichtung, plus wann der aktuell gueltige
+        # Wert zu gelten begann.
+        "verbrenner_price_weighted_sum": 0.0,
+        "verbrenner_price_weighted_seconds": 0.0,
+        "verbrenner_price_interval_start_ts": None,
+        "home_price_weighted_sum": 0.0,
+        "home_price_weighted_seconds": 0.0,
+        "home_price_interval_start_ts": None,
         "fahrten": [],
         "pending_trips": [],
         "trip_totals": {"km": 0.0, "count": 0},
@@ -107,6 +117,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._person_zone: Optional[str] = None
         self._trip_start_zone: Optional[str] = None
         self._trip_start_soc: Optional[float] = None
+        # Ob gerade eine "Tankerkoenig nicht verfuegbar"-Benachrichtigung
+        # aktiv ist -- verhindert wiederholte create/dismiss-Serviceaufrufe
+        # bei jedem einzelnen _recompute()-Tick (siehe _wire_tankerkoenig_price()).
+        self._tankerkoenig_notified: bool = False
         self._detector: Optional[ChargeDetector] = None
         self._calibrator: Optional[EfficiencyCalibrator] = None
         self._trip_detector: Optional[TripDetector] = None
@@ -200,7 +214,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._wire(CONF_HOME_ENTITY, CONF_HOME_TEMPLATE, self._set_home)
         self._wire(CONF_POWER_ENTITY, CONF_POWER_TEMPLATE, self._set_power)
         self._wire_odo()
-        self._wire_verbrenner_price()
+        # tankerkoenig_fuel_type hat Vorrang vor verbrenner_price_entity (siehe
+        # const.py-Kommentar bei CONF_TANKERKOENIG_FUEL_TYPE) -- daher exklusiv,
+        # nie beide gleichzeitig verdrahten (sonst koennten sich beide
+        # Listener gegenseitig ueberschreiben).
+        if self._opt(CONF_TANKERKOENIG_FUEL_TYPE):
+            self._wire_tankerkoenig_price()
+        else:
+            self._wire_verbrenner_price()
         self._wire_home_price()
         self._wire_gps()
 
@@ -243,6 +264,78 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         state = self.hass.states.get(entity_id)
         if state is not None and state.state not in _INVALID:
             self._set_verbrenner_price(state.state)
+
+    def _wire_tankerkoenig_price(self) -> None:
+        """Kraftstoffpreis automatisch aus der Tankerkoenig-Integration:
+        findet alle registrierten, nicht deaktivierten Preis-Sensoren der
+        gewaehlten Kraftstoffsorte (ueber alle konfigurierten
+        tankerkoenig-Config-Entries hinweg -- mehrere Tankstellen im Umkreis
+        sind der Normalfall), ermittelt bei jeder Aenderung die guenstigste
+        aktuell GEOEFFNETE Station (binary_sensor ..._status, device_class
+        "door": "on" = offen) und speist das Ergebnis in _set_verbrenner_price()
+        ein -- inklusive der dort bereits vorhandenen zeitgewichteten
+        Durchschnittsbildung (siehe _price_average()). Sind alle bekannten
+        Stationen geschlossen, wird trotzdem der guenstigste (wenn auch
+        veraltete) Preis verwendet, statt ganz auszufallen."""
+        fuel_type = self._opt(CONF_TANKERKOENIG_FUEL_TYPE)
+        if not fuel_type:
+            return
+
+        from homeassistant.helpers import entity_registry as er
+
+        ent_reg = er.async_get(self.hass)
+        price_ids: list[str] = []
+        for entry in self.hass.config_entries.async_entries("tankerkoenig"):
+            for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
+                if e.disabled_by:
+                    continue
+                if e.entity_id.startswith("sensor.") and e.entity_id.endswith(f"_{fuel_type}"):
+                    price_ids.append(e.entity_id)
+        if not price_ids:
+            _LOGGER.warning(
+                "ev_assistant: keine Tankerkoenig-Preis-Sensoren fuer Kraftstoffsorte '%s' gefunden",
+                fuel_type,
+            )
+            self._tankerkoenig_notified = True
+            self.hass.async_create_task(self._notify_tankerkoenig_unavailable())
+            return
+
+        def _status_id(price_id: str) -> str:
+            station = price_id[len("sensor."):-len(f"_{fuel_type}")]
+            return f"binary_sensor.{station}_status"
+
+        status_ids = [_status_id(p) for p in price_ids]
+
+        @callback
+        def _recompute(_event=None) -> None:
+            open_prices: list[float] = []
+            all_prices: list[float] = []
+            for price_id, stat_id in zip(price_ids, status_ids):
+                price_state = self.hass.states.get(price_id)
+                if price_state is None or price_state.state in _INVALID:
+                    continue
+                try:
+                    price = float(price_state.state)
+                except (ValueError, TypeError):
+                    continue
+                all_prices.append(price)
+                status_state = self.hass.states.get(stat_id)
+                if status_state is not None and status_state.state == "on":
+                    open_prices.append(price)
+            chosen = min(open_prices) if open_prices else (min(all_prices) if all_prices else None)
+            if chosen is not None:
+                self._set_verbrenner_price(chosen)
+                if self._tankerkoenig_notified:
+                    self._tankerkoenig_notified = False
+                    self.hass.async_create_task(self._dismiss_tankerkoenig_unavailable())
+            elif not self._tankerkoenig_notified:
+                self._tankerkoenig_notified = True
+                self.hass.async_create_task(self._notify_tankerkoenig_unavailable())
+
+        self._unsub.append(
+            async_track_state_change_event(self.hass, price_ids + status_ids, _recompute)
+        )
+        _recompute()
 
     def _wire_odo(self) -> None:
         """Kilometerstand: reine Anzeige-Entitaet (kein Erkennungssignal)."""
@@ -515,12 +608,52 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return zone_state.attributes.get("friendly_name", raw)
         return raw
 
+    def _accumulate_price_interval(self, prefix: str, previous_value: Optional[float], now: float) -> None:
+        """Schliesst das Zeitintervall ab, in dem `previous_value` gegolten
+        hat, und addiert es zeitgewichtet zur laufenden Summe (siehe
+        _price_average()). `prefix` z.B. "verbrenner_price"/"home_price"."""
+        if previous_value is None:
+            return
+        start_ts = self.data.get(f"{prefix}_interval_start_ts")
+        if start_ts is None:
+            return
+        elapsed = max(0.0, now - start_ts)
+        self.data[f"{prefix}_weighted_sum"] = self.data.get(f"{prefix}_weighted_sum", 0.0) + previous_value * elapsed
+        self.data[f"{prefix}_weighted_seconds"] = self.data.get(f"{prefix}_weighted_seconds", 0.0) + elapsed
+
+    def _price_average(self, prefix: str, live_value: Optional[float]) -> Optional[float]:
+        """Zeitgewichteter Durchschnitt aller bisher beobachteten Werte einer
+        schwankenden Preis-Live-Entitaet (Kraftstoff/Heimstrom-Tarif) seit
+        Einrichtung -- verhindert, dass savings()/_home_price() nur den
+        aktuellen Momentanwert auf die GESAMTE seit Einrichtung gefahrene
+        Strecke bzw. geladene Menge anwenden. Das noch offene Intervall (der
+        aktuell gueltige Wert) wird bis JETZT mitgezaehlt, sonst wuerde die
+        zuletzt gemeldete Aenderung nie einfliessen. Faellt auf den reinen
+        Live-Wert zurueck, solange noch kein Intervall abgeschlossen ist
+        (z.B. direkt nach der Ersteinrichtung)."""
+        if live_value is None:
+            return None
+        weighted_sum = self.data.get(f"{prefix}_weighted_sum", 0.0)
+        weighted_seconds = self.data.get(f"{prefix}_weighted_seconds", 0.0)
+        start_ts = self.data.get(f"{prefix}_interval_start_ts")
+        if start_ts is not None:
+            elapsed = max(0.0, time.time() - start_ts)
+            weighted_sum += live_value * elapsed
+            weighted_seconds += elapsed
+        if weighted_seconds <= 0:
+            return live_value
+        return round(weighted_sum / weighted_seconds, 4)
+
     @callback
     def _set_verbrenner_price(self, raw) -> None:
         try:
-            self._verbrenner_price_live = float(raw)
+            new_value = float(raw)
         except (ValueError, TypeError):
             return
+        now = time.time()
+        self._accumulate_price_interval("verbrenner_price", self._verbrenner_price_live, now)
+        self._verbrenner_price_live = new_value
+        self.data["verbrenner_price_interval_start_ts"] = now
         # Persistiert, damit ein Neustart nicht auf "unbekannt" zurueckfaellt,
         # bevor sich die Entitaet zum ersten Mal wieder meldet (siehe
         # async_setup(), das diesen Wert als Startwert wiederherstellt).
@@ -531,9 +664,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     @callback
     def _set_home_price(self, raw) -> None:
         try:
-            self._home_price_live = float(raw)
+            new_value = float(raw)
         except (ValueError, TypeError):
             return
+        now = time.time()
+        self._accumulate_price_interval("home_price", self._home_price_live, now)
+        self._home_price_live = new_value
+        self.data["home_price_interval_start_ts"] = now
         # Persistiert, damit ein Neustart nicht auf "unbekannt" zurueckfaellt,
         # bevor sich die Entitaet zum ersten Mal wieder meldet (siehe
         # async_setup(), das diesen Wert als Startwert wiederherstellt).
@@ -756,6 +893,41 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             await self.hass.services.async_call(
                 "persistent_notification", "dismiss",
                 {"notification_id": f"{self._notify_tag}_trip"}, blocking=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _notify_tankerkoenig_unavailable(self) -> None:
+        """Dauerhafte Benachrichtigung, solange Tankerkoenig keinen einzigen
+        gueltigen Preis fuer die gewaehlte Kraftstoffsorte liefert (siehe
+        _wire_tankerkoenig_price()) -- der Kostenvergleich rechnet in der
+        Zwischenzeit mit dem letzten bekannten bzw. festen Fallback-Preis
+        weiter, statt auszufallen."""
+        en = self._en()
+        title = "Tankerkönig unavailable" if en else "Tankerkönig nicht verfügbar"
+        message = (
+            "No valid fuel price could be read from any configured Tankerkönig "
+            "station — the cost comparison keeps using the last known or fixed "
+            "fallback fuel price instead."
+            if en else
+            "Von keiner konfigurierten Tankerkönig-Station konnte ein gültiger "
+            "Kraftstoffpreis gelesen werden — der Kostenvergleich rechnet "
+            "stattdessen mit dem letzten bekannten bzw. festen Fallback-Preis weiter."
+        )
+        try:
+            await self.hass.services.async_call(
+                "persistent_notification", "create",
+                {"notification_id": f"{self._notify_tag}_tankerkoenig", "title": title, "message": message},
+                blocking=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _dismiss_tankerkoenig_unavailable(self) -> None:
+        try:
+            await self.hass.services.async_call(
+                "persistent_notification", "dismiss",
+                {"notification_id": f"{self._notify_tag}_tankerkoenig"}, blocking=False,
             )
         except Exception:  # noqa: BLE001
             pass
@@ -1061,11 +1233,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return round(self._wallbox_energy - start, 2)
 
     def _home_price(self) -> Optional[float]:
-        """Heimstrompreis: die Live-Entitaet (falls konfiguriert und ein
-        gueltiger Wert vorliegt) hat Vorrang vor dem festen
-        Konfigurationswert -- siehe _wire_home_price()/savings()."""
+        """Heimstrompreis: der zeitgewichtete Durchschnitt der Live-Entitaet
+        (falls konfiguriert und ein gueltiger Wert vorliegt) hat Vorrang vor
+        dem festen Konfigurationswert -- siehe _wire_home_price()/
+        _price_average()/savings()."""
         if self._home_price_live is not None:
-            return self._home_price_live
+            avg = self._price_average("home_price", self._home_price_live)
+            if avg is not None:
+                return avg
         price = self._opt(CONF_HOME_PRICE_KWH)
         return float(price) if price is not None else None
 
@@ -1073,13 +1248,19 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         """Kostenvergleich gegenueber einem Verbrenner (siehe
         engine.py::calculate_savings), oder None wenn eine der zwingend
         noetigen Groessen (Kilometerstand-Delta, Verbrenner-Verbrauch,
-        Kraftstoffpreis) fehlt. Heimstrompreis und Kraftstoffpreis: die
-        jeweilige Live-Entitaet (falls konfiguriert und ein gueltiger Wert
-        vorliegt) hat Vorrang vor dem festen Konfigurationswert."""
+        Kraftstoffpreis) fehlt. Heimstrompreis und Kraftstoffpreis: der
+        zeitgewichtete Durchschnitt der jeweiligen Live-Entitaet (falls
+        konfiguriert und ein gueltiger Wert vorliegt) hat Vorrang vor dem
+        festen Konfigurationswert -- ein schwankender Preis (z.B. Tankerkoenig)
+        wird so ueber die gesamte Zeit seit Einrichtung gewichtet statt nur
+        mit seinem aktuellen Momentanwert auf die volle Strecke/Menge
+        angewendet zu werden (siehe _price_average())."""
         verbrenner_l = self._opt(CONF_VERBRENNER_L_100KM)
         verbrenner_price = self._opt(CONF_VERBRENNER_PRICE_PER_LITER)
         if self._verbrenner_price_live is not None:
-            verbrenner_price = self._verbrenner_price_live
+            avg = self._price_average("verbrenner_price", self._verbrenner_price_live)
+            if avg is not None:
+                verbrenner_price = avg
         return calculate_savings(
             km_driven=self._km_driven(),
             home_kwh=self._home_kwh(),

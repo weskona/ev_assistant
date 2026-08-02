@@ -59,13 +59,14 @@
       },
       "vergleich": {
         "title": "EV Assistant - Kostenvergleich",
-        "description": "Schritt 7/7: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional. Heimladen-Kosten setzen einen Wallbox-Energiezähler aus Schritt 3 voraus. Fester Wert ODER Entität — die Entität hat Vorrang.",
+        "description": "Schritt 7/7: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional. Heimladen-Kosten setzen einen Wallbox-Energiezähler aus Schritt 3 voraus. Kraftstoffpreis-Priorität: Tankerkönig-Kraftstoffsorte (automatisch, günstigste offene Tankstelle) > Entität > fester Wert — nur eine Quelle konfigurieren.",
         "data": {
           "home_price_kwh": "Preis pro kWh (Heimladen)",
           "home_price_entity": "Heimstrompreis-Entität (überschreibt den festen Preis)",
           "verbrenner_l_100km": "Verbrauch Vergleichsfahrzeug (L/100km)",
           "verbrenner_price_per_liter": "Kraftstoffpreis (EUR/Liter)",
-          "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis)"
+          "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis)",
+          "tankerkoenig_fuel_type": "Kraftstoffsorte für Tankerkönig-Auto-Erkennung (überschreibt Entität/festen Preis mit der günstigsten offenen Tankstelle)"
         }
       }
     },
@@ -133,13 +134,14 @@
       },
       "vergleich": {
         "title": "EV Assistant - Kostenvergleich",
-        "description": "Schritt 7/7: Optionaler Kostenvergleich gegenüber einem Verbrenner.",
+        "description": "Schritt 7/7: Optionaler Kostenvergleich gegenüber einem Verbrenner. Kraftstoffpreis-Priorität: Tankerkönig-Kraftstoffsorte > Entität > fester Wert.",
         "data": {
           "home_price_kwh": "Preis pro kWh (Heimladen)",
           "home_price_entity": "Heimstrompreis-Entität (überschreibt den festen Preis)",
           "verbrenner_l_100km": "Verbrauch Vergleichsfahrzeug (L/100km)",
           "verbrenner_price_per_liter": "Kraftstoffpreis (EUR/Liter)",
-          "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis)"
+          "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis)",
+          "tankerkoenig_fuel_type": "Kraftstoffsorte für Tankerkönig-Auto-Erkennung (überschreibt Entität/festen Preis)"
         }
       }
     },
@@ -149,39 +151,104 @@
   },
   "entity": {
     "sensor": {
-      "pending_estimate": { "name": "Fremdladung ausstehend" },
-      "last_cost": { "name": "Fremdladung Kosten (letzte)" },
-      "last_kwh": { "name": "Fremdladung kWh (letzte)" },
-      "total_kwh": { "name": "Fremdladung kWh (gesamt)" },
-      "total_cost": { "name": "Fremdladung Kosten (gesamt)" },
-      "count": { "name": "Fremdladung Anzahl" },
-      "last_price": { "name": "Fremdladung Preis (letzter)" },
-      "last_duration": { "name": "Fremdladung Ladezeit (letzte)" },
-      "last_charge_power": { "name": "Fremdladung Ø Leistung (letzte)" },
-      "measured_efficiency": { "name": "Ladewirkungsgrad (gemessen)" },
-      "odo": { "name": "Kilometerstand" },
-      "odo_day_km": { "name": "Gefahrene km (heute)" },
-      "odo_week_km": { "name": "Gefahrene km (Woche)" },
-      "odo_month_km": { "name": "Gefahrene km (Monat)" },
-      "odo_year_km": { "name": "Gefahrene km (Jahr)" },
-      "odo_avg_day": { "name": "Ø km/Tag" },
-      "odo_avg_week": { "name": "Ø km/Woche" },
-      "odo_avg_month": { "name": "Ø km/Monat" },
-      "odo_avg_year": { "name": "Ø km/Jahr" },
-      "odo_year_projected": { "name": "Erwartete km (Kalenderjahr)" },
-      "odo_annual_from_reg": { "name": "Erwartete km/Jahr (seit Erstzulassung)" },
-      "erstzulassung": { "name": "Erstzulassung" },
-      "home_kwh": { "name": "Heimladen kWh (gesamt)" },
-      "home_cost": { "name": "Heimladen Kosten (gesamt)" },
-      "savings": { "name": "Ersparnis ggü. Verbrenner" },
-      "trip_pending_estimate": { "name": "Fahrt ausstehend" },
-      "last_trip_km": { "name": "Fahrt km (letzte)" },
-      "trip_count": { "name": "Fahrtenbuch Anzahl" },
-      "total_trip_km": { "name": "Fahrtenbuch km (gesamt)" }
+      "pending_estimate": {
+        "name": "Fremdladung ausstehend"
+      },
+      "last_cost": {
+        "name": "Fremdladung Kosten (letzte)"
+      },
+      "last_kwh": {
+        "name": "Fremdladung kWh (letzte)"
+      },
+      "total_kwh": {
+        "name": "Fremdladung kWh (gesamt)"
+      },
+      "total_cost": {
+        "name": "Fremdladung Kosten (gesamt)"
+      },
+      "count": {
+        "name": "Fremdladung Anzahl"
+      },
+      "last_price": {
+        "name": "Fremdladung Preis (letzter)"
+      },
+      "last_duration": {
+        "name": "Fremdladung Ladezeit (letzte)"
+      },
+      "last_charge_power": {
+        "name": "Fremdladung Ø Leistung (letzte)"
+      },
+      "measured_efficiency": {
+        "name": "Ladewirkungsgrad (gemessen)"
+      },
+      "odo": {
+        "name": "Kilometerstand"
+      },
+      "odo_day_km": {
+        "name": "Gefahrene km (heute)"
+      },
+      "odo_week_km": {
+        "name": "Gefahrene km (Woche)"
+      },
+      "odo_month_km": {
+        "name": "Gefahrene km (Monat)"
+      },
+      "odo_year_km": {
+        "name": "Gefahrene km (Jahr)"
+      },
+      "odo_avg_day": {
+        "name": "Ø km/Tag"
+      },
+      "odo_avg_week": {
+        "name": "Ø km/Woche"
+      },
+      "odo_avg_month": {
+        "name": "Ø km/Monat"
+      },
+      "odo_avg_year": {
+        "name": "Ø km/Jahr"
+      },
+      "odo_year_projected": {
+        "name": "Erwartete km (Kalenderjahr)"
+      },
+      "odo_annual_from_reg": {
+        "name": "Erwartete km/Jahr (seit Erstzulassung)"
+      },
+      "erstzulassung": {
+        "name": "Erstzulassung"
+      },
+      "home_kwh": {
+        "name": "Heimladen kWh (gesamt)"
+      },
+      "home_cost": {
+        "name": "Heimladen Kosten (gesamt)"
+      },
+      "savings": {
+        "name": "Ersparnis ggü. Verbrenner"
+      },
+      "verbrenner_price_selected": {
+        "name": "Kraftstoffpreis (ausgewählt)"
+      },
+      "trip_pending_estimate": {
+        "name": "Fahrt ausstehend"
+      },
+      "last_trip_km": {
+        "name": "Fahrt km (letzte)"
+      },
+      "trip_count": {
+        "name": "Fahrtenbuch Anzahl"
+      },
+      "total_trip_km": {
+        "name": "Fahrtenbuch km (gesamt)"
+      }
     },
     "binary_sensor": {
-      "pending": { "name": "Fremdladung Erfassung offen" },
-      "trip_pending": { "name": "Fahrt Erfassung offen" }
+      "pending": {
+        "name": "Fremdladung Erfassung offen"
+      },
+      "trip_pending": {
+        "name": "Fahrt Erfassung offen"
+      }
     }
   }
 }

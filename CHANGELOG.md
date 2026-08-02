@@ -2,6 +2,30 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.22.0] - 2026-08-03
+
+### Added
+
+- **Time-weighted fuel/home-electricity price averaging**: when the fuel price or home
+  electricity price comes from a live entity, the cost comparison no longer applies its
+  current instantaneous reading to the entire distance/energy tracked since setup. Every
+  reading is now weighted by how long it was actually in effect, so a price that fluctuates
+  (e.g. a dynamic tariff or fuel-price tracker) is averaged correctly over time instead of
+  distorting the whole comparison with whatever value happens to be live right now.
+- **Tankerkönig auto-detection for the fuel price**: pick a fuel type (`super`, `super_e10`,
+  `diesel`) in step 7 and EV Assistant automatically discovers every station configured in
+  the core Tankerkönig integration, always using the cheapest currently *open* one — no
+  manual price entity or custom template sensor needed. Takes priority over a manually
+  linked fuel-price entity, which in turn takes priority over a fixed value.
+- **Graceful degradation when Tankerkönig becomes unavailable**: the comparison keeps
+  calculating with the last known good price rather than dropping out entirely. A persistent
+  notification appears in Home Assistant for as long as Tankerkönig can't produce a single
+  valid reading (fuel type never found, integration removed, ...), and is dismissed
+  automatically once a valid price returns.
+- New sensor `... Fuel Price (Selected)`: shows the raw price currently in effect for the
+  comparison (whichever of the three sources — Tankerkönig, entity, or fixed — is active),
+  with a `quelle` attribute naming the active source. Historized via Long-Term Statistics.
+
 ## [0.21.3] - 2026-08-02
 
 ### Fixed

@@ -20,6 +20,7 @@ from .const import (
     CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM,
     CONF_USABLE_KWH, CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL,
     CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY, CONF_VERBRENNER_PRICE_PER_LITER,
+    CONF_TANKERKOENIG_FUEL_TYPE,
     CONF_WALLBOX_ENERGY_ENTITY,
     CONF_EVCC_CHARGE_POWER, CONF_EVCC_CHARGE_STATUS, CONF_EVCC_MODE,
     CONF_EVCC_PHASES_ACTIVE, CONF_EVCC_VEHICLE_SOC, CONF_EVCC_LIMIT_SOC,
@@ -58,6 +59,16 @@ _HOME_PRICE_ENTITY = selector.EntitySelector(
 )
 _GPS_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain=["person", "device_tracker"])
+)
+_TANKERKOENIG_FUEL_TYPE = selector.SelectSelector(
+    selector.SelectSelectorConfig(
+        options=[
+            {"value": "super", "label": "Super (E5)"},
+            {"value": "super_e10", "label": "Super E10"},
+            {"value": "diesel", "label": "Diesel"},
+        ],
+        mode=selector.SelectSelectorMode.DROPDOWN,
+    )
 )
 
 _EVCC_VEHICLE_NAME = selector.TextSelector(
@@ -213,7 +224,13 @@ def build_trip_schema(cur: dict) -> vol.Schema:
 
 
 def build_comparison_schema(cur: dict) -> vol.Schema:
-    """Schritt 7: Kostenvergleich Verbrenner."""
+    """Schritt 7: Kostenvergleich Verbrenner.
+
+    Kraftstoffpreis-Prioritaet: tankerkoenig_fuel_type (guenstigste offene
+    Tankerkoenig-Station, automatisch ermittelt) > verbrenner_price_entity
+    (eigene Entitaet) > verbrenner_price_per_liter (fester Wert). Nur eines
+    davon konfigurieren, je nachdem, welche Quelle genutzt werden soll.
+    """
     def sv(key):
         return {"suggested_value": cur.get(key)}
 
@@ -223,6 +240,7 @@ def build_comparison_schema(cur: dict) -> vol.Schema:
         vol.Optional(CONF_VERBRENNER_L_100KM, description=sv(CONF_VERBRENNER_L_100KM)): vol.Coerce(float),
         vol.Optional(CONF_VERBRENNER_PRICE_PER_LITER, description=sv(CONF_VERBRENNER_PRICE_PER_LITER)): vol.Coerce(float),
         vol.Optional(CONF_VERBRENNER_PRICE_ENTITY, description=sv(CONF_VERBRENNER_PRICE_ENTITY)): _VERBRENNER_PRICE_ENTITY,
+        vol.Optional(CONF_TANKERKOENIG_FUEL_TYPE, description=sv(CONF_TANKERKOENIG_FUEL_TYPE)): _TANKERKOENIG_FUEL_TYPE,
     })
 
 
@@ -317,7 +335,8 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_vergleich(self, user_input=None) -> FlowResult:
         if user_input is not None:
-            self._data = {**self._data, **_clean(user_input)}
+            cleaned = _clean(user_input)
+            self._data = {**self._data, **cleaned}
             self._data = {**self._data, **await _discover_evcc_entities(self.hass)}
             hersteller = self._data.get(CONF_VEHICLE_HERSTELLER)
             modell = self._data.get(CONF_VEHICLE_MODELL)
@@ -325,7 +344,7 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
             title = f"EV Assistant ({fahrzeug})" if fahrzeug else "EV Assistant"
             return self.async_create_entry(title=title, data=self._data)
 
-        cur = user_input if user_input is not None else self._data
+        cur = self._data
         return self.async_show_form(
             step_id="vergleich", data_schema=build_comparison_schema(cur)
         )
@@ -410,7 +429,8 @@ class EvAssistantOptionsFlow(OptionsFlow):
 
     async def async_step_vergleich(self, user_input=None) -> FlowResult:
         if user_input is not None:
-            self._data = {**self._data, **_clean(user_input)}
+            cleaned = _clean(user_input)
+            self._data = {**self._data, **cleaned}
             self._data = {**self._data, **await _discover_evcc_entities(self.hass)}
             return self.async_create_entry(title="", data=self._data)
 

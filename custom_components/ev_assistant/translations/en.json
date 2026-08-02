@@ -59,13 +59,14 @@
       },
       "vergleich": {
         "title": "EV Assistant - Cost Comparison",
-        "description": "Step 7/7: Optional cost comparison against a combustion vehicle. All fields optional. Home-charging costs require a wallbox energy meter from step 3. Fixed value OR entity — the entity takes precedence.",
+        "description": "Step 7/7: Optional cost comparison against a combustion vehicle. All fields optional. Home-charging costs require a wallbox energy meter from step 3. Fuel price priority: Tankerkönig fuel type (automatic, cheapest open station) > entity > fixed value — configure only one source.",
         "data": {
           "home_price_kwh": "Price per kWh (home charging)",
           "home_price_entity": "Home electricity price entity (overrides fixed price)",
           "verbrenner_l_100km": "Comparison vehicle consumption (L/100km)",
           "verbrenner_price_per_liter": "Fuel price (EUR/liter)",
-          "verbrenner_price_entity": "Fuel price entity (overrides fixed price)"
+          "verbrenner_price_entity": "Fuel price entity (overrides fixed price)",
+          "tankerkoenig_fuel_type": "Fuel type for Tankerkönig auto-detection (overrides entity/fixed price with the cheapest open station)"
         }
       }
     },
@@ -133,13 +134,14 @@
       },
       "vergleich": {
         "title": "EV Assistant - Cost Comparison",
-        "description": "Step 7/7: Optional cost comparison against a combustion vehicle.",
+        "description": "Step 7/7: Optional cost comparison against a combustion vehicle. Fuel price priority: Tankerkönig fuel type > entity > fixed value.",
         "data": {
           "home_price_kwh": "Price per kWh (home charging)",
           "home_price_entity": "Home electricity price entity (overrides fixed price)",
           "verbrenner_l_100km": "Comparison vehicle consumption (L/100km)",
           "verbrenner_price_per_liter": "Fuel price (EUR/liter)",
-          "verbrenner_price_entity": "Fuel price entity (overrides fixed price)"
+          "verbrenner_price_entity": "Fuel price entity (overrides fixed price)",
+          "tankerkoenig_fuel_type": "Fuel type for Tankerkönig auto-detection (overrides entity/fixed price)"
         }
       }
     },
@@ -149,39 +151,104 @@
   },
   "entity": {
     "sensor": {
-      "pending_estimate": { "name": "External Charge Pending" },
-      "last_cost": { "name": "External Charge Cost (last)" },
-      "last_kwh": { "name": "External Charge kWh (last)" },
-      "total_kwh": { "name": "External Charge kWh (total)" },
-      "total_cost": { "name": "External Charge Cost (total)" },
-      "count": { "name": "External Charge Count" },
-      "last_price": { "name": "External Charge Price (last)" },
-      "last_duration": { "name": "External Charge Duration (last)" },
-      "last_charge_power": { "name": "External Charge Avg Power (last)" },
-      "measured_efficiency": { "name": "Charging Efficiency (measured)" },
-      "odo": { "name": "Odometer" },
-      "odo_day_km": { "name": "km driven (today)" },
-      "odo_week_km": { "name": "km driven (week)" },
-      "odo_month_km": { "name": "km driven (month)" },
-      "odo_year_km": { "name": "km driven (year)" },
-      "odo_avg_day": { "name": "Avg km/day" },
-      "odo_avg_week": { "name": "Avg km/week" },
-      "odo_avg_month": { "name": "Avg km/month" },
-      "odo_avg_year": { "name": "Avg km/year" },
-      "odo_year_projected": { "name": "Projected km (calendar year)" },
-      "odo_annual_from_reg": { "name": "Projected km/year (since registration)" },
-      "erstzulassung": { "name": "First Registration" },
-      "home_kwh": { "name": "Home Charging kWh (total)" },
-      "home_cost": { "name": "Home Charging Cost (total)" },
-      "savings": { "name": "Savings vs. ICE Vehicle" },
-      "trip_pending_estimate": { "name": "Trip Pending" },
-      "last_trip_km": { "name": "Trip km (last)" },
-      "trip_count": { "name": "Trip Log Count" },
-      "total_trip_km": { "name": "Trip Log km (total)" }
+      "pending_estimate": {
+        "name": "External Charge Pending"
+      },
+      "last_cost": {
+        "name": "External Charge Cost (last)"
+      },
+      "last_kwh": {
+        "name": "External Charge kWh (last)"
+      },
+      "total_kwh": {
+        "name": "External Charge kWh (total)"
+      },
+      "total_cost": {
+        "name": "External Charge Cost (total)"
+      },
+      "count": {
+        "name": "External Charge Count"
+      },
+      "last_price": {
+        "name": "External Charge Price (last)"
+      },
+      "last_duration": {
+        "name": "External Charge Duration (last)"
+      },
+      "last_charge_power": {
+        "name": "External Charge Avg Power (last)"
+      },
+      "measured_efficiency": {
+        "name": "Charging Efficiency (measured)"
+      },
+      "odo": {
+        "name": "Odometer"
+      },
+      "odo_day_km": {
+        "name": "km driven (today)"
+      },
+      "odo_week_km": {
+        "name": "km driven (week)"
+      },
+      "odo_month_km": {
+        "name": "km driven (month)"
+      },
+      "odo_year_km": {
+        "name": "km driven (year)"
+      },
+      "odo_avg_day": {
+        "name": "Avg km/day"
+      },
+      "odo_avg_week": {
+        "name": "Avg km/week"
+      },
+      "odo_avg_month": {
+        "name": "Avg km/month"
+      },
+      "odo_avg_year": {
+        "name": "Avg km/year"
+      },
+      "odo_year_projected": {
+        "name": "Projected km (calendar year)"
+      },
+      "odo_annual_from_reg": {
+        "name": "Projected km/year (since registration)"
+      },
+      "erstzulassung": {
+        "name": "First Registration"
+      },
+      "home_kwh": {
+        "name": "Home Charging kWh (total)"
+      },
+      "home_cost": {
+        "name": "Home Charging Cost (total)"
+      },
+      "savings": {
+        "name": "Savings vs. ICE Vehicle"
+      },
+      "verbrenner_price_selected": {
+        "name": "Fuel Price (Selected)"
+      },
+      "trip_pending_estimate": {
+        "name": "Trip Pending"
+      },
+      "last_trip_km": {
+        "name": "Trip km (last)"
+      },
+      "trip_count": {
+        "name": "Trip Log Count"
+      },
+      "total_trip_km": {
+        "name": "Trip Log km (total)"
+      }
     },
     "binary_sensor": {
-      "pending": { "name": "External Charge Capture Open" },
-      "trip_pending": { "name": "Trip Capture Open" }
+      "pending": {
+        "name": "External Charge Capture Open"
+      },
+      "trip_pending": {
+        "name": "Trip Capture Open"
+      }
     }
   }
 }
