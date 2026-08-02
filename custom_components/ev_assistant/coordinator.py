@@ -12,7 +12,7 @@ from typing import Callable, Optional
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change, async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.template import Template
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -76,6 +76,7 @@ def _empty_data() -> dict:
         "trip_detector_state": None,
         "trip_start_zone": None,
         "odo_periods": {},
+        "odo_lts": {},
     }
 
 
@@ -148,6 +149,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._unsub.append(
             async_track_time_interval(self.hass, self._periodic_check, timedelta(seconds=60))
         )
+        self._unsub.append(
+            async_track_time_change(self.hass, self._daily_lts_refresh, hour=0, minute=5, second=0)
+        )
+        self.hass.async_create_task(self.async_refresh_lts_data())
         self.async_set_updated_data(self.data)
 
     def _build_detector(self) -> None:
@@ -426,6 +431,65 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             entry = periods.get(period)
             if entry is None or entry.get("key") != key:
                 periods[period] = {"key": key, "odo_km": odo_km}
+
+    @callback
+    def _daily_lts_refresh(self, now) -> None:
+        self.hass.async_create_task(self.async_refresh_lts_data())
+
+    async def async_refresh_lts_data(self) -> None:
+        """LTS-Summen des Odometer-Sensors abfragen fuer Perioden-Projektionen.
+        Deltas der 'sum'-Werte ergeben gefahrene km pro Zeitraum."""
+        odo_entity = self._opt(CONF_ODO_ENTITY)
+        if not odo_entity:
+            return
+        try:
+            from homeassistant.components.recorder import get_instance
+            from homeassistant.components.recorder.statistics import statistics_during_period
+        except ImportError:
+            _LOGGER.debug("Recorder nicht verfuegbar, LTS-Abfrage uebersprungen")
+            return
+
+        now = dt_util.now()
+
+        def _query(start_utc, end_utc):
+            return statistics_during_period(
+                self.hass, start_utc, end_utc, {odo_entity}, "hour", None, {"sum"}
+            )
+
+        def _first_sum(result):
+            rows = result.get(odo_entity, [])
+            return rows[0].get("sum") if rows else None
+
+        def _last_sum(result):
+            rows = result.get(odo_entity, [])
+            return rows[-1].get("sum") if rows else None
+
+        year_start = dt_util.as_utc(now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0))
+        ago30 = dt_util.as_utc(now - timedelta(days=30))
+        ago90 = dt_util.as_utc(now - timedelta(days=90))
+        now_utc = dt_util.as_utc(now)
+
+        try:
+            instance = get_instance(self.hass)
+            r_year = await instance.async_add_executor_job(_query, year_start, year_start + timedelta(hours=25))
+            r_30d  = await instance.async_add_executor_job(_query, ago30,      ago30 + timedelta(hours=25))
+            r_90d  = await instance.async_add_executor_job(_query, ago90,      ago90 + timedelta(hours=25))
+            r_now  = await instance.async_add_executor_job(_query, now_utc - timedelta(hours=25), now_utc)
+
+            lts = self.data.setdefault("odo_lts", {})
+            sum_year = _first_sum(r_year)
+            sum_30d  = _first_sum(r_30d)
+            sum_90d  = _first_sum(r_90d)
+            sum_now  = _last_sum(r_now)
+
+            if sum_year is not None: lts["sum_year_start"] = sum_year
+            if sum_30d  is not None: lts["sum_30d_ago"]    = sum_30d
+            if sum_90d  is not None: lts["sum_90d_ago"]    = sum_90d
+            if sum_now  is not None: lts["sum_now"]        = sum_now
+
+            _LOGGER.debug("LTS odo: year_start=%s 30d=%s 90d=%s now=%s", sum_year, sum_30d, sum_90d, sum_now)
+        except Exception as exc:
+            _LOGGER.debug("LTS-Abfrage fehlgeschlagen: %s", exc)
 
     @callback
     def _set_person_zone(self, raw) -> None:

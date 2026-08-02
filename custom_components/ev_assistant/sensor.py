@@ -35,6 +35,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         OdoWeekKmSensor(coordinator, entry),
         OdoMonthKmSensor(coordinator, entry),
         OdoYearKmSensor(coordinator, entry),
+        OdoAvgDaySensor(coordinator, entry),
+        OdoAvgWeekSensor(coordinator, entry),
+        OdoAvgMonthSensor(coordinator, entry),
         OdoYearProjectedSensor(coordinator, entry),
         OdoAnnualFromRegSensor(coordinator, entry),
         ErstzulassungSensor(coordinator, entry),
@@ -79,6 +82,7 @@ class PendingEstimateSensor(EvAssistantEntity, SensorEntity):
 class LastCostSensor(EvAssistantEntity, SensorEntity):
     _attr_translation_key = "last_cost"
     _attr_native_unit_of_measurement = "EUR"
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:cash"
     # force_update: edit_charge/delete_charge auf einen AELTEREN (nicht den
     # juengsten) Historien-Eintrag aendert die historie-Liste, aber nicht
@@ -105,6 +109,7 @@ class LastCostSensor(EvAssistantEntity, SensorEntity):
 class LastKwhSensor(EvAssistantEntity, SensorEntity):
     _attr_translation_key = "last_kwh"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:ev-station"
 
     def __init__(self, coordinator, entry):
@@ -146,6 +151,7 @@ class TotalCostSensor(EvAssistantEntity, SensorEntity):
 
 class CountSensor(EvAssistantEntity, SensorEntity):
     _attr_translation_key = "count"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:format-list-numbered"
 
     def __init__(self, coordinator, entry):
@@ -159,6 +165,7 @@ class CountSensor(EvAssistantEntity, SensorEntity):
 class LastPriceSensor(EvAssistantEntity, SensorEntity):
     _attr_translation_key = "last_price"
     _attr_native_unit_of_measurement = "EUR/kWh"
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:currency-eur"
 
     def __init__(self, coordinator, entry):
@@ -177,6 +184,7 @@ class LastDurationSensor(EvAssistantEntity, SensorEntity):
 
     _attr_translation_key = "last_duration"
     _attr_native_unit_of_measurement = UnitOfTime.MINUTES
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:timer-outline"
 
     def __init__(self, coordinator, entry):
@@ -191,6 +199,7 @@ class LastDurationSensor(EvAssistantEntity, SensorEntity):
 class LastChargePowerSensor(EvAssistantEntity, SensorEntity):
     _attr_translation_key = "last_charge_power"
     _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:flash"
     _attr_suggested_display_precision = 1
 
@@ -222,6 +231,7 @@ class MeasuredEfficiencySensor(EvAssistantEntity, SensorEntity):
 
     _attr_translation_key = "measured_efficiency"
     _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_icon = "mdi:gauge"
 
@@ -336,43 +346,85 @@ class OdoYearKmSensor(_OdoPeriodSensor):
         super().__init__(coordinator, entry, "odo_year_km")
 
 
-class OdoYearProjectedSensor(EvAssistantEntity, SensorEntity):
-    """Hochgerechnete Jahreskilometerleistung basierend auf den bisher im
-    Kalenderjahr gefahrenen Kilometern und dem Jahresfortschritt."""
-
-    _attr_translation_key = "odo_year_projected"
+class _OdoLtsSensor(EvAssistantEntity, SensorEntity):
+    """Basis fuer LTS-basierte Odometer-Projektionssensoren."""
     _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
     _attr_device_class = SensorDeviceClass.DISTANCE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 0
-    _attr_icon = "mdi:chart-timeline-variant"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def _lts(self):
+        return self.coordinator.data.get("odo_lts", {})
+
+    def _delta(self, key_start, key_end="sum_now"):
+        lts = self._lts()
+        s = lts.get(key_start)
+        e = lts.get(key_end)
+        if s is None or e is None:
+            return None
+        d = e - s
+        return d if d >= 0 else None
+
+
+class OdoAvgDaySensor(_OdoLtsSensor):
+    _attr_translation_key = "odo_avg_day"
+    _attr_icon = "mdi:calendar-today"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "odo_avg_day")
+
+    @property
+    def native_value(self):
+        d = self._delta("sum_30d_ago")
+        return round(d / 30, 1) if d is not None else None
+
+
+class OdoAvgWeekSensor(_OdoLtsSensor):
+    _attr_translation_key = "odo_avg_week"
+    _attr_icon = "mdi:calendar-week"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "odo_avg_week")
+
+    @property
+    def native_value(self):
+        d = self._delta("sum_30d_ago")
+        return round(d / 30 * 7) if d is not None else None
+
+
+class OdoAvgMonthSensor(_OdoLtsSensor):
+    _attr_translation_key = "odo_avg_month"
+    _attr_icon = "mdi:calendar-month"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "odo_avg_month")
+
+    @property
+    def native_value(self):
+        d = self._delta("sum_90d_ago")
+        return round(d / 3) if d is not None else None
+
+
+class OdoYearProjectedSensor(_OdoLtsSensor):
+    _attr_translation_key = "odo_year_projected"
+    _attr_icon = "mdi:chart-timeline-variant"
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry, "odo_year_projected")
 
     @property
     def native_value(self):
-        from homeassistant.util import dt as dt_util
-        import calendar
-        odo = self.coordinator.data.get("odo")
-        if odo is None:
-            return None
-        unit = self.coordinator.data.get("odo_unit", "km")
-        from .const import MILES_TO_KM
-        odo_km = odo * MILES_TO_KM if unit == "mi" else float(odo)
-        entry = self.coordinator.data.get("odo_periods", {}).get("year")
-        if not entry:
-            return None
-        km_so_far = odo_km - entry["odo_km"]
-        if km_so_far <= 0:
+        import calendar as cal
+        d = self._delta("sum_year_start")
+        if d is None or d <= 0:
             return None
         today = dt_util.now().date()
         day_of_year = today.timetuple().tm_yday
         if day_of_year < 7:
             return None
-        days_in_year = 366 if calendar.isleap(today.year) else 365
-        return round(km_so_far / (day_of_year / days_in_year))
+        days_in_year = 366 if cal.isleap(today.year) else 365
+        return round(d / (day_of_year / days_in_year))
 
 
 class OdoAnnualFromRegSensor(EvAssistantEntity, SensorEntity):
@@ -393,7 +445,6 @@ class OdoAnnualFromRegSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def native_value(self):
-        from homeassistant.util import dt as dt_util
         reg_raw = self.coordinator.entry.options.get(
             CONF_ERSTZULASSUNG,
             self.coordinator.entry.data.get(CONF_ERSTZULASSUNG),
@@ -466,6 +517,7 @@ class HomeCostSensor(EvAssistantEntity, SensorEntity):
 
     _attr_translation_key = "home_cost"
     _attr_native_unit_of_measurement = "EUR"
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:home-currency-usd"
 
     def __init__(self, coordinator, entry):
@@ -490,6 +542,7 @@ class SavingsSensor(EvAssistantEntity, SensorEntity):
 
     _attr_translation_key = "savings"
     _attr_native_unit_of_measurement = "EUR"
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:cash-multiple"
 
     def __init__(self, coordinator, entry):
@@ -545,6 +598,7 @@ class LastTripSensor(EvAssistantEntity, SensorEntity):
 
     _attr_translation_key = "last_trip_km"
     _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
+    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:map-marker-distance"
     _attr_force_update = True
 
@@ -568,6 +622,7 @@ class TripCountSensor(EvAssistantEntity, SensorEntity):
     """Anzahl bestaetigter Fahrtenbuch-Eintraege -- analog CountSensor."""
 
     _attr_translation_key = "trip_count"
+    _attr_state_class = SensorStateClass.TOTAL_INCREASING
     _attr_icon = "mdi:format-list-numbered"
 
     def __init__(self, coordinator, entry):
