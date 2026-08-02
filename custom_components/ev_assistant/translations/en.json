@@ -149,7 +149,7 @@
   },
   "entity": {
     "sensor": {
-      "pending_estimate": { "name": "External Charge Estimate" },
+      "pending_estimate": { "name": "External Charge Pending" },
       "last_cost": { "name": "External Charge Cost (last)" },
       "last_kwh": { "name": "External Charge kWh (last)" },
       "total_kwh": { "name": "External Charge kWh (total)" },
@@ -163,7 +163,7 @@
       "home_kwh": { "name": "Home Charging kWh (total)" },
       "home_cost": { "name": "Home Charging Cost (total)" },
       "savings": { "name": "Savings vs. ICE Vehicle" },
-      "trip_pending_estimate": { "name": "Trip Estimate" },
+      "trip_pending_estimate": { "name": "Trip Pending" },
       "last_trip_km": { "name": "Trip km (last)" },
       "trip_count": { "name": "Trip Log Count" },
       "total_trip_km": { "name": "Trip Log km (total)" }

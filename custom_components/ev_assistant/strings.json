@@ -149,7 +149,7 @@
   },
   "entity": {
     "sensor": {
-      "pending_estimate": { "name": "Fremdladung Schätzung" },
+      "pending_estimate": { "name": "Fremdladung ausstehend" },
       "last_cost": { "name": "Fremdladung Kosten (letzte)" },
       "last_kwh": { "name": "Fremdladung kWh (letzte)" },
       "total_kwh": { "name": "Fremdladung kWh (gesamt)" },
@@ -163,7 +163,7 @@
       "home_kwh": { "name": "Heimladen kWh (gesamt)" },
       "home_cost": { "name": "Heimladen Kosten (gesamt)" },
       "savings": { "name": "Ersparnis ggü. Verbrenner" },
-      "trip_pending_estimate": { "name": "Fahrt Schätzung" },
+      "trip_pending_estimate": { "name": "Fahrt ausstehend" },
       "last_trip_km": { "name": "Fahrt km (letzte)" },
       "trip_count": { "name": "Fahrtenbuch Anzahl" },
       "total_trip_km": { "name": "Fahrtenbuch km (gesamt)" }
