@@ -164,6 +164,8 @@
       "odo_week_km": { "name": "km driven (week)" },
       "odo_month_km": { "name": "km driven (month)" },
       "odo_year_km": { "name": "km driven (year)" },
+      "odo_year_projected": { "name": "Projected km (calendar year)" },
+      "odo_annual_from_reg": { "name": "Projected km/year (since registration)" },
       "erstzulassung": { "name": "First Registration" },
       "home_kwh": { "name": "Home Charging kWh (total)" },
       "home_cost": { "name": "Home Charging Cost (total)" },

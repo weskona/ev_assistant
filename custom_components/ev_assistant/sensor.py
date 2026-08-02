@@ -35,6 +35,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         OdoWeekKmSensor(coordinator, entry),
         OdoMonthKmSensor(coordinator, entry),
         OdoYearKmSensor(coordinator, entry),
+        OdoYearProjectedSensor(coordinator, entry),
+        OdoAnnualFromRegSensor(coordinator, entry),
         ErstzulassungSensor(coordinator, entry),
         HomeKwhSensor(coordinator, entry),
         HomeCostSensor(coordinator, entry),
@@ -332,6 +334,86 @@ class OdoYearKmSensor(_OdoPeriodSensor):
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry, "odo_year_km")
+
+
+class OdoYearProjectedSensor(EvAssistantEntity, SensorEntity):
+    """Hochgerechnete Jahreskilometerleistung basierend auf den bisher im
+    Kalenderjahr gefahrenen Kilometern und dem Jahresfortschritt."""
+
+    _attr_translation_key = "odo_year_projected"
+    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
+    _attr_device_class = SensorDeviceClass.DISTANCE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
+    _attr_icon = "mdi:chart-timeline-variant"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "odo_year_projected")
+
+    @property
+    def native_value(self):
+        from homeassistant.util import dt as dt_util
+        import calendar
+        odo = self.coordinator.data.get("odo")
+        if odo is None:
+            return None
+        unit = self.coordinator.data.get("odo_unit", "km")
+        from .const import MILES_TO_KM
+        odo_km = odo * MILES_TO_KM if unit == "mi" else float(odo)
+        entry = self.coordinator.data.get("odo_periods", {}).get("year")
+        if not entry:
+            return None
+        km_so_far = odo_km - entry["odo_km"]
+        if km_so_far <= 0:
+            return None
+        today = dt_util.now().date()
+        day_of_year = today.timetuple().tm_yday
+        if day_of_year < 7:
+            return None
+        days_in_year = 366 if calendar.isleap(today.year) else 365
+        return round(km_so_far / (day_of_year / days_in_year))
+
+
+class OdoAnnualFromRegSensor(EvAssistantEntity, SensorEntity):
+    """Durchschnittliche Jahreskilometerleistung seit Erstzulassung.
+    Berechnung: aktueller Kilometerstand / (Tage seit Erstzulassung / 365.25).
+    Setzt voraus, dass das Fahrzeug bei Erstzulassung 0 km hatte."""
+
+    _attr_translation_key = "odo_annual_from_reg"
+    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
+    _attr_device_class = SensorDeviceClass.DISTANCE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 0
+    _attr_icon = "mdi:chart-bell-curve"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "odo_annual_from_reg")
+
+    @property
+    def native_value(self):
+        from homeassistant.util import dt as dt_util
+        reg_raw = self.coordinator.entry.options.get(
+            CONF_ERSTZULASSUNG,
+            self.coordinator.entry.data.get(CONF_ERSTZULASSUNG),
+        )
+        if not reg_raw:
+            return None
+        try:
+            reg_date = date.fromisoformat(reg_raw)
+        except (ValueError, TypeError):
+            return None
+        odo = self.coordinator.data.get("odo")
+        if odo is None:
+            return None
+        unit = self.coordinator.data.get("odo_unit", "km")
+        from .const import MILES_TO_KM
+        odo_km = odo * MILES_TO_KM if unit == "mi" else float(odo)
+        days = (dt_util.now().date() - reg_date).days
+        if days < 30:
+            return None
+        return round(odo_km / (days / 365.25))
 
 
 class ErstzulassungSensor(EvAssistantEntity, SensorEntity):

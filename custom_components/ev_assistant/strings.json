@@ -164,6 +164,8 @@
       "odo_week_km": { "name": "Gefahrene km (Woche)" },
       "odo_month_km": { "name": "Gefahrene km (Monat)" },
       "odo_year_km": { "name": "Gefahrene km (Jahr)" },
+      "odo_year_projected": { "name": "Erwartete km (Kalenderjahr)" },
+      "odo_annual_from_reg": { "name": "Erwartete km/Jahr (seit Erstzulassung)" },
       "erstzulassung": { "name": "Erstzulassung" },
       "home_kwh": { "name": "Heimladen kWh (gesamt)" },
       "home_cost": { "name": "Heimladen Kosten (gesamt)" },
