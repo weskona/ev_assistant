@@ -90,6 +90,16 @@ async def _discover_evcc_entities(hass) -> dict:
          if eid.startswith("sensor.evcc_") and eid.endswith("_charge_power")),
         None,
     )
+    # Manche evcc_intg-Versionen/Konfigurationen exponieren Fahrzeugdaten nicht
+    # ueber den Ladepunkt-Praefix (sensor.{lp}_vehicle_soc), sondern ueber einen
+    # eigenen "configvehicle"-Namensraum (sensor.evcc_{vehicle}_configvehicle_soc,
+    # z.B. wenn evcc_intg das Fahrzeug getrennt vom Ladepunkt fuehrt).
+    vk = next(
+        (eid[len("sensor.evcc_"):-len("_configvehicle_soc")]
+         for eid in sorted(evcc_ids)
+         if eid.startswith("sensor.evcc_") and eid.endswith("_configvehicle_soc")),
+        None,
+    )
 
     discovered: dict = {
         CONF_EVCC_PV_POWER:       pick("sensor.evcc_pv_power"),
@@ -114,6 +124,13 @@ async def _discover_evcc_entities(hass) -> dict:
             CONF_EVCC_SESSION_PRICE:     pick(f"sensor.{lp}_session_price"),
             CONF_EVCC_CHARGE_DURATION:   pick(f"sensor.{lp}_charge_duration"),
         })
+    if vk:
+        # setdefault greift nicht, wenn lp bereits einen (fehlgeschlagenen)
+        # Versuch mit Wert None eingetragen hat -- daher explizit pruefen.
+        if not discovered.get(CONF_EVCC_VEHICLE_SOC):
+            discovered[CONF_EVCC_VEHICLE_SOC] = pick(f"sensor.evcc_{vk}_configvehicle_soc")
+        if not discovered.get(CONF_EVCC_LIMIT_SOC):
+            discovered[CONF_EVCC_LIMIT_SOC] = pick(f"sensor.evcc_{vk}_configvehicle_limitsoc")
     return {k: v for k, v in discovered.items() if v is not None}
 
 

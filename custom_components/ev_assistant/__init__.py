@@ -12,7 +12,7 @@ from .const import (
     DOMAIN, PLATFORMS, SERVICE_DELETE, SERVICE_DELETE_TRIP, SERVICE_DISCARD,
     SERVICE_DISCARD_TRIP, SERVICE_EDIT, SERVICE_EDIT_TRIP, SERVICE_EXPORT_TRIPS,
     SERVICE_LOG, SERVICE_LOG_TRIP, SERVICE_SIMULATE, SERVICE_SIMULATE_TRIP,
-    EVCC_CONF_KEYS, CONF_EVCC_VEHICLE_NAME,
+    EVCC_CONF_KEYS, CONF_EVCC_VEHICLE_NAME, CONF_SOC_ENTITY,
 )
 from .coordinator import EvAssistantCoordinator
 
@@ -39,6 +39,12 @@ def _build_entity_map(ent_reg, ev_entry, evcc_conf_keys) -> dict:
         eid = ev_entry.options.get(key) or ev_entry.data.get(key)
         if eid:
             entity_map[key] = eid
+    # Fahrzeugkarte im Panel soll den SoC von DIESER Entitaet zeigen (Schritt 1,
+    # immer konfiguriert, dieselbe Quelle, der auch die Erkennung vertraut) --
+    # nicht von evcc_vehicle_soc, das evcc-Namensschema-abhaengig und optional ist.
+    soc_eid = ev_entry.options.get(CONF_SOC_ENTITY) or ev_entry.data.get(CONF_SOC_ENTITY)
+    if soc_eid:
+        entity_map["soc_entity"] = soc_eid
     return entity_map
 
 

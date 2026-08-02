@@ -75,6 +75,7 @@ def _empty_data() -> dict:
         "trip_totals": {"km": 0.0, "count": 0},
         "trip_detector_state": None,
         "trip_start_zone": None,
+        "trip_start_soc": None,
         "odo_periods": {},
         "odo_lts": {},
     }
@@ -105,6 +106,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # laufenden Fahrt zuletzt bekannt war (siehe _run_trip_detection()).
         self._person_zone: Optional[str] = None
         self._trip_start_zone: Optional[str] = None
+        self._trip_start_soc: Optional[float] = None
         self._detector: Optional[ChargeDetector] = None
         self._calibrator: Optional[EfficiencyCalibrator] = None
         self._trip_detector: Optional[TripDetector] = None
@@ -135,6 +137,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Zone bei Fahrtbeginn ueberlebt einen HA-Neustart waehrend einer
         # laufenden Fahrt, aus demselben Grund wie detector_state/trip_detector_state.
         self._trip_start_zone = self.data.get("trip_start_zone")
+        self._trip_start_soc = self.data.get("trip_start_soc")
         self._build_detector()
         self._build_trip_detector()
         await self._setup_sources()
@@ -575,17 +578,24 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         event = self._trip_detector.update(sample)
         self.data["trip_detector_state"] = self._trip_detector.get_state()
         # Fahrtbeginn erkannt (idle -> aktiv): aktuelle Zone als Start-Ort-
-        # Vorschlag einfrieren, bevor sich die Zone waehrend der Fahrt
-        # aendert. Persistiert, damit ein HA-Neustart waehrend der Fahrt
-        # den Vorschlag nicht verliert (siehe async_setup()).
+        # Vorschlag sowie den aktuellen SoC als Start-SoC einfrieren, bevor
+        # sich beide waehrend der Fahrt aendern. Persistiert, damit ein
+        # HA-Neustart waehrend der Fahrt weder Vorschlag noch Start-SoC
+        # verliert (siehe async_setup()).
         if not was_active and self._trip_detector.active:
             self._trip_start_zone = self._person_zone
             self.data["trip_start_zone"] = self._trip_start_zone
+            self._trip_start_soc = self._soc
+            self.data["trip_start_soc"] = self._trip_start_soc
         await self._save()
         if event is not None:
             pend = event.as_dict()
             pend["start_ort_vorschlag"] = self._trip_start_zone
             pend["end_ort_vorschlag"] = self._person_zone
+            if self._trip_start_soc is not None and self._soc is not None:
+                pend["soc_start"] = round(self._trip_start_soc, 1)
+                pend["soc_end"] = round(self._soc, 1)
+                pend["delta_soc"] = round(self._soc - self._trip_start_soc, 1)
             await self._handle_pending_trip(pend)
 
     async def _record_efficiency_sample(self, sample: float) -> None:

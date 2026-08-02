@@ -1222,8 +1222,9 @@ class EVAssistantPanel extends HTMLElement {
       r.vhVehName.textContent = label || "—";
     }
 
-    // SOC
-    const socEid = this._eid("evcc_vehicle_soc");
+    // SOC — von der Fahrzeug-eigenen SoC-Entitaet (Schritt 1, immer konfiguriert),
+    // nicht von evcc_vehicle_soc (optional, evcc-Namensschema-abhaengig).
+    const socEid = this._eid("soc_entity");
     const socState = socEid && this._hass ? this._hass.states[socEid] : null;
     const soc = socState ? parseFloat(socState.state) : null;
     if (r.vhSocVal) r.vhSocVal.textContent = soc != null && !isNaN(soc) ? Math.round(soc) : "—";
@@ -2063,7 +2064,7 @@ class EVAssistantPanel extends HTMLElement {
       .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 
       /* Main scroll area */
-      .main { flex: 1; overflow-y: auto; padding: 24px 28px 40px; }
+      .main { flex: 1; overflow-y: auto; padding: 24px 28px 40px; overscroll-behavior: contain; }
       .main::-webkit-scrollbar { width: 8px; }
       .main::-webkit-scrollbar-thumb {
         background: var(--line-s); border-radius: 8px;
@@ -2453,6 +2454,7 @@ class EVAssistantPanel extends HTMLElement {
       .hist-scroll { display: flex; flex-direction: column; gap: 8px; }
       .hist-scroll.expanded {
         max-height: 420px; overflow-y: auto; padding-right: 4px;
+        overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
       }
       .hist-scroll.expanded::-webkit-scrollbar { width: 6px; }
       .hist-scroll.expanded::-webkit-scrollbar-thumb { background: var(--line-s); border-radius: 6px; }

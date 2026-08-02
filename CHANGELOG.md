@@ -2,6 +2,36 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.21.2] - 2026-08-02
+
+### Fixed
+
+- **Vehicle card SOC was never shown**: it read exclusively from the optional `evcc_vehicle_soc`
+  entity, auto-discovered from evcc — but that discovery only recognized one evcc naming scheme
+  (loadpoint-prefixed, `sensor.{loadpoint}_vehicle_soc`) and silently found nothing on installs
+  where evcc exposes vehicle data under a `configvehicle` namespace instead
+  (`sensor.evcc_{vehicle}_configvehicle_soc`). The vehicle card now reads SOC from the vehicle's
+  own `soc_entity` (step 1, always configured, the same source the detection engine already
+  trusts) instead of depending on evcc auto-discovery at all.
+- **evcc auto-discovery missed vehicle SOC/limit-SOC on `configvehicle`-style evcc_intg setups**:
+  added recognition for `sensor.evcc_{vehicle}_configvehicle_soc` /
+  `..._configvehicle_limitsoc`, alongside the existing loadpoint-based pattern. Fixes the
+  Übersicht tab's live SOC bar for these installs too.
+- **Confirmed trips never got a SOC value**: the trip detector snapshotted the start/end
+  location for the GPS suggestion, but never actually captured the vehicle's SOC at trip
+  start/end — the history display and `log_trip` handling for `soc_start`/`soc_end`/`delta_soc`
+  (added in 0.21.1) had nothing to read, since the snapshot itself was never implemented. Now
+  captured the same restart-safe way as the location suggestion. Takes effect from the next
+  detected trip onward — already-confirmed trips are unaffected.
+- **Scrolling the trip-log (or any expanded history) card on mobile could bounce the whole page
+  back to the top**: classic scroll-chaining — reaching the end of the inner scrollable list
+  without `overscroll-behavior: contain` let the scroll gesture propagate to the outer page.
+  Added `overscroll-behavior: contain` (+ `-webkit-overflow-scrolling: touch`) to the expanded
+  history list and the panel's main scroll container.
+- **`NameError: name 'dt_util' is not defined`** on every coordinator update, breaking the
+  "expected km/year since first registration" sensor (`odo_annual_from_reg`) added in 0.21.0 —
+  `homeassistant.util.dt` was used but never imported in `sensor.py`.
+
 ## [0.21.1] - 2026-08-02
 
 ### Fixed
