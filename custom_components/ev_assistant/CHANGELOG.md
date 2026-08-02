@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.20.2] - 2026-08-02
+
+### Fixed
+
+- Removed `evcc_intg` from `dependencies` in `manifest.json` — HA cannot resolve custom (HACS) integrations as hard dependencies, causing ev_assistant and potentially other integrations to fail loading entirely.
+
 ## [0.20.1] - 2026-08-02
 
 ### Fixed
