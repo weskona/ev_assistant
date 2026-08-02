@@ -38,6 +38,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         OdoAvgDaySensor(coordinator, entry),
         OdoAvgWeekSensor(coordinator, entry),
         OdoAvgMonthSensor(coordinator, entry),
+        OdoAvgYearSensor(coordinator, entry),
         OdoYearProjectedSensor(coordinator, entry),
         OdoAnnualFromRegSensor(coordinator, entry),
         ErstzulassungSensor(coordinator, entry),
@@ -404,6 +405,19 @@ class OdoAvgMonthSensor(_OdoLtsSensor):
     def native_value(self):
         d = self._delta("sum_90d_ago")
         return round(d / 3) if d is not None else None
+
+
+class OdoAvgYearSensor(_OdoLtsSensor):
+    _attr_translation_key = "odo_avg_year"
+    _attr_icon = "mdi:calendar-blank-multiple"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "odo_avg_year")
+
+    @property
+    def native_value(self):
+        d = self._delta("sum_365d_ago")
+        return round(d) if d is not None else None
 
 
 class OdoYearProjectedSensor(_OdoLtsSensor):

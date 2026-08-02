@@ -167,6 +167,7 @@
       "odo_avg_day": { "name": "Avg km/day (30 days)" },
       "odo_avg_week": { "name": "Avg km/week (30 days)" },
       "odo_avg_month": { "name": "Avg km/month (90 days)" },
+      "odo_avg_year": { "name": "Avg km/year (365 days)" },
       "odo_year_projected": { "name": "Projected km (calendar year)" },
       "odo_annual_from_reg": { "name": "Projected km/year (since registration)" },
       "erstzulassung": { "name": "First Registration" },

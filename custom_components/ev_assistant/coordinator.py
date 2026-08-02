@@ -466,28 +466,32 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
         year_start = dt_util.as_utc(now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0))
         ago30 = dt_util.as_utc(now - timedelta(days=30))
-        ago90 = dt_util.as_utc(now - timedelta(days=90))
+        ago90  = dt_util.as_utc(now - timedelta(days=90))
+        ago365 = dt_util.as_utc(now - timedelta(days=365))
         now_utc = dt_util.as_utc(now)
 
         try:
             instance = get_instance(self.hass)
-            r_year = await instance.async_add_executor_job(_query, year_start, year_start + timedelta(hours=25))
-            r_30d  = await instance.async_add_executor_job(_query, ago30,      ago30 + timedelta(hours=25))
-            r_90d  = await instance.async_add_executor_job(_query, ago90,      ago90 + timedelta(hours=25))
-            r_now  = await instance.async_add_executor_job(_query, now_utc - timedelta(hours=25), now_utc)
+            r_year  = await instance.async_add_executor_job(_query, year_start,       year_start + timedelta(hours=25))
+            r_30d   = await instance.async_add_executor_job(_query, ago30,            ago30 + timedelta(hours=25))
+            r_90d   = await instance.async_add_executor_job(_query, ago90,            ago90 + timedelta(hours=25))
+            r_365d  = await instance.async_add_executor_job(_query, ago365,           ago365 + timedelta(hours=25))
+            r_now   = await instance.async_add_executor_job(_query, now_utc - timedelta(hours=25), now_utc)
 
             lts = self.data.setdefault("odo_lts", {})
-            sum_year = _first_sum(r_year)
-            sum_30d  = _first_sum(r_30d)
-            sum_90d  = _first_sum(r_90d)
-            sum_now  = _last_sum(r_now)
+            sum_year  = _first_sum(r_year)
+            sum_30d   = _first_sum(r_30d)
+            sum_90d   = _first_sum(r_90d)
+            sum_365d  = _first_sum(r_365d)
+            sum_now   = _last_sum(r_now)
 
-            if sum_year is not None: lts["sum_year_start"] = sum_year
-            if sum_30d  is not None: lts["sum_30d_ago"]    = sum_30d
-            if sum_90d  is not None: lts["sum_90d_ago"]    = sum_90d
-            if sum_now  is not None: lts["sum_now"]        = sum_now
+            if sum_year  is not None: lts["sum_year_start"] = sum_year
+            if sum_30d   is not None: lts["sum_30d_ago"]    = sum_30d
+            if sum_90d   is not None: lts["sum_90d_ago"]    = sum_90d
+            if sum_365d  is not None: lts["sum_365d_ago"]   = sum_365d
+            if sum_now   is not None: lts["sum_now"]        = sum_now
 
-            _LOGGER.debug("LTS odo: year_start=%s 30d=%s 90d=%s now=%s", sum_year, sum_30d, sum_90d, sum_now)
+            _LOGGER.debug("LTS odo: year_start=%s 30d=%s 90d=%s 365d=%s now=%s", sum_year, sum_30d, sum_90d, sum_365d, sum_now)
         except Exception as exc:
             _LOGGER.debug("LTS-Abfrage fehlgeschlagen: %s", exc)
 
