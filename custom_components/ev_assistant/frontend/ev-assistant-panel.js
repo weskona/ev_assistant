@@ -341,7 +341,7 @@ class EVAssistantPanel extends HTMLElement {
     const socSect = document.createElement("div");
     socSect.className = "soc-sect";
     socSect.innerHTML = `
-      <div class="soc-bar-hdr" id="st-soc-hdr">Fahrzeug-Akku</div>
+      <div class="soc-bar-hdr">Fahrzeug-Akku</div>
       <div class="soc-bar-track">
         <div class="soc-bar-fill" id="st-soc-fill"></div>
         <div class="soc-bar-limit" id="st-soc-limit"></div>
@@ -367,7 +367,6 @@ class EVAssistantPanel extends HTMLElement {
     this._r.stPwGrid    = pw.querySelector(".pw-grid");
     this._r.stPwBar     = pw.querySelector("#st-pw-bar");
     this._r.stPwAvail   = pw.querySelector("#st-pw-avail");
-    this._r.stSocHdr    = socSect.querySelector("#st-soc-hdr");
     this._r.stSocFill   = socSect.querySelector("#st-soc-fill");
     this._r.stSocLimit  = socSect.querySelector("#st-soc-limit");
     this._r.stSocVal    = socSect.querySelector("#st-soc-val");
@@ -952,7 +951,8 @@ class EVAssistantPanel extends HTMLElement {
     const phaseNum = parseInt(phases ?? "3", 10) || 3;
     const maxKw    = phaseNum * 3.68;
     const solarPct = parseFloat(ev("evcc_session_solar_pct") ?? NaN);
-    const soc      = parseFloat(ev("evcc_vehicle_soc")       ?? NaN);
+    const socEid   = this._eid("soc_entity");
+    const soc      = socEid ? parseFloat(this._raw(socEid) ?? NaN) : parseFloat(ev("evcc_vehicle_soc") ?? NaN);
     const socLim   = parseFloat(ev("evcc_limit_soc")         ?? NaN);
     const rawConn  = ev("evcc_charge_status");               // binary_sensor → "on"/"off"
     const mode     = ev("evcc_mode")                         || "";
@@ -996,13 +996,6 @@ class EVAssistantPanel extends HTMLElement {
     r.stPwBar.style.width = isCharging ? this._clamp(power / maxKw * 100, 0, 100) + "%" : "0%";
     r.stPwBar.style.background = (!isNaN(solarPct) && solarPct > 50) ? "#4ade80" : "var(--accent)";
     r.stPwAvail.textContent = `Max: ${this._fmtNum(maxKw, 1)} kW (${phaseNum}P)`;
-
-    // EV SOC bar label — use soc_entity friendly name
-    const socEid = this._eid("soc_entity");
-    const socName = socEid
-      ? (this._hass?.states[socEid]?.attributes?.friendly_name || socEid.split(".").pop().replace(/_/g, " "))
-      : "SOC";
-    r.stSocHdr.textContent = socName;
 
     // EV SOC bar
     if (!isNaN(soc)) {

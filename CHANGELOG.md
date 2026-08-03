@@ -4,13 +4,12 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 
 ## [0.26.0] - 2026-08-03
 
-### Changed
+### Fixed
 
-- **SOC bar label in Übersicht now reflects configured entity name**: the
-  label above the state-of-charge bar in the overview tab was hardcoded to
-  "Fahrzeug-Akku". It now dynamically shows the friendly name of the
-  configured `soc_entity` (e.g. "Marstek Speicher 1 Batterie-Ladestand"),
-  falling back to a cleaned-up entity ID if no friendly name is available.
+- **SOC bar in Übersicht now reads from configured `soc_entity`**: previously
+  the bar read from `evcc_vehicle_soc` (the evcc vehicle SOC entity). It now
+  reads from the separately configured `soc_entity`, falling back to
+  `evcc_vehicle_soc` if no `soc_entity` is set.
 
 ## [0.25.0] - 2026-08-03
 
