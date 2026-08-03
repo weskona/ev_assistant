@@ -262,6 +262,37 @@ export_fahrtenbuch:
         config_entry:
           integration: ev_assistant
 
+import_fahrtenbuch:
+  name: Fahrtenbuch importieren
+  description: >
+    Importiert historische Fahrten aus einer Fremdquelle (z.B. Export einer
+    anderen Fahrtenbuch-App) direkt ins Fahrtenbuch, ohne die
+    Kilometerstand-Erkennung -- Kilometerstaende bleiben dabei leer, nur
+    Datum, Start-/Zielort und Strecke werden uebernommen. Je Eintrag: start/
+    ende als "YYYY-MM-DD HH:MM:SS" (lokale Zeit), start_ort, ziel_ort,
+    strecke (km), optional verbrauch_kwh/avg_verbrauch/avg_speed. Bereits
+    importierte Fahrten (gleiche Startzeit) werden bei einem erneuten Aufruf
+    uebersprungen.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    trips:
+      name: Fahrten
+      description: >
+        Liste von Fahrten, je ein Objekt mit start, start_ort, ende,
+        ziel_ort, strecke (km) und optional verbrauch_kwh/avg_verbrauch/
+        avg_speed.
+      required: true
+      example: >
+        [{"start": "2026-08-03 09:21:28", "start_ort": "Home", "ende": "2026-08-03 09:41:57", "ziel_ort": "L 237, Moers", "strecke": 25.0}]
+      selector:
+        object:
+
 simulate_trip:
   name: Fahrt simulieren (Test)
   description: >

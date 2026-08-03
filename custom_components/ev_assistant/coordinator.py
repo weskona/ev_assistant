@@ -6,7 +6,7 @@ import json
 import logging
 import os
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from homeassistant.util import dt as dt_util
 from typing import Callable, Optional
 
@@ -34,7 +34,7 @@ from .const import (
     DEFAULT_USABLE_KWH, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
     EFF_MAX_EFFICIENCY, EFF_MIN_SAMPLES, EFF_MIN_SOC_DELTA,
     EVENT_DELETED, EVENT_EDITED, EVENT_LOGGED, EVENT_PENDING, EVENT_TRIP_DELETED,
-    EVENT_TRIP_EDITED, EVENT_TRIP_LOGGED, EVENT_TRIP_PENDING,
+    EVENT_TRIP_EDITED, EVENT_TRIP_IMPORTED, EVENT_TRIP_LOGGED, EVENT_TRIP_PENDING,
     MILES_TO_KM, NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
 )
 from .engine import (
@@ -531,6 +531,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     @callback
     def _daily_lts_refresh(self, now) -> None:
         self.hass.async_create_task(self.async_refresh_lts_data())
+        self.hass.async_create_task(self._daily_odo_period_rollover())
+
+    async def _daily_odo_period_rollover(self) -> None:
+        """Rollt die Tag/Woche/Monat/Jahr-Baselines (siehe
+        _update_odo_periods()) auch dann taeglich, wenn seit Mitternacht
+        noch kein neuer Kilometerstand gemeldet wurde (Auto steht) -- sonst
+        zeigt z.B. 'km heute' morgens vor der ersten Fahrt faelschlich noch
+        den gestrigen Wert, weil der Rollover bisher nur als Nebeneffekt
+        einer neuen Kilometerstand-Meldung in _set_odo() ausgeloest wurde."""
+        odo_km = self._odo_km()
+        if odo_km is None:
+            return
+        self._update_odo_periods(odo_km)
+        self.async_set_updated_data(self.data)
+        await self._save()
 
     async def async_refresh_lts_data(self) -> None:
         """LTS-Summen des Odometer-Sensors abfragen fuer Perioden-Projektionen.
@@ -1019,6 +1034,83 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 return True
         return False
 
+    async def async_import_fahrtenbuch(self, trips: list) -> int:
+        """Importiert historische Fahrten aus einer Fremdquelle (z.B. Export
+        einer anderen Fahrtenbuch-App) direkt in data['fahrten'], ohne den
+        Umweg ueber die Kilometerstand-Erkennung -- odo_start/odo_end
+        bleiben dabei None, da diese Fremddaten keine Kilometerstaende
+        liefern, nur die gefahrene Strecke. Format je Eintrag: start/ende
+        als 'YYYY-MM-DD HH:MM:SS' in lokaler Zeit, start_ort/ziel_ort,
+        strecke (km), optional verbrauch_kwh/avg_verbrauch/avg_speed.
+        Ungueltige Eintraege werden uebersprungen (Warnung im Log) statt
+        den gesamten Import abzubrechen. Eintraege mit einem bereits
+        vorhandenen start_ts werden uebersprungen, damit ein wiederholter
+        Import keine Dubletten erzeugt. Gibt die Anzahl tatsaechlich neu
+        importierter Fahrten zurueck."""
+        existing_starts = {rec.get("start_ts") for rec in self.data.get("fahrten") or []}
+        imported: list[dict] = []
+        for row in trips:
+            try:
+                start_dt = datetime.strptime(row["start"], "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=dt_util.DEFAULT_TIME_ZONE
+                )
+                end_dt = datetime.strptime(row["ende"], "%Y-%m-%d %H:%M:%S").replace(
+                    tzinfo=dt_util.DEFAULT_TIME_ZONE
+                )
+                start_ts = start_dt.timestamp()
+                if start_ts in existing_starts:
+                    continue
+                rec = {
+                    "config_entry_id": self.entry.entry_id,
+                    "datum": start_dt.date().isoformat(),
+                    "start_ts": start_ts, "end_ts": end_dt.timestamp(),
+                    "odo_start": None, "odo_end": None,
+                    "km": round(float(row["strecke"]), 2),
+                    "start_ort": row["start_ort"], "end_ort": row["ziel_ort"],
+                    "erfasst_ts": int(time.time()), "quelle": "import",
+                }
+                for key in ("verbrauch_kwh", "avg_verbrauch", "avg_speed"):
+                    if row.get(key) is not None:
+                        rec[key] = float(row[key])
+                imported.append(rec)
+                existing_starts.add(start_ts)
+            except (KeyError, TypeError, ValueError) as exc:
+                _LOGGER.warning(
+                    "ev_assistant: Fahrtenbuch-Import: ungueltiger Eintrag uebersprungen (%s): %r", exc, row
+                )
+
+        if not imported:
+            return 0
+
+        fahrten = self.data.setdefault("fahrten", [])
+        fahrten.extend(imported)
+        fahrten.sort(key=lambda r: r.get("start_ts") or 0, reverse=True)
+
+        totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
+        totals["km"] = round(totals.get("km", 0.0) + sum(r["km"] for r in imported), 2)
+        totals["count"] = totals.get("count", 0) + len(imported)
+
+        await self._save()
+        self.hass.bus.async_fire(EVENT_TRIP_IMPORTED, {"anzahl": len(imported)})
+        en = self._en()
+        try:
+            await self.hass.services.async_call(
+                "persistent_notification", "create",
+                {
+                    "notification_id": f"{self._notify_tag}_import",
+                    "title": "Trip log import" if en else "Fahrtenbuch-Import",
+                    "message": (
+                        f"{len(imported)} trip(s) imported."
+                        if en else f"{len(imported)} Fahrt(en) importiert."
+                    ),
+                },
+                blocking=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        self.async_set_updated_data(self.data)
+        return len(imported)
+
     async def async_simulate_trip(self, km: float) -> None:
         odo = self._odo_km() or 0.0
         now = int(time.time())
@@ -1061,7 +1153,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             writer = csv.writer(f, delimiter=";")
             writer.writerow(["Datum", "Start", "Ziel", "km Start", "km Ende", "Strecke (km)"])
             for t in fahrten:
-                writer.writerow([t["datum"], t["start_ort"], t["end_ort"], t["odo_start"], t["odo_end"], t["km"]])
+                odo_start = t["odo_start"] if t["odo_start"] is not None else ""
+                odo_end = t["odo_end"] if t["odo_end"] is not None else ""
+                writer.writerow([t["datum"], t["start_ort"], t["end_ort"], odo_start, odo_end, t["km"]])
 
     async def async_log_charge(self, kwh: float, price: float, start_ts: Optional[float] = None) -> None:
         """Bestaetigt eine offene Fremdladung. Bei mehreren gleichzeitig

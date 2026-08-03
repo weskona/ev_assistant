@@ -2,6 +2,33 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.23.0] - 2026-08-03
+
+### Added
+
+- **`import_fahrtenbuch` service**: bulk-import historical trips from another
+  trip-log app/export directly into the trip log, bypassing the odometer
+  detector entirely. Each entry: local-time `start`/`ende`, `start_ort`,
+  `ziel_ort`, `strecke` (km), optionally `verbrauch_kwh`/`avg_verbrauch`/
+  `avg_speed`. Odometer values stay empty (the source has none). Re-running
+  the same import is safe — entries already present (same start time) are
+  skipped rather than duplicated. Accepts either a plain list or the whole
+  source file's `{"trips": [...]}` shape directly, since pasting the full
+  file as-is into the field is an easy mistake.
+
+### Fixed
+
+- **"km driven today/this week/..." didn't reset at midnight if the car
+  didn't drive right away**: the day/week/month/year baselines only rolled
+  over as a side effect of a *new* odometer reading, so a parked car kept
+  showing yesterday's distance until its first reading of the new day. A
+  daily check (already scheduled for the LTS statistics refresh) now rolls
+  the baselines over using the last known odometer value, independent of
+  whether the car has moved yet.
+- Trip log CSV export showed the literal text `None` for the odometer
+  columns of imported trips (which have no odometer values) — now left
+  blank instead.
+
 ## [0.22.0] - 2026-08-03
 
 ### Added

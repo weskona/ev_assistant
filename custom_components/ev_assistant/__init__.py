@@ -11,7 +11,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from .const import (
     DOMAIN, PLATFORMS, SERVICE_DELETE, SERVICE_DELETE_TRIP, SERVICE_DISCARD,
     SERVICE_DISCARD_TRIP, SERVICE_EDIT, SERVICE_EDIT_TRIP, SERVICE_EXPORT_TRIPS,
-    SERVICE_LOG, SERVICE_LOG_TRIP, SERVICE_SIMULATE, SERVICE_SIMULATE_TRIP,
+    SERVICE_IMPORT_TRIPS, SERVICE_LOG, SERVICE_LOG_TRIP, SERVICE_SIMULATE, SERVICE_SIMULATE_TRIP,
     EVCC_CONF_KEYS, CONF_EVCC_VEHICLE_NAME, CONF_SOC_ENTITY,
 )
 from .coordinator import EvAssistantCoordinator
@@ -200,6 +200,14 @@ DELETE_TRIP_SCHEMA = vol.Schema({
     vol.Required("erfasst_ts"): vol.Coerce(int),
 })
 
+IMPORT_TRIPS_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    # Akzeptiert sowohl eine reine Liste als auch versehentlich die komplette
+    # Quelldatei inkl. ihres umschliessenden "trips"-Schluessels (haeufiger
+    # Copy-Paste-Fehler in Entwicklertools -> Aktionen).
+    vol.Required("trips"): vol.Any([dict], vol.Schema({vol.Required("trips"): [dict]}, extra=vol.ALLOW_EXTRA)),
+})
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = EvAssistantCoordinator(hass, entry)
@@ -292,6 +300,14 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_delete_trip(call.data["erfasst_ts"])
 
+    async def _handle_import_trips(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            trips = call.data["trips"]
+            if isinstance(trips, dict):
+                trips = trips.get("trips", [])
+            await coordinator.async_import_fahrtenbuch(trips)
+
     hass.services.async_register(DOMAIN, SERVICE_LOG, _handle_log, schema=LOG_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCARD, _handle_discard, schema=DISCARD_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE, _handle_simulate, schema=SIMULATE_SCHEMA)
@@ -303,6 +319,7 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE_TRIP, _handle_simulate_trip, schema=SIMULATE_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_EDIT_TRIP, _handle_edit_trip, schema=EDIT_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DELETE_TRIP, _handle_delete_trip, schema=DELETE_TRIP_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_IMPORT_TRIPS, _handle_import_trips, schema=IMPORT_TRIPS_SCHEMA)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -315,7 +332,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for service in (
                 SERVICE_LOG, SERVICE_DISCARD, SERVICE_SIMULATE, SERVICE_EDIT, SERVICE_DELETE,
                 SERVICE_LOG_TRIP, SERVICE_DISCARD_TRIP, SERVICE_EXPORT_TRIPS, SERVICE_SIMULATE_TRIP,
-                SERVICE_EDIT_TRIP, SERVICE_DELETE_TRIP,
+                SERVICE_EDIT_TRIP, SERVICE_DELETE_TRIP, SERVICE_IMPORT_TRIPS,
             ):
                 hass.services.async_remove(DOMAIN, service)
         else:
