@@ -442,17 +442,23 @@ def calculate_savings(
     fremdladen_kosten: float,
     verbrenner_l_100km: Optional[float],
     verbrenner_price_per_liter: Optional[float],
+    home_cost: Optional[float] = None,
 ) -> Optional[dict]:
     """Gesamtkosten der EV-Nutzung (Heimladen + Fremdladen) gegen einen
     Vergleichs-Verbrenner (Verbrauch x Kraftstoffpreis auf derselben
     Strecke). Gibt None zurueck, wenn eine der zwingend noetigen Groessen
     fehlt (km_driven, verbrenner_l_100km, verbrenner_price_per_liter) --
     home_kwh/home_price_kwh sind einzeln optional: fehlen sie, wird nur
-    mit den (immer vorhandenen) Fremdladungskosten gerechnet."""
+    mit den (immer vorhandenen) Fremdladungskosten gerechnet.
+    home_cost: wenn angegeben, wird dieser Wert direkt verwendet statt
+    home_kwh * home_price_kwh (z.B. wenn evcc die Kosten pro Fahrzeug
+    bereits korrekt berechnet hat)."""
     if km_driven is None or verbrenner_l_100km is None or verbrenner_price_per_liter is None:
         return None
     heimladen_kosten = 0.0
-    if home_kwh is not None and home_price_kwh is not None:
+    if home_cost is not None:
+        heimladen_kosten = round(home_cost, 2)
+    elif home_kwh is not None and home_price_kwh is not None:
         heimladen_kosten = round(home_kwh * home_price_kwh, 2)
     kosten_ev_gesamt = round(heimladen_kosten + fremdladen_kosten, 2)
     kosten_verbrenner = round((km_driven / 100.0) * verbrenner_l_100km * verbrenner_price_per_liter, 2)

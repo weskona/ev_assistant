@@ -542,6 +542,9 @@ class HomeCostSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def native_value(self):
+        direct = self.coordinator._home_cost()
+        if direct is not None:
+            return direct
         home_kwh = self.coordinator._home_kwh()
         home_price = self.coordinator._home_price()
         if home_kwh is None or home_price is None:

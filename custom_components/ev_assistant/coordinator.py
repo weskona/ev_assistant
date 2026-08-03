@@ -1391,6 +1391,25 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return None
         return round(self._wallbox_energy - start, 2)
 
+    def _home_cost(self) -> Optional[float]:
+        """Heimladen-Kosten direkt aus evccs Fahrzeug-Session-Statistik,
+        falls verfuegbar -- praeziser als home_kwh * home_price, da evcc
+        pro Session mit dem tatsaechlichen Tarif rechnet statt mit dem
+        standortweiten Durchschnittspreis."""
+        veh = self._evcc_vehicle_key()
+        if veh:
+            state = self.hass.states.get("sensor.evcc_charging_sessions_vehicles")
+            if state:
+                veh_data = state.attributes.get(veh)
+                if isinstance(veh_data, dict):
+                    cost = veh_data.get("cost")
+                    if cost is not None:
+                        try:
+                            return round(float(cost), 2)
+                        except (ValueError, TypeError):
+                            pass
+        return None
+
     def _home_price(self) -> Optional[float]:
         """Heimstrompreis. Prioritaet: (1) evccs standortweite
         Durchschnittspreis-Statistik (CONF_EVCC_STAT_AVG_PRICE) -- NUR wenn
@@ -1444,6 +1463,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             fremdladen_kosten=self.data.get("totals", {}).get("kosten", 0.0),
             verbrenner_l_100km=float(verbrenner_l) if verbrenner_l is not None else None,
             verbrenner_price_per_liter=float(verbrenner_price) if verbrenner_price is not None else None,
+            home_cost=self._home_cost(),
         )
 
     async def _dismiss(self) -> None:

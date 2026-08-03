@@ -2,6 +2,39 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.25.0] - 2026-08-03
+
+### Fixed
+
+- **Home charging cost now uses evcc's per-vehicle cost directly**: when
+  `sensor.evcc_charging_sessions_vehicles` is available (evcc tracks cost
+  per vehicle with the actual per-session tariff), that cost is used
+  directly instead of multiplying kWh × the site-wide average price — the
+  site-wide average blends in sessions from other vehicles at the same
+  site, systematically underestimating the effective price for the vehicle
+  in question.
+- **Active charging session no longer appears in home charging history**:
+  evcc creates a session record as soon as charging starts (with `finished`
+  = null); the history list now filters out sessions without a finished
+  timestamp so only completed sessions are shown.
+- **Cost/100 km now uses odometer-based km (gefahrene_km) instead of trip
+  log km**: the savings sensor's `gefahrene_km` attribute (odometer delta
+  since setup) is the correct denominator — trip log km only counts
+  confirmed trips and will always be lower, making the per-100-km costs
+  appear inflated.
+
+### Added
+
+- **Locale-aware number formatting throughout the panel**: all displayed
+  numbers (kWh, EUR, kW, km, €/kWh, chart axes) now respect the HA locale
+  setting (`Settings → Profile → Number format`). German users see commas
+  as decimal separators (e.g. `11,40`), US users see dots — without any
+  manual configuration.
+- **Bar chart value labels replaced by hover tooltip**: bar charts no
+  longer show per-bar value labels (which overlapped in monthly view with
+  30 bars). Hovering over any bar now shows a floating tooltip with the
+  formatted value above it.
+
 ## [0.24.0] - 2026-08-03
 
 ### Fixed

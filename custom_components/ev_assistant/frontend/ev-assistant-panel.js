@@ -96,10 +96,23 @@ class EVAssistantPanel extends HTMLElement {
     if (!eid || !this._hass) return false;
     return (this._hass.states[eid] || {}).state === "on";
   }
+  _fmtNum(value, decimals) {
+    const v = Number(value);
+    if (isNaN(v)) return "—";
+    const loc = this._hass?.locale;
+    const fmt = loc?.number_format;
+    if (fmt === "none") return v.toFixed(decimals);
+    let locale;
+    if (fmt === "comma_decimal") locale = "en-US";
+    else if (fmt === "decimal_comma") locale = "de";
+    else if (fmt === "space_comma") locale = "fr";
+    else locale = loc?.language || this._hass?.language || undefined;
+    return v.toLocaleString(locale, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  }
   _num(key, decimals = 1) {
     const v = parseFloat(this._state(key));
     if (isNaN(v)) return "—";
-    return decimals === 0 ? Math.round(v).toString() : v.toFixed(decimals);
+    return this._fmtNum(v, decimals);
   }
   _duration(key) {
     const eid = this._eid(key);
@@ -122,7 +135,7 @@ class EVAssistantPanel extends HTMLElement {
   _rawNum(entityId, decimals = 1) {
     const v = parseFloat(this._raw(entityId));
     if (isNaN(v)) return "—";
-    return decimals === 0 ? Math.round(v).toString() : v.toFixed(decimals);
+    return this._fmtNum(v, decimals);
   }
   _clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
@@ -694,8 +707,8 @@ class EVAssistantPanel extends HTMLElement {
               <div class="km-item"><span class="km-label">EV-Kosten</span><span class="km-val vh-sav-ev-cost">—</span><span class="km-unit">EUR</span></div>
               <div class="km-item"><span class="km-label">Verbrenner</span><span class="km-val vh-sav-verb-cost">—</span><span class="km-unit">EUR</span></div>
               <div class="km-sep"></div>
-              <div class="km-item"><span class="km-label">/100km EV</span><span class="km-val vh-sav-ev-per100">—</span><span class="km-unit">EUR</span></div>
-              <div class="km-item"><span class="km-label">/100km Verb.</span><span class="km-val vh-sav-verb-per100">—</span><span class="km-unit">EUR</span></div>
+              <div class="km-item"><span class="km-label">Kosten/100km EV</span><span class="km-val vh-sav-ev-per100">—</span><span class="km-unit">EUR</span></div>
+              <div class="km-item"><span class="km-label">Kosten/100km Verb.</span><span class="km-val vh-sav-verb-per100">—</span><span class="km-unit">EUR</span></div>
             </div>
           </div>
         </div>
@@ -966,7 +979,7 @@ class EVAssistantPanel extends HTMLElement {
     // ----- Status ring -----
     this._updateRing(r.stRingSolar, r.stRingGrid, power, maxKw, r.stCirc, solarPct);
     if (isCharging) {
-      r.stKw.innerHTML = `${power.toFixed(1)}<span>kW</span>`;
+      r.stKw.innerHTML = `${this._fmtNum(power, 1)}<span>kW</span>`;
     } else {
       r.stKw.innerHTML = `—<span>kW</span>`;
     }
@@ -974,14 +987,14 @@ class EVAssistantPanel extends HTMLElement {
     const pvShow   = !isNaN(pvKw)   && pvKw   > 0.01;
     const gridShow = !isNaN(gridPw) && Math.abs(gridPw) > 0.01;
     r.stPwSolar.innerHTML = pvShow
-      ? `${pvKw.toFixed(1)}<span class="stat-unit"> kW</span>`
+      ? `${this._fmtNum(pvKw, 1)}<span class="stat-unit"> kW</span>`
       : `—<span class="stat-unit"> kW</span>`;
     r.stPwGrid.innerHTML  = gridShow
-      ? `${Math.abs(gridPw).toFixed(1)}<span class="stat-unit"> kW ${gridPw < 0 ? "↑" : "↓"}</span>`
+      ? `${this._fmtNum(Math.abs(gridPw), 1)}<span class="stat-unit"> kW ${gridPw < 0 ? "↑" : "↓"}</span>`
       : `—<span class="stat-unit"> kW</span>`;
     r.stPwBar.style.width = isCharging ? this._clamp(power / maxKw * 100, 0, 100) + "%" : "0%";
     r.stPwBar.style.background = (!isNaN(solarPct) && solarPct > 50) ? "#4ade80" : "var(--accent)";
-    r.stPwAvail.textContent = `Max: ${maxKw.toFixed(1)} kW (${phaseNum}P)`;
+    r.stPwAvail.textContent = `Max: ${this._fmtNum(maxKw, 1)} kW (${phaseNum}P)`;
 
     // EV SOC bar
     if (!isNaN(soc)) {
@@ -1010,12 +1023,12 @@ class EVAssistantPanel extends HTMLElement {
     this._setChip(r.dgConn, connLabel, connTone);
     this._setChip(r.dgPhases, phases ? phases + " Ph." : "—", "");
     this._setChip(r.dgSocLim, !isNaN(socLim) ? Math.round(socLim) + " %" : "—", "");
-    this._setChip(r.dgTgrid,   !isNaN(tGrid)   ? tGrid.toFixed(3)   + " €/kWh" : "—", "");
-    this._setChip(r.dgTfeedin, !isNaN(tFeedin) ? tFeedin.toFixed(3) + " €/kWh" : "—", "");
-    this._setChip(r.dgSessKwh, !isNaN(sessKwh) ? sessKwh.toFixed(2) + " kWh" : "—", "");
+    this._setChip(r.dgTgrid,   !isNaN(tGrid)   ? this._fmtNum(tGrid, 3)   + " €/kWh" : "—", "");
+    this._setChip(r.dgTfeedin, !isNaN(tFeedin) ? this._fmtNum(tFeedin, 3) + " €/kWh" : "—", "");
+    this._setChip(r.dgSessKwh, !isNaN(sessKwh) ? this._fmtNum(sessKwh, 2) + " kWh" : "—", "");
     this._setChip(r.dgSessSol, !isNaN(solarPct) ? Math.round(solarPct) + " %" : "—",
       !isNaN(solarPct) && solarPct > 50 ? "good" : "");
-    this._setChip(r.dgSessEur, !isNaN(sessEur) ? sessEur.toFixed(2) + " EUR" : "—", "");
+    this._setChip(r.dgSessEur, !isNaN(sessEur) ? this._fmtNum(sessEur, 2) + " EUR" : "—", "");
 
     let durStr = "—";
     if (!isNaN(durSec) && durSec > 0) {
@@ -1030,35 +1043,35 @@ class EVAssistantPanel extends HTMLElement {
     // ----- Session bars -----
     const u = (s) => `<span class="dim" style="font-size:11px"> ${s}</span>`;
     const durMin = (!isNaN(durSec) && durSec > 0) ? Math.round(durSec / 60) : 0;
-    this._setBar(r.sesskwhV,   r.sesskwhBar,   !isNaN(sessKwh) ? sessKwh.toFixed(2) + u("kWh") : "—",
+    this._setBar(r.sesskwhV,   r.sesskwhBar,   !isNaN(sessKwh) ? this._fmtNum(sessKwh, 2) + u("kWh") : "—",
       !isNaN(sessKwh) ? this._clamp(sessKwh / 100 * 100, 0, 100) : 0);
     this._setBar(r.sesssolarV, r.sesssolarBar, !isNaN(solarPct) ? Math.round(solarPct) + u("%") : "—",
       !isNaN(solarPct) ? this._clamp(solarPct, 0, 100) : 0);
-    this._setBar(r.sesspriceV, r.sesspriceBar, !isNaN(sessEur) ? sessEur.toFixed(2) + u("EUR") : "—",
+    this._setBar(r.sesspriceV, r.sesspriceBar, !isNaN(sessEur) ? this._fmtNum(sessEur, 2) + u("EUR") : "—",
       !isNaN(sessEur) ? this._clamp(sessEur / 30 * 100, 0, 100) : 0);
     this._setBar(r.sessdurV, r.sessdurBar,
       durMin > 0 ? (durMin < 60 ? durMin + u("min") : Math.floor(durMin/60) + "h" + u("")) : "—",
       this._clamp(durMin / 480 * 100, 0, 100));
 
     // ----- Stats bars -----
-    this._setBar(r.stattkV,   r.stattkBar,   !isNaN(totalKwh) ? totalKwh.toFixed(1) + u("kWh") : "—",
+    this._setBar(r.stattkV,   r.stattkBar,   !isNaN(totalKwh) ? this._fmtNum(totalKwh, 1) + u("kWh") : "—",
       !isNaN(totalKwh) ? this._clamp(totalKwh / 10000 * 100, 0, 100) : 0);
     this._setBar(r.stattsV,   r.stattsBar,   !isNaN(totalSol) ? Math.round(totalSol) + u("%") : "—",
       !isNaN(totalSol) ? this._clamp(totalSol, 0, 100) : 0);
-    this._setBar(r.stattaV,   r.stattaBar,   !isNaN(avgPrice) ? avgPrice.toFixed(4) + u("€/kWh") : "—",
+    this._setBar(r.stattaV,   r.stattaBar,   !isNaN(avgPrice) ? this._fmtNum(avgPrice, 4) + u("€/kWh") : "—",
       !isNaN(avgPrice) ? this._clamp(avgPrice / 0.5 * 100, 0, 100) : 0);
 
     // ----- Tariff bars -----
     const maxT = Math.max(isNaN(tGrid) ? 0 : tGrid, isNaN(tFeedin) ? 0 : tFeedin, 0.5);
-    this._setBar(r.tarifftgV,  r.tarifftgBar,  !isNaN(tGrid)   ? tGrid.toFixed(3)   + u("€/kWh") : "—",
+    this._setBar(r.tarifftgV,  r.tarifftgBar,  !isNaN(tGrid)   ? this._fmtNum(tGrid, 3)   + u("€/kWh") : "—",
       !isNaN(tGrid) ? this._clamp(tGrid / maxT * 100, 0, 100) : 0);
-    this._setBar(r.tarifftfV,  r.tarifftfBar,  !isNaN(tFeedin) ? tFeedin.toFixed(3) + u("€/kWh") : "—",
+    this._setBar(r.tarifftfV,  r.tarifftfBar,  !isNaN(tFeedin) ? this._fmtNum(tFeedin, 3) + u("€/kWh") : "—",
       !isNaN(tFeedin) ? this._clamp(tFeedin / maxT * 100, 0, 100) : 0);
 
     // ----- Home bars -----
-    this._setBar(r.homehkV,   r.homehkBar,   !isNaN(homeKwh)  ? homeKwh.toFixed(1)  + u("kWh") : "—",
+    this._setBar(r.homehkV,   r.homehkBar,   !isNaN(homeKwh)  ? this._fmtNum(homeKwh, 1)  + u("kWh") : "—",
       !isNaN(homeKwh)  ? this._clamp(homeKwh  / 10000 * 100, 0, 100) : 0);
-    this._setBar(r.homehcV,   r.homehcBar,   !isNaN(homeCost) ? homeCost.toFixed(2)  + u("EUR") : "—",
+    this._setBar(r.homehcV,   r.homehcBar,   !isNaN(homeCost) ? this._fmtNum(homeCost, 2)  + u("EUR") : "—",
       !isNaN(homeCost) ? this._clamp(homeCost / 3000 * 100, 0, 100) : 0);
   }
 
@@ -1079,13 +1092,13 @@ class EVAssistantPanel extends HTMLElement {
 
     // Solar node
     r.nSolar.node.classList.toggle("active", solActive);
-    r.nSolar.val.textContent  = solActive ? pvKw.toFixed(1) : "—";
+    r.nSolar.val.textContent  = solActive ? this._fmtNum(pvKw, 1) : "—";
     r.nSolar.unit.textContent = solActive ? " kW" : "";
 
     // Grid node — shows import or export
     const gridActive = gridImport || gridExport;
     r.nGrid.node.classList.toggle("active", gridActive);
-    r.nGrid.val.textContent  = gridActive ? Math.abs(gridPw).toFixed(1) : "—";
+    r.nGrid.val.textContent  = gridActive ? this._fmtNum(Math.abs(gridPw), 1) : "—";
     r.nGrid.unit.textContent = gridActive ? " kW" : "";
     r.nGrid.badge.textContent = gridExport ? "↑ Einspeisung" : "";
 
@@ -1093,7 +1106,7 @@ class EVAssistantPanel extends HTMLElement {
     const battActive = battDisc || battChg;
     if (r.nBatt) {
       r.nBatt.node.classList.toggle("active", battActive);
-      r.nBatt.val.textContent  = battActive ? Math.abs(battPw).toFixed(1) : "—";
+      r.nBatt.val.textContent  = battActive ? this._fmtNum(Math.abs(battPw), 1) : "—";
       r.nBatt.unit.textContent = battActive ? " kW" : "";
       r.nBatt.badge.textContent = battChg ? "Lädt" : battDisc ? "Entlädt" : "";
     }
@@ -1223,15 +1236,15 @@ class EVAssistantPanel extends HTMLElement {
       const ersparnis   = parseFloat(savState ? savState.state : NaN);
       const evCost      = parseFloat(attr.kosten_ev_gesamt);
       const verbCost    = parseFloat(attr.kosten_verbrenner_geschaetzt);
-      const tripKm      = parseFloat(this._state("total_trip_km"));
-      const fmt2 = (v) => isNaN(v) ? "—" : v.toFixed(2);
+      const gefahrenKm  = parseFloat(attr.gefahrene_km);
+      const fmt2 = (v) => isNaN(v) ? "—" : this._fmtNum(v, 2);
       r.vhSavErsparnis.textContent  = fmt2(ersparnis);
       r.vhSavEvCost.textContent     = fmt2(evCost);
       r.vhSavVerbCost.textContent   = fmt2(verbCost);
-      r.vhSavEvPer100.textContent   = (!isNaN(evCost) && !isNaN(tripKm) && tripKm > 0)
-        ? (evCost / tripKm * 100).toFixed(2) : "—";
-      r.vhSavVerbPer100.textContent = (!isNaN(verbCost) && !isNaN(tripKm) && tripKm > 0)
-        ? (verbCost / tripKm * 100).toFixed(2) : "—";
+      r.vhSavEvPer100.textContent   = (!isNaN(evCost) && !isNaN(gefahrenKm) && gefahrenKm > 0)
+        ? this._fmtNum(evCost / gefahrenKm * 100, 2) : "—";
+      r.vhSavVerbPer100.textContent = (!isNaN(verbCost) && !isNaN(gefahrenKm) && gefahrenKm > 0)
+        ? this._fmtNum(verbCost / gefahrenKm * 100, 2) : "—";
     }
 
     // Fahrzeugname
@@ -1257,7 +1270,7 @@ class EVAssistantPanel extends HTMLElement {
     const trips = tripState && Array.isArray((tripState.attributes || {}).fahrtenbuch)
       ? tripState.attributes.fahrtenbuch : [];
     const lastTrip = trips.length > 0 ? trips[0] : null;
-    r.vhTripKmLast.textContent   = lastTrip ? Number(lastTrip.km).toFixed(1) : "—";
+    r.vhTripKmLast.textContent   = lastTrip ? this._fmtNum(lastTrip.km, 1) : "—";
     r.vhTripRouteLast.textContent = lastTrip ? `${lastTrip.start_ort} → ${lastTrip.end_ort}` : "—";
   }
 
@@ -1322,7 +1335,7 @@ class EVAssistantPanel extends HTMLElement {
           </div>
         </div>
         <div class="pend-estimate">
-          <span class="pend-estimate-val">${p.energy_kwh != null ? Number(p.energy_kwh).toFixed(2) : "—"}<small>kWh geschätzt</small></span>
+          <span class="pend-estimate-val">${p.energy_kwh != null ? this._fmtNum(p.energy_kwh, 2) : "—"}<small>kWh geschätzt</small></span>
           ${soc ? `<span class="pend-estimate-sub">${soc}</span>` : ""}
         </div>
         <div class="pend-inputs">
@@ -1391,7 +1404,7 @@ class EVAssistantPanel extends HTMLElement {
           </div>
         </div>
         <div class="pend-estimate">
-          <span class="pend-estimate-val">${p.km != null ? Number(p.km).toFixed(1) : "—"}<small>km</small></span>
+          <span class="pend-estimate-val">${p.km != null ? this._fmtNum(p.km, 1) : "—"}<small>km</small></span>
         </div>
         <div class="pend-inputs">
           <label>Startort<input type="text" class="pf-start" value="${st.start_ort}"></label>
@@ -1478,11 +1491,11 @@ class EVAssistantPanel extends HTMLElement {
         <div class="hist-figures">
           <div class="hist-figures-left">
             ${soc ? `<span class="hist-soc">${soc}</span>` : ""}
-            <span class="hist-kwh">${Number(h.kwh).toFixed(2)}<small>kWh</small></span>
-            ${(() => { const p = h.dauer_min >= 5 ? h.kwh / (h.dauer_min / 60) : null; return (p >= 1 && p <= 350) ? `<span class="hist-power">Ø ${p.toFixed(1)}<small>kW</small></span>` : ""; })()}
-            <span class="hist-price">${Number(h.preis_kwh).toFixed(3)} €/kWh</span>
+            <span class="hist-kwh">${this._fmtNum(h.kwh, 2)}<small>kWh</small></span>
+            ${(() => { const p = h.dauer_min >= 5 ? h.kwh / (h.dauer_min / 60) : null; return (p >= 1 && p <= 350) ? `<span class="hist-power">Ø ${this._fmtNum(p, 1)}<small>kW</small></span>` : ""; })()}
+            <span class="hist-price">${this._fmtNum(h.preis_kwh, 3)} €/kWh</span>
           </div>
-          <span class="hist-cost">${Number(h.kosten).toFixed(2)} €</span>
+          <span class="hist-cost">${this._fmtNum(h.kosten, 2)} €</span>
         </div>
         ${(h.soc_start != null && h.soc_end != null) ? `<div class="soc-bar-wrap"><div class="soc-bar-fill ext" style="--soc-w:${Math.min(100, Math.max(0, h.soc_end - h.soc_start) * 2).toFixed(1)}%"></div></div>` : ""}
         <div class="hist-edit-form hidden">
@@ -1589,8 +1602,8 @@ class EVAssistantPanel extends HTMLElement {
         <div class="hist-figures">
           <div class="hist-figures-left">
             ${tSocStr ? `<span class="hist-soc">${tSocStr}</span>` : ""}
-            <span class="hist-kwh">${Number(h.km).toFixed(1)}<small>km</small></span>
-            ${(tSpeed && tSpeed > 0 && tSpeed < 300) ? `<span class="hist-power">Ø ${tSpeed.toFixed(0)}<small>km/h</small></span>` : ""}
+            <span class="hist-kwh">${this._fmtNum(h.km, 1)}<small>km</small></span>
+            ${(tSpeed && tSpeed > 0 && tSpeed < 300) ? `<span class="hist-power">Ø ${this._fmtNum(tSpeed, 0)}<small>km/h</small></span>` : ""}
           </div>
         </div>
         ${(h.soc_start != null && h.soc_end != null) ? `<div class="soc-bar-wrap"><div class="soc-bar-fill trip" style="--soc-w:${Math.min(100, Math.max(0, h.soc_start - h.soc_end) * 2).toFixed(1)}%"></div></div>` : ""}
@@ -1701,7 +1714,7 @@ class EVAssistantPanel extends HTMLElement {
       const socEnd = typeof s.socEnd === "number" ? s.socEnd : null;
       const pricePerKwh = typeof s.pricePerKWh === "number" ? s.pricePerKWh : null;
       return { startTs, endTs, durMin, kwh, cost, solarPct, vehicle, socStart, socEnd, pricePerKwh };
-    }).filter((s) => s.startTs != null)
+    }).filter((s) => s.startTs != null && s.endTs != null)
       .sort((a, b) => b.startTs - a.startTs);
 
     // Mehrere Fahrzeuge in evcc -> Auswahl anbieten; bei genau einem (oder keinem
@@ -1745,8 +1758,8 @@ class EVAssistantPanel extends HTMLElement {
     const lastHome = filtered[0] || null;
     const r = this._r;
     if (r.vhHomeKwhLast) {
-      r.vhHomeKwhLast.textContent   = lastHome && lastHome.kwh != null      ? lastHome.kwh.toFixed(2)              : "—";
-      r.vhHomeCostLast.textContent  = lastHome && lastHome.cost != null     ? lastHome.cost.toFixed(2)             : "—";
+      r.vhHomeKwhLast.textContent   = lastHome && lastHome.kwh != null      ? this._fmtNum(lastHome.kwh, 2)        : "—";
+      r.vhHomeCostLast.textContent  = lastHome && lastHome.cost != null     ? this._fmtNum(lastHome.cost, 2)       : "—";
       r.vhHomeSolarLast.textContent = lastHome && lastHome.solarPct != null ? Math.round(lastHome.solarPct)        : "—";
       r.vhHomeDurLast.textContent   = lastHome && lastHome.durMin != null   ? this._fmtDuration(lastHome.durMin)   : "—";
       r.vhHomeCount.textContent     = filtered.length > 0 ? String(filtered.length)       : "—";
@@ -1819,11 +1832,11 @@ class EVAssistantPanel extends HTMLElement {
         <div class="hist-figures">
           <div class="hist-figures-left">
             ${socStr ? `<span class="hist-soc">${socStr}</span>` : ""}
-            <span class="hist-kwh">${h.kwh != null ? h.kwh.toFixed(2) : "—"}<small>kWh</small></span>
-            ${(() => { const p = h.durMin >= 5 && h.kwh ? h.kwh / (h.durMin / 60) : null; return (p >= 1 && p <= 350) ? `<span class="hist-power">Ø ${p.toFixed(1)}<small>kW</small></span>` : ""; })()}
-            ${h.pricePerKwh != null ? `<span class="hist-price">${h.pricePerKwh.toFixed(3)} €/kWh</span>` : ""}
+            <span class="hist-kwh">${h.kwh != null ? this._fmtNum(h.kwh, 2) : "—"}<small>kWh</small></span>
+            ${(() => { const p = h.durMin >= 5 && h.kwh ? h.kwh / (h.durMin / 60) : null; return (p >= 1 && p <= 350) ? `<span class="hist-power">Ø ${this._fmtNum(p, 1)}<small>kW</small></span>` : ""; })()}
+            ${h.pricePerKwh != null ? `<span class="hist-price">${this._fmtNum(h.pricePerKwh, 3)} €/kWh</span>` : ""}
           </div>
-          <span class="hist-cost">${h.cost != null ? h.cost.toFixed(2) + " €" : "—"}</span>
+          <span class="hist-cost">${h.cost != null ? this._fmtNum(h.cost, 2) + " €" : "—"}</span>
         </div>
         ${socBarHtml}`;
       scroll.appendChild(row);
@@ -1945,16 +1958,16 @@ class EVAssistantPanel extends HTMLElement {
       roundedMax = Math.ceil(rawMax / step) * step;
     }
     const toH = (v) => Math.max(0, (v / roundedMax) * chartH);
-    const fmtVal = opts.fmtVal || ((v) => v >= 10 ? v.toFixed(1) : v.toFixed(2));
     let yAxis = "", grid = "";
     [0, 0.5, 1].forEach((f) => {
       const val = roundedMax * f;
       const yPos = padT + chartH - f * chartH;
-      const lbl = opts.fmtAxis ? opts.fmtAxis(val) : (val >= 10 ? Math.round(val) : val.toFixed(1));
+      const lbl = opts.fmtAxis ? opts.fmtAxis(val) : (val >= 10 ? Math.round(val) : this._fmtNum(val, 1));
       yAxis += `<text x="${padL - 5}" y="${yPos + 4}" text-anchor="end" class="ca">${lbl}</text>`;
       if (f > 0) grid += `<line x1="${padL}" y1="${yPos}" x2="${svgW - padR}" y2="${yPos}" class="cg"/>`;
     });
-    let bars = "", xlabels = "";
+    const fmtTip = opts.fmtVal || ((v) => v >= 10 ? this._fmtNum(v, 1) : this._fmtNum(v, 2));
+    let bars = "", hits = "", xlabels = "";
     buckets.forEach((b, i) => {
       const xC = padL + slotW * i + slotW / 2, xL = xC - barW / 2, yBot = padT + chartH;
       let yTop = yBot;
@@ -1962,14 +1975,39 @@ class EVAssistantPanel extends HTMLElement {
         const h = toH(b[key] || 0);
         if (h > 0) { bars += `<rect x="${xL.toFixed(1)}" y="${(yTop-h).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" fill="${color}" rx="2"/>`; yTop -= h; }
       });
-      const tot = totalVal(b), hTot = yBot - yTop;
-      if (hTot > 14) bars += `<text x="${xC.toFixed(1)}" y="${(yTop-3).toFixed(1)}" text-anchor="middle" class="cv">${fmtVal(tot)}</text>`;
+      const tot = totalVal(b);
+      if (tot > 0) hits += `<rect class="ch" x="${xL.toFixed(1)}" y="${padT}" width="${barW.toFixed(1)}" height="${chartH}" fill="transparent" data-v="${fmtTip(tot)}" data-xc="${xC.toFixed(1)}" data-yt="${yTop.toFixed(1)}"/>`;
       xlabels += `<text x="${xC.toFixed(1)}" y="${svgH - 4}" text-anchor="middle" class="ca">${b.label}</text>`;
     });
+    wrap.style.position = "relative";
+    // tooltip div — create once, re-append after every innerHTML reset
+    if (!wrap._tip) {
+      const tip = document.createElement("div");
+      tip.style.cssText = "position:absolute;display:none;pointer-events:none;background:var(--card-bg,#1e2024);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:2px 8px;font-size:12px;white-space:nowrap;z-index:10;transform:translateX(-50%)";
+      wrap._tip = tip;
+    }
     wrap.innerHTML = `<svg viewBox="0 0 ${svgW} ${svgH}" width="100%" style="display:block;overflow:visible">
-      <style>.ca{font-size:11px;fill:var(--ink-dim);font-family:inherit}.cv{font-size:10px;fill:var(--ink-mid);font-family:inherit}.cg{stroke:var(--line);stroke-width:1}</style>
+      <style>.ca{font-size:11px;fill:var(--ink-dim);font-family:inherit}.cg{stroke:var(--line);stroke-width:1}.ch{cursor:default}</style>
       <line x1="${padL}" y1="${padT}" x2="${padL}" y2="${padT+chartH}" stroke="var(--line-s)" stroke-width="1"/>
-      ${grid}${yAxis}${bars}${xlabels}</svg>`;
+      ${grid}${yAxis}${bars}${hits}${xlabels}</svg>`;
+    wrap.appendChild(wrap._tip);  // re-attach after innerHTML wipe
+    const tip = wrap._tip;
+    const svg = wrap.querySelector("svg");
+    svg.onmouseover = (e) => {
+      const el = e.target.closest(".ch");
+      if (!el) { tip.style.display = "none"; return; }
+      const svgRect = svg.getBoundingClientRect();
+      const wrapRect = wrap.getBoundingClientRect();
+      const scaleX = svgRect.width / svgW;
+      const scaleY = svgRect.height / svgH;
+      const xPx = parseFloat(el.dataset.xc) * scaleX + (svgRect.left - wrapRect.left);
+      const yPx = parseFloat(el.dataset.yt) * scaleY + (svgRect.top - wrapRect.top);
+      tip.textContent = el.dataset.v;
+      tip.style.display = "block";
+      tip.style.left = xPx + "px";
+      tip.style.top = (yPx - tip.offsetHeight - 6) + "px";
+    };
+    svg.onmouseleave = () => { tip.style.display = "none"; };
   }
 
   _renderAllCharts() {
@@ -2008,7 +2046,7 @@ class EVAssistantPanel extends HTMLElement {
     });
     this._svgBarChart(this._r && this._r.kostenChart, buckets,
       [{key: "home", color: "var(--c-home)"}, {key: "ext", color: "var(--c-ext)"}],
-      {fmtVal: (v) => v.toFixed(2)});
+      {});
   }
 
   _renderChartSolar() {
