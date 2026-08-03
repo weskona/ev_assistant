@@ -18,7 +18,8 @@ Eine umfassende **EV-Monitoring-Integration für Home Assistant**. EV Assistant 
 - **Automatisches Fahrtenbuch** — erkennt Fahrten anhand des Kilometerstands; Start- und Zielort werden manuell bestätigt. CSV-Export inklusive.
 - **Ladewirkungsgrad-Kalibrierung** — lernt den echten AC→Batterie-Wirkungsgrad des Fahrzeugs aus Heimlade-Sitzungen und wendet ihn automatisch auf alle Schätzungen an.
 - **Kilometerstand-Statistik** — gefahrene km pro Tag/Woche/Monat/Jahr sowie gleitende Durchschnitte und Kalenderjahrprojektion, basierend auf HA Long-Term Statistics.
-- **Kostenvergleich** — vergleicht die gesamten EV-Ausgaben (Heimladen + Fremdladung) mit einem gleichwertigen Verbrenner; wird live in der Fahrzeugkarte angezeigt.
+- **Kostenvergleich** — vergleicht die gesamten EV-Ausgaben (Heimladen + Fremdladung) mit einem gleichwertigen Verbrenner; wird live in der Fahrzeugkarte angezeigt. Kraftstoffpreis kann ein fester Wert, eine Live-Entität oder automatische Tankerkönig-Tankstellenabfrage sein (günstigste geöffnete Station), mit stabilem Fallback, falls die Preisquelle mal ausfällt.
+- **Fahrtenbuch-Import** — historische Fahrten aus einer anderen Fahrtenbuch-App/einem Export per Service-Aufruf in einem Rutsch importieren, für einen einmaligen Rückstand ohne die Kilometerstand-Erkennung.
 - **Vollständiges Seitenleisten-Panel** — ein eingebautes EV-Dashboard; kein Lovelace-Karten-Setup erforderlich.
 - **Mehrfahrzeug-Unterstützung** — pro Fahrzeug einen Integrationseintrag konfigurieren; das Panel zeigt Tabs zum Wechsel zwischen den Fahrzeugen.
 
@@ -53,7 +54,7 @@ Die Einrichtung läuft als 7-schrittiger Assistent (derselbe Assistent wird beim
 | 4 — Benachrichtigungen | Optionaler `notify.*`-Dienst für Push-Benachrichtigungen bei erkannten Fremdladungen. Eine persistente HA-Benachrichtigung erscheint unabhängig davon immer. |
 | 5 — Erkennung | Feinjustierung der Erkennungs-Zustandsmaschine: `start_delta` (minimaler SoC-Anstieg zum Auslösen), `noise` (Jitter-Toleranz, muss < `start_delta` sein), `idle_timeout_s` (Sitzungsende-Timeout), `drop_ends` (SoC-Abfall, der eine Sitzung sofort beendet). Standardwerte funktionieren für die meisten Fahrzeuge. |
 | 6 — Fahrtenbuch | Optional: `trip_min_km` (Mindestfahrstrecke), `trip_idle_timeout_s` (Standzeit bis Fahrtende), `gps_entity` (person/device_tracker für Ortsvorschläge). |
-| 7 — Kostenvergleich | Optional: Verbrenner-Referenzverbrauch (L/100 km), Kraftstoffpreis, Heimstrompreis — jeweils als fester Wert oder als Live-HA-Entität. |
+| 7 — Kostenvergleich | Optional: Verbrenner-Referenzverbrauch (L/100 km), Kraftstoffpreis, Heimstrompreis. Kraftstoffpreis-Priorität: Tankerkönig-Auto-Erkennung (Kraftstoffsorte wählen, günstigste offene Tankstelle gewinnt) > Live-Entität > fester Wert. Heimstrompreis: Live-Entität (kWh-gewichteter Durchschnitt) > fester Wert. |
 
 ---
 
@@ -80,8 +81,8 @@ Das HA-Gerät heißt `{Hersteller} {Modell}` (z. B. „VW ID.4"), Entitätsnamen
 
 | Key | Name | Beschreibung |
 |-----|------|--------------|
-| `home_kwh` | Heimladen kWh (gesamt) | Gesamt-kWh seit Einrichtung, aus dem Wallbox-Energiezähler. `unknown` ohne konfigurierten Zähler. |
-| `home_cost` | Heimladen Kosten (gesamt) | Heimlade-Kosten seit Einrichtung. Wenn `sensor.evcc_charging_sessions_vehicles` verfügbar ist, werden die vom evcc direkt gemeldeten Fahrzeugkosten verwendet (genauer — evcc wendet den tatsächlichen Sitzungstarif an). Andernfalls Fallback auf kWh × Heimstrompreis. `unknown` ohne Zähler oder Preis. |
+| `home_kwh` | Heimladen kWh (gesamt) | Gesamt-kWh seit Einrichtung. Bevorzugt evccs eigene Fahrzeug-Session-Daten, dann evccs standortweite „gesamt geladene Energie"-Statistik (nur wenn für dieses Fahrzeug auch ein Wallbox-Zähler konfiguriert ist — diese Statistik ist nicht pro Fahrzeug), sonst Fallback auf den Wallbox-Energiezähler-Delta. `unknown` ohne konfigurierten Zähler. |
+| `home_cost` | Heimladen Kosten (gesamt) | Heimlade-Kosten seit Einrichtung. Bevorzugt die von evcc direkt gemeldeten Fahrzeugkosten (`sensor.evcc_charging_sessions_vehicles`, am genauesten — evcc wendet den tatsächlichen Sitzungstarif an), dann evccs standortweite Durchschnittspreis-Statistik × kWh (gleiche Fahrzeug-Absicherung wie oben), sonst Fallback auf kWh × Heimstrompreis (kWh-gewichtet, wenn der Preis aus einer Live-Entität kommt — eine Preisspitze ohne jede Ladung verzerrt den Durchschnitt dann nicht). `unknown` ohne Zähler oder Preis. |
 | `measured_efficiency` | Ladewirkungsgrad (gemessen) | Live-kalibrierter AC→Batterie-Wirkungsgrad aus Heimlade-Sitzungen. Attribute: `anzahl_sessions`, `benoetigte_sessions` (3), `einzelwerte_prozent`, `wird_verwendet`, `manueller_wert_prozent`. Diagnostisch. |
 
 ### Kilometerstand & gefahrene Kilometer
@@ -111,12 +112,15 @@ Alle Kilometerstand-Sensoren sind `entity_category: diagnostic`. Die Perioden- u
 | `last_trip_km` | Fahrt km (letzte) | Strecke der zuletzt bestätigten Fahrt. Attribut `fahrtenbuch` enthält die vollständige Historie. |
 | `trip_count` | Fahrtenbuch Anzahl | Gesamtanzahl aller bestätigten Fahrten (`state_class: total_increasing`). |
 | `total_trip_km` | Fahrtenbuch km (gesamt) | Laufende Summe aller bestätigten Fahrstrecken (`state_class: total_increasing`). |
+| `trip_avg_consumption` | Fahrtenbuch Durchschnittsverbrauch | Durchschnittlicher Verbrauch in kWh pro Fahrt, über alle Fahrten mit bekanntem Verbrauch (direkt importiert oder aus dem SoC-Delta erkannter Fahrten abgeleitet). `unknown` ohne nutzbare Daten. |
 
 ### Kostenvergleich
 
 | Key | Name | Beschreibung |
 |-----|------|--------------|
-| `savings` | Ersparnis ggü. Verbrenner | Geschätzte Ersparnis gegenüber dem Verbrenner-Referenzfahrzeug über die seit Einrichtung gefahrenen km. `unknown`, bis Kilometerstand, Verbrenner-Verbrauch und Kraftstoffpreis konfiguriert sind. Attribute: `gefahrene_km`, `heimladen_kosten`, `kosten_ev_gesamt`, `kosten_verbrenner_geschaetzt`, `kraftstoffpreis_live`, `heimstrompreis_live`. |
+| `savings` | Ersparnis ggü. Verbrenner | Geschätzte Ersparnis gegenüber dem Verbrenner-Referenzfahrzeug über die seit Einrichtung gefahrenen km. `unknown`, bis Kilometerstand, Verbrenner-Verbrauch und Kraftstoffpreis konfiguriert sind. Attribute: `gefahrene_km`, `heimladen_kosten`, `kosten_ev_gesamt`, `kosten_verbrenner_geschaetzt`, `kraftstoffpreis_live` (Live-/Auto-Kraftstoffpreis aktiv), `heimstrompreis_live`. |
+| `verbrenner_price_selected` | Kraftstoffpreis (ausgewählt) | Der aktuell geltende Rohpreis (Tankerkönig / Live-Entität / fester Wert), mit dem Attribut `quelle`, das die aktive Quelle benennt. Über HA Long-Term Statistics historisierbar. |
+| `vehicle_avg_consumption` | Fahrzeug Durchschnittsverbrauch | Gesamt-Durchschnittsverbrauch in kWh/100 km seit Einrichtung, aus der Energiebilanz: geladene kWh gesamt (Heim + Fremd) ÷ gefahrene km. `unknown` ohne Kilometerstand-Tracking. |
 | `erstzulassung` | Erstzulassung | Erstzulassungsdatum aus Schritt 1, als `date`-typisierter Sensor. Diagnostisch. |
 
 ---
@@ -139,7 +143,7 @@ Fahrzeugspezifisches Dashboard in einem Drei-Spalten-Layout:
 | **Fremdladung** | Fremdladungs-Gesamtwerte, letzte Sitzungs-KPIs, editierbare Historie. Jeder Eintrag zeigt kWh, Ø Ladeleistung, Kosten und einen SOC-Balken. |
 | **Fahrtenbuch** | Fahrt-Gesamtwerte, letzte Fahrt-KPIs (km, Route), editierbare Fahrthistorie. |
 
-**Fahrzeugkarte** (über den drei Spalten): Fahrzeugname, aktueller SOC mit farbkodiertem Balken (rot < 20 %, orange < 40 %, sonst grün), Kilometerstand und Ladewirkungsgrad. Darunter: ein kompaktes km-Grid (gefahrene km heute/Woche/Monat/Jahr links, gleitende Durchschnitte und Projektionen rechts) sowie der Verbrenner-Vergleich (Ersparnis, EV-Kosten, Verbrenner-Kosten, Kosten pro 100 km).
+**Fahrzeugkarte** (über den drei Spalten): Fahrzeugname, aktueller SOC mit farbkodiertem Balken (rot < 20 %, orange < 40 %, sonst grün), Kilometerstand, Durchschnittsverbrauch (kWh/100 km, aus der gesamten Energiebilanz seit Einrichtung — geladene kWh gesamt ÷ gefahrene km) und Ladewirkungsgrad. Darunter: ein kompaktes km-Grid (gefahrene km heute/Woche/Monat/Jahr links, gleitende Durchschnitte und Projektionen rechts) sowie der Verbrenner-Vergleich (Ersparnis, EV-Kosten, Verbrenner-Kosten, Kosten pro 100 km).
 
 **Balkendiagramme**: Ladeübersicht, Kostenübersicht und Solaranteil — umschaltbar zwischen Wochen-, Monats- und Jahresansicht mit Vor-/Zurück-Navigation. Beim Hovern über einen Balken erscheint ein Tooltip mit dem Wert (ersetzt die früheren Beschriftungen über den Balken, die in der Monatsansicht überlappten). Mobil-responsiv: auf Bildschirmen ≤ 600 px stapeln sich die drei Diagramme vertikal.
 
@@ -163,6 +167,7 @@ Alle Dienste benötigen `config_entry_id`, um bei mehreren konfigurierten Eintr�
 | `edit_trip` | `config_entry_id`, `erfasst_ts`, `start_ort`, `end_ort` | Start-/Zielort eines bestätigten Fahrtenbucheintrags korrigieren. |
 | `delete_trip` | `config_entry_id`, `erfasst_ts` | Bestätigten Fahrtenbucheintrag entfernen. **Nicht rückgängig machbar.** |
 | `export_fahrtenbuch` | `config_entry_id` | Vollständige Fahrthistorie als CSV in `www/ev_assistant_fahrtenbuch_<entry_id>.csv` schreiben. |
+| `import_fahrtenbuch` | `config_entry_id`, `trips` | Historische Fahrten aus einer anderen Fahrtenbuch-App/einem Export importieren (Liste von `{start, start_ort, ende, ziel_ort, strecke, ...}`), ohne die Kilometerstand-Erkennung. Gefahrlos mehrfach aufrufbar — bereits vorhandene Einträge werden übersprungen. |
 | `simulate_trip` | `config_entry_id`, `km` | Test-Fahrtereignis ohne Auto auslösen. |
 
 *optional

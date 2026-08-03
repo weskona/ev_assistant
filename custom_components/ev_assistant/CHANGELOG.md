@@ -2,6 +2,72 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.27.0] - 2026-08-03
+
+### Added
+
+- **New sensor `Trip Log Avg Consumption`**: average kWh consumed per trip,
+  across all trip-log entries with known consumption — either imported
+  directly (`verbrauch_kwh`) or derived from SoC delta for detected trips.
+- **New sensor `Vehicle Avg Consumption`**: overall average consumption in
+  kWh/100 km since setup, from the energy balance (total charged kWh, home +
+  external, ÷ km driven) — a distance-weighted figure independent of
+  whether every individual trip was confirmed in the trip log. Shown in the
+  vehicle card next to the odometer.
+- **Detected trips now record consumption too**: previously only imported
+  trips carried a `verbrauch_kwh` value; detected trips only had the raw
+  `delta_soc`. Confirming a detected trip now also computes and stores
+  `verbrauch_kwh` (`delta_soc × usable battery kWh`, clamped to ≥ 0), so
+  every trip-log entry — detected or imported — has a consistent
+  consumption figure. The panel's trip history now shows this per-entry.
+- Root README (EN + DE) documentation updated to match: Tankerkönig
+  auto-detection, `import_fahrtenbuch`, and the full evcc-based home
+  kWh/price priority chain were previously undocumented there.
+
+## [0.26.0] - 2026-08-03
+
+### Fixed
+
+- **SOC bar in Übersicht now reads from configured `soc_entity`**: previously
+  the bar read from `evcc_vehicle_soc` (the evcc vehicle SOC entity). It now
+  reads from the separately configured `soc_entity`, falling back to
+  `evcc_vehicle_soc` if no `soc_entity` is set.
+
+## [0.25.0] - 2026-08-03
+
+### Fixed
+
+- **Home charging cost now uses evcc's per-vehicle cost directly**: when
+  `sensor.evcc_charging_sessions_vehicles` is available (evcc tracks cost
+  per vehicle with the actual per-session tariff), that cost is used
+  directly instead of multiplying kWh × the site-wide average price — the
+  site-wide average blends in sessions from other vehicles at the same
+  site, systematically underestimating the effective price for the vehicle
+  in question.
+- **Active charging session no longer appears in home charging history**:
+  evcc creates a session record as soon as charging starts (with `finished`
+  = null); the history list now filters out sessions without a finished
+  timestamp so only completed sessions are shown.
+- **Cost/100 km now uses odometer-based km (gefahrene_km) instead of trip
+  log km**: the savings sensor's `gefahrene_km` attribute (odometer delta
+  since setup) is the correct denominator — trip log km only counts
+  confirmed trips and will always be lower, making the per-100-km costs
+  appear inflated.
+
+### Added
+
+- **Locale-aware number formatting throughout the panel**: all displayed
+  numbers (kWh, EUR, kW, km, €/kWh, chart axes) now respect the HA locale
+  setting (`Settings → Profile → Number format`). German users see commas
+  as decimal separators (e.g. `11,40`), US users see dots — without any
+  manual configuration.
+- **Bar chart value labels replaced by hover tooltip**: bar charts no
+  longer show per-bar value labels (which overlapped in monthly view with
+  30 bars). Hovering over any bar now shows a floating tooltip with the
+  formatted value above it.
+- **Cost-per-100-km labels renamed** from "/100km EV" / "/100km Verb." to
+  "Kosten/100km EV" / "Kosten/100km Verb." for clarity.
+
 ## [0.24.0] - 2026-08-03
 
 ### Fixed

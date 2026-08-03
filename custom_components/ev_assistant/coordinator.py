@@ -768,6 +768,32 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return odo * MILES_TO_KM
         return odo
 
+    def _trip_avg_consumption_kwh(self) -> Optional[float]:
+        """Durchschnittsverbrauch in kWh pro Fahrt ueber alle Fahrtenbuch-
+        Eintraege mit bekanntem Verbrauch. Zwei Quellen pro Eintrag:
+        importierte Fahrten liefern verbrauch_kwh direkt mit (siehe
+        async_import_fahrtenbuch()); erkannte Fahrten haben stattdessen
+        delta_soc (siehe _run_trip_detection()), woraus sich der Verbrauch
+        wie bei der Ladewirkungsgrad-Kalibrierung ergibt: delta_soc% *
+        nutzbare kWh. delta_soc ist beim Fahren negativ (SoC sinkt) -- auf
+        >= 0 geklemmt, falls Rekuperation den SoC waehrend der Fahrt per
+        saldo hat steigen lassen. None ohne einen einzigen Eintrag mit
+        bekanntem Verbrauch."""
+        fahrten = self.data.get("fahrten") or []
+        usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+        values: list[float] = []
+        for rec in fahrten:
+            verbrauch = rec.get("verbrauch_kwh")
+            if verbrauch is not None:
+                values.append(float(verbrauch))
+                continue
+            delta_soc = rec.get("delta_soc")
+            if delta_soc is not None:
+                values.append(max(0.0, -delta_soc) / 100.0 * usable_kwh)
+        if not values:
+            return None
+        return round(sum(values) / len(values), 2)
+
     async def _run_trip_detection(self) -> None:
         km = self._odo_km()
         if km is None or self._trip_detector is None:
@@ -1019,6 +1045,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             rec["soc_start"] = pend["soc_start"]
             rec["soc_end"] = pend.get("soc_end")
             rec["delta_soc"] = pend.get("delta_soc")
+            if rec["delta_soc"] is not None:
+                # Verbrauch aus SoC-Delta, analog _trip_avg_consumption_kwh() --
+                # damit haben erkannte Fahrten wie importierte einen
+                # verbrauch_kwh-Wert und die Panel-Historie kann ihn
+                # einheitlich anzeigen. delta_soc ist beim Fahren negativ
+                # (SoC sinkt); auf >= 0 geklemmt falls Rekuperation den SoC
+                # waehrend der Fahrt per saldo hat steigen lassen.
+                usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+                rec["verbrauch_kwh"] = round(max(0.0, -rec["delta_soc"]) / 100.0 * usable_kwh, 2)
         self.data.setdefault("fahrten", []).insert(0, rec)
         totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
         totals["km"] = round(totals.get("km", 0.0) + rec["km"], 2)
@@ -1335,6 +1370,25 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if self.data.get("odo_unit") == "mi":
             delta *= MILES_TO_KM
         return round(delta, 1)
+
+    def _vehicle_avg_consumption_kwh_per_100km(self) -> Optional[float]:
+        """Durchschnittsverbrauch des Fahrzeugs in kWh/100km ueber die
+        gesamte Zeit seit Einrichtung, aus der Energiebilanz: (Heimladen +
+        Fremdladen) kWh gesamt, geteilt durch die seit Einrichtung
+        gefahrenen km (siehe _km_driven()/_home_kwh()) -- dieselben immer
+        vorhandenen Gesamtwerte wie savings(), unabhaengig davon, ob jede
+        einzelne Fahrt im Fahrtenbuch bestaetigt wurde (anders als
+        _trip_avg_consumption_kwh(), das nur bestaetigte/importierte
+        Fahrten zaehlt). Kleine systematische Abweichung durch den Akku-
+        Fuellstand zum Einrichtungszeitpunkt, ueber laengere Zeitraeume
+        vernachlaessigbar."""
+        km = self._km_driven()
+        if km is None or km <= 0:
+            return None
+        home_kwh = self._home_kwh() or 0.0
+        external_kwh = self.data.get("totals", {}).get("kwh", 0.0)
+        total_kwh = home_kwh + external_kwh
+        return round(total_kwh / km * 100.0, 2)
 
     def _evcc_vehicle_key(self) -> Optional[str]:
         """Fahrzeugname in evcc: aus Konfiguration oder via Auto-Erkennung

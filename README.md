@@ -18,7 +18,8 @@ A comprehensive **EV monitoring integration for Home Assistant**. EV Assistant c
 - **Automatic trip log** — detects trips from your odometer sensor; you confirm start/end locations. CSV export included.
 - **Charge-efficiency calibration** — learns your car's real AC→battery efficiency from home sessions and applies it automatically to all estimates.
 - **Odometer statistics** — driven km per day/week/month/year plus rolling averages and calendar-year projection, sourced from HA Long-Term Statistics.
-- **Cost comparison** — compares total EV spend (home + external charging) against an equivalent combustion car; shown live in the vehicle card.
+- **Cost comparison** — compares total EV spend (home + external charging) against an equivalent combustion car; shown live in the vehicle card. Fuel price can come from a fixed value, a live entity, or automatic Tankerkönig station lookup (cheapest open station), with graceful fallback if the price source becomes unavailable.
+- **Trip import** — bulk-import historical trips from another trip-log app/export via a service call, for a one-time backfill without needing the odometer detector.
 - **Full sidebar panel** — a built-in EV dashboard; no Lovelace card setup needed.
 - **Multi-vehicle support** — configure one integration entry per vehicle; the panel shows pill tabs to switch between them.
 
@@ -53,7 +54,7 @@ Setup runs as a 7-step flow (the same flow is used when editing via **Configure*
 | 4 — Notifications | Optional `notify.*` service for push notifications on detected external charges. A persistent HA notification always fires regardless of this setting. |
 | 5 — Detection | Fine-tune the detection state machine: `start_delta` (min SoC rise to trigger), `noise` (jitter tolerance, must be < `start_delta`), `idle_timeout_s` (session-end timeout), `drop_ends` (SoC drop that ends a session immediately). Defaults work for most vehicles. |
 | 6 — Trip Log | Optional: `trip_min_km` (minimum trip distance), `trip_idle_timeout_s` (standstill-to-trip-end timeout), `gps_entity` (person/device_tracker for location suggestions). |
-| 7 — Cost Comparison | Optional: combustion reference consumption (L/100 km), fuel price, home electricity price — each as a fixed value or a live HA entity. |
+| 7 — Cost Comparison | Optional: combustion reference consumption (L/100 km), fuel price, home electricity price. Fuel price priority: Tankerkönig auto-detection (pick a fuel type, cheapest open station wins) > live entity > fixed value. Home electricity price: live entity (kWh-weighted average) > fixed value. |
 
 ---
 
@@ -80,8 +81,8 @@ The HA device is named `{Manufacturer} {Model}` (e.g. "VW ID.4"), so entity name
 
 | Key | Name | Description |
 |-----|------|-------------|
-| `home_kwh` | Home Charging kWh (total) | Total kWh charged at home since setup, from the wallbox energy meter. `unknown` without a configured meter. |
-| `home_cost` | Home Charging Cost (total) | Home-charging cost since setup. When `sensor.evcc_charging_sessions_vehicles` is available, uses the per-vehicle cost reported directly by evcc (more accurate — evcc applies the actual per-session tariff). Falls back to kWh × home electricity price otherwise. `unknown` without meter or price. |
+| `home_kwh` | Home Charging kWh (total) | Total kWh charged at home since setup. Prefers evcc's own per-vehicle session data, then evcc's site-wide "total charged energy" statistic (only if a wallbox meter is also configured for this vehicle — that statistic isn't per-vehicle), then falls back to the wallbox energy meter delta. `unknown` without a configured meter. |
+| `home_cost` | Home Charging Cost (total) | Home-charging cost since setup. Prefers the per-vehicle cost reported directly by evcc (`sensor.evcc_charging_sessions_vehicles`, most accurate — evcc applies the actual per-session tariff), then evcc's site-wide average-price statistic × kWh (same per-vehicle guard as above), then falls back to kWh × home electricity price (kWh-weighted if the price comes from a live entity — a price spike with zero charging during it doesn't skew the average). `unknown` without meter or price. |
 | `measured_efficiency` | Charge Efficiency (measured) | Live-calibrated AC→battery efficiency from home sessions. Attributes: `anzahl_sessions` (sample count), `benoetigte_sessions` (threshold: 3), `einzelwerte_prozent` (individual readings), `wird_verwendet` (active), `manueller_wert_prozent` (configured fallback). Diagnostic. |
 
 ### Odometer & Driven Kilometres
@@ -111,12 +112,15 @@ All odometer sensors are `entity_category: diagnostic`. The period and LTS senso
 | `last_trip_km` | Trip km (last) | Distance of the most recently confirmed trip. Attribute `fahrtenbuch` contains the full trip history list. |
 | `trip_count` | Trip Log Count | Total number of confirmed trips (`state_class: total_increasing`). |
 | `total_trip_km` | Trip Log km (total) | Running total of all confirmed trip distances (`state_class: total_increasing`). |
+| `trip_avg_consumption` | Trip Log Avg Consumption | Average kWh consumed per trip, across all trips with known consumption (imported directly, or derived from SoC delta for detected trips). `unknown` without any usable data. |
 
 ### Cost Comparison
 
 | Key | Name | Description |
 |-----|------|-------------|
-| `savings` | Savings vs. ICE Vehicle | Estimated savings vs. the combustion reference over km driven since setup. `unknown` until odometer, combustion consumption, and fuel price are all configured. Attributes: `gefahrene_km` (km driven), `heimladen_kosten` (home-charging cost), `kosten_ev_gesamt` (total EV cost), `kosten_verbrenner_geschaetzt` (estimated combustion cost), `kraftstoffpreis_live` (live fuel price active), `heimstrompreis_live` (live electricity price active). |
+| `savings` | Savings vs. ICE Vehicle | Estimated savings vs. the combustion reference over km driven since setup. `unknown` until odometer, combustion consumption, and fuel price are all configured. Attributes: `gefahrene_km` (km driven), `heimladen_kosten` (home-charging cost), `kosten_ev_gesamt` (total EV cost), `kosten_verbrenner_geschaetzt` (estimated combustion cost), `kraftstoffpreis_live` (live/auto fuel price active), `heimstrompreis_live` (live electricity price active). |
+| `verbrenner_price_selected` | Fuel Price (Selected) | The raw fuel price currently in effect (Tankerkönig / live entity / fixed value), with a `quelle` attribute naming the active source. Historized via HA Long-Term Statistics. |
+| `vehicle_avg_consumption` | Vehicle Avg Consumption | Overall average consumption in kWh/100 km since setup, from the energy balance: total charged kWh (home + external) ÷ km driven. `unknown` without odometer tracking. |
 | `erstzulassung` | First Registration | First-registration date from step 1, exposed as a `date`-typed sensor. Diagnostic. |
 
 ---
@@ -139,7 +143,7 @@ Per-vehicle dashboard in a three-column layout:
 | **External Charging** | External charge totals, last session KPIs, editable history. Each entry shows kWh, Ø charge power, cost, and a SOC bar. |
 | **Trip Log** | Trip totals, last trip KPIs (km, route), editable trip history. |
 
-**Vehicle card** (above the three columns): vehicle name, current SOC with colour-coded bar (red < 20 %, orange < 40 %, green otherwise), odometer, and charge efficiency. Below that: a compact km grid (driven km today/week/month/year on the left, rolling averages and projections on the right) and the ICE Comparison section (savings, EV cost, estimated combustion cost, cost per 100 km).
+**Vehicle card** (above the three columns): vehicle name, current SOC with colour-coded bar (red < 20 %, orange < 40 %, green otherwise), odometer, average consumption (kWh/100 km, from the overall energy balance — total charged kWh since setup ÷ km driven since setup), and charge efficiency. Below that: a compact km grid (driven km today/week/month/year on the left, rolling averages and projections on the right) and the ICE Comparison section (savings, EV cost, estimated combustion cost, cost per 100 km).
 
 **Bar charts**: charging overview, cost overview, and solar share — switchable between week / month / year view with prev/next navigation. Hover over any bar to see its value in a tooltip (replacing the per-bar labels that overlapped in monthly view). Mobile-responsive: on screens ≤ 600 px the three charts stack vertically.
 
@@ -163,6 +167,7 @@ All services require `config_entry_id` to target a specific vehicle when multipl
 | `edit_trip` | `config_entry_id`, `erfasst_ts`, `start_ort`, `end_ort` | Correct the start/end location of a confirmed trip log entry. |
 | `delete_trip` | `config_entry_id`, `erfasst_ts` | Remove a confirmed trip log entry. **Not reversible.** |
 | `export_fahrtenbuch` | `config_entry_id` | Write full trip history as CSV to `www/ev_assistant_fahrtenbuch_<entry_id>.csv`. |
+| `import_fahrtenbuch` | `config_entry_id`, `trips` | Bulk-import historical trips from another trip-log app/export (list of `{start, start_ort, ende, ziel_ort, strecke, ...}`), bypassing the odometer detector. Safe to re-run — entries already present are skipped. |
 | `simulate_trip` | `config_entry_id`, `km` | Fire a test trip event without a car. |
 
 *optional

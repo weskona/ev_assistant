@@ -240,6 +240,12 @@
       },
       "total_trip_km": {
         "name": "Fahrtenbuch km (gesamt)"
+      },
+      "trip_avg_consumption": {
+        "name": "Fahrtenbuch Durchschnittsverbrauch"
+      },
+      "vehicle_avg_consumption": {
+        "name": "Fahrzeug Durchschnittsverbrauch"
       }
     },
     "binary_sensor": {

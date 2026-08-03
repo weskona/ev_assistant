@@ -240,6 +240,12 @@
       },
       "total_trip_km": {
         "name": "Trip Log km (total)"
+      },
+      "trip_avg_consumption": {
+        "name": "Trip Log Avg Consumption"
+      },
+      "vehicle_avg_consumption": {
+        "name": "Vehicle Avg Consumption"
       }
     },
     "binary_sensor": {

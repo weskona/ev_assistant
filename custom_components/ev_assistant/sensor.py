@@ -52,6 +52,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         LastTripSensor(coordinator, entry),
         TripCountSensor(coordinator, entry),
         TotalTripKmSensor(coordinator, entry),
+        TripAvgConsumptionSensor(coordinator, entry),
+        VehicleAvgConsumptionSensor(coordinator, entry),
     ])
 
 
@@ -701,3 +703,42 @@ class TotalTripKmSensor(EvAssistantEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator.data.get("trip_totals", {}).get("km", 0.0)
+
+
+class TripAvgConsumptionSensor(EvAssistantEntity, SensorEntity):
+    """Durchschnittsverbrauch in kWh pro Fahrt ueber alle Fahrtenbuch-
+    Eintraege mit bekanntem Verbrauch (siehe
+    coordinator.py::_trip_avg_consumption_kwh())."""
+
+    _attr_translation_key = "trip_avg_consumption"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:lightning-bolt"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "trip_avg_consumption")
+
+    @property
+    def native_value(self):
+        return self.coordinator._trip_avg_consumption_kwh()
+
+
+class VehicleAvgConsumptionSensor(EvAssistantEntity, SensorEntity):
+    """Durchschnittsverbrauch des Fahrzeugs in kWh/100km ueber die gesamte
+    Zeit seit Einrichtung, aus der Energiebilanz (Heimladen + Fremdladen
+    kWh gesamt / gefahrene km) -- siehe
+    coordinator.py::_vehicle_avg_consumption_kwh_per_100km(). Anders als
+    trip_avg_consumption unabhaengig davon, ob jede Fahrt im Fahrtenbuch
+    bestaetigt wurde."""
+
+    _attr_translation_key = "vehicle_avg_consumption"
+    _attr_native_unit_of_measurement = "kWh/100km"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:gauge"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "vehicle_avg_consumption")
+
+    @property
+    def native_value(self):
+        return self.coordinator._vehicle_avg_consumption_kwh_per_100km()

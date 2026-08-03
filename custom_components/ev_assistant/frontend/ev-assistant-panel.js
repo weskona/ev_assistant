@@ -673,6 +673,7 @@ class EVAssistantPanel extends HTMLElement {
         <div class="divider"></div>
         <div class="kpi-row">
           <div class="kpi"><div class="kv vh-odo">—</div><div class="kl">km Kilometerstand</div></div>
+          <div class="kpi"><div class="kv vh-avg-consumption">—</div><div class="kl">kWh/100km Ø Verbrauch</div></div>
           <div class="kpi"><div class="kv vh-efficiency">—</div><div class="kl">% Ladewirkungsgrad</div></div>
           <div class="kpi"><div class="kv green vh-savings">—</div><div class="kl">EUR Ersparnis ggü. Verbrenner</div></div>
         </div>
@@ -869,6 +870,7 @@ class EVAssistantPanel extends HTMLElement {
       vhTripKmTotal:   q(".vh-trip-km-total"),
       vhTripRouteLast: q(".vh-trip-route-last"),
       vhOdo:          q(".vh-odo"),
+      vhAvgConsumption: q(".vh-avg-consumption"),
       vhOdoDay:       q(".vh-odo-day"),
       vhOdoWeek:      q(".vh-odo-week"),
       vhOdoMonth:     q(".vh-odo-month"),
@@ -1216,6 +1218,7 @@ class EVAssistantPanel extends HTMLElement {
     this._renderAllCharts();
     r.vhTripKmTotal.textContent  = this._num("total_trip_km", 0);
     r.vhOdo.textContent          = this._num("odo", 0);
+    r.vhAvgConsumption.textContent = this._num("vehicle_avg_consumption", 1);
     r.vhOdoDay.textContent       = this._num("odo_day_km", 0);
     r.vhOdoWeek.textContent      = this._num("odo_week_km", 0);
     r.vhOdoMonth.textContent     = this._num("odo_month_km", 0);
@@ -1604,6 +1607,7 @@ class EVAssistantPanel extends HTMLElement {
           <div class="hist-figures-left">
             ${tSocStr ? `<span class="hist-soc">${tSocStr}</span>` : ""}
             <span class="hist-kwh">${this._fmtNum(h.km, 1)}<small>km</small></span>
+            ${(h.verbrauch_kwh != null) ? `<span class="hist-power">${this._fmtNum(h.verbrauch_kwh, 1)}<small>kWh</small></span>` : ""}
             ${(tSpeed && tSpeed > 0 && tSpeed < 300) ? `<span class="hist-power">Ø ${this._fmtNum(tSpeed, 0)}<small>km/h</small></span>` : ""}
           </div>
         </div>

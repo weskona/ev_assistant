@@ -2,6 +2,28 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.27.0] - 2026-08-03
+
+### Added
+
+- **New sensor `Trip Log Avg Consumption`**: average kWh consumed per trip,
+  across all trip-log entries with known consumption — either imported
+  directly (`verbrauch_kwh`) or derived from SoC delta for detected trips.
+- **New sensor `Vehicle Avg Consumption`**: overall average consumption in
+  kWh/100 km since setup, from the energy balance (total charged kWh, home +
+  external, ÷ km driven) — a distance-weighted figure independent of
+  whether every individual trip was confirmed in the trip log. Shown in the
+  vehicle card next to the odometer.
+- **Detected trips now record consumption too**: previously only imported
+  trips carried a `verbrauch_kwh` value; detected trips only had the raw
+  `delta_soc`. Confirming a detected trip now also computes and stores
+  `verbrauch_kwh` (`delta_soc × usable battery kWh`, clamped to ≥ 0), so
+  every trip-log entry — detected or imported — has a consistent
+  consumption figure. The panel's trip history now shows this per-entry.
+- Root README (EN + DE) documentation updated to match: Tankerkönig
+  auto-detection, `import_fahrtenbuch`, and the full evcc-based home
+  kWh/price priority chain were previously undocumented there.
+
 ## [0.26.0] - 2026-08-03
 
 ### Fixed
