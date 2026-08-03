@@ -81,7 +81,7 @@ Das HA-Gerät heißt `{Hersteller} {Modell}` (z. B. „VW ID.4"), Entitätsnamen
 | Key | Name | Beschreibung |
 |-----|------|--------------|
 | `home_kwh` | Heimladen kWh (gesamt) | Gesamt-kWh seit Einrichtung, aus dem Wallbox-Energiezähler. `unknown` ohne konfigurierten Zähler. |
-| `home_cost` | Heimladen Kosten (gesamt) | Heimlade-kWh × Heimstrompreis. `unknown` ohne Zähler oder Preis. |
+| `home_cost` | Heimladen Kosten (gesamt) | Heimlade-Kosten seit Einrichtung. Wenn `sensor.evcc_charging_sessions_vehicles` verfügbar ist, werden die vom evcc direkt gemeldeten Fahrzeugkosten verwendet (genauer — evcc wendet den tatsächlichen Sitzungstarif an). Andernfalls Fallback auf kWh × Heimstrompreis. `unknown` ohne Zähler oder Preis. |
 | `measured_efficiency` | Ladewirkungsgrad (gemessen) | Live-kalibrierter AC→Batterie-Wirkungsgrad aus Heimlade-Sitzungen. Attribute: `anzahl_sessions`, `benoetigte_sessions` (3), `einzelwerte_prozent`, `wird_verwendet`, `manueller_wert_prozent`. Diagnostisch. |
 
 ### Kilometerstand & gefahrene Kilometer
@@ -127,7 +127,7 @@ EV Assistant registriert automatisch ein **Seitenleisten-Panel** — keine zusä
 
 ### Tab „Übersicht"
 
-Live-Energieflussdiagramm mit aktueller PV-, Netz-, Haus-, Speicher- und Wallbox-Leistung. Zeigt die aktive Ladesitzung (Modus, SOC, Sitzungsenergie, Solaranteil, Tarif) sowie ausstehende Fremdladungen oder Fahrten, die auf Bestätigung warten.
+Live-Energieflussdiagramm mit aktueller PV-, Netz-, Haus-, Speicher- und Wallbox-Leistung. Zeigt die aktive Ladesitzung (Modus, SOC, Sitzungsenergie, Solaranteil, Tarif) sowie ausstehende Fremdladungen oder Fahrten, die auf Bestätigung warten. Der SOC-Balken („Fahrzeug-Akku") liest die in Schritt 1 konfigurierte `soc_entity`; Fallback auf den evcc-Fahrzeug-SOC, wenn keine `soc_entity` gesetzt ist.
 
 ### Tab „Fahrzeuge"
 
@@ -141,7 +141,9 @@ Fahrzeugspezifisches Dashboard in einem Drei-Spalten-Layout:
 
 **Fahrzeugkarte** (über den drei Spalten): Fahrzeugname, aktueller SOC mit farbkodiertem Balken (rot < 20 %, orange < 40 %, sonst grün), Kilometerstand und Ladewirkungsgrad. Darunter: ein kompaktes km-Grid (gefahrene km heute/Woche/Monat/Jahr links, gleitende Durchschnitte und Projektionen rechts) sowie der Verbrenner-Vergleich (Ersparnis, EV-Kosten, Verbrenner-Kosten, Kosten pro 100 km).
 
-**Balkendiagramme**: Ladeübersicht, Kostenübersicht und Solaranteil — umschaltbar zwischen Wochen-, Monats- und Jahresansicht mit Vor-/Zurück-Navigation. Mobil-responsiv: auf Bildschirmen ≤ 600 px stapeln sich die drei Diagramme vertikal.
+**Balkendiagramme**: Ladeübersicht, Kostenübersicht und Solaranteil — umschaltbar zwischen Wochen-, Monats- und Jahresansicht mit Vor-/Zurück-Navigation. Beim Hovern über einen Balken erscheint ein Tooltip mit dem Wert (ersetzt die früheren Beschriftungen über den Balken, die in der Monatsansicht überlappten). Mobil-responsiv: auf Bildschirmen ≤ 600 px stapeln sich die drei Diagramme vertikal.
+
+**Zahlenformatierung**: Alle Werte im Panel richten sich nach der HA-Locale-Einstellung (`Einstellungen → Profil → Zahlenformat`) — keine manuelle Konfiguration nötig.
 
 ---
 

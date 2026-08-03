@@ -43,6 +43,8 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
   longer show per-bar value labels (which overlapped in monthly view with
   30 bars). Hovering over any bar now shows a floating tooltip with the
   formatted value above it.
+- **Cost-per-100-km labels renamed** from "/100km EV" / "/100km Verb." to
+  "Kosten/100km EV" / "Kosten/100km Verb." for clarity.
 
 ## [0.24.0] - 2026-08-03
 

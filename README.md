@@ -81,7 +81,7 @@ The HA device is named `{Manufacturer} {Model}` (e.g. "VW ID.4"), so entity name
 | Key | Name | Description |
 |-----|------|-------------|
 | `home_kwh` | Home Charging kWh (total) | Total kWh charged at home since setup, from the wallbox energy meter. `unknown` without a configured meter. |
-| `home_cost` | Home Charging Cost (total) | Home-charging kWh × home electricity price. `unknown` without meter or price. |
+| `home_cost` | Home Charging Cost (total) | Home-charging cost since setup. When `sensor.evcc_charging_sessions_vehicles` is available, uses the per-vehicle cost reported directly by evcc (more accurate — evcc applies the actual per-session tariff). Falls back to kWh × home electricity price otherwise. `unknown` without meter or price. |
 | `measured_efficiency` | Charge Efficiency (measured) | Live-calibrated AC→battery efficiency from home sessions. Attributes: `anzahl_sessions` (sample count), `benoetigte_sessions` (threshold: 3), `einzelwerte_prozent` (individual readings), `wird_verwendet` (active), `manueller_wert_prozent` (configured fallback). Diagnostic. |
 
 ### Odometer & Driven Kilometres
@@ -127,7 +127,7 @@ EV Assistant registers a **sidebar panel** automatically — no extra setup beyo
 
 ### Overview tab
 
-Live energy-flow diagram showing current PV, grid, home, battery, and wallbox power. Displays the active charging session (mode, SOC, session energy, solar share, tariff) and any pending charges or trips waiting for confirmation.
+Live energy-flow diagram showing current PV, grid, home, battery, and wallbox power. Displays the active charging session (mode, SOC, session energy, solar share, tariff) and any pending charges or trips waiting for confirmation. The SOC bar ("Fahrzeug-Akku") reads from the `soc_entity` configured in step 1, falling back to the evcc vehicle SOC if no `soc_entity` is set.
 
 ### Vehicles tab
 
@@ -141,7 +141,9 @@ Per-vehicle dashboard in a three-column layout:
 
 **Vehicle card** (above the three columns): vehicle name, current SOC with colour-coded bar (red < 20 %, orange < 40 %, green otherwise), odometer, and charge efficiency. Below that: a compact km grid (driven km today/week/month/year on the left, rolling averages and projections on the right) and the ICE Comparison section (savings, EV cost, estimated combustion cost, cost per 100 km).
 
-**Bar charts**: charging overview, cost overview, and solar share — switchable between week / month / year view with prev/next navigation. Mobile-responsive: on screens ≤ 600 px the three charts stack vertically.
+**Bar charts**: charging overview, cost overview, and solar share — switchable between week / month / year view with prev/next navigation. Hover over any bar to see its value in a tooltip (replacing the per-bar labels that overlapped in monthly view). Mobile-responsive: on screens ≤ 600 px the three charts stack vertically.
+
+**Number formatting**: all values in the panel respect the HA locale setting (`Settings → Profile → Number format`) — no manual configuration needed.
 
 ---
 
