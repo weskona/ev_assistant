@@ -2,6 +2,30 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.24.0] - 2026-08-03
+
+### Fixed
+
+- **Home-charging price used time-weighted averaging, which is wrong for
+  home charging**: a fluctuating home electricity price was averaged by how
+  long each value was in effect — fine for fuel (driving doesn't correlate
+  with fuel-price swings), but wrong for home charging, since smart/tariff-
+  scheduled charging (e.g. via evcc) deliberately happens during cheap
+  windows. The old approach blended in expensive hours where zero charging
+  happened, systematically overestimating the effective price paid. Now
+  kWh-weighted: each price is weighted by how much was actually charged
+  while it was in effect (via the wallbox energy meter), so periods with no
+  charging contribute zero weight.
+- **Home-charging kWh/cost now prefer evcc's own statistics when
+  available**: `sensor.evcc_stat_total_charged_kwh` /
+  `sensor.evcc_stat_total_avg_price` (auto-discovered from the evcc
+  integration) take priority over the wallbox-meter-based calculation when
+  present — evcc already tracks and weights this correctly itself. Guarded
+  by requiring a wallbox energy meter to also be configured for that
+  vehicle, since these evcc statistics are site-wide, not per vehicle —
+  without the guard, a second vehicle at the same evcc site would wrongly
+  inherit the first vehicle's home-charging total.
+
 ## [0.23.0] - 2026-08-03
 
 ### Added

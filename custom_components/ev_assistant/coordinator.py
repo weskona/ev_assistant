@@ -18,7 +18,8 @@ from homeassistant.helpers.template import Template
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
-    CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_EVCC_VEHICLE_NAME, CONF_GPS_ENTITY, CONF_HOME_ENTITY,
+    CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_EVCC_STAT_AVG_PRICE, CONF_EVCC_STAT_TOTAL_KWH,
+    CONF_EVCC_VEHICLE_NAME, CONF_GPS_ENTITY, CONF_HOME_ENTITY,
     CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
     CONF_IDLE_TIMEOUT, CONF_NOISE, CONF_NOTIFY_SERVICE,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE,
@@ -70,16 +71,25 @@ def _empty_data() -> dict:
         "detector_state": None,
         "verbrenner_price_last": None,
         "home_price_last": None,
-        # Zeitgewichtete Durchschnittsbildung fuer schwankende Preis-Live-
-        # Entitaeten (siehe _price_average()/savings()): Summe(Preis * Dauer)
-        # und Gesamtdauer seit Einrichtung, plus wann der aktuell gueltige
-        # Wert zu gelten begann.
+        # Zeitgewichtete Durchschnittsbildung fuer den schwankenden
+        # Kraftstoffpreis (siehe _price_average()/savings()): Summe(Preis *
+        # Dauer) und Gesamtdauer seit Einrichtung, plus wann der aktuell
+        # gueltige Wert zu gelten begann. Zeitgewichtung passt hier, weil
+        # Fahren nicht systematisch mit Preisschwankungen korreliert.
         "verbrenner_price_weighted_sum": 0.0,
         "verbrenner_price_weighted_seconds": 0.0,
         "verbrenner_price_interval_start_ts": None,
-        "home_price_weighted_sum": 0.0,
-        "home_price_weighted_seconds": 0.0,
-        "home_price_interval_start_ts": None,
+        # kWh-gewichtete Durchschnittsbildung fuer den Heimstrompreis (siehe
+        # _home_price_average()): Summe(Preis * geladene kWh) und geladene
+        # Gesamt-kWh seit Einrichtung, plus Wallbox-Zaehlerstand, ab dem der
+        # aktuell gueltige Preis zu gelten begann. Gewichtung nach geladener
+        # Energie statt nach Zeit, weil Heimladen (z.B. per evcc-Tarif-
+        # steuerung) gezielt in Guenstigpreis-Fenster gelegt wird -- eine
+        # Zeitgewichtung wuerde den effektiv gezahlten Preis systematisch
+        # ueberschaetzen.
+        "home_price_weighted_energy_sum": 0.0,
+        "home_price_weighted_kwh": 0.0,
+        "home_price_interval_start_wallbox_energy": None,
         "fahrten": [],
         "pending_trips": [],
         "trip_totals": {"km": 0.0, "count": 0},
@@ -659,6 +669,44 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return live_value
         return round(weighted_sum / weighted_seconds, 4)
 
+    def _accumulate_home_price_interval(self, previous_value: Optional[float], wallbox_energy: Optional[float]) -> None:
+        """Schliesst das kWh-Intervall ab, in dem `previous_value` als
+        Heimstrompreis gegolten hat, gewichtet nach der in diesem Intervall
+        tatsaechlich geladenen Energie (NICHT nach verstrichener Zeit) --
+        siehe _home_price_average()."""
+        if previous_value is None or wallbox_energy is None:
+            return
+        start_energy = self.data.get("home_price_interval_start_wallbox_energy")
+        if start_energy is None:
+            return
+        delta = max(0.0, wallbox_energy - start_energy)
+        self.data["home_price_weighted_energy_sum"] = (
+            self.data.get("home_price_weighted_energy_sum", 0.0) + previous_value * delta
+        )
+        self.data["home_price_weighted_kwh"] = self.data.get("home_price_weighted_kwh", 0.0) + delta
+
+    def _home_price_average(self, live_value: Optional[float]) -> Optional[float]:
+        """kWh-gewichteter Durchschnitt des Heimstrompreises seit
+        Einrichtung (siehe _accumulate_home_price_interval() fuer die
+        Begruendung, warum kWh- statt Zeitgewichtung). Das noch offene
+        Intervall (der aktuell gueltige Preis) wird bis zum aktuellen
+        Wallbox-Zaehlerstand mitgezaehlt. Faellt auf den reinen Live-Wert
+        zurueck, solange noch kein Intervall abgeschlossen ist oder kein
+        Wallbox-Energiezaehler konfiguriert ist -- ohne Energie-Gewicht
+        laesst sich kein sinnvoller Durchschnitt bilden."""
+        if live_value is None:
+            return None
+        weighted_sum = self.data.get("home_price_weighted_energy_sum", 0.0)
+        weighted_kwh = self.data.get("home_price_weighted_kwh", 0.0)
+        start_energy = self.data.get("home_price_interval_start_wallbox_energy")
+        if start_energy is not None and self._wallbox_energy is not None:
+            delta = max(0.0, self._wallbox_energy - start_energy)
+            weighted_sum += live_value * delta
+            weighted_kwh += delta
+        if weighted_kwh <= 0:
+            return live_value
+        return round(weighted_sum / weighted_kwh, 4)
+
     @callback
     def _set_verbrenner_price(self, raw) -> None:
         try:
@@ -682,10 +730,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             new_value = float(raw)
         except (ValueError, TypeError):
             return
-        now = time.time()
-        self._accumulate_price_interval("home_price", self._home_price_live, now)
+        self._accumulate_home_price_interval(self._home_price_live, self._wallbox_energy)
         self._home_price_live = new_value
-        self.data["home_price_interval_start_ts"] = now
+        self.data["home_price_interval_start_wallbox_energy"] = self._wallbox_energy
         # Persistiert, damit ein Neustart nicht auf "unbekannt" zurueckfaellt,
         # bevor sich die Entitaet zum ersten Mal wieder meldet (siehe
         # async_setup(), das diesen Wert als Startwert wiederherstellt).
@@ -1311,7 +1358,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return None
 
     def _home_kwh(self) -> Optional[float]:
-        """Heimladen kWh: bevorzugt evcc-Fahrzeugstatistik, Fallback auf Wallbox-Zähler-Delta."""
+        """Heimladen kWh seit Einrichtung. Prioritaet: (1) evccs eigene
+        Fahrzeug-Session-Statistik (praezise, aber erfordert evccs
+        "Erweiterte Fahrzeugdaten" und ist daher meist unavailable), (2)
+        evccs standortweite Gesamt-Ladeenergie-Statistik
+        (CONF_EVCC_STAT_TOTAL_KWH) -- NUR wenn ein Wallbox-Energiezaehler
+        fuer dieses Fahrzeug konfiguriert ist, da diese Statistik
+        standortweit (nicht pro Fahrzeug) ist und sonst bei mehreren
+        EV-Assistant-Instanzen faelschlich auch einem Fahrzeug zugerechnet
+        wuerde, das gar nicht zuhause laedt, (3) Differenz des Wallbox-
+        Energiezaehlers seit Einrichtung."""
         veh = self._evcc_vehicle_key()
         if veh:
             state = self.hass.states.get("sensor.evcc_charging_sessions_vehicles")
@@ -1321,18 +1377,40 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                     energy = veh_data.get("chargedEnergy")
                     if energy is not None:
                         return round(float(energy), 2)
+        if self._opt(CONF_WALLBOX_ENERGY_ENTITY):
+            kwh_entity = self._opt(CONF_EVCC_STAT_TOTAL_KWH)
+            if kwh_entity:
+                state = self.hass.states.get(kwh_entity)
+                if state is not None and state.state not in _INVALID:
+                    try:
+                        return round(float(state.state), 2)
+                    except (ValueError, TypeError):
+                        pass
         start = self.data.get("wallbox_energy_start")
         if self._wallbox_energy is None or start is None:
             return None
         return round(self._wallbox_energy - start, 2)
 
     def _home_price(self) -> Optional[float]:
-        """Heimstrompreis: der zeitgewichtete Durchschnitt der Live-Entitaet
-        (falls konfiguriert und ein gueltiger Wert vorliegt) hat Vorrang vor
-        dem festen Konfigurationswert -- siehe _wire_home_price()/
-        _price_average()/savings()."""
+        """Heimstrompreis. Prioritaet: (1) evccs standortweite
+        Durchschnittspreis-Statistik (CONF_EVCC_STAT_AVG_PRICE) -- NUR wenn
+        ein Wallbox-Energiezaehler fuer dieses Fahrzeug konfiguriert ist
+        (siehe _home_kwh() fuer die Begruendung; evcc gewichtet dabei
+        bereits selbst nach tatsaechlich geladener Energie), (2) der
+        kWh-gewichtete Durchschnitt der eigenen Live-Entitaet (falls
+        konfiguriert und ein gueltiger Wert vorliegt, siehe
+        _home_price_average()), (3) der feste Konfigurationswert."""
+        if self._opt(CONF_WALLBOX_ENERGY_ENTITY):
+            price_entity = self._opt(CONF_EVCC_STAT_AVG_PRICE)
+            if price_entity:
+                state = self.hass.states.get(price_entity)
+                if state is not None and state.state not in _INVALID:
+                    try:
+                        return round(float(state.state), 4)
+                    except (ValueError, TypeError):
+                        pass
         if self._home_price_live is not None:
-            avg = self._price_average("home_price", self._home_price_live)
+            avg = self._home_price_average(self._home_price_live)
             if avg is not None:
                 return avg
         price = self._opt(CONF_HOME_PRICE_KWH)
@@ -1343,12 +1421,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         engine.py::calculate_savings), oder None wenn eine der zwingend
         noetigen Groessen (Kilometerstand-Delta, Verbrenner-Verbrauch,
         Kraftstoffpreis) fehlt. Heimstrompreis und Kraftstoffpreis: der
-        zeitgewichtete Durchschnitt der jeweiligen Live-Entitaet (falls
+        gewichtete Durchschnitt der jeweiligen Live-Entitaet (falls
         konfiguriert und ein gueltiger Wert vorliegt) hat Vorrang vor dem
-        festen Konfigurationswert -- ein schwankender Preis (z.B. Tankerkoenig)
-        wird so ueber die gesamte Zeit seit Einrichtung gewichtet statt nur
-        mit seinem aktuellen Momentanwert auf die volle Strecke/Menge
-        angewendet zu werden (siehe _price_average())."""
+        festen Konfigurationswert -- ein schwankender Preis wird so ueber
+        die gesamte Menge/Strecke seit Einrichtung gewichtet statt nur mit
+        seinem aktuellen Momentanwert angewendet zu werden. Kraftstoffpreis:
+        zeitgewichtet (siehe _price_average()) -- Fahren korreliert nicht
+        systematisch mit Preisschwankungen. Heimstrompreis: kWh-gewichtet
+        (siehe _home_price_average()) -- Heimladen wird (z.B. per evcc)
+        gezielt in Guenstigpreis-Fenster gelegt, eine Zeitgewichtung wuerde
+        den effektiv gezahlten Preis dadurch systematisch ueberschaetzen."""
         verbrenner_l = self._opt(CONF_VERBRENNER_L_100KM)
         verbrenner_price = self._opt(CONF_VERBRENNER_PRICE_PER_LITER)
         if self._verbrenner_price_live is not None:
