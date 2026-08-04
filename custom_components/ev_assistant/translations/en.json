@@ -52,11 +52,13 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Trip Log",
-        "description": "Step 6/7: fine-tuning of automatic trip detection, which uses the same odometer sensor from step 1. Default values work for most cases.",
+        "description": "Step 6/7: fine-tuning of automatic trip detection, which uses the same odometer sensor from step 1. Default values work for most cases. Optional: a motor/driving sensor (e.g. ignition/\"Ready\") adds a second signal for vehicles whose odometer updates too coarsely/infrequently to derive trip start/end from it directly — distance is still always taken from the odometer.",
         "data": {
           "trip_min_km": "Minimum distance (km)",
           "trip_idle_timeout_s": "Idle time until trip end (s)",
-          "gps_entity": "Location suggestion (person or device_tracker entity)"
+          "gps_entity": "Location suggestion (person or device_tracker entity)",
+          "motor_entity": "Motor/driving sensor (optional, binary_sensor)",
+          "motor_debounce_s": "Debounce for motor/driving sensor (s)"
         }
       },
       "vergleich": {
@@ -129,11 +131,13 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Trip Log",
-        "description": "Step 6/7: fine-tuning of automatic trip detection.",
+        "description": "Step 6/7: fine-tuning of automatic trip detection. Optional: a motor/driving sensor adds a second signal (see debounce).",
         "data": {
           "trip_min_km": "Minimum distance (km)",
           "trip_idle_timeout_s": "Idle time until trip end (s)",
-          "gps_entity": "Location suggestion (person or device_tracker entity)"
+          "gps_entity": "Location suggestion (person or device_tracker entity)",
+          "motor_entity": "Motor/driving sensor (optional, binary_sensor)",
+          "motor_debounce_s": "Debounce for motor/driving sensor (s)"
         }
       },
       "vergleich": {

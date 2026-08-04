@@ -2,7 +2,7 @@
 
 import pytest
 from engine import (
-    ChargeDetector, ChargeSample, EfficiencyCalibrator, PlugDebouncer, TripDetector, TripSample,
+    ChargeDetector, ChargeSample, EfficiencyCalibrator, SignalDebouncer, TripDetector, TripSample,
     average_efficiency, calculate_savings, merge_pending, pop_pending,
 )
 
@@ -110,30 +110,30 @@ def test_plugged_in_none_faellt_auf_idle_timeout_zurueck():
     assert (ev.soc_start, ev.soc_end) == (30, 50)
 
 
-# ----- PlugDebouncer: Flacker-/Aussetzer-Filterung -------------------------
+# ----- SignalDebouncer: Flacker-/Aussetzer-Filterung -------------------------
 
 def test_plug_debouncer_unbekannt_vor_erster_bestaetigung():
-    d = PlugDebouncer(debounce_s=100)
+    d = SignalDebouncer(debounce_s=100)
     assert d.update(0, True) is None
     assert d.update(50, True) is None
 
 
 def test_plug_debouncer_bestaetigt_nach_debounce_s():
-    d = PlugDebouncer(debounce_s=100)
+    d = SignalDebouncer(debounce_s=100)
     d.update(0, True)
     assert d.update(99, True) is None
     assert d.update(100, True) is True
 
 
 def test_plug_debouncer_ignoriert_unbekannten_rohwert():
-    d = PlugDebouncer(debounce_s=100)
+    d = SignalDebouncer(debounce_s=100)
     d.update(0, True)
     d.update(100, True)
     assert d.update(150, None) is True  # unavailable/unknown -> haelt Stand
 
 
 def test_plug_debouncer_kurzer_blip_schlaegt_nicht_durch():
-    d = PlugDebouncer(debounce_s=100)
+    d = SignalDebouncer(debounce_s=100)
     d.update(0, True)
     d.update(100, True)
     assert d.update(150, False) is True  # Blip beginnt
@@ -143,7 +143,7 @@ def test_plug_debouncer_kurzer_blip_schlaegt_nicht_durch():
 
 
 def test_plug_debouncer_echter_wechsel_schlaegt_nach_debounce_s_durch():
-    d = PlugDebouncer(debounce_s=100)
+    d = SignalDebouncer(debounce_s=100)
     d.update(0, True)
     d.update(100, True)
     d.update(150, False)
@@ -151,13 +151,13 @@ def test_plug_debouncer_echter_wechsel_schlaegt_nach_debounce_s_durch():
 
 
 def test_plug_debouncer_get_load_state_roundtrip():
-    d = PlugDebouncer(debounce_s=100)
+    d = SignalDebouncer(debounce_s=100)
     d.update(0, True)
     d.update(100, True)
     d.update(150, False)
     state = d.get_state()
 
-    d2 = PlugDebouncer(debounce_s=100)
+    d2 = SignalDebouncer(debounce_s=100)
     d2.load_state(state)
     assert d2.update(250, False) is False
 
@@ -375,8 +375,8 @@ def test_calculate_savings_fehlende_pflichtgroesse_liefert_none(km_driven, l_100
 
 # ----- TripDetector: Fahrtenbuch-Erkennung aus dem Kilometerstand ----------
 
-def trip_stream(odos, start_ts=0, step=60):
-    return [TripSample(ts=start_ts + i * step, odo_km=v) for i, v in enumerate(odos)]
+def trip_stream(odos, start_ts=0, step=60, driving=None):
+    return [TripSample(ts=start_ts + i * step, odo_km=v, driving=driving) for i, v in enumerate(odos)]
 
 
 def run_trips(det, samples):
@@ -417,6 +417,47 @@ def test_zwei_fahrten_getrennt_durch_standzeit():
     assert len(evs) == 2
     assert (evs[0].odo_start, evs[0].odo_end) == (0.0, 10.0)
     assert (evs[1].odo_start, evs[1].odo_end) == (10.0, 15.0)
+
+
+# ----- driving: Motor-/Fahr-Signal ergaenzt den Odometer-Vergleich --------
+
+def test_driving_true_startet_fahrt_ohne_odometer_anstieg():
+    # Odometer bleibt unveraendert (grob/selten aktualisierte Hersteller-API)
+    # -- ohne driving-Signal wuerde das nie als Fahrt erkannt.
+    det = TripDetector(min_km=0.5, idle_timeout_s=300)
+    samples = (
+        trip_stream([100.0, 100.0], step=60)
+        + trip_stream([100.0, 100.0], start_ts=120, step=60, driving=True)
+        + trip_stream([102.0], start_ts=250, driving=False)
+        + trip_stream([102.0], start_ts=600, driving=False)  # 350s Standzeit -> finalize
+    )
+    ev = run_trips(det, samples)[0]
+    assert (ev.odo_start, ev.odo_end) == (100.0, 102.0)
+
+
+def test_driving_false_beendet_fahrt_nicht_sofort_sondern_nach_idle_timeout():
+    # Kurzes Motor-Aus (z.B. Stopp-Start an der Ampel) mitten in der Fahrt
+    # darf sie nicht beenden -- anders als plugged_in=False bei ChargeDetector.
+    det = TripDetector(min_km=0.5, idle_timeout_s=120)
+    samples = (
+        trip_stream([50.0, 50.0], step=60, driving=False)
+        + trip_stream([50.0], start_ts=120, driving=True)  # Fahrt beginnt
+        + trip_stream([55.0], start_ts=150, driving=False)  # kurzer Stopp
+        + trip_stream([55.0], start_ts=180, driving=True)  # faehrt weiter
+        + trip_stream([60.0], start_ts=240, driving=False)
+    )
+    assert run_trips(det, samples) == []  # noch keine 120s Standzeit erreicht
+    ev = run_trips(det, trip_stream([60.0], start_ts=370, driving=False))[0]
+    assert (ev.odo_start, ev.odo_end) == (50.0, 60.0)
+
+
+def test_driving_none_faellt_auf_odometer_vergleich_zurueck():
+    # Kein Motor-Sensor konfiguriert (driving immer None) -- unveraendertes
+    # Verhalten wie vor Einfuehrung des Signals.
+    det = TripDetector(min_km=0.5, idle_timeout_s=120)
+    samples = trip_stream([10.0, 10.0], step=60) + trip_stream([15.0], start_ts=120) + trip_stream([15.0], start_ts=300)
+    ev = run_trips(det, samples)[0]
+    assert (ev.odo_start, ev.odo_end) == (10.0, 15.0)
 
 
 def test_get_state_load_state_ueberlebt_simulierten_neustart():

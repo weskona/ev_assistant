@@ -21,7 +21,7 @@ from .const import (
     CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_EVCC_STAT_AVG_PRICE, CONF_EVCC_STAT_TOTAL_KWH,
     CONF_EVCC_VEHICLE_NAME, CONF_GPS_ENTITY, CONF_HOME_ENTITY,
     CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
-    CONF_IDLE_TIMEOUT, CONF_NOISE, CONF_NOTIFY_SERVICE,
+    CONF_IDLE_TIMEOUT, CONF_MOTOR_DEBOUNCE, CONF_MOTOR_ENTITY, CONF_NOISE, CONF_NOTIFY_SERVICE,
     CONF_PLUG_DEBOUNCE, CONF_PLUG_ENTITY,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE,
     CONF_ODO_ENTITY, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE,
@@ -30,7 +30,7 @@ from .const import (
     CONF_VERBRENNER_PRICE_PER_LITER, CONF_TANKERKOENIG_FUEL_TYPE, CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE,
     DEFAULT_DROP_ENDS, DEFAULT_EFFICIENCY,
-    DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE, DEFAULT_PLUG_DEBOUNCE, DEFAULT_POWER_IS_AC,
+    DEFAULT_IDLE_TIMEOUT, DEFAULT_MOTOR_DEBOUNCE, DEFAULT_NOISE, DEFAULT_PLUG_DEBOUNCE, DEFAULT_POWER_IS_AC,
     DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
     DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
@@ -40,7 +40,7 @@ from .const import (
     MILES_TO_KM, NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
 )
 from .engine import (
-    ChargeDetector, ChargeSample, EfficiencyCalibrator, PlugDebouncer, TripDetector, TripSample,
+    ChargeDetector, ChargeSample, EfficiencyCalibrator, SignalDebouncer, TripDetector, TripSample,
     average_efficiency, calculate_savings, merge_pending, pop_pending,
 )
 
@@ -71,6 +71,7 @@ def _empty_data() -> dict:
         "wallbox_energy_start_source": None,
         "detector_state": None,
         "plug_debounce_state": None,
+        "motor_debounce_state": None,
         "verbrenner_price_last": None,
         "home_price_last": None,
         # Zeitgewichtete Durchschnittsbildung fuer den schwankenden
@@ -120,11 +121,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._soc: Optional[float] = None
         self._home: bool = False
         self._power: Optional[float] = None
-        # Optional: debounced Steckerstatus (siehe engine.py::PlugDebouncer)
+        # Optional: debounced Steckerstatus (siehe engine.py::SignalDebouncer)
         # -- bleibt None ohne konfigurierten CONF_PLUG_ENTITY, ChargeDetector
         # faellt dann auf die idle_timeout_s-Heuristik zurueck.
         self._plugged_in: Optional[bool] = None
-        self._plug_debouncer: Optional[PlugDebouncer] = None
+        self._plug_debouncer: Optional[SignalDebouncer] = None
+        # Optional: debounced Motor-/Fahr-Status (siehe engine.py::
+        # SignalDebouncer) -- bleibt None ohne konfigurierten
+        # CONF_MOTOR_ENTITY, TripDetector faellt dann auf den reinen
+        # Odometer-Vergleich zurueck.
+        self._driving: Optional[bool] = None
+        self._motor_debouncer: Optional[SignalDebouncer] = None
         self._wallbox_energy: Optional[float] = None
         self._verbrenner_price_live: Optional[float] = None
         self._home_price_live: Optional[float] = None
@@ -213,7 +220,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             min_efficiency=EFF_MIN_EFFICIENCY,
             max_efficiency=EFF_MAX_EFFICIENCY,
         )
-        self._plug_debouncer = PlugDebouncer(
+        self._plug_debouncer = SignalDebouncer(
             debounce_s=float(self._opt(CONF_PLUG_DEBOUNCE, DEFAULT_PLUG_DEBOUNCE))
         )
         # Analog detector_state oben: ein gerade laufender (noch nicht ueber
@@ -230,6 +237,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # einen HA-Neustart hinweg wieder her, aus demselben Grund wie bei
         # ChargeDetector.load_state() oben.
         self._trip_detector.load_state(self.data.get("trip_detector_state"))
+        self._motor_debouncer = SignalDebouncer(
+            debounce_s=float(self._opt(CONF_MOTOR_DEBOUNCE, DEFAULT_MOTOR_DEBOUNCE))
+        )
+        # Analog plug_debounce_state: ein gerade laufender (noch nicht
+        # bestaetigter) Motor-Status-Wechsel ueberlebt so einen HA-Neustart.
+        self._motor_debouncer.load_state(self.data.get("motor_debounce_state"))
 
     # ----- Quellen-Verdrahtung -------------------------------------------
     async def _setup_sources(self) -> None:
@@ -249,6 +262,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self._wire_verbrenner_price()
         self._wire_home_price()
         self._wire_gps()
+        self._wire_motor()
 
     def _wire_home_price(self) -> None:
         """Heimstrompreis: optionale Live-Entitaet (z.B. ein dynamischer
@@ -384,7 +398,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         """Optionaler Stecker-/Connectivity-Sensor (device_class "plug" o.ae.).
         Anders als bei _wire() wird ein unbekannter Rohwert (unavailable/
         unknown/Entitaet entfernt) hier NICHT ignoriert, sondern explizit als
-        None an den PlugDebouncer gemeldet -- der haelt in diesem Fall
+        None an den SignalDebouncer gemeldet -- der haelt in diesem Fall
         ohnehin den zuletzt bestaetigten Wert (siehe engine.py), zaehlt einen
         laufenden gegenteiligen Bestaetigungsversuch aber bewusst nicht als
         Fortsetzung, falls die Entitaet zwischenzeitlich ausfaellt."""
@@ -400,6 +414,24 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._unsub.append(async_track_state_change_event(self.hass, [entity_id], _on_state))
         state = self.hass.states.get(entity_id)
         self._set_plug(state.state if state is not None else None)
+
+    def _wire_motor(self) -> None:
+        """Optionaler Motor-/Fahr-Sensor ("Ready"/Zuendung/Motorlauf) --
+        ergaenzt die odometerbasierte Fahrterkennung, siehe const.py bei
+        CONF_MOTOR_ENTITY. Gleiches Verhalten bei unbekanntem Rohwert wie
+        _wire_plug() oben."""
+        entity_id = self._opt(CONF_MOTOR_ENTITY)
+        if not entity_id or self._motor_debouncer is None:
+            return
+
+        @callback
+        def _on_state(event) -> None:
+            new = event.data.get("new_state")
+            self._set_motor(new.state if new is not None else None)
+
+        self._unsub.append(async_track_state_change_event(self.hass, [entity_id], _on_state))
+        state = self.hass.states.get(entity_id)
+        self._set_motor(state.state if state is not None else None)
 
     def _wire_gps(self) -> None:
         """Fahrtenbuch-Ortsvorschlag: optionale person-/device_tracker-
@@ -494,6 +526,25 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._plugged_in = self._plug_debouncer.update(time.time(), value)
         self.data["plug_debounce_state"] = self._plug_debouncer.get_state()
         self.hass.async_create_task(self._save())
+
+    @callback
+    def _set_motor(self, raw: Optional[str]) -> None:
+        if raw == "on":
+            value: Optional[bool] = True
+        elif raw == "off":
+            value = False
+        else:
+            value = None  # unavailable/unknown/entfernt
+        if self._motor_debouncer is None:
+            return
+        self._driving = self._motor_debouncer.update(time.time(), value)
+        self.data["motor_debounce_state"] = self._motor_debouncer.get_state()
+        self.hass.async_create_task(self._save())
+        # Sofort neu pruefen statt auf die naechste Odometer-Aenderung oder
+        # den 60s-Periodic-Check zu warten -- der Motor-Sensor soll die
+        # Fahrt ja gerade unmittelbar starten/beenden (siehe const.py bei
+        # CONF_MOTOR_ENTITY).
+        self.hass.async_create_task(self._run_trip_detection())
 
     def _wallbox_energy_source(self) -> Optional[str]:
         return self._opt(CONF_WALLBOX_ENERGY_ENTITY)
@@ -809,11 +860,20 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         laenger unveraenderten Wert trotzdem greift (siehe Kommentar in
         async_setup)."""
         self._recheck_plug()
+        self._recheck_motor()
         await self._run_detection()
         await self._run_trip_detection()
 
+    def _recheck_motor(self) -> None:
+        """Analog _recheck_plug() oben, fuer den optionalen Motor-Sensor."""
+        entity_id = self._opt(CONF_MOTOR_ENTITY)
+        if not entity_id or self._motor_debouncer is None:
+            return
+        state = self.hass.states.get(entity_id)
+        self._set_motor(state.state if state is not None else None)
+
     def _recheck_plug(self) -> None:
-        """Fuehrt den PlugDebouncer auch ohne neues Stecker-Ereignis mit dem
+        """Fuehrt den SignalDebouncer auch ohne neues Stecker-Ereignis mit dem
         aktuellen Zeitstempel nach -- sonst wuerde eine laufende
         Bestaetigung (debounce_s) bei einem unveraendert anliegenden Rohwert
         NIE abschliessen, da HA bei unveraendertem Zustand kein neues
@@ -866,7 +926,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if km is None or self._trip_detector is None:
             return
         was_active = self._trip_detector.active
-        sample = TripSample(ts=time.time(), odo_km=km)
+        sample = TripSample(ts=time.time(), odo_km=km, driving=self._driving)
         event = self._trip_detector.update(sample)
         self.data["trip_detector_state"] = self._trip_detector.get_state()
         # Fahrtbeginn erkannt (idle -> aktiv): aktuelle Zone als Start-Ort-

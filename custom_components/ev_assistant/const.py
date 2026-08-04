@@ -27,7 +27,7 @@ CONF_DROP_ENDS = "drop_ends"
 # "connectivity"). Bestaetigt "ausgesteckt" beendet eine Fremdladung sofort
 # statt ueber idle_timeout_s zu warten -- bestaetigt "eingesteckt" verhindert
 # umgekehrt, dass idle_timeout_s eine durchgehende Ladung bei grob/langsam
-# gemeldetem SoC faelschlich splittet (siehe engine.py::PlugDebouncer).
+# gemeldetem SoC faelschlich splittet (siehe engine.py::SignalDebouncer).
 CONF_PLUG_ENTITY = "plug_entity"
 CONF_PLUG_DEBOUNCE = "plug_debounce_s"
 
@@ -45,6 +45,13 @@ CONF_TRIP_IDLE_TIMEOUT = "trip_idle_timeout_s"
 # als Start-/Ziel-Ort-VORSCHLAG gespeichert wird (log_trip bestaetigt/
 # korrigiert weiterhin manuell -- siehe coordinator.py::_run_trip_detection).
 CONF_GPS_ENTITY = "gps_entity"
+# Optional: binaerer Motor-/Fahr-Sensor ("Ready"/Zuendung/Motorlauf). Ergaenzt
+# die odometerbasierte Fahrterkennung um ein zweites Signal fuer manche
+# Hersteller-APIs, deren Kilometerstand zu grob/selten aktualisiert wird, um
+# Fahrtbeginn/-ende daraus abzuleiten -- der Odometer bleibt trotzdem die
+# einzige Quelle fuer die gefahrene Strecke (siehe engine.py::TripDetector).
+CONF_MOTOR_ENTITY = "motor_entity"
+CONF_MOTOR_DEBOUNCE = "motor_debounce_s"
 
 # Kostenvergleich gegenueber einem Verbrenner (alle optional -- ohne sie
 # bleiben die Ersparnis-Sensoren unbekannt statt einen Fehler zu werfen).
@@ -109,10 +116,14 @@ DEFAULT_NOISE = 0.5
 DEFAULT_IDLE_TIMEOUT = 600.0
 DEFAULT_DROP_ENDS = 1.0
 # Grosszuegig, da Hersteller-/Dongle-APIs den Steckerstatus teils verzoegert
-# oder kurzzeitig unzuverlaessig melden (siehe engine.py::PlugDebouncer).
+# oder kurzzeitig unzuverlaessig melden (siehe engine.py::SignalDebouncer).
 DEFAULT_PLUG_DEBOUNCE = 300.0
 DEFAULT_TRIP_MIN_KM = 0.5
 DEFAULT_TRIP_IDLE_TIMEOUT = 300.0
+# Kuerzer als DEFAULT_PLUG_DEBOUNCE: filtert nur kurze Sensor-Fehlmeldungen --
+# die eigentliche Kulanzzeit fuer normale Fahrpausen (Ampel, Stopp-Start-
+# Automatik) liefert bereits DEFAULT_TRIP_IDLE_TIMEOUT.
+DEFAULT_MOTOR_DEBOUNCE = 60.0
 
 STORAGE_VERSION = 1
 STORAGE_KEY = "ev_assistant_data"

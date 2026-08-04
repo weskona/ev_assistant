@@ -28,7 +28,7 @@ class ChargeSample:
     soc: float
     home_charging: bool
     power_kw: Optional[float] = None
-    # Optional, ueber PlugDebouncer gefiltert (siehe dort): True/False nur
+    # Optional, ueber SignalDebouncer gefiltert (siehe dort): True/False nur
     # bei einem ueber debounce_s bestaetigten Steckerstatus, sonst None
     # (kein Steckersensor konfiguriert, oder Bestaetigung steht noch aus) --
     # ChargeDetector faellt bei None auf die idle_timeout_s-Heuristik zurueck.
@@ -196,7 +196,7 @@ class ChargeDetector:
             return None
         if s.soc < self._peak_soc - self.drop_ends:
             return self._finalize(s)
-        # Bestaetigt ausgesteckt (siehe PlugDebouncer) -> sofort beenden,
+        # Bestaetigt ausgesteckt (siehe SignalDebouncer) -> sofort beenden,
         # unabhaengig von idle_timeout_s -- das Fahrzeug meldet den SoC bei
         # manchen Herstellern nur grob/langsam, idle_timeout_s waere sonst
         # entweder zu kurz (faelschlich gesplittete Ladung, siehe
@@ -244,7 +244,7 @@ class ChargeDetector:
         return ev if delta >= self.start_delta else None
 
 
-class PlugDebouncer:
+class SignalDebouncer:
     """Filtert kurze Flacker-/Aussetzer-Zustaende eines Stecker-
     (Connectivity-)Sensors heraus, bevor sie als ChargeSample.plugged_in in
     den ChargeDetector einfliessen.
@@ -361,6 +361,12 @@ def average_efficiency(samples: list[float], max_samples: int = 10) -> Optional[
 class TripSample:
     ts: float
     odo_km: float
+    # Optional, ueber SignalDebouncer gefiltert (siehe dort): True/False nur
+    # bei einem ueber debounce_s bestaetigten Motor-/Fahr-Status, sonst None
+    # (kein Motor-Sensor konfiguriert, oder Bestaetigung steht noch aus) --
+    # TripDetector faellt bei None auf den reinen Odometer-Vergleich zurueck.
+    # Der Odometer bleibt in jedem Fall die einzige Quelle fuer die Strecke.
+    driving: Optional[bool] = None
 
 
 @dataclass
@@ -394,7 +400,16 @@ class TripDetector:
     Fahrten, getrennt durch Standzeiten -- kein GPS noetig. Anders als
     ChargeDetector (SoC kann fallen/schwanken) braucht es kein Peak-
     Tracking/drop_ends: der Kilometerstand steigt nur, daher trennt hier
-    eine Standzeit >= idle_timeout_s zwei Fahrten."""
+    eine Standzeit >= idle_timeout_s zwei Fahrten.
+
+    Optionales TripSample.driving (siehe dort) ersetzt "Odometer gestiegen"
+    als Bewegungssignal, wenn eine Hersteller-API den Kilometerstand zu grob
+    oder selten aktualisiert, um Fahrtbeginn/-ende direkt daraus abzuleiten.
+    idle_timeout_s bleibt dieselbe Kulanzzeit fuer kurze Fahrpausen (z.B.
+    Stopp-Start-Automatik an der Ampel) -- ein bestaetigtes "Motor aus" endet
+    die Fahrt NICHT sofort, anders als plugged_in=False bei ChargeDetector,
+    weil ein kurzes Motor-Aus mitten in der Fahrt normal ist. Der Odometer
+    bleibt in jedem Fall die einzige Quelle fuer odo_start/odo_end/km."""
 
     def __init__(self, min_km: float = 0.5, idle_timeout_s: float = 300.0):
         self.min_km = min_km
@@ -452,23 +467,36 @@ class TripDetector:
         self._last_odo = state.get("last_odo", 0.0)
         self._last_move_ts = state.get("last_move_ts", 0.0)
 
-    def _update_idle(self, s: TripSample) -> Optional[TripEvent]:
+    def _moved(self, s: TripSample) -> bool:
+        """Bewegungssignal: Odometer-Anstieg ODER bestaetigter Motor-/Fahr-
+        Status (falls konfiguriert) -- eine Quelle ersetzt die andere nicht
+        vollstaendig, ein echter Odometer-Sprung zaehlt daher immer, selbst
+        wenn driving zufaellig False meldet."""
         if s.odo_km > self._last_odo:
+            return True
+        return bool(s.driving)
+
+    def _update_idle(self, s: TripSample) -> Optional[TripEvent]:
+        if self._moved(s):
             self._active = True
             self._start_ts = self._anchor_ts
             self._start_odo = self._anchor_odo
-            self._last_odo = s.odo_km
+            self._last_odo = max(self._last_odo, s.odo_km)
             self._last_move_ts = s.ts
             return None
-        # Kein neuer Kilometerstand -> Anker (letzter bekannter Ruhepunkt)
-        # nachfuehren, damit eine spaeter beginnende Fahrt ab dem Ende der
-        # tatsaechlichen Standzeit gezaehlt wird statt ab deren Anfang.
+        # Keine Bewegung -> Anker (letzter bekannter Ruhepunkt, Zeit UND
+        # Kilometerstand) nachfuehren, damit eine spaeter beginnende Fahrt ab
+        # dem Ende der tatsaechlichen Standzeit gezaehlt wird statt ab deren
+        # Anfang -- bei reinem Odometer-Vergleich ist odo_km hier ohnehin
+        # unveraendert, bei motor-basierter Erkennung haelt das den Anker
+        # trotz ggf. verzoegert eintreffender Odometer-Werte aktuell.
         self._anchor_ts = s.ts
+        self._anchor_odo = s.odo_km
         return None
 
     def _update_driving(self, s: TripSample) -> Optional[TripEvent]:
-        if s.odo_km > self._last_odo:
-            self._last_odo = s.odo_km
+        if self._moved(s):
+            self._last_odo = max(self._last_odo, s.odo_km)
             self._last_move_ts = s.ts
             return None
         if s.ts - self._last_move_ts >= self.idle_timeout_s:

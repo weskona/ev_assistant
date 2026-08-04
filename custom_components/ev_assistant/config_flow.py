@@ -15,6 +15,7 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_ERSTZULASSUNG, CONF_GPS_ENTITY, CONF_HOME_ENTITY,
     CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_IDLE_TIMEOUT,
+    CONF_MOTOR_DEBOUNCE, CONF_MOTOR_ENTITY,
     CONF_NOISE, CONF_NOTIFY_SERVICE, CONF_ODO_ENTITY, CONF_PLUG_DEBOUNCE, CONF_PLUG_ENTITY,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC,
     CONF_SOC_ENTITY, CONF_START_DELTA,
@@ -31,7 +32,7 @@ from .const import (
     CONF_EVCC_PV_POWER, CONF_EVCC_GRID_POWER, CONF_EVCC_BATTERY_POWER,
     CONF_EVCC_VEHICLE_NAME,
     DEFAULT_DROP_ENDS,
-    DEFAULT_EFFICIENCY, DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE, DEFAULT_PLUG_DEBOUNCE,
+    DEFAULT_EFFICIENCY, DEFAULT_IDLE_TIMEOUT, DEFAULT_MOTOR_DEBOUNCE, DEFAULT_NOISE, DEFAULT_PLUG_DEBOUNCE,
     DEFAULT_POWER_IS_AC, DEFAULT_START_DELTA,
     DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH, DOMAIN,
@@ -62,6 +63,9 @@ _GPS_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain=["person", "device_tracker"])
 )
 _PLUG_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="binary_sensor")
+)
+_MOTOR_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="binary_sensor")
 )
 _TANKERKOENIG_FUEL_TYPE = selector.SelectSelector(
@@ -231,6 +235,10 @@ def build_trip_schema(cur: dict) -> vol.Schema:
             CONF_TRIP_IDLE_TIMEOUT, default=cur.get(CONF_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_IDLE_TIMEOUT)
         ): vol.Coerce(float),
         vol.Optional(CONF_GPS_ENTITY, description=sv(CONF_GPS_ENTITY)): _GPS_ENTITY,
+        vol.Optional(CONF_MOTOR_ENTITY, description=sv(CONF_MOTOR_ENTITY)): _MOTOR_ENTITY,
+        vol.Optional(
+            CONF_MOTOR_DEBOUNCE, default=cur.get(CONF_MOTOR_DEBOUNCE, DEFAULT_MOTOR_DEBOUNCE)
+        ): vol.Coerce(float),
     })
 
 

@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.29.0] - 2026-08-04
+
+### Added
+
+- **Optional motor/driving sensor (`motor_entity`, `motor_debounce_s`) for trip detection**: a second signal for vehicles whose odometer updates too coarsely/infrequently for the existing standstill-timeout detection to reliably derive trip start/end. When configured, a confirmed "driving" state starts/continues a trip even without a fresh odometer reading, and a confirmed "not driving" is treated the same as "no odometer movement" — `trip_idle_timeout_s` still provides the grace period for brief stops (e.g. stop-start at a red light), so a momentary motor-off reading mid-trip does not end it. Distance is always taken from the odometer regardless of this signal; a genuine odometer increase is never ignored even if the motor signal says otherwise. Debounced (default 60 s, configurable) against brief flaky readings from the source — shorter than the plug sensor's default, since the actual tolerance for normal driving pauses already comes from `trip_idle_timeout_s`.
+- Internally renamed `PlugDebouncer` to `SignalDebouncer` in `engine.py`, since it's now shared between the plug and motor signals (no functional change).
+
 ## [0.28.0] - 2026-08-04
 
 ### Fixed

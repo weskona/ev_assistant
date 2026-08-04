@@ -52,11 +52,13 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Fahrtenbuch",
-        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung, die denselben Kilometerstand-Sensor aus Schritt 1 nutzt. Standardwerte passen für die meisten Fälle.",
+        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung, die denselben Kilometerstand-Sensor aus Schritt 1 nutzt. Standardwerte passen für die meisten Fälle. Optional: ein Motor-/Fahr-Sensor (z.B. Zündung/„Ready“) ergänzt die Erkennung um ein zweites Signal für Fahrzeuge, deren Kilometerstand zu grob/selten aktualisiert wird, um Fahrtbeginn/-ende direkt daraus abzuleiten — die Strecke stammt trotzdem immer aus dem Kilometerstand.",
         "data": {
           "trip_min_km": "Mindest-Strecke (km)",
           "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s)",
-          "gps_entity": "Orts-Vorschlag (person- oder device_tracker-Entität)"
+          "gps_entity": "Orts-Vorschlag (person- oder device_tracker-Entität)",
+          "motor_entity": "Motor-/Fahr-Sensor (optional, binary_sensor)",
+          "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)"
         }
       },
       "vergleich": {
@@ -129,11 +131,13 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Fahrtenbuch",
-        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung.",
+        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung. Optional: ein Motor-/Fahr-Sensor ergänzt die Erkennung um ein zweites Signal (siehe Debounce).",
         "data": {
           "trip_min_km": "Mindest-Strecke (km)",
           "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s)",
-          "gps_entity": "Orts-Vorschlag (person- oder device_tracker-Entität)"
+          "gps_entity": "Orts-Vorschlag (person- oder device_tracker-Entität)",
+          "motor_entity": "Motor-/Fahr-Sensor (optional, binary_sensor)",
+          "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)"
         }
       },
       "vergleich": {
