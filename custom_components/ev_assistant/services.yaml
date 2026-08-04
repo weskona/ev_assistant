@@ -321,10 +321,12 @@ simulate_trip:
 edit_trip:
   name: Fahrt nachträglich korrigieren
   description: >
-    Korrigiert Start-/Zielort eines bereits bestätigten Fahrtenbuch-
-    Eintrags nachträglich (z.B. Tippfehler beim Erfassen bemerkt).
-    Kilometerstand und Strecke sind nicht editierbar, da sie
-    ausschließlich aus der automatischen Erkennung stammen.
+    Korrigiert einen bereits bestätigten Fahrtenbuch-Eintrag nachträglich
+    (z.B. Tippfehler oder eine falsch erkannte Strecke). Alle Felder außer
+    config_entry_id/erfasst_ts sind optional -- nur mitgegebene Werte werden
+    geändert. Ändert sich km, wird die Fahrtenbuch-Gesamtsumme um die
+    Differenz angepasst. Ändern sich soc_start/soc_end, wird verbrauch_kwh
+    automatisch neu berechnet (außer es wird selbst mitgegeben).
   fields:
     config_entry_id:
       name: Fahrzeug
@@ -343,16 +345,81 @@ edit_trip:
           mode: box
     start_ort:
       name: Startort
-      required: true
+      required: false
       example: Zuhause
       selector:
         text:
     end_ort:
       name: Zielort
-      required: true
+      required: false
       example: Büro
       selector:
         text:
+    start_ts:
+      name: Startzeit (Unix)
+      description: Ändert auch das für den CSV-Export genutzte Datum.
+      required: false
+      example: 1751884800
+      selector:
+        number:
+          mode: box
+    end_ts:
+      name: Endzeit (Unix)
+      required: false
+      example: 1751886600
+      selector:
+        number:
+          mode: box
+    km:
+      name: Strecke (km)
+      required: false
+      example: 12.5
+      selector:
+        number:
+          mode: box
+          min: 0
+          max: 2000
+    odo_start:
+      name: Kilometerstand Start
+      required: false
+      example: 12345.6
+      selector:
+        number:
+          mode: box
+    odo_end:
+      name: Kilometerstand Ende
+      required: false
+      example: 12358.1
+      selector:
+        number:
+          mode: box
+    soc_start:
+      name: SoC Start (%)
+      required: false
+      example: 80
+      selector:
+        number:
+          mode: box
+          min: 0
+          max: 100
+    soc_end:
+      name: SoC Ende (%)
+      required: false
+      example: 60
+      selector:
+        number:
+          mode: box
+          min: 0
+          max: 100
+    verbrauch_kwh:
+      name: Verbrauch (kWh)
+      description: Überschreibt den aus SoC-Delta berechneten Wert, falls gesetzt.
+      required: false
+      example: 9.0
+      selector:
+        number:
+          mode: box
+          min: 0
 
 delete_trip:
   name: Fahrt löschen

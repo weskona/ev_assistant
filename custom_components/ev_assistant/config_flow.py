@@ -15,7 +15,8 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_ERSTZULASSUNG, CONF_GPS_ENTITY, CONF_HOME_ENTITY,
     CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_IDLE_TIMEOUT,
-    CONF_NOISE, CONF_NOTIFY_SERVICE, CONF_ODO_ENTITY, CONF_POWER_ENTITY, CONF_POWER_IS_AC,
+    CONF_NOISE, CONF_NOTIFY_SERVICE, CONF_ODO_ENTITY, CONF_PLUG_DEBOUNCE, CONF_PLUG_ENTITY,
+    CONF_POWER_ENTITY, CONF_POWER_IS_AC,
     CONF_SOC_ENTITY, CONF_START_DELTA,
     CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM,
     CONF_USABLE_KWH, CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL,
@@ -30,7 +31,7 @@ from .const import (
     CONF_EVCC_PV_POWER, CONF_EVCC_GRID_POWER, CONF_EVCC_BATTERY_POWER,
     CONF_EVCC_VEHICLE_NAME,
     DEFAULT_DROP_ENDS,
-    DEFAULT_EFFICIENCY, DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE,
+    DEFAULT_EFFICIENCY, DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE, DEFAULT_PLUG_DEBOUNCE,
     DEFAULT_POWER_IS_AC, DEFAULT_START_DELTA,
     DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH, DOMAIN,
@@ -59,6 +60,9 @@ _HOME_PRICE_ENTITY = selector.EntitySelector(
 )
 _GPS_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain=["person", "device_tracker"])
+)
+_PLUG_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="binary_sensor")
 )
 _TANKERKOENIG_FUEL_TYPE = selector.SelectSelector(
     selector.SelectSelectorConfig(
@@ -201,11 +205,18 @@ def build_output_schema(cur: dict) -> vol.Schema:
 
 def build_detection_schema(cur: dict) -> vol.Schema:
     """Schritt 5: ChargeDetector-Schwellwerte."""
+    def sv(key):
+        return {"suggested_value": cur.get(key)}
+
     return vol.Schema({
         vol.Optional(CONF_START_DELTA, default=cur.get(CONF_START_DELTA, DEFAULT_START_DELTA)): vol.Coerce(float),
         vol.Optional(CONF_NOISE, default=cur.get(CONF_NOISE, DEFAULT_NOISE)): vol.Coerce(float),
         vol.Optional(CONF_IDLE_TIMEOUT, default=cur.get(CONF_IDLE_TIMEOUT, DEFAULT_IDLE_TIMEOUT)): vol.Coerce(float),
         vol.Optional(CONF_DROP_ENDS, default=cur.get(CONF_DROP_ENDS, DEFAULT_DROP_ENDS)): vol.Coerce(float),
+        vol.Optional(CONF_PLUG_ENTITY, description=sv(CONF_PLUG_ENTITY)): _PLUG_ENTITY,
+        vol.Optional(
+            CONF_PLUG_DEBOUNCE, default=cur.get(CONF_PLUG_DEBOUNCE, DEFAULT_PLUG_DEBOUNCE)
+        ): vol.Coerce(float),
     })
 
 

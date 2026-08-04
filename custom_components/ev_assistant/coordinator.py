@@ -22,6 +22,7 @@ from .const import (
     CONF_EVCC_VEHICLE_NAME, CONF_GPS_ENTITY, CONF_HOME_ENTITY,
     CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
     CONF_IDLE_TIMEOUT, CONF_NOISE, CONF_NOTIFY_SERVICE,
+    CONF_PLUG_DEBOUNCE, CONF_PLUG_ENTITY,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE,
     CONF_ODO_ENTITY, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE,
     CONF_START_DELTA, CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM, CONF_USABLE_KWH,
@@ -29,7 +30,7 @@ from .const import (
     CONF_VERBRENNER_PRICE_PER_LITER, CONF_TANKERKOENIG_FUEL_TYPE, CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE,
     DEFAULT_DROP_ENDS, DEFAULT_EFFICIENCY,
-    DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE, DEFAULT_POWER_IS_AC,
+    DEFAULT_IDLE_TIMEOUT, DEFAULT_NOISE, DEFAULT_PLUG_DEBOUNCE, DEFAULT_POWER_IS_AC,
     DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
     DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
@@ -39,8 +40,8 @@ from .const import (
     MILES_TO_KM, NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
 )
 from .engine import (
-    ChargeDetector, ChargeSample, EfficiencyCalibrator, TripDetector, TripSample,
-    average_efficiency, calculate_savings, pop_pending,
+    ChargeDetector, ChargeSample, EfficiencyCalibrator, PlugDebouncer, TripDetector, TripSample,
+    average_efficiency, calculate_savings, merge_pending, pop_pending,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ def _empty_data() -> dict:
         "wallbox_energy_start": None,
         "wallbox_energy_start_source": None,
         "detector_state": None,
+        "plug_debounce_state": None,
         "verbrenner_price_last": None,
         "home_price_last": None,
         # Zeitgewichtete Durchschnittsbildung fuer den schwankenden
@@ -118,6 +120,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._soc: Optional[float] = None
         self._home: bool = False
         self._power: Optional[float] = None
+        # Optional: debounced Steckerstatus (siehe engine.py::PlugDebouncer)
+        # -- bleibt None ohne konfigurierten CONF_PLUG_ENTITY, ChargeDetector
+        # faellt dann auf die idle_timeout_s-Heuristik zurueck.
+        self._plugged_in: Optional[bool] = None
+        self._plug_debouncer: Optional[PlugDebouncer] = None
         self._wallbox_energy: Optional[float] = None
         self._verbrenner_price_live: Optional[float] = None
         self._home_price_live: Optional[float] = None
@@ -206,6 +213,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             min_efficiency=EFF_MIN_EFFICIENCY,
             max_efficiency=EFF_MAX_EFFICIENCY,
         )
+        self._plug_debouncer = PlugDebouncer(
+            debounce_s=float(self._opt(CONF_PLUG_DEBOUNCE, DEFAULT_PLUG_DEBOUNCE))
+        )
+        # Analog detector_state oben: ein gerade laufender (noch nicht ueber
+        # debounce_s bestaetigter) Steckerstatus-Wechsel ueberlebt so einen
+        # HA-Neustart.
+        self._plug_debouncer.load_state(self.data.get("plug_debounce_state"))
 
     def _build_trip_detector(self) -> None:
         self._trip_detector = TripDetector(
@@ -224,6 +238,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._wire(CONF_HOME_ENTITY, CONF_HOME_TEMPLATE, self._set_home)
         self._wire(CONF_POWER_ENTITY, CONF_POWER_TEMPLATE, self._set_power)
         self._wire_odo()
+        self._wire_plug()
         # tankerkoenig_fuel_type hat Vorrang vor verbrenner_price_entity (siehe
         # const.py-Kommentar bei CONF_TANKERKOENIG_FUEL_TYPE) -- daher exklusiv,
         # nie beide gleichzeitig verdrahten (sonst koennten sich beide
@@ -365,6 +380,27 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if state is not None and state.state not in _INVALID:
             self._set_odo(state.state, state.attributes.get("unit_of_measurement"))
 
+    def _wire_plug(self) -> None:
+        """Optionaler Stecker-/Connectivity-Sensor (device_class "plug" o.ae.).
+        Anders als bei _wire() wird ein unbekannter Rohwert (unavailable/
+        unknown/Entitaet entfernt) hier NICHT ignoriert, sondern explizit als
+        None an den PlugDebouncer gemeldet -- der haelt in diesem Fall
+        ohnehin den zuletzt bestaetigten Wert (siehe engine.py), zaehlt einen
+        laufenden gegenteiligen Bestaetigungsversuch aber bewusst nicht als
+        Fortsetzung, falls die Entitaet zwischenzeitlich ausfaellt."""
+        entity_id = self._opt(CONF_PLUG_ENTITY)
+        if not entity_id or self._plug_debouncer is None:
+            return
+
+        @callback
+        def _on_state(event) -> None:
+            new = event.data.get("new_state")
+            self._set_plug(new.state if new is not None else None)
+
+        self._unsub.append(async_track_state_change_event(self.hass, [entity_id], _on_state))
+        state = self.hass.states.get(entity_id)
+        self._set_plug(state.state if state is not None else None)
+
     def _wire_gps(self) -> None:
         """Fahrtenbuch-Ortsvorschlag: optionale person-/device_tracker-
         Entitaet, deren Zone bei Fahrtbeginn/-ende als Start-/Ziel-Ort-
@@ -444,6 +480,20 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self._power = float(raw)
         except (ValueError, TypeError):
             self._power = None
+
+    @callback
+    def _set_plug(self, raw: Optional[str]) -> None:
+        if raw == "on":
+            value: Optional[bool] = True
+        elif raw == "off":
+            value = False
+        else:
+            value = None  # unavailable/unknown/entfernt
+        if self._plug_debouncer is None:
+            return
+        self._plugged_in = self._plug_debouncer.update(time.time(), value)
+        self.data["plug_debounce_state"] = self._plug_debouncer.get_state()
+        self.hass.async_create_task(self._save())
 
     def _wallbox_energy_source(self) -> Optional[str]:
         return self._opt(CONF_WALLBOX_ENERGY_ENTITY)
@@ -743,7 +793,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     async def _run_detection(self) -> None:
         if self._soc is None or self._detector is None:
             return
-        sample = ChargeSample(ts=time.time(), soc=self._soc, home_charging=self._home, power_kw=self._power)
+        sample = ChargeSample(
+            ts=time.time(), soc=self._soc, home_charging=self._home, power_kw=self._power,
+            plugged_in=self._plugged_in,
+        )
         event = self._detector.update(sample)
         self.data["detector_state"] = self._detector.get_state()
         await self._save()
@@ -755,8 +808,22 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         SoC-/Kilometerstand-Messung an, damit idle_timeout_s bei einem
         laenger unveraenderten Wert trotzdem greift (siehe Kommentar in
         async_setup)."""
+        self._recheck_plug()
         await self._run_detection()
         await self._run_trip_detection()
+
+    def _recheck_plug(self) -> None:
+        """Fuehrt den PlugDebouncer auch ohne neues Stecker-Ereignis mit dem
+        aktuellen Zeitstempel nach -- sonst wuerde eine laufende
+        Bestaetigung (debounce_s) bei einem unveraendert anliegenden Rohwert
+        NIE abschliessen, da HA bei unveraendertem Zustand kein neues
+        state_changed-Ereignis feuert (analog der Begruendung fuer den
+        periodischen idle_timeout_s-Check oben)."""
+        entity_id = self._opt(CONF_PLUG_ENTITY)
+        if not entity_id or self._plug_debouncer is None:
+            return
+        state = self.hass.states.get(entity_id)
+        self._set_plug(state.state if state is not None else None)
 
     def _odo_km(self) -> Optional[float]:
         """Aktueller Kilometerstand in km, unabhaengig von der Quell-Einheit
@@ -848,9 +915,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Instanz die Fremdladung gemeldet hat. "pending" ist eine Liste
         # (mehrere gleichzeitig offene Fremdladungen moeglich, z.B. bei
         # zwei Ladestopps auf einem Roadtrip vor dem ersten Bestaetigen) —
-        # neue Ladungen werden angehaengt, nie ueberschrieben.
+        # neue Ladungen werden per merge_pending() angehaengt (oder mit der
+        # letzten offenen zusammengefuehrt, siehe dort).
         pend["config_entry_id"] = self.entry.entry_id
-        self.data.setdefault("pending", []).append(pend)
+        merge_pending(self.data.setdefault("pending", []), pend)
         await self._save()
         self.hass.bus.async_fire(EVENT_PENDING, pend)
         await self._notify()
@@ -1079,18 +1147,63 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             await self._dismiss_trip()
         self.async_set_updated_data(self.data)
 
-    async def async_edit_trip(self, erfasst_ts: int, start_ort: str, end_ort: str) -> bool:
-        """Korrigiert Start-/Zielort eines bereits bestaetigten Fahrtenbuch-
-        Eintrags (z.B. Tippfehler beim Erfassen bemerkt) -- analog
-        async_edit_charge(). Kilometerstand/Strecke sind NICHT editierbar,
-        da sie ausschliesslich aus der Erkennung stammen (siehe
-        async_log_trip()). Gibt False zurueck, wenn kein Eintrag mit
+    async def async_edit_trip(
+        self,
+        erfasst_ts: int,
+        start_ort: Optional[str] = None,
+        end_ort: Optional[str] = None,
+        start_ts: Optional[float] = None,
+        end_ts: Optional[float] = None,
+        km: Optional[float] = None,
+        odo_start: Optional[float] = None,
+        odo_end: Optional[float] = None,
+        soc_start: Optional[float] = None,
+        soc_end: Optional[float] = None,
+        verbrauch_kwh: Optional[float] = None,
+    ) -> bool:
+        """Korrigiert einen bereits bestaetigten Fahrtenbuch-Eintrag --
+        alle Felder optional, nur mitgegebene Werte werden geaendert. Bei
+        Aenderung von km wird trip_totals["km"] um die Differenz angepasst
+        (nicht neu aus der Historie berechnet, analog async_edit_charge()).
+        Aendern sich soc_start/soc_end, wird delta_soc neu berechnet, und
+        verbrauch_kwh (falls nicht explizit mitgegeben) daraus neu
+        abgeleitet -- dieselbe Formel wie in async_log_trip(). Aendert sich
+        start_ts, wird "datum" (fuer den CSV-Export) daraus neu abgeleitet,
+        analog async_log_trip(). Gibt False zurueck, wenn kein Eintrag mit
         erfasst_ts gefunden wurde."""
         fahrten = self.data.get("fahrten") or []
         for rec in fahrten:
             if rec.get("erfasst_ts") == erfasst_ts:
-                rec["start_ort"] = start_ort
-                rec["end_ort"] = end_ort
+                if start_ort is not None:
+                    rec["start_ort"] = start_ort
+                if end_ort is not None:
+                    rec["end_ort"] = end_ort
+                if start_ts is not None:
+                    rec["start_ts"] = start_ts
+                    rec["datum"] = date.fromtimestamp(start_ts).isoformat()
+                if end_ts is not None:
+                    rec["end_ts"] = end_ts
+                if km is not None:
+                    old_km = rec.get("km", 0.0)
+                    rec["km"] = round(float(km), 2)
+                    totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
+                    totals["km"] = round(totals.get("km", 0.0) - old_km + rec["km"], 2)
+                if odo_start is not None:
+                    rec["odo_start"] = round(float(odo_start), 2)
+                if odo_end is not None:
+                    rec["odo_end"] = round(float(odo_end), 2)
+                if soc_start is not None:
+                    rec["soc_start"] = round(float(soc_start), 1)
+                if soc_end is not None:
+                    rec["soc_end"] = round(float(soc_end), 1)
+                if soc_start is not None or soc_end is not None:
+                    if rec.get("soc_start") is not None and rec.get("soc_end") is not None:
+                        rec["delta_soc"] = round(rec["soc_end"] - rec["soc_start"], 1)
+                        if verbrauch_kwh is None:
+                            usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+                            rec["verbrauch_kwh"] = round(max(0.0, -rec["delta_soc"]) / 100.0 * usable_kwh, 2)
+                if verbrauch_kwh is not None:
+                    rec["verbrauch_kwh"] = round(float(verbrauch_kwh), 2)
                 await self._save()
                 self.hass.bus.async_fire(EVENT_TRIP_EDITED, rec)
                 self.async_set_updated_data(self.data)

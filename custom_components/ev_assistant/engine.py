@@ -28,6 +28,11 @@ class ChargeSample:
     soc: float
     home_charging: bool
     power_kw: Optional[float] = None
+    # Optional, ueber PlugDebouncer gefiltert (siehe dort): True/False nur
+    # bei einem ueber debounce_s bestaetigten Steckerstatus, sonst None
+    # (kein Steckersensor konfiguriert, oder Bestaetigung steht noch aus) --
+    # ChargeDetector faellt bei None auf die idle_timeout_s-Heuristik zurueck.
+    plugged_in: Optional[bool] = None
 
 
 @dataclass
@@ -191,7 +196,19 @@ class ChargeDetector:
             return None
         if s.soc < self._peak_soc - self.drop_ends:
             return self._finalize(s)
-        if s.ts - self._last_rise_ts >= self.idle_timeout_s:
+        # Bestaetigt ausgesteckt (siehe PlugDebouncer) -> sofort beenden,
+        # unabhaengig von idle_timeout_s -- das Fahrzeug meldet den SoC bei
+        # manchen Herstellern nur grob/langsam, idle_timeout_s waere sonst
+        # entweder zu kurz (faelschlich gesplittete Ladung, siehe
+        # merge_pending()) oder zu lang (Ladeende verzoegert erkannt).
+        if s.plugged_in is False:
+            return self._finalize(s)
+        # Bestaetigt noch eingesteckt -> idle_timeout_s NICHT anwenden, sonst
+        # wuerde eine durchgehende Ladung mit grob/langsam gemeldetem SoC
+        # trotz vorhandenem Steckersensor weiterhin faelschlich gesplittet.
+        # Kein Steckersensor konfiguriert (plugged_in bleibt immer None):
+        # unveraendertes Verhalten, idle_timeout_s bleibt die einzige Instanz.
+        if s.plugged_in is None and s.ts - self._last_rise_ts >= self.idle_timeout_s:
             return self._finalize(s)
         return None
 
@@ -225,6 +242,61 @@ class ChargeDetector:
         self._last_power = None
         self._last_power_ts = None
         return ev if delta >= self.start_delta else None
+
+
+class PlugDebouncer:
+    """Filtert kurze Flacker-/Aussetzer-Zustaende eines Stecker-
+    (Connectivity-)Sensors heraus, bevor sie als ChargeSample.plugged_in in
+    den ChargeDetector einfliessen.
+
+    Hersteller-/Dongle-APIs melden den Steckerstatus teils kurzzeitig
+    fehlerhaft oder verzoegert (z.B. MQTT-Reconnects mit
+    unavailable/unknown/off fuer 1-3s, ohne dass tatsaechlich ausgesteckt
+    wurde) -- ein einzelner abweichender Rohwert darf daher nicht sofort
+    durchschlagen. Ein unbekannter Rohwert (None, z.B. unavailable/unknown)
+    wird ignoriert und haelt den zuletzt bestaetigten Wert; ein
+    abweichender on/off-Wert muss `debounce_s` lang DURCHGEHEND anliegen
+    (jede Unterbrechung durch einen erneut abweichenden oder unbekannten
+    Wert setzt die Wartezeit zurueck), bevor er uebernommen wird."""
+
+    def __init__(self, debounce_s: float = 300.0):
+        self.debounce_s = debounce_s
+        self._debounced: Optional[bool] = None
+        self._pending: Optional[bool] = None
+        self._pending_since: Optional[float] = None
+
+    def update(self, ts: float, raw: Optional[bool]) -> Optional[bool]:
+        if raw is None or raw == self._debounced:
+            self._pending = None
+            self._pending_since = None
+            return self._debounced
+        if raw != self._pending:
+            self._pending = raw
+            self._pending_since = ts
+            return self._debounced
+        if ts - self._pending_since >= self.debounce_s:
+            self._debounced = raw
+            self._pending = None
+            self._pending_since = None
+        return self._debounced
+
+    def get_state(self) -> dict:
+        """Momentaufnahme zum Persistieren, analog ChargeDetector.get_state()
+        -- ohne das wuerde ein HA-Neustart einen gerade laufenden (noch
+        nicht ueber debounce_s bestaetigten) Steckerstatus-Wechsel
+        verwerfen."""
+        return {
+            "debounced": self._debounced,
+            "pending": self._pending,
+            "pending_since": self._pending_since,
+        }
+
+    def load_state(self, state: Optional[dict]) -> None:
+        if not state:
+            return
+        self._debounced = state.get("debounced")
+        self._pending = state.get("pending")
+        self._pending_since = state.get("pending_since")
 
 
 class EfficiencyCalibrator:
@@ -433,6 +505,36 @@ def pop_pending(pending_list: list, start_ts: Optional[float]) -> Optional[dict]
                 return pending_list.pop(i)
         return None
     return pending_list.pop(0)
+
+
+def merge_pending(pending_list: list, new: dict, drop_tolerance: float = 0.5) -> None:
+    """Haengt `new` an `pending_list` an (in-place) -- ausser die letzte
+    offene Ladung geht ohne SoC-Abfall direkt in `new` ueber, dann wird
+    stattdessen mit ihr zusammengefuehrt.
+
+    Grund: der ChargeDetector finalisiert rein ueber idle_timeout_s. Meldet
+    ein Fahrzeug seinen SoC nur grob/langsam (z.B. alle 10-20 Minuten in
+    ganzen Prozent), reisst eine tatsaechlich durchgehende Fremdladung
+    dadurch faelschlich in mehrere "offene Ladungen" (siehe Coordinator
+    _handle_pending). Ein SoC-Abfall zwischen zwei Ladungen bedeutet
+    dagegen, dass dazwischen gefahren wurde -- das bleibt ein
+    zuverlaessiges, vom Meldeintervall unabhaengiges Signal fuer zwei
+    tatsaechlich getrennte Ladestopps (z.B. auf einem Roadtrip) und wird
+    nicht zusammengefuehrt."""
+    if pending_list:
+        last = pending_list[-1]
+        if new["soc_start"] >= last["soc_end"] - drop_tolerance:
+            last["end_ts"] = new["end_ts"]
+            last["soc_end"] = new["soc_end"]
+            last["delta_soc"] = round(last["soc_end"] - last["soc_start"], 1)
+            last["energy_kwh"] = round(last["energy_kwh"] + new["energy_kwh"], 2)
+            last["energy_batt_kwh"] = round(last["energy_batt_kwh"] + new["energy_batt_kwh"], 2)
+            last["losses_kwh"] = round(last["energy_kwh"] - last["energy_batt_kwh"], 2)
+            last["duration_min"] = round((last["end_ts"] - last["start_ts"]) / 60.0, 1)
+            if last["energy_source"] != new["energy_source"]:
+                last["energy_source"] = "mixed"
+            return
+    pending_list.append(new)
 
 
 def calculate_savings(

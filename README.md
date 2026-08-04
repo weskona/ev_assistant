@@ -52,7 +52,7 @@ Setup runs as a 7-step flow (the same flow is used when editing via **Configure*
 | 2 — evcc & Wallbox | Vehicle name in evcc (for home-charging history filter) and the wallbox charge-power entity (used as the home-charging signal — any value > 0.1 kW counts as "charging at home"). |
 | 3 — Charge Power | Optional vehicle charge-power sensor (improves external-charge estimates) and wallbox energy meter (cumulative kWh counter for efficiency calibration and home-charging costs). |
 | 4 — Notifications | Optional `notify.*` service for push notifications on detected external charges. A persistent HA notification always fires regardless of this setting. |
-| 5 — Detection | Fine-tune the detection state machine: `start_delta` (min SoC rise to trigger), `noise` (jitter tolerance, must be < `start_delta`), `idle_timeout_s` (session-end timeout), `drop_ends` (SoC drop that ends a session immediately). Defaults work for most vehicles. |
+| 5 — Detection | Fine-tune the detection state machine: `start_delta` (min SoC rise to trigger), `noise` (jitter tolerance, must be < `start_delta`), `idle_timeout_s` (session-end timeout), `drop_ends` (SoC drop that ends a session immediately). Defaults work for most vehicles. Optional: `plug_entity` (a plug/connectivity `binary_sensor`) and `plug_debounce_s` — when set, a confirmed "plugged in" overrides `idle_timeout_s` entirely (no more false session splits on coarsely-reported SoC) and a confirmed "unplugged" (held for `plug_debounce_s`, guarding against brief flaky readings) ends the session immediately. |
 | 6 — Trip Log | Optional: `trip_min_km` (minimum trip distance), `trip_idle_timeout_s` (standstill-to-trip-end timeout), `gps_entity` (person/device_tracker for location suggestions). |
 | 7 — Cost Comparison | Optional: combustion reference consumption (L/100 km), fuel price, home electricity price. Fuel price priority: Tankerkönig auto-detection (pick a fuel type, cheapest open station wins) > live entity > fixed value. Home electricity price: live entity (kWh-weighted average) > fixed value. |
 
@@ -164,7 +164,7 @@ All services require `config_entry_id` to target a specific vehicle when multipl
 | `simulate_event` | `config_entry_id`, `soc_start`, `soc_end`, `energy_source`* | Fire a test external-charge event without a car. |
 | `log_trip` | `config_entry_id`, `start_ort`, `end_ort`, `start_ts`* | Confirm a pending trip with a start/end location. |
 | `discard_pending_trip` | `config_entry_id`, `start_ts`* | Discard a pending trip. |
-| `edit_trip` | `config_entry_id`, `erfasst_ts`, `start_ort`, `end_ort` | Correct the start/end location of a confirmed trip log entry. |
+| `edit_trip` | `config_entry_id`, `erfasst_ts`, `start_ort`*, `end_ort`*, `start_ts`*, `end_ts`*, `km`*, `odo_start`*, `odo_end`*, `soc_start`*, `soc_end`*, `verbrauch_kwh`* | Correct any field of a confirmed trip log entry, including its date/time. Only given fields change. |
 | `delete_trip` | `config_entry_id`, `erfasst_ts` | Remove a confirmed trip log entry. **Not reversible.** |
 | `export_fahrtenbuch` | `config_entry_id` | Write full trip history as CSV to `www/ev_assistant_fahrtenbuch_<entry_id>.csv`. |
 | `import_fahrtenbuch` | `config_entry_id`, `trips` | Bulk-import historical trips from another trip-log app/export (list of `{start, start_ort, ende, ziel_ort, strecke, ...}`), bypassing the odometer detector. Safe to re-run — entries already present are skipped. |
@@ -178,9 +178,11 @@ All services require `config_entry_id` to target a specific vehicle when multipl
 
 EV Assistant needs no GPS, no manufacturer API, and no list of charging stations. The principle in one sentence: **if the battery SoC rises while the home-charging signal is off, the car must be charging elsewhere**.
 
-A small state machine (`engine.py::ChargeDetector`) watches every SoC reading. It tracks the last resting low point ("anchor"). Once SoC has risen ≥ `start_delta` above the anchor *with home-charging off*, a session starts. It ends when the home-charging signal turns on, SoC drops > `drop_ends` below the tracked peak, or `idle_timeout_s` passes without a new high.
+A small state machine (`engine.py::ChargeDetector`) watches every SoC reading. It tracks the last resting low point ("anchor"). Once SoC has risen ≥ `start_delta` above the anchor *with home-charging off*, a session starts. It ends when the home-charging signal turns on, SoC drops > `drop_ends` below the tracked peak, `idle_timeout_s` passes without a new high, or (if `plug_entity` is configured) a confirmed unplug is detected.
 
 Energy is estimated from SoC delta × usable battery ÷ charge efficiency, or — when a vehicle charging-power sensor is configured — from the integrated power curve (more accurate, also works away from home where the wallbox has no data).
+
+Vehicles that report SoC only coarsely or infrequently (some manufacturer cloud APIs) can trip `idle_timeout_s` between two SoC ticks of the *same* ongoing charge, splitting it into several "pending" entries. Two safeguards handle this: newly detected charges are merged into the previous pending one whenever there was no SoC drop in between (a real drop means driving happened, i.e. genuinely separate charge stops); and if a `plug_entity` is configured, a confirmed "plugged in" state overrides `idle_timeout_s` entirely, so the session simply never ends while the car stays connected.
 
 ---
 

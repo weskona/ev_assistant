@@ -52,7 +52,7 @@ Die Einrichtung läuft als 7-schrittiger Assistent (derselbe Assistent wird beim
 | 2 — evcc & Wallbox | Fahrzeugname in evcc (für den Heimladen-Historienfilter) und die Wallbox-Ladeleistungs-Entität (dient als Heimlade-Signal — jeder Wert > 0,1 kW gilt als „lädt zuhause"). |
 | 3 — Ladeleistung | Optionaler Fahrzeug-Ladeleistungssensor (verbessert Fremdladungsschätzungen) und Wallbox-Energiezähler (kumulativer kWh-Zähler für Wirkungsgrad-Kalibrierung und Heimlade-Kosten). |
 | 4 — Benachrichtigungen | Optionaler `notify.*`-Dienst für Push-Benachrichtigungen bei erkannten Fremdladungen. Eine persistente HA-Benachrichtigung erscheint unabhängig davon immer. |
-| 5 — Erkennung | Feinjustierung der Erkennungs-Zustandsmaschine: `start_delta` (minimaler SoC-Anstieg zum Auslösen), `noise` (Jitter-Toleranz, muss < `start_delta` sein), `idle_timeout_s` (Sitzungsende-Timeout), `drop_ends` (SoC-Abfall, der eine Sitzung sofort beendet). Standardwerte funktionieren für die meisten Fahrzeuge. |
+| 5 — Erkennung | Feinjustierung der Erkennungs-Zustandsmaschine: `start_delta` (minimaler SoC-Anstieg zum Auslösen), `noise` (Jitter-Toleranz, muss < `start_delta` sein), `idle_timeout_s` (Sitzungsende-Timeout), `drop_ends` (SoC-Abfall, der eine Sitzung sofort beendet). Standardwerte funktionieren für die meisten Fahrzeuge. Optional: `plug_entity` (ein Stecker-/Connectivity-`binary_sensor`) und `plug_debounce_s` — wenn gesetzt, überstimmt ein bestätigtes „eingesteckt" `idle_timeout_s` komplett (keine Fehl-Splits mehr bei grob gemeldetem SoC), und ein bestätigtes „ausgesteckt" (muss `plug_debounce_s` lang anhalten, zur Absicherung gegen kurze Fehlmeldungen) beendet die Sitzung sofort. |
 | 6 — Fahrtenbuch | Optional: `trip_min_km` (Mindestfahrstrecke), `trip_idle_timeout_s` (Standzeit bis Fahrtende), `gps_entity` (person/device_tracker für Ortsvorschläge). |
 | 7 — Kostenvergleich | Optional: Verbrenner-Referenzverbrauch (L/100 km), Kraftstoffpreis, Heimstrompreis. Kraftstoffpreis-Priorität: Tankerkönig-Auto-Erkennung (Kraftstoffsorte wählen, günstigste offene Tankstelle gewinnt) > Live-Entität > fester Wert. Heimstrompreis: Live-Entität (kWh-gewichteter Durchschnitt) > fester Wert. |
 
@@ -164,7 +164,7 @@ Alle Dienste benötigen `config_entry_id`, um bei mehreren konfigurierten Eintr�
 | `simulate_event` | `config_entry_id`, `soc_start`, `soc_end`, `energy_source`* | Test-Fremdladungsereignis ohne Auto auslösen. |
 | `log_trip` | `config_entry_id`, `start_ort`, `end_ort`, `start_ts`* | Ausstehende Fahrt mit Start-/Zielort bestätigen. |
 | `discard_pending_trip` | `config_entry_id`, `start_ts`* | Ausstehende Fahrt verwerfen. |
-| `edit_trip` | `config_entry_id`, `erfasst_ts`, `start_ort`, `end_ort` | Start-/Zielort eines bestätigten Fahrtenbucheintrags korrigieren. |
+| `edit_trip` | `config_entry_id`, `erfasst_ts`, `start_ort`*, `end_ort`*, `start_ts`*, `end_ts`*, `km`*, `odo_start`*, `odo_end`*, `soc_start`*, `soc_end`*, `verbrauch_kwh`* | Beliebige Felder eines bestätigten Fahrtenbucheintrags korrigieren, inklusive Datum/Uhrzeit. Nur mitgegebene Felder ändern sich. |
 | `delete_trip` | `config_entry_id`, `erfasst_ts` | Bestätigten Fahrtenbucheintrag entfernen. **Nicht rückgängig machbar.** |
 | `export_fahrtenbuch` | `config_entry_id` | Vollständige Fahrthistorie als CSV in `www/ev_assistant_fahrtenbuch_<entry_id>.csv` schreiben. |
 | `import_fahrtenbuch` | `config_entry_id`, `trips` | Historische Fahrten aus einer anderen Fahrtenbuch-App/einem Export importieren (Liste von `{start, start_ort, ende, ziel_ort, strecke, ...}`), ohne die Kilometerstand-Erkennung. Gefahrlos mehrfach aufrufbar — bereits vorhandene Einträge werden übersprungen. |
@@ -178,9 +178,11 @@ Alle Dienste benötigen `config_entry_id`, um bei mehreren konfigurierten Eintr�
 
 EV Assistant benötigt kein GPS, keine Hersteller-API und keine Ladesäulenliste. Das Prinzip in einem Satz: **Steigt der Batterie-SoC, während das Heimlade-Signal inaktiv ist, muss das Auto woanders laden**.
 
-Eine kleine Zustandsmaschine (`engine.py::ChargeDetector`) überwacht jeden SoC-Messwert. Sie verfolgt den letzten Ruhepunkt als „Anker". Sobald der SoC *ohne aktives Heimlade-Signal* um ≥ `start_delta` über den Anker gestiegen ist, beginnt eine Sitzung. Sie endet, wenn das Heimlade-Signal aktiv wird, der SoC um > `drop_ends` unter den verfolgten Höchstwert fällt oder `idle_timeout_s` ohne neuen Höchstwert verstreicht.
+Eine kleine Zustandsmaschine (`engine.py::ChargeDetector`) überwacht jeden SoC-Messwert. Sie verfolgt den letzten Ruhepunkt als „Anker". Sobald der SoC *ohne aktives Heimlade-Signal* um ≥ `start_delta` über den Anker gestiegen ist, beginnt eine Sitzung. Sie endet, wenn das Heimlade-Signal aktiv wird, der SoC um > `drop_ends` unter den verfolgten Höchstwert fällt, `idle_timeout_s` ohne neuen Höchstwert verstreicht, oder (falls `plug_entity` konfiguriert ist) ein bestätigtes Ausstecken erkannt wird.
 
 Die Energie wird aus SoC-Delta × nutzbarem Akku ÷ Ladewirkungsgrad geschätzt — oder, wenn ein Fahrzeug-Ladeleistungssensor konfiguriert ist, aus der integrierten Leistungskurve (genauer, funktioniert auch unterwegs ohne Wallbox-Daten).
+
+Fahrzeuge, die den SoC nur grob oder selten melden (manche Hersteller-Cloud-APIs), können `idle_timeout_s` zwischen zwei SoC-Meldungen derselben, eigentlich durchgehenden Ladung auslösen und sie so in mehrere "offene" Einträge zerteilen. Zwei Absicherungen fangen das ab: neu erkannte Ladungen werden mit der vorherigen offenen zusammengeführt, wenn dazwischen kein SoC-Abfall lag (ein echter Abfall bedeutet, dass gefahren wurde, also tatsächlich getrennte Ladestopps); und falls ein `plug_entity` konfiguriert ist, überstimmt ein bestätigtes „eingesteckt" `idle_timeout_s` komplett, sodass die Sitzung einfach nie endet, solange das Auto verbunden bleibt.
 
 ---
 

@@ -2,14 +2,14 @@
 
 import pytest
 from engine import (
-    ChargeDetector, ChargeSample, EfficiencyCalibrator, TripDetector, TripSample,
-    average_efficiency, calculate_savings, pop_pending,
+    ChargeDetector, ChargeSample, EfficiencyCalibrator, PlugDebouncer, TripDetector, TripSample,
+    average_efficiency, calculate_savings, merge_pending, pop_pending,
 )
 
 
-def stream(socs, start_ts=0, step=60, home=False, power=None):
+def stream(socs, start_ts=0, step=60, home=False, power=None, plug=None):
     return [
-        ChargeSample(ts=start_ts + i * step, soc=v, home_charging=home, power_kw=power)
+        ChargeSample(ts=start_ts + i * step, soc=v, home_charging=home, power_kw=power, plugged_in=plug)
         for i, v in enumerate(socs)
     ]
 
@@ -79,6 +79,87 @@ def test_zwei_sessions():
     assert len(evs) == 2
     assert (evs[0].soc_start, evs[0].soc_end) == (30, 60)
     assert (evs[1].soc_start, evs[1].soc_end) == (40, 70)
+
+
+# ----- plugged_in: Steckersignal ueberstimmt idle_timeout_s ----------------
+
+def test_plugged_in_true_verhindert_idle_timeout_split():
+    # idle_timeout_s=120, aber grosse Sample-Abstaende (300s) -- ohne
+    # Steckersignal wuerde das laengst in mehrere Sessions zerfallen.
+    det = ChargeDetector(idle_timeout_s=120)
+    samples = stream([30, 40, 50, 60], start_ts=0, step=300, plug=True)
+    assert run(det, samples) == []
+    ev = run(det, stream([60], start_ts=1200, step=300, plug=False))[0]
+    assert (ev.soc_start, ev.soc_end) == (30, 60)
+
+
+def test_plugged_in_false_beendet_sofort_trotz_kurzer_standzeit():
+    det = ChargeDetector(idle_timeout_s=9999)
+    samples = stream([30, 40, 50], start_ts=0, step=60, plug=True)
+    assert run(det, samples) == []
+    ev = run(det, stream([50], start_ts=180, step=60, plug=False))[0]
+    assert (ev.soc_start, ev.soc_end) == (30, 50)
+
+
+def test_plugged_in_none_faellt_auf_idle_timeout_zurueck():
+    # Kein Steckersensor konfiguriert (plugged_in immer None) -- unveraendertes
+    # Verhalten wie vor Einfuehrung des Signals.
+    det = ChargeDetector(idle_timeout_s=120)
+    samples = stream([30, 40, 50], start_ts=0, step=60) + stream([50], start_ts=300)
+    ev = run(det, samples)[0]
+    assert (ev.soc_start, ev.soc_end) == (30, 50)
+
+
+# ----- PlugDebouncer: Flacker-/Aussetzer-Filterung -------------------------
+
+def test_plug_debouncer_unbekannt_vor_erster_bestaetigung():
+    d = PlugDebouncer(debounce_s=100)
+    assert d.update(0, True) is None
+    assert d.update(50, True) is None
+
+
+def test_plug_debouncer_bestaetigt_nach_debounce_s():
+    d = PlugDebouncer(debounce_s=100)
+    d.update(0, True)
+    assert d.update(99, True) is None
+    assert d.update(100, True) is True
+
+
+def test_plug_debouncer_ignoriert_unbekannten_rohwert():
+    d = PlugDebouncer(debounce_s=100)
+    d.update(0, True)
+    d.update(100, True)
+    assert d.update(150, None) is True  # unavailable/unknown -> haelt Stand
+
+
+def test_plug_debouncer_kurzer_blip_schlaegt_nicht_durch():
+    d = PlugDebouncer(debounce_s=100)
+    d.update(0, True)
+    d.update(100, True)
+    assert d.update(150, False) is True  # Blip beginnt
+    assert d.update(155, True) is True  # Blip endet nach 5s -> verworfen
+    assert d.update(200, False) is True  # neuer Off-Versuch, Uhr laeuft neu
+    assert d.update(255, False) is True  # 55s < 100s debounce
+
+
+def test_plug_debouncer_echter_wechsel_schlaegt_nach_debounce_s_durch():
+    d = PlugDebouncer(debounce_s=100)
+    d.update(0, True)
+    d.update(100, True)
+    d.update(150, False)
+    assert d.update(250, False) is False
+
+
+def test_plug_debouncer_get_load_state_roundtrip():
+    d = PlugDebouncer(debounce_s=100)
+    d.update(0, True)
+    d.update(100, True)
+    d.update(150, False)
+    state = d.get_state()
+
+    d2 = PlugDebouncer(debounce_s=100)
+    d2.load_state(state)
+    assert d2.update(250, False) is False
 
 
 def test_fahrt_beendet_ladung():
@@ -212,6 +293,47 @@ def test_pop_pending_unbekannter_start_ts_liefert_none_und_laesst_liste_unveraen
     pending = [{"start_ts": 100, "kind": "a"}]
     assert pop_pending(pending, 999) is None
     assert pending == [{"start_ts": 100, "kind": "a"}]
+
+
+# ----- merge_pending: faelschlich per idle_timeout_s gesplittete Ladung ----
+
+def test_merge_pending_leere_liste_haengt_an():
+    pending = []
+    merge_pending(pending, {"start_ts": 100, "end_ts": 200, "soc_start": 40.0, "soc_end": 42.0,
+                             "energy_kwh": 1.0, "energy_batt_kwh": 0.9, "energy_source": "soc"})
+    assert len(pending) == 1
+
+
+def test_merge_pending_ohne_soc_abfall_wird_zusammengefuehrt():
+    pending = [{"start_ts": 100, "end_ts": 200, "soc_start": 40.0, "soc_end": 47.0,
+                "energy_kwh": 4.0, "energy_batt_kwh": 3.5, "energy_source": "soc"}]
+    merge_pending(pending, {"start_ts": 800, "end_ts": 900, "soc_start": 47.0, "soc_end": 56.0,
+                             "energy_kwh": 4.0, "energy_batt_kwh": 3.5, "energy_source": "soc"})
+    assert len(pending) == 1
+    merged = pending[0]
+    assert merged["start_ts"] == 100
+    assert merged["end_ts"] == 900
+    assert merged["soc_end"] == 56.0
+    assert merged["delta_soc"] == 16.0
+    assert merged["energy_kwh"] == 8.0
+    assert merged["energy_batt_kwh"] == 7.0
+
+
+def test_merge_pending_mit_soc_abfall_bleibt_getrennt():
+    # SoC-Abfall dazwischen == gefahren -> zwei echte, getrennte Ladestopps
+    pending = [{"start_ts": 100, "end_ts": 200, "soc_start": 40.0, "soc_end": 47.0,
+                "energy_kwh": 4.0, "energy_batt_kwh": 3.5, "energy_source": "soc"}]
+    merge_pending(pending, {"start_ts": 800, "end_ts": 900, "soc_start": 30.0, "soc_end": 40.0,
+                             "energy_kwh": 4.0, "energy_batt_kwh": 3.5, "energy_source": "soc"})
+    assert len(pending) == 2
+
+
+def test_merge_pending_unterschiedliche_quelle_wird_als_mixed_markiert():
+    pending = [{"start_ts": 100, "end_ts": 200, "soc_start": 40.0, "soc_end": 47.0,
+                "energy_kwh": 4.0, "energy_batt_kwh": 3.5, "energy_source": "power_ac"}]
+    merge_pending(pending, {"start_ts": 800, "end_ts": 900, "soc_start": 47.0, "soc_end": 56.0,
+                             "energy_kwh": 4.0, "energy_batt_kwh": 3.5, "energy_source": "soc"})
+    assert pending[0]["energy_source"] == "mixed"
 
 
 # ----- calculate_savings: Kostenvergleich gegenueber einem Verbrenner ------

@@ -1300,6 +1300,22 @@ class EVAssistantPanel extends HTMLElement {
     return new Date(ts * 1000).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
   }
 
+  // Unix-Timestamp (s) <-> <input type="datetime-local">-Wert, jeweils in
+  // Browser-Lokalzeit -- passend zu _fmtDate()/_fmtTime() oben, die ebenfalls
+  // ueber Date() lokal formatieren statt UTC.
+  _toDatetimeLocal(ts) {
+    if (ts === null || ts === undefined) return "";
+    const d = new Date(ts * 1000);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  _fromDatetimeLocal(value) {
+    if (!value) return null;
+    const ms = new Date(value).getTime();
+    return isNaN(ms) ? null : ms / 1000;
+  }
+
   _fmtDuration(minutes) {
     const m = parseFloat(minutes);
     if (isNaN(m) || m < 0) return null;
@@ -1616,6 +1632,14 @@ class EVAssistantPanel extends HTMLElement {
         <div class="hist-edit-form hidden">
           <label>Startort<input type="text" class="hf-start" value="${h.start_ort}"></label>
           <label>Zielort<input type="text" class="hf-end" value="${h.end_ort}"></label>
+          <label>Start<input type="datetime-local" class="hf-start-ts" value="${this._toDatetimeLocal(h.start_ts)}"></label>
+          <label>Ende<input type="datetime-local" class="hf-end-ts" value="${this._toDatetimeLocal(h.end_ts)}"></label>
+          <label>Strecke (km)<input type="text" inputmode="decimal" class="hf-km" value="${h.km ?? ""}"></label>
+          <label>km Start<input type="text" inputmode="decimal" class="hf-odo-start" value="${h.odo_start ?? ""}"></label>
+          <label>km Ende<input type="text" inputmode="decimal" class="hf-odo-end" value="${h.odo_end ?? ""}"></label>
+          <label>SoC Start (%)<input type="text" inputmode="decimal" class="hf-soc-start" value="${h.soc_start ?? ""}"></label>
+          <label>SoC Ende (%)<input type="text" inputmode="decimal" class="hf-soc-end" value="${h.soc_end ?? ""}"></label>
+          <label>Verbrauch (kWh)<input type="text" inputmode="decimal" class="hf-verbrauch" value="${h.verbrauch_kwh ?? ""}"></label>
           <button class="btn btn-primary hf-save">Speichern</button>
           <button class="btn btn-ghost hf-cancel">Abbrechen</button>
         </div>
@@ -1635,7 +1659,24 @@ class EVAssistantPanel extends HTMLElement {
         const start_ort = row.querySelector(".hf-start").value;
         const end_ort = row.querySelector(".hf-end").value;
         if (!start_ort || !end_ort) return;
-        this._call("edit_trip", { erfasst_ts: ts, start_ort, end_ort });
+        const num = (sel) => {
+          const raw = row.querySelector(sel).value.trim().replace(",", ".");
+          if (raw === "") return null;
+          const v = parseFloat(raw);
+          return isNaN(v) ? null : v;
+        };
+        const payload = { erfasst_ts: ts, start_ort, end_ort };
+        const startTs = this._fromDatetimeLocal(row.querySelector(".hf-start-ts").value);
+        if (startTs != null) payload.start_ts = startTs;
+        const endTs = this._fromDatetimeLocal(row.querySelector(".hf-end-ts").value);
+        if (endTs != null) payload.end_ts = endTs;
+        const km = num(".hf-km"); if (km != null) payload.km = km;
+        const odoStart = num(".hf-odo-start"); if (odoStart != null) payload.odo_start = odoStart;
+        const odoEnd = num(".hf-odo-end"); if (odoEnd != null) payload.odo_end = odoEnd;
+        const socStart = num(".hf-soc-start"); if (socStart != null) payload.soc_start = socStart;
+        const socEnd = num(".hf-soc-end"); if (socEnd != null) payload.soc_end = socEnd;
+        const verbrauch = num(".hf-verbrauch"); if (verbrauch != null) payload.verbrauch_kwh = verbrauch;
+        this._call("edit_trip", payload);
         form.classList.add("hidden");
       });
       row.querySelector(".hist-delete").addEventListener("click", () => {

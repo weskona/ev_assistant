@@ -40,12 +40,14 @@
       },
       "erkennung": {
         "title": "EV Assistant - Detection",
-        "description": "Step 5/7: fine-tuning of external charging detection. Default values work for most cases. Flow: charging starts when SoC rises by the start threshold; ends on SoC drop below the peak or after timeout. SoC noise must ALWAYS be smaller than the start threshold.",
+        "description": "Step 5/7: fine-tuning of external charging detection. Default values work for most cases. Flow: charging starts when SoC rises by the start threshold; ends on SoC drop below the peak or after timeout. SoC noise must ALWAYS be smaller than the start threshold. Optional: a plug sensor detects charge end/continuation directly instead of via the timeout — a confirmed “plugged in” prevents a split when SoC is reported coarsely, a confirmed “unplugged” ends immediately. To guard against brief false readings from the source, a change must hold for the debounce time.",
         "data": {
           "start_delta": "Start threshold (%, minimum SoC rise to count as charging)",
           "noise": "SoC noise (%, tolerance — must be smaller than the start threshold!)",
           "idle_timeout_s": "Timeout without new SoC peak (s)",
-          "drop_ends": "SoC drop ends charging immediately (%)"
+          "drop_ends": "SoC drop ends charging immediately (%)",
+          "plug_entity": "Plug sensor (optional, binary_sensor)",
+          "plug_debounce_s": "Debounce for plug sensor (s)"
         }
       },
       "fahrtenbuch": {
@@ -115,12 +117,14 @@
       },
       "erkennung": {
         "title": "EV Assistant - Detection",
-        "description": "Step 5/7: fine-tuning of external charging detection.",
+        "description": "Step 5/7: fine-tuning of external charging detection. Optional: a plug sensor detects charge end/continuation directly instead of via the timeout (see debounce).",
         "data": {
           "start_delta": "Start threshold (%, minimum SoC rise to count as charging)",
           "noise": "SoC noise (%, tolerance — must be smaller than the start threshold!)",
           "idle_timeout_s": "Timeout without new SoC peak (s)",
-          "drop_ends": "SoC drop ends charging immediately (%)"
+          "drop_ends": "SoC drop ends charging immediately (%)",
+          "plug_entity": "Plug sensor (optional, binary_sensor)",
+          "plug_debounce_s": "Debounce for plug sensor (s)"
         }
       },
       "fahrtenbuch": {

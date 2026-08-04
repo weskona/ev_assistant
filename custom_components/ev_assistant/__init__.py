@@ -191,8 +191,14 @@ SIMULATE_TRIP_SCHEMA = vol.Schema({
 EDIT_TRIP_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
     vol.Required("erfasst_ts"): vol.Coerce(int),
-    vol.Required("start_ort"): str,
-    vol.Required("end_ort"): str,
+    vol.Optional("start_ort"): str,
+    vol.Optional("end_ort"): str,
+    vol.Optional("km"): vol.Coerce(float),
+    vol.Optional("odo_start"): vol.Coerce(float),
+    vol.Optional("odo_end"): vol.Coerce(float),
+    vol.Optional("soc_start"): vol.Coerce(float),
+    vol.Optional("soc_end"): vol.Coerce(float),
+    vol.Optional("verbrauch_kwh"): vol.Coerce(float),
 })
 
 DELETE_TRIP_SCHEMA = vol.Schema({
@@ -292,7 +298,15 @@ def _register_services(hass: HomeAssistant) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
             await coordinator.async_edit_trip(
-                call.data["erfasst_ts"], call.data["start_ort"], call.data["end_ort"]
+                call.data["erfasst_ts"],
+                start_ort=call.data.get("start_ort"),
+                end_ort=call.data.get("end_ort"),
+                km=call.data.get("km"),
+                odo_start=call.data.get("odo_start"),
+                odo_end=call.data.get("odo_end"),
+                soc_start=call.data.get("soc_start"),
+                soc_end=call.data.get("soc_end"),
+                verbrauch_kwh=call.data.get("verbrauch_kwh"),
             )
 
     async def _handle_delete_trip(call: ServiceCall) -> None:

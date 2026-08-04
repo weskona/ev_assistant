@@ -40,12 +40,14 @@
       },
       "erkennung": {
         "title": "EV Assistant - Erkennung",
-        "description": "Schritt 5/7: Feinjustierung der Fremdlade-Erkennung. Standardwerte passen für die meisten Fälle. Ablauf: Ladung startet wenn SoC um die Start-Schwelle steigt; endet bei SoC-Abfall unter den Höchststand oder nach dem Timeout. SoC-Rauschen muss IMMER kleiner sein als die Start-Schwelle.",
+        "description": "Schritt 5/7: Feinjustierung der Fremdlade-Erkennung. Standardwerte passen für die meisten Fälle. Ablauf: Ladung startet wenn SoC um die Start-Schwelle steigt; endet bei SoC-Abfall unter den Höchststand oder nach dem Timeout. SoC-Rauschen muss IMMER kleiner sein als die Start-Schwelle. Optional: ein Stecker-Sensor erkennt Ladeende/-fortsetzung direkt statt über den Timeout — bestätigt „eingesteckt“ verhindert ein Splitten bei grob gemeldetem SoC, bestätigt „ausgesteckt“ beendet sofort. Zur Absicherung gegen kurze Fehlmeldungen der Quelle muss ein Wechsel die Debounce-Zeit lang anhalten.",
         "data": {
           "start_delta": "Start-Schwelle (%, ab wie viel SoC-Anstieg eine Ladung gilt)",
           "noise": "SoC-Rauschen (%, Toleranz — muss kleiner sein als die Start-Schwelle!)",
           "idle_timeout_s": "Timeout ohne neuen SoC-Höchstwert (s)",
-          "drop_ends": "SoC-Abfall beendet Ladung sofort (%)"
+          "drop_ends": "SoC-Abfall beendet Ladung sofort (%)",
+          "plug_entity": "Stecker-Sensor (optional, binary_sensor)",
+          "plug_debounce_s": "Debounce für Stecker-Sensor (s)"
         }
       },
       "fahrtenbuch": {
@@ -115,12 +117,14 @@
       },
       "erkennung": {
         "title": "EV Assistant - Erkennung",
-        "description": "Schritt 5/7: Feinjustierung der Fremdlade-Erkennung.",
+        "description": "Schritt 5/7: Feinjustierung der Fremdlade-Erkennung. Optional: ein Stecker-Sensor erkennt Ladeende/-fortsetzung direkt statt über den Timeout (siehe Debounce).",
         "data": {
           "start_delta": "Start-Schwelle (%, ab wie viel SoC-Anstieg eine Ladung gilt)",
           "noise": "SoC-Rauschen (%, Toleranz — muss kleiner sein als die Start-Schwelle!)",
           "idle_timeout_s": "Timeout ohne neuen SoC-Höchstwert (s)",
-          "drop_ends": "SoC-Abfall beendet Ladung sofort (%)"
+          "drop_ends": "SoC-Abfall beendet Ladung sofort (%)",
+          "plug_entity": "Stecker-Sensor (optional, binary_sensor)",
+          "plug_debounce_s": "Debounce für Stecker-Sensor (s)"
         }
       },
       "fahrtenbuch": {

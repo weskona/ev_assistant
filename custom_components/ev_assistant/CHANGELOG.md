@@ -2,6 +2,17 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.28.0] - 2026-08-04
+
+### Fixed
+
+- **External charges on vehicles with coarse/infrequent SoC reporting no longer split into multiple pending entries**: `idle_timeout_s` finalizes a session once no new SoC peak has been seen for that long — vehicles whose SoC only ticks every 10-20+ minutes (e.g. some manufacturer cloud APIs) could trip that timeout mid-charge, splitting one continuous external charge into several separate "pending" entries. A newly detected charge is now merged into the previous still-open one whenever there was no SoC drop in between (a real drop only happens if the car was actually driven, i.e. genuinely separate charge stops) — independent of the vehicle's reporting cadence.
+
+### Added
+
+- **Optional plug/connectivity sensor (`plug_entity`, `plug_debounce_s`)**: a more direct alternative to the fix above, for vehicles that expose a plug-state `binary_sensor` (e.g. via an OBD/CAN dongle). When configured, a confirmed "plugged in" overrides `idle_timeout_s` entirely — the session never times out while the car stays connected — and a confirmed "unplugged" ends it immediately. Debounced (default 300 s, configurable) against brief flaky readings from the source before either state is trusted.
+- **`edit_trip` service can now correct any field of a confirmed trip log entry**, including its date/time (`start_ts`/`end_ts`), distance (`km`), odometer readings (`odo_start`/`odo_end`), SoC (`soc_start`/`soc_end`), and consumption (`verbrauch_kwh`) — previously only the start/end location could be corrected. Changing `km` adjusts the running trip-log total by the difference; changing `start_ts` also updates the entry's `datum` (used by the CSV export); changing `soc_start`/`soc_end` recomputes `delta_soc` and, unless given explicitly, `verbrauch_kwh`. The panel's trip-history edit form now has date/time fields alongside the existing ones.
+
 ## [0.27.0] - 2026-08-03
 
 ### Added

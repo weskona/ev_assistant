@@ -23,6 +23,13 @@ CONF_START_DELTA = "start_delta"
 CONF_NOISE = "noise"
 CONF_IDLE_TIMEOUT = "idle_timeout_s"
 CONF_DROP_ENDS = "drop_ends"
+# Optional: binaerer Stecker-/Connectivity-Sensor (device_class "plug" oder
+# "connectivity"). Bestaetigt "ausgesteckt" beendet eine Fremdladung sofort
+# statt ueber idle_timeout_s zu warten -- bestaetigt "eingesteckt" verhindert
+# umgekehrt, dass idle_timeout_s eine durchgehende Ladung bei grob/langsam
+# gemeldetem SoC faelschlich splittet (siehe engine.py::PlugDebouncer).
+CONF_PLUG_ENTITY = "plug_entity"
+CONF_PLUG_DEBOUNCE = "plug_debounce_s"
 
 # Fahrzeug-Eckdaten
 CONF_VEHICLE_HERSTELLER = "vehicle_hersteller"
@@ -101,6 +108,9 @@ DEFAULT_START_DELTA = 1.0
 DEFAULT_NOISE = 0.5
 DEFAULT_IDLE_TIMEOUT = 600.0
 DEFAULT_DROP_ENDS = 1.0
+# Grosszuegig, da Hersteller-/Dongle-APIs den Steckerstatus teils verzoegert
+# oder kurzzeitig unzuverlaessig melden (siehe engine.py::PlugDebouncer).
+DEFAULT_PLUG_DEBOUNCE = 300.0
 DEFAULT_TRIP_MIN_KM = 0.5
 DEFAULT_TRIP_IDLE_TIMEOUT = 300.0
 
