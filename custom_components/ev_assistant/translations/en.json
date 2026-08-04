@@ -56,7 +56,7 @@
         "data": {
           "trip_min_km": "Minimum distance (km)",
           "trip_idle_timeout_s": "Idle time until trip end (s)",
-          "gps_entity": "Location suggestion (person or device_tracker entity)",
+          "gps_entity": "Location suggestion (person, device_tracker, or sensor entity)",
           "motor_entity": "Motor/driving sensor (optional, binary_sensor)",
           "motor_debounce_s": "Debounce for motor/driving sensor (s)"
         }
@@ -135,7 +135,7 @@
         "data": {
           "trip_min_km": "Minimum distance (km)",
           "trip_idle_timeout_s": "Idle time until trip end (s)",
-          "gps_entity": "Location suggestion (person or device_tracker entity)",
+          "gps_entity": "Location suggestion (person, device_tracker, or sensor entity)",
           "motor_entity": "Motor/driving sensor (optional, binary_sensor)",
           "motor_debounce_s": "Debounce for motor/driving sensor (s)"
         }

@@ -435,8 +435,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     def _wire_gps(self) -> None:
         """Fahrtenbuch-Ortsvorschlag: optionale person-/device_tracker-
-        Entitaet, deren Zone bei Fahrtbeginn/-ende als Start-/Ziel-Ort-
-        VORSCHLAG gespeichert wird (siehe _run_trip_detection())."""
+        oder sensor-Entitaet, deren Zustand bei Fahrtbeginn/-ende als
+        Start-/Ziel-Ort-VORSCHLAG gespeichert wird (siehe
+        _run_trip_detection()). Bei person/device_tracker ist der Zustand
+        eine Zonen-Objekt-ID (z.B. "home"); bei einer beliebigen sensor-
+        Entitaet wird der Zustand direkt als Ortsname verwendet, wenn er
+        keiner Zone entspricht (siehe _zone_friendly_name())."""
         entity_id = self._opt(CONF_GPS_ENTITY)
         if not entity_id:
             return
@@ -719,16 +723,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     @callback
     def _set_person_zone(self, raw) -> None:
-        """raw ist der Zustand der person-/device_tracker-Entitaet: entweder
-        eine Zonen-Objekt-ID (z.B. "home") oder "not_home", falls in keiner
-        Zone. Wird nur zwischengespeichert -- der eigentliche Schnappschuss
-        fuer Start-/Ziel-Ort-Vorschlag passiert in _run_trip_detection()."""
+        """raw ist der Zustand der konfigurierten CONF_GPS_ENTITY: bei
+        person-/device_tracker entweder eine Zonen-Objekt-ID (z.B. "home")
+        oder "not_home", falls in keiner Zone; bei einer beliebigen sensor-
+        Entitaet ein beliebiger Text (z.B. ein vom Fahrzeug selbst gemeldeter
+        Standortname). Wird nur zwischengespeichert -- der eigentliche
+        Schnappschuss fuer Start-/Ziel-Ort-Vorschlag passiert in
+        _run_trip_detection()."""
         self._person_zone = self._zone_friendly_name(raw)
 
     def _zone_friendly_name(self, raw: str) -> str:
         """Loest eine Zonen-Objekt-ID zu ihrem Anzeigenamen auf (z.B. "home"
-        -> "Home"). Ohne passende Zone (z.B. "not_home") wird der Rohwert
-        unveraendert zurueckgegeben."""
+        -> "Home"). Ohne passende Zone (z.B. "not_home", oder ein beliebiger
+        sensor-Zustand ohne Zonen-Entsprechung) wird der Rohwert unveraendert
+        zurueckgegeben -- so laesst sich z.B. ein sensor mit einem bereits
+        lesbaren Ortsnamen direkt als Vorschlag nutzen."""
         zone_state = self.hass.states.get(f"zone.{raw}")
         if zone_state is not None:
             return zone_state.attributes.get("friendly_name", raw)

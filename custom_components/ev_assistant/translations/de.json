@@ -56,7 +56,7 @@
         "data": {
           "trip_min_km": "Mindest-Strecke (km)",
           "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s)",
-          "gps_entity": "Orts-Vorschlag (person- oder device_tracker-Entität)",
+          "gps_entity": "Orts-Vorschlag (person-, device_tracker- oder sensor-Entität)",
           "motor_entity": "Motor-/Fahr-Sensor (optional, binary_sensor)",
           "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)"
         }
@@ -135,7 +135,7 @@
         "data": {
           "trip_min_km": "Mindest-Strecke (km)",
           "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s)",
-          "gps_entity": "Orts-Vorschlag (person- oder device_tracker-Entität)",
+          "gps_entity": "Orts-Vorschlag (person-, device_tracker- oder sensor-Entität)",
           "motor_entity": "Motor-/Fahr-Sensor (optional, binary_sensor)",
           "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)"
         }

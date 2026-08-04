@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.30.0] - 2026-08-04
+
+### Added
+
+- **`gps_entity` (trip log location suggestion) now also accepts plain `sensor` entities**, not just `person`/`device_tracker`. Its state is used the same way as before: resolved against a matching `zone.*` entity for a friendly name if possible, otherwise used as-is — so a `sensor` whose state is already a readable location name (e.g. a vehicle-reported location) works directly.
+
 ## [0.29.0] - 2026-08-04
 
 ### Added

@@ -41,9 +41,12 @@ CONF_ODO_ENTITY = "odo_entity"
 # basiert auf derselben Kilometerstand-Entitaet (CONF_ODO_ENTITY oben).
 CONF_TRIP_MIN_KM = "trip_min_km"
 CONF_TRIP_IDLE_TIMEOUT = "trip_idle_timeout_s"
-# Optional: person/device_tracker-Entitaet, deren Zone bei Fahrtbeginn/-ende
-# als Start-/Ziel-Ort-VORSCHLAG gespeichert wird (log_trip bestaetigt/
-# korrigiert weiterhin manuell -- siehe coordinator.py::_run_trip_detection).
+# Optional: person-/device_tracker-Entitaet (liefert eine Zonen-Objekt-ID,
+# z.B. "home") ODER eine beliebige sensor-Entitaet (Zustand wird direkt als
+# Ortsname verwendet, wenn er keiner Zone entspricht -- z.B. ein Fahrzeug-
+# eigener Standort-/Adress-Sensor). Wird bei Fahrtbeginn/-ende als Start-/
+# Ziel-Ort-VORSCHLAG gespeichert (log_trip bestaetigt/korrigiert weiterhin
+# manuell -- siehe coordinator.py::_run_trip_detection).
 CONF_GPS_ENTITY = "gps_entity"
 # Optional: binaerer Motor-/Fahr-Sensor ("Ready"/Zuendung/Motorlauf). Ergaenzt
 # die odometerbasierte Fahrterkennung um ein zweites Signal fuer manche

@@ -60,7 +60,7 @@ _HOME_PRICE_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor")
 )
 _GPS_ENTITY = selector.EntitySelector(
-    selector.EntitySelectorConfig(domain=["person", "device_tracker"])
+    selector.EntitySelectorConfig(domain=["person", "device_tracker", "sensor"])
 )
 _PLUG_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="binary_sensor")
