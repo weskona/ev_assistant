@@ -79,6 +79,14 @@ CONF_VERBRENNER_L_100KM = "verbrenner_l_100km"
 CONF_VERBRENNER_PRICE_PER_LITER = "verbrenner_price_per_liter"
 CONF_VERBRENNER_PRICE_ENTITY = "verbrenner_price_entity"
 CONF_TANKERKOENIG_FUEL_TYPE = "tankerkoenig_fuel_type"
+# Optional: Netzstrom-CO2-Intensitaet (g/kWh) fuer den CO2-Vergleich gegen
+# den Verbrenner (siehe engine.py::calculate_co2_savings()). Fester Wert
+# statt Live-Entitaet, anders als beim Kraftstoff-/Heimstrompreis -- die
+# CO2-Intensitaet schwankt fuer die Zwecke dieses Vergleichs deutlich
+# weniger stark als Preise und eine Live-Quelle (z.B. eine CO2-Signal-
+# Integration) waere ein weiterer optionaler Konfigurationsschritt fuer
+# einen Wert, der ohnehin nur eine grobe Schaetzung sein kann.
+CONF_CO2_PER_KWH = "co2_per_kwh_g"
 
 # Evcc-Fahrzeugname (String, kein Entity — muss dem "vehicle"-Feld in evcc's
 # Ladelogbuch entsprechen), zum Filtern der Heimladen-Historie bei mehreren
@@ -134,6 +142,17 @@ DEFAULT_TRIP_IDLE_TIMEOUT = 300.0
 # Automatik) liefert bereits DEFAULT_TRIP_IDLE_TIMEOUT.
 DEFAULT_MOTOR_DEBOUNCE = 60.0
 DEFAULT_TRIP_AUTO_CONFIRM = False
+# Deutscher Strommix-Durchschnitt (grobe Schaetzung, schwankt je nach Jahr/
+# Versorger/Tarif) -- Nutzer mit einer praeziseren Quelle (z.B. Oekostrom-
+# Vertrag) sollten den Wert anpassen.
+DEFAULT_CO2_PER_KWH_G = 380.0
+# Direkte Verbrennungs-CO2-Faktoren (kg/Liter, Tank-to-Wheel, ohne
+# Vorkette) je Kraftstoffsorte -- dieselben Werte, die CONF_TANKERKOENIG_
+# FUEL_TYPE bereits zur Auswahl anbietet. "super" ist der Fallback fuer
+# Verbrenner-Vergleiche ohne gewaehlte Kraftstoffsorte (die meisten reinen
+# Kostenvergleiche ohne Tankerkoenig-Integration).
+CO2_PER_LITER_KG = {"super": 2.33, "super_e10": 2.24, "diesel": 2.65}
+DEFAULT_CO2_PER_LITER_KG = CO2_PER_LITER_KG["super"]
 
 STORAGE_VERSION = 1
 STORAGE_KEY = "ev_assistant_data"

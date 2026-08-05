@@ -598,3 +598,27 @@ def calculate_savings(
         "kosten_verbrenner_geschaetzt": kosten_verbrenner,
         "ersparnis": round(kosten_verbrenner - kosten_ev_gesamt, 2),
     }
+
+
+def calculate_co2_savings(
+    km_driven: Optional[float],
+    ev_kwh_total: Optional[float],
+    co2_per_kwh_kg: Optional[float],
+    verbrenner_l_100km: Optional[float],
+    co2_per_liter_kg: float,
+) -> Optional[dict]:
+    """CO2-Bilanz der EV-Nutzung (aus der Strommenge seit Einrichtung)
+    gegen einen Vergleichs-Verbrenner (Verbrauch x CO2-Faktor auf derselben
+    Strecke) -- analog calculate_savings(), nur CO2 (kg) statt EUR. Gibt
+    None zurueck, wenn eine der noetigen Groessen fehlt (km_driven,
+    ev_kwh_total, co2_per_kwh_kg, verbrenner_l_100km); co2_per_liter_kg hat
+    immer einen Wert (Fallback-Konstante, siehe const.py)."""
+    if km_driven is None or ev_kwh_total is None or co2_per_kwh_kg is None or verbrenner_l_100km is None:
+        return None
+    co2_ev_kg = round(ev_kwh_total * co2_per_kwh_kg, 2)
+    co2_verbrenner_kg = round((km_driven / 100.0) * verbrenner_l_100km * co2_per_liter_kg, 2)
+    return {
+        "co2_ev_kg": co2_ev_kg,
+        "co2_verbrenner_kg": co2_verbrenner_kg,
+        "co2_ersparnis_kg": round(co2_verbrenner_kg - co2_ev_kg, 2),
+    }

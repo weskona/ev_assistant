@@ -71,7 +71,8 @@
           "verbrenner_l_100km": "Verbrauch Vergleichsfahrzeug (L/100km)",
           "verbrenner_price_per_liter": "Kraftstoffpreis (EUR/Liter)",
           "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis)",
-          "tankerkoenig_fuel_type": "Kraftstoffsorte für Tankerkönig-Auto-Erkennung (überschreibt Entität/festen Preis mit der günstigsten offenen Tankstelle)"
+          "tankerkoenig_fuel_type": "Kraftstoffsorte für Tankerkönig-Auto-Erkennung (überschreibt Entität/festen Preis mit der günstigsten offenen Tankstelle)",
+          "co2_per_kwh_g": "Netzstrom-CO2-Intensität (g/kWh, für den CO2-Vergleich)"
         }
       }
     },
@@ -151,7 +152,8 @@
           "verbrenner_l_100km": "Verbrauch Vergleichsfahrzeug (L/100km)",
           "verbrenner_price_per_liter": "Kraftstoffpreis (EUR/Liter)",
           "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis)",
-          "tankerkoenig_fuel_type": "Kraftstoffsorte für Tankerkönig-Auto-Erkennung (überschreibt Entität/festen Preis)"
+          "tankerkoenig_fuel_type": "Kraftstoffsorte für Tankerkönig-Auto-Erkennung (überschreibt Entität/festen Preis)",
+          "co2_per_kwh_g": "Netzstrom-CO2-Intensität (g/kWh, für den CO2-Vergleich)"
         }
       }
     },
@@ -256,6 +258,24 @@
       },
       "vehicle_avg_consumption": {
         "name": "Fahrzeug Durchschnittsverbrauch"
+      },
+      "co2_savings": {
+        "name": "CO2-Ersparnis ggü. Verbrenner"
+      },
+      "home_vs_external_price": {
+        "name": "Preisunterschied Fremd- vs. Heimladen"
+      },
+      "cost_day": {
+        "name": "Kosten (heute)"
+      },
+      "cost_week": {
+        "name": "Kosten (Woche)"
+      },
+      "cost_month": {
+        "name": "Kosten (Monat)"
+      },
+      "cost_year": {
+        "name": "Kosten (Jahr)"
       }
     },
     "binary_sensor": {

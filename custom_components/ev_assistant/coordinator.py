@@ -18,6 +18,8 @@ from homeassistant.helpers.template import Template
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .const import (
+    CO2_PER_LITER_KG,
+    CONF_CO2_PER_KWH,
     CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_EVCC_STAT_AVG_PRICE, CONF_EVCC_STAT_TOTAL_KWH,
     CONF_EVCC_VEHICLE_NAME, CONF_GPS_ENTITY, CONF_HOME_ENTITY,
     CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
@@ -30,6 +32,7 @@ from .const import (
     CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY,
     CONF_VERBRENNER_PRICE_PER_LITER, CONF_TANKERKOENIG_FUEL_TYPE, CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE,
+    DEFAULT_CO2_PER_KWH_G, DEFAULT_CO2_PER_LITER_KG,
     DEFAULT_DROP_ENDS, DEFAULT_EFFICIENCY,
     DEFAULT_IDLE_TIMEOUT, DEFAULT_MOTOR_DEBOUNCE, DEFAULT_NOISE, DEFAULT_PLUG_DEBOUNCE, DEFAULT_POWER_IS_AC,
     DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
@@ -42,7 +45,7 @@ from .const import (
 )
 from .engine import (
     ChargeDetector, ChargeSample, EfficiencyCalibrator, SignalDebouncer, TripDetector, TripSample,
-    average_efficiency, calculate_savings, merge_pending, pop_pending,
+    average_efficiency, calculate_co2_savings, calculate_savings, merge_pending, pop_pending,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -106,6 +109,7 @@ def _empty_data() -> dict:
         "trip_start_zone": None,
         "trip_start_soc": None,
         "odo_periods": {},
+        "cost_periods": {},
         "odo_lts": {},
     }
 
@@ -185,6 +189,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._build_detector()
         self._build_trip_detector()
         await self._setup_sources()
+        # Seedet die Kosten-Perioden-Baselines sofort statt erst beim
+        # naechsten taeglichen Rollover (siehe _daily_cost_period_rollover())
+        # -- sonst waeren "Kosten heute/Woche/..." bis Mitternacht unknown.
+        self._update_cost_periods()
         # Periodischer Re-Check zusaetzlich zu den SoC-/Kilometerstand-
         # getriebenen Updates: idle_timeout_s wird nur ausgewertet, wenn
         # _run_detection()/_run_trip_detection() laufen, was normalerweise
@@ -630,29 +638,50 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.hass.async_create_task(self._save())
         self.hass.async_create_task(self._run_trip_detection())
 
-    def _update_odo_periods(self, odo_km: float) -> None:
-        """Perioden-Baselines (Tag/Woche/Monat/Jahr) aktualisieren.
-        Bei Periodenrollover wird der aktuelle Kilometerstand als neuer
-        Startwert gesetzt."""
-        now = dt_util.now()
-        today = now.date()
+    @staticmethod
+    def _period_keys() -> dict:
+        """Tag/Woche/Monat/Jahr-Schluessel fuer den aktuellen Zeitpunkt --
+        gemeinsam genutzt von _update_odo_periods() und
+        _update_cost_periods(), die beide nach demselben Muster
+        (Baseline pro Periode, Rollover bei Schluessel-Wechsel)
+        funktionieren."""
+        today = dt_util.now().date()
         iso = today.isocalendar()
-        keys = {
+        return {
             "day":   str(today),
             "week":  f"{iso.year}-W{iso.week:02d}",
             "month": f"{today.year}-{today.month:02d}",
             "year":  str(today.year),
         }
+
+    def _update_odo_periods(self, odo_km: float) -> None:
+        """Perioden-Baselines (Tag/Woche/Monat/Jahr) aktualisieren.
+        Bei Periodenrollover wird der aktuelle Kilometerstand als neuer
+        Startwert gesetzt."""
         periods = self.data.setdefault("odo_periods", {})
-        for period, key in keys.items():
+        for period, key in self._period_keys().items():
             entry = periods.get(period)
             if entry is None or entry.get("key") != key:
                 periods[period] = {"key": key, "odo_km": odo_km}
+
+    def _update_cost_periods(self) -> None:
+        """Perioden-Baselines (Tag/Woche/Monat/Jahr) fuer die EV-
+        Gesamtkosten (Heim + Fremd seit Einrichtung, siehe
+        _ev_cost_total_since_setup()) aktualisieren -- analog
+        _update_odo_periods(). Bei Periodenrollover wird der aktuelle
+        Kostenstand als neuer Startwert gesetzt."""
+        cost = self._ev_cost_total_since_setup()
+        periods = self.data.setdefault("cost_periods", {})
+        for period, key in self._period_keys().items():
+            entry = periods.get(period)
+            if entry is None or entry.get("key") != key:
+                periods[period] = {"key": key, "cost": cost}
 
     @callback
     def _daily_lts_refresh(self, now) -> None:
         self.hass.async_create_task(self.async_refresh_lts_data())
         self.hass.async_create_task(self._daily_odo_period_rollover())
+        self.hass.async_create_task(self._daily_cost_period_rollover())
 
     async def _daily_odo_period_rollover(self) -> None:
         """Rollt die Tag/Woche/Monat/Jahr-Baselines (siehe
@@ -665,6 +694,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if odo_km is None:
             return
         self._update_odo_periods(odo_km)
+        self.async_set_updated_data(self.data)
+        await self._save()
+
+    async def _daily_cost_period_rollover(self) -> None:
+        """Rollt die Tag/Woche/Monat/Jahr-Kosten-Baselines (siehe
+        _update_cost_periods()) taeglich -- analog
+        _daily_odo_period_rollover(), aus demselben Grund (Heim-/
+        Fremdladen-Kosten aendern sich nicht zuverlaessig ueber ein
+        einzelnes Ereignis, das den Rollover sonst anstossen wuerde)."""
+        self._update_cost_periods()
         self.async_set_updated_data(self.data)
         await self._save()
 
@@ -1582,13 +1621,34 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             delta *= MILES_TO_KM
         return round(delta, 1)
 
+    def _ev_kwh_total_since_setup(self) -> float:
+        """(Heimladen + Fremdladen) kWh gesamt seit Einrichtung -- dieselbe
+        Energiebilanz wie savings()/_vehicle_avg_consumption_kwh_per_100km()/
+        co2_savings(), an einer Stelle gebuendelt."""
+        home_kwh = self._home_kwh_since_setup() or 0.0
+        external_kwh = self.data.get("totals", {}).get("kwh", 0.0)
+        return home_kwh + external_kwh
+
+    def _ev_cost_total_since_setup(self) -> float:
+        """(Heimladen + Fremdladen) Kosten gesamt seit Einrichtung --
+        dieselbe Kosten-Prioritaet wie calculate_savings() (home_cost, falls
+        vorhanden, sonst home_kwh * home_price), fuer die Perioden-Baselines
+        (siehe _update_cost_periods())."""
+        home_cost = self._home_cost_since_setup()
+        if home_cost is None:
+            home_kwh = self._home_kwh_since_setup()
+            home_price = self._home_price()
+            home_cost = round(home_kwh * home_price, 2) if (home_kwh is not None and home_price is not None) else 0.0
+        external_cost = self.data.get("totals", {}).get("kosten", 0.0)
+        return home_cost + external_cost
+
     def _vehicle_avg_consumption_kwh_per_100km(self) -> Optional[float]:
         """Durchschnittsverbrauch des Fahrzeugs in kWh/100km ueber die
-        gesamte Zeit seit Einrichtung, aus der Energiebilanz: (Heimladen +
-        Fremdladen) kWh gesamt, geteilt durch die seit Einrichtung
-        gefahrenen km (siehe _km_driven()/_home_kwh()) -- dieselben immer
-        vorhandenen Gesamtwerte wie savings(), unabhaengig davon, ob jede
-        einzelne Fahrt im Fahrtenbuch bestaetigt wurde (anders als
+        gesamte Zeit seit Einrichtung, aus der Energiebilanz (siehe
+        _ev_kwh_total_since_setup()), geteilt durch die seit Einrichtung
+        gefahrenen km (siehe _km_driven()) -- dieselben immer vorhandenen
+        Gesamtwerte wie savings(), unabhaengig davon, ob jede einzelne
+        Fahrt im Fahrtenbuch bestaetigt wurde (anders als
         _trip_avg_consumption_kwh(), das nur bestaetigte/importierte
         Fahrten zaehlt). Kleine systematische Abweichung durch den Akku-
         Fuellstand zum Einrichtungszeitpunkt, ueber laengere Zeitraeume
@@ -1596,10 +1656,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         km = self._km_driven()
         if km is None or km <= 0:
             return None
-        home_kwh = self._home_kwh_since_setup() or 0.0
-        external_kwh = self.data.get("totals", {}).get("kwh", 0.0)
-        total_kwh = home_kwh + external_kwh
-        return round(total_kwh / km * 100.0, 2)
+        return round(self._ev_kwh_total_since_setup() / km * 100.0, 2)
 
     def _evcc_vehicle_key(self) -> Optional[str]:
         """Fahrzeugname in evcc: aus Konfiguration oder via Auto-Erkennung
@@ -1758,6 +1815,29 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         price = self._opt(CONF_HOME_PRICE_KWH)
         return float(price) if price is not None else None
 
+    def home_vs_external_price(self) -> Optional[dict]:
+        """Vergleich Heimladen- vs. Fremdladen-Preis pro kWh, jeweils seit
+        Einrichtung. Heimladen: _home_price() (bereits ein Preis, keine
+        Division noetig). Fremdladen: kWh-gewichteter Durchschnitt aus den
+        bestaetigten Historien-Summen (Gesamtkosten / Gesamt-kWh) -- anders
+        als last_price (nur die zuletzt bestaetigte Ladung). None, wenn
+        einer der beiden Preise fehlt (kein Heimstrompreis konfiguriert,
+        oder noch keine Fremdladung bestaetigt)."""
+        home_price = self._home_price()
+        if home_price is None:
+            return None
+        totals = self.data.get("totals", {})
+        external_kwh = totals.get("kwh", 0.0)
+        if external_kwh <= 0:
+            return None
+        external_price = round(totals.get("kosten", 0.0) / external_kwh, 4)
+        home_price = round(home_price, 4)
+        return {
+            "heimladen_preis_kwh": home_price,
+            "fremdladen_preis_kwh": external_price,
+            "differenz_kwh": round(external_price - home_price, 4),
+        }
+
     def savings(self) -> Optional[dict]:
         """Kostenvergleich gegenueber einem Verbrenner (siehe
         engine.py::calculate_savings), oder None wenn eine der zwingend
@@ -1787,6 +1867,35 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             verbrenner_l_100km=float(verbrenner_l) if verbrenner_l is not None else None,
             verbrenner_price_per_liter=float(verbrenner_price) if verbrenner_price is not None else None,
             home_cost=self._home_cost_since_setup(),
+        )
+
+    def _co2_per_liter_kg(self) -> float:
+        """CO2-Faktor (kg/Liter) fuer den Verbrenner-Vergleich, siehe
+        const.py::CO2_PER_LITER_KG. Richtet sich nach CONF_TANKERKOENIG_
+        FUEL_TYPE, falls gewaehlt (dieselbe Kraftstoffsorten-Auswahl wie
+        fuer die automatische Tankerkoenig-Preisermittlung) -- sonst
+        Fallback auf Super/Benzin, die ueblichste Annahme fuer einen
+        Kostenvergleich ohne Tankerkoenig."""
+        fuel_type = self._opt(CONF_TANKERKOENIG_FUEL_TYPE)
+        return CO2_PER_LITER_KG.get(fuel_type, DEFAULT_CO2_PER_LITER_KG)
+
+    def co2_savings(self) -> Optional[dict]:
+        """CO2-Bilanz gegenueber einem Verbrenner (siehe
+        engine.py::calculate_co2_savings), oder None wenn eine der
+        zwingend noetigen Groessen fehlt (Kilometerstand-Delta, EV-
+        Strommenge, Netzstrom-CO2-Intensitaet, Verbrenner-Verbrauch).
+        Nutzt dieselbe Energiebilanz wie savings()/
+        _vehicle_avg_consumption_kwh_per_100km() (siehe
+        _ev_kwh_total_since_setup()), daher `unknown` unter denselben
+        Bedingungen wie die Verbrauchs-/Ersparnis-Sensoren."""
+        verbrenner_l = self._opt(CONF_VERBRENNER_L_100KM)
+        co2_per_kwh_g = self._opt(CONF_CO2_PER_KWH, DEFAULT_CO2_PER_KWH_G)
+        return calculate_co2_savings(
+            km_driven=self._km_driven(),
+            ev_kwh_total=self._ev_kwh_total_since_setup(),
+            co2_per_kwh_kg=float(co2_per_kwh_g) / 1000.0 if co2_per_kwh_g is not None else None,
+            verbrenner_l_100km=float(verbrenner_l) if verbrenner_l is not None else None,
+            co2_per_liter_kg=self._co2_per_liter_kg(),
         )
 
     async def _dismiss(self) -> None:

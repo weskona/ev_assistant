@@ -71,7 +71,8 @@
           "verbrenner_l_100km": "Comparison vehicle consumption (L/100km)",
           "verbrenner_price_per_liter": "Fuel price (EUR/liter)",
           "verbrenner_price_entity": "Fuel price entity (overrides fixed price)",
-          "tankerkoenig_fuel_type": "Fuel type for Tankerkönig auto-detection (overrides entity/fixed price with the cheapest open station)"
+          "tankerkoenig_fuel_type": "Fuel type for Tankerkönig auto-detection (overrides entity/fixed price with the cheapest open station)",
+          "co2_per_kwh_g": "Grid CO2 intensity (g/kWh, for the CO2 comparison)"
         }
       }
     },
@@ -151,7 +152,8 @@
           "verbrenner_l_100km": "Comparison vehicle consumption (L/100km)",
           "verbrenner_price_per_liter": "Fuel price (EUR/liter)",
           "verbrenner_price_entity": "Fuel price entity (overrides fixed price)",
-          "tankerkoenig_fuel_type": "Fuel type for Tankerkönig auto-detection (overrides entity/fixed price)"
+          "tankerkoenig_fuel_type": "Fuel type for Tankerkönig auto-detection (overrides entity/fixed price)",
+          "co2_per_kwh_g": "Grid CO2 intensity (g/kWh, for the CO2 comparison)"
         }
       }
     },
@@ -256,6 +258,24 @@
       },
       "vehicle_avg_consumption": {
         "name": "Vehicle Avg Consumption"
+      },
+      "co2_savings": {
+        "name": "CO2 Savings vs. ICE Vehicle"
+      },
+      "home_vs_external_price": {
+        "name": "External vs. Home Charging Price Difference"
+      },
+      "cost_day": {
+        "name": "Cost (Today)"
+      },
+      "cost_week": {
+        "name": "Cost (Week)"
+      },
+      "cost_month": {
+        "name": "Cost (Month)"
+      },
+      "cost_year": {
+        "name": "Cost (Year)"
       }
     },
     "binary_sensor": {

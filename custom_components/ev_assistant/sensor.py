@@ -54,6 +54,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         TotalTripKmSensor(coordinator, entry),
         TripAvgConsumptionSensor(coordinator, entry),
         VehicleAvgConsumptionSensor(coordinator, entry),
+        Co2SavingsSensor(coordinator, entry),
+        HomeVsExternalPriceSensor(coordinator, entry),
+        CostDaySensor(coordinator, entry),
+        CostWeekSensor(coordinator, entry),
+        CostMonthSensor(coordinator, entry),
+        CostYearSensor(coordinator, entry),
     ])
 
 
@@ -742,3 +748,122 @@ class VehicleAvgConsumptionSensor(EvAssistantEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator._vehicle_avg_consumption_kwh_per_100km()
+
+
+class Co2SavingsSensor(EvAssistantEntity, SensorEntity):
+    """CO2-Ersparnis gegenueber einem Vergleichs-Verbrenner auf derselben
+    Strecke (siehe engine.py::calculate_co2_savings) -- analog SavingsSensor,
+    nur kg CO2 statt EUR. unknown, bis Kilometerstand-Entitaet (Schritt 1)
+    und Verbrenner-Verbrauch (Schritt 7) konfiguriert sind."""
+
+    _attr_translation_key = "co2_savings"
+    _attr_native_unit_of_measurement = "kg"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:molecule-co2"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "co2_savings")
+
+    @property
+    def native_value(self):
+        co2 = self.coordinator.co2_savings()
+        return co2["co2_ersparnis_kg"] if co2 else None
+
+    @property
+    def extra_state_attributes(self):
+        co2 = self.coordinator.co2_savings()
+        return dict(co2) if co2 else {}
+
+
+class HomeVsExternalPriceSensor(EvAssistantEntity, SensorEntity):
+    """Preisunterschied Fremdladen ggue. Heimladen (EUR/kWh, jeweils
+    gewichteter Durchschnitt seit Einrichtung) -- siehe
+    coordinator.py::home_vs_external_price(). Positiv = Fremdladen teurer
+    (der Normalfall). unknown ohne Heimstrompreis oder solange noch keine
+    Fremdladung bestaetigt wurde."""
+
+    _attr_translation_key = "home_vs_external_price"
+    _attr_native_unit_of_measurement = "EUR/kWh"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:swap-horizontal"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "home_vs_external_price")
+
+    @property
+    def native_value(self):
+        cmp = self.coordinator.home_vs_external_price()
+        return cmp["differenz_kwh"] if cmp else None
+
+    @property
+    def extra_state_attributes(self):
+        cmp = self.coordinator.home_vs_external_price()
+        return dict(cmp) if cmp else {}
+
+
+class _CostPeriodSensor(EvAssistantEntity, SensorEntity):
+    """Basisklasse fuer die Kosten-Perioden-Sensoren (Tag/Woche/Monat/Jahr)
+    -- analog _OdoPeriodSensor, nur EV-Gesamtkosten (Heim + Fremd seit
+    Einrichtung, siehe coordinator.py::_ev_cost_total_since_setup()) statt
+    Kilometerstand. Anders als beim Odometer-Pendant wird ein negatives
+    Delta auf 0 geklemmt statt als unknown behandelt: der Heimladen-Anteil
+    ist (mangels evcc-Kostenstatistik) haeufig kWh * gewichteter
+    Durchschnittspreis -- dieser Durchschnitt kann leicht sinken, wenn eine
+    neue, guenstigere Ladesession einfliesst, wodurch die Gesamtkosten
+    kurzzeitig unter die Perioden-Basislinie fallen koennen, OHNE dass dies
+    ein Anzeichen fuer einen echten Fehler (wie beim monoton steigenden
+    Kilometerstand) ist."""
+
+    _attr_native_unit_of_measurement = "EUR"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:cash-multiple"
+
+    _PERIOD: str = ""
+
+    def __init__(self, coordinator, entry, unique_suffix):
+        super().__init__(coordinator, entry, unique_suffix)
+
+    @property
+    def native_value(self):
+        entry = self.coordinator.data.get("cost_periods", {}).get(self._PERIOD)
+        if not entry:
+            return None
+        cost = self.coordinator._ev_cost_total_since_setup()
+        return max(0.0, round(cost - entry["cost"], 2))
+
+
+class CostDaySensor(_CostPeriodSensor):
+    _attr_translation_key = "cost_day"
+    _attr_icon = "mdi:calendar-today"
+    _PERIOD = "day"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "cost_day")
+
+
+class CostWeekSensor(_CostPeriodSensor):
+    _attr_translation_key = "cost_week"
+    _attr_icon = "mdi:calendar-week"
+    _PERIOD = "week"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "cost_week")
+
+
+class CostMonthSensor(_CostPeriodSensor):
+    _attr_translation_key = "cost_month"
+    _attr_icon = "mdi:calendar-month"
+    _PERIOD = "month"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "cost_month")
+
+
+class CostYearSensor(_CostPeriodSensor):
+    _attr_translation_key = "cost_year"
+    _attr_icon = "mdi:calendar-blank"
+    _PERIOD = "year"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "cost_year")

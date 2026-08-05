@@ -3,7 +3,7 @@
 import pytest
 from engine import (
     ChargeDetector, ChargeSample, EfficiencyCalibrator, SignalDebouncer, TripDetector, TripSample,
-    average_efficiency, calculate_savings, merge_pending, pop_pending,
+    average_efficiency, calculate_co2_savings, calculate_savings, merge_pending, pop_pending,
 )
 
 
@@ -371,6 +371,30 @@ def test_calculate_savings_ohne_heimladen_nur_fremdladungskosten():
 ])
 def test_calculate_savings_fehlende_pflichtgroesse_liefert_none(km_driven, l_100km, price):
     assert calculate_savings(km_driven, 150, 0.30, 50, l_100km, price) is None
+
+
+# ----- calculate_co2_savings: CO2-Bilanz gegenueber einem Verbrenner -------
+
+def test_calculate_co2_savings_durchgerechnetes_beispiel():
+    r = calculate_co2_savings(
+        km_driven=1000, ev_kwh_total=200, co2_per_kwh_kg=0.38,
+        verbrenner_l_100km=6.5, co2_per_liter_kg=2.33,
+    )
+    assert r == {
+        "co2_ev_kg": 76.0,
+        "co2_verbrenner_kg": 151.45,
+        "co2_ersparnis_kg": 75.45,
+    }
+
+
+@pytest.mark.parametrize("km_driven,ev_kwh_total,co2_per_kwh,l_100km", [
+    (None, 200, 0.38, 6.5),
+    (1000, None, 0.38, 6.5),
+    (1000, 200, None, 6.5),
+    (1000, 200, 0.38, None),
+])
+def test_calculate_co2_savings_fehlende_pflichtgroesse_liefert_none(km_driven, ev_kwh_total, co2_per_kwh, l_100km):
+    assert calculate_co2_savings(km_driven, ev_kwh_total, co2_per_kwh, l_100km, 2.33) is None
 
 
 # ----- TripDetector: Fahrtenbuch-Erkennung aus dem Kilometerstand ----------

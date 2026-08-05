@@ -2,6 +2,14 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.36.0] - 2026-08-06
+
+### Added
+
+- **New `CO2 Savings vs. ICE Vehicle` sensor**: parallel to the existing cost comparison, estimates kg CO2 saved vs. the reference combustion car — `(combustion fuel use × its CO2 factor) − (EV kWh used × co2_per_kwh_g)`. New optional config field `co2_per_kwh_g` (grid CO2 intensity, g/kWh, default 380 — a rough German-grid-average estimate) in step 7. The combustion-side CO2 factor is a fixed constant per fuel type (taken from `tankerkoenig_fuel_type` if set, otherwise gasoline).
+- **New `External vs. Home Charging Price Difference` sensor**: the weighted-average price actually paid for external charging minus the home electricity price (both €/kWh, since setup) — a direct answer to "how much more does charging away from home cost me per kWh".
+- **New `Cost (Today/Week/Month/Year)` sensors**: combined home + external charging cost within the current calendar period, using the same period-baseline-and-rollover mechanism already used for the driven-km period sensors.
+
 ## [0.35.0] - 2026-08-05
 
 ### Fixed
