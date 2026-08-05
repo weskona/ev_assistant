@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.33.0] - 2026-08-05
+
+### Fixed
+
+- **`Vehicle Avg Consumption` (and home-charging cost) could be wildly inflated when using evcc's own cumulative statistics for home kWh/cost** (evcc's site-wide total-charged-kWh statistic, or its per-vehicle `chargedEnergy`/`cost` session statistic). Those are evcc's own counters, running since evcc itself was set up — not since EV Assistant was configured. Used directly, a counter that's been running far longer than EV Assistant's own km-driven tracking produces a home-kWh figure for a much longer period than the km in the denominator, wildly overstating kWh/100 km (reported case: 980 kWh/100 km instead of the correct ~20). All three of these now establish a reference value the first time they're read (same principle already used for the wallbox-energy-meter fallback) and only count the delta since then. Note: for existing installations this resets the affected figure to 0 at upgrade time — there's no way to recover what evcc's counter was at EV Assistant's actual setup time, so it starts accumulating fresh from the upgrade.
+
 ## [0.32.0] - 2026-08-05
 
 ### Fixed
