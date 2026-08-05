@@ -53,7 +53,7 @@ Setup runs as a 7-step flow (the same flow is used when editing via **Configure*
 | 3 — Charge Power | Optional vehicle charge-power sensor (improves external-charge estimates) and wallbox energy meter (cumulative kWh counter for efficiency calibration and home-charging costs). |
 | 4 — Notifications | Optional `notify.*` service for push notifications on detected external charges. A persistent HA notification always fires regardless of this setting. |
 | 5 — Detection | Fine-tune the detection state machine: `start_delta` (min SoC rise to trigger), `noise` (jitter tolerance, must be < `start_delta`), `idle_timeout_s` (session-end timeout), `drop_ends` (SoC drop that ends a session immediately). Defaults work for most vehicles. Optional: `plug_entity` (a plug/connectivity `binary_sensor`) and `plug_debounce_s` — when set, a confirmed "plugged in" overrides `idle_timeout_s` entirely (no more false session splits on coarsely-reported SoC) and a confirmed "unplugged" (held for `plug_debounce_s`, guarding against brief flaky readings) ends the session immediately. |
-| 6 — Trip Log | Optional: `trip_min_km` (minimum trip distance), `trip_idle_timeout_s` (standstill-to-trip-end timeout), `gps_entity` (person, device_tracker, or sensor entity for location suggestions). Also optional: `motor_entity` (a motor/driving `binary_sensor`, e.g. ignition/"Ready") and `motor_debounce_s` — a second signal for vehicles whose odometer updates too coarsely/infrequently to derive trip start/end from it directly. A confirmed "driving" starts/continues a trip even without a fresh odometer reading; `trip_idle_timeout_s` still tolerates brief stops (e.g. stop-start at a light). Distance always comes from the odometer regardless. A further optional toggle, `trip_auto_confirm`, adds a detected trip to the trip log immediately instead of waiting for manual start/end-location confirmation — location comes from `gps_entity` if configured, otherwise stays empty (editable later via `edit_trip`). |
+| 6 — Trip Log | Optional: `trip_min_km` (minimum trip distance), `trip_idle_timeout_s` (standstill-to-trip-end timeout), `gps_entity` (person, device_tracker, or sensor entity for location suggestions). Also optional: `motor_entity` (a motor/driving `binary_sensor`, e.g. ignition/"Ready") and `motor_debounce_s` — a second signal for vehicles whose odometer updates too coarsely/infrequently to derive trip start/end from it directly. A confirmed "driving" starts/continues a trip even without a fresh odometer reading; `trip_idle_timeout_s` still tolerates brief stops (e.g. stop-start at a light). Distance always comes from the odometer regardless. A further optional toggle, `trip_auto_confirm`, adds a detected trip to the trip log immediately instead of waiting for manual start/end-location confirmation — location comes from `gps_entity` if configured, otherwise stays empty (editable later via `edit_trip`). One more optional field, `usage_profile_buffer_pct` (default 20), sets the safety margin added on top of the historical weekday average for the Usage Profile tab's "needed tomorrow" figure. |
 | 7 — Cost Comparison | Optional: combustion reference consumption (L/100 km), fuel price, home electricity price. Fuel price priority: Tankerkönig auto-detection (pick a fuel type, cheapest open station wins) > live entity > fixed value. Home electricity price: live entity (kWh-weighted average) > fixed value. Also optional: `co2_per_kwh_g` (grid CO2 intensity, g/kWh, default 380 — a rough German-grid-average estimate, adjust for your own supplier/tariff) for the CO2 comparison sensor. |
 
 ---
@@ -126,6 +126,17 @@ All odometer sensors are `entity_category: diagnostic`. The period and LTS senso
 | `cost_day` / `cost_week` / `cost_month` / `cost_year` | Cost (Today/Week/Month/Year) | Combined home + external charging cost within the current calendar period, same rollover pattern as the driven-km period sensors below. `unknown` before the period's baseline is established (right after setup); clamped to 0 rather than going negative if the total dips below the period baseline (e.g. the home-cost estimate's weighted-average price ticking down as a cheaper session is folded in). |
 | `erstzulassung` | First Registration | First-registration date from step 1, exposed as a `date`-typed sensor. Diagnostic. |
 
+### Usage Profile
+
+See the "Usage Profile tab" section above for the underlying idea.
+
+| Key | Name | Description |
+|-----|------|-------------|
+| `usage_profile` | Usage Profile | Average kWh consumed on today's weekday, from the trip log (`verbrauch_kwh` if known per trip, otherwise its `km` × `vehicle_avg_consumption` as an estimate). Attributes: `montag`…`sonntag` (all 7 weekday averages). `unknown` with less than 7 days of trip-log history (guarantees every weekday has been observed at least once). |
+| `usage_profile_tomorrow` | Usage Profile (Needed Tomorrow) | Tomorrow's weekday average plus `usage_profile_buffer_pct` margin — directly comparable to `available_kwh`. Attributes: `wochentag`, `roh_kwh` (unbuffered), `puffer_prozent`, `benoetigt_kwh` (same as the state). |
+| `available_kwh` | Available kWh | Current SoC × usable battery capacity. |
+| `binary_sensor ... Charge Before Solar Recommended` | **On** when `available_kwh` is less than `usage_profile_tomorrow`'s buffered figure — i.e. charging now (e.g. from the grid) is advisable rather than waiting for tomorrow's solar surplus. Attributes: `verfuegbare_kwh`, `benoetigt_morgen_kwh`. `unknown` under the same conditions as `usage_profile`. |
+
 ---
 
 ## Panel / Dashboard
@@ -145,6 +156,10 @@ Per-vehicle dashboard in a three-column layout:
 | **Home Charging** | Home charging totals (kWh, EUR, session count, avg. solar share), last session KPIs, full evcc session history. Each entry shows SOC start→end, kWh, Ø charge power, EUR/kWh, cost, solar share, duration, and a SOC bar. |
 | **External Charging** | External charge totals, last session KPIs, editable history. Each entry shows kWh, Ø charge power, cost, and a SOC bar. |
 | **Trip Log** | Trip totals, last trip KPIs (km, route), editable trip history. |
+
+### Usage Profile tab
+
+Answers "do I need to charge tonight, or can charging wait for tomorrow's solar surplus?" from your own driving history — no manual input needed. A bar chart shows the average kWh consumed per weekday (Mon–Sun), derived from the trip log: for each weekday, total kWh used on that weekday ÷ number of that weekday that have elapsed since your first logged trip (days without a trip still count as 0 kWh, so "rarely drives on Sundays" correctly pulls the Sunday average down instead of being ignored). Requires at least 7 days of trip-log history before it shows anything (see `usage_profile` below); today's and tomorrow's bars are highlighted. Below the chart: currently available battery kWh (from SoC × usable capacity), tomorrow's typical need plus your configured buffer, and a plain-language recommendation.
 
 **Vehicle card** (above the three columns): vehicle name, current SOC with colour-coded bar (red < 20 %, orange < 40 %, green otherwise), odometer, average consumption (kWh/100 km, from the overall energy balance — total charged kWh since setup ÷ km driven since setup), and charge efficiency. Below that: a compact km grid (driven km today/week/month/year on the left, rolling averages and projections on the right) and the ICE Comparison section (savings, EV cost, estimated combustion cost, cost per 100 km).
 

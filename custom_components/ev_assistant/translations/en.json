@@ -59,7 +59,8 @@
           "gps_entity": "Location suggestion (person, device_tracker, or sensor entity)",
           "motor_entity": "Motor/driving sensor (optional, binary_sensor)",
           "motor_debounce_s": "Debounce for motor/driving sensor (s)",
-          "trip_auto_confirm": "Automatically add trips to the log (without manual confirmation)"
+          "trip_auto_confirm": "Automatically add trips to the log (without manual confirmation)",
+          "usage_profile_buffer_pct": "Buffer for usage profile (%, on the weekday average)"
         }
       },
       "vergleich": {
@@ -140,7 +141,8 @@
           "gps_entity": "Location suggestion (person, device_tracker, or sensor entity)",
           "motor_entity": "Motor/driving sensor (optional, binary_sensor)",
           "motor_debounce_s": "Debounce for motor/driving sensor (s)",
-          "trip_auto_confirm": "Automatically add trips to the log (without manual confirmation)"
+          "trip_auto_confirm": "Automatically add trips to the log (without manual confirmation)",
+          "usage_profile_buffer_pct": "Buffer for usage profile (%, on the weekday average)"
         }
       },
       "vergleich": {
@@ -276,6 +278,15 @@
       },
       "cost_year": {
         "name": "Cost (Year)"
+      },
+      "usage_profile": {
+        "name": "Usage Profile"
+      },
+      "usage_profile_tomorrow": {
+        "name": "Usage Profile (Needed Tomorrow)"
+      },
+      "available_kwh": {
+        "name": "Available kWh"
       }
     },
     "binary_sensor": {
@@ -284,6 +295,9 @@
       },
       "trip_pending": {
         "name": "Trip Capture Open"
+      },
+      "charge_before_pv_recommended": {
+        "name": "Charge Before Solar Recommended"
       }
     }
   }

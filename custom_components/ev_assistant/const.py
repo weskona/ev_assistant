@@ -61,6 +61,11 @@ CONF_MOTOR_DEBOUNCE = "motor_debounce_s"
 # Zielort kommen dabei aus dem GPS-Ortsvorschlag (CONF_GPS_ENTITY), falls
 # konfiguriert, sonst bleiben sie leer (spaeter per edit_trip nachtragbar).
 CONF_TRIP_AUTO_CONFIRM = "trip_auto_confirm"
+# Optional: Puffer (%) auf den historischen Wochentags-kWh-Bedarf beim
+# Nutzungsprofil (siehe engine.py::weekday_usage_profile(),
+# coordinator.py::usage_profile_tomorrow()) -- soll verhindern, dass ein
+# leicht ueberdurchschnittlicher Tag den Akku knapp werden laesst.
+CONF_USAGE_PROFILE_BUFFER_PCT = "usage_profile_buffer_pct"
 
 # Kostenvergleich gegenueber einem Verbrenner (alle optional -- ohne sie
 # bleiben die Ersparnis-Sensoren unbekannt statt einen Fehler zu werfen).
@@ -142,6 +147,11 @@ DEFAULT_TRIP_IDLE_TIMEOUT = 300.0
 # Automatik) liefert bereits DEFAULT_TRIP_IDLE_TIMEOUT.
 DEFAULT_MOTOR_DEBOUNCE = 60.0
 DEFAULT_TRIP_AUTO_CONFIRM = False
+DEFAULT_USAGE_PROFILE_BUFFER_PCT = 20.0
+# Mindestanzahl Kalendertage Fahrtenbuch-Historie, bevor ein Nutzungsprofil
+# gezeigt wird (siehe engine.py::weekday_usage_profile()) -- 7 Tage
+# garantieren, dass jeder Wochentag mindestens einmal vorkommt.
+MIN_USAGE_PROFILE_DAYS = 7
 # Deutscher Strommix-Durchschnitt (grobe Schaetzung, schwankt je nach Jahr/
 # Versorger/Tarif) -- Nutzer mit einer praeziseren Quelle (z.B. Oekostrom-
 # Vertrag) sollten den Wert anpassen.

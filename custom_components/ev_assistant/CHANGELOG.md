@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.37.0] - 2026-08-06
+
+### Added
+
+- **Usage Profile**: a new `weekday_usage_profile()` calculation buckets the trip log's kWh consumption by weekday and averages it over how often that weekday has occurred since your first logged trip, answering "do I need to charge tonight, or can charging wait for tomorrow's solar surplus?" purely from your own driving history. New sensors `Usage Profile` (today's weekday average, with all 7 weekday averages as attributes) and `Usage Profile (Needed Tomorrow)` (tomorrow's average plus a configurable safety buffer), a new `Available kWh` sensor (SoC × usable battery capacity), and a new `Charge Before Solar Recommended` binary sensor that turns on when available kWh is below tomorrow's buffered need. New optional config field `usage_profile_buffer_pct` (default 20 %) in step 6.
+- **New "Usage Profile" panel tab**: a bar chart of average kWh per weekday (today and tomorrow highlighted), plus available kWh, tomorrow's need, and a plain-language charge-tonight-or-wait recommendation.
+
 ## [0.36.0] - 2026-08-06
 
 ### Added

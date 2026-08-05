@@ -12,7 +12,11 @@ from .entity import EvAssistantEntity
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     coordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities([PendingBinarySensor(coordinator, entry), TripPendingBinarySensor(coordinator, entry)])
+    async_add_entities([
+        PendingBinarySensor(coordinator, entry),
+        TripPendingBinarySensor(coordinator, entry),
+        ChargeBeforePvBinarySensor(coordinator, entry),
+    ])
 
 
 class PendingBinarySensor(EvAssistantEntity, BinarySensorEntity):
@@ -61,3 +65,30 @@ class TripPendingBinarySensor(EvAssistantEntity, BinarySensorEntity):
             attrs.update(pending[0])
         attrs["offene_fahrten"] = pending
         return attrs
+
+
+class ChargeBeforePvBinarySensor(EvAssistantEntity, BinarySensorEntity):
+    """Empfehlung, ob vor dem naechsten PV-Ueberschuss noch nachgeladen
+    werden sollte (siehe coordinator.py::charge_before_pv_recommended()):
+    verfuegbare Batteriekapazitaet reicht nicht fuer den morgigen,
+    historisch-typischen (gepufferten) Wochentags-Bedarf. unknown, solange
+    kein Nutzungsprofil vorliegt (siehe UsageProfileSensor) oder kein SoC
+    bekannt ist."""
+
+    _attr_translation_key = "charge_before_pv_recommended"
+    _attr_icon = "mdi:battery-charging-outline"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "charge_before_pv_recommended")
+
+    @property
+    def is_on(self):
+        rec = self.coordinator.charge_before_pv_recommended()
+        return rec["empfehlung"] if rec else None
+
+    @property
+    def extra_state_attributes(self):
+        rec = self.coordinator.charge_before_pv_recommended()
+        if not rec:
+            return {}
+        return {"verfuegbare_kwh": rec["verfuegbare_kwh"], "benoetigt_morgen_kwh": rec["benoetigt_morgen_kwh"]}

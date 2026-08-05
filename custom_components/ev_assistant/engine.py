@@ -19,6 +19,7 @@ Energie (aussagekraeftig = AC am Ladepunkt, inkl. Ladeverluste):
 """
 
 from dataclasses import dataclass
+from datetime import date, timedelta
 from typing import Optional
 
 
@@ -622,3 +623,39 @@ def calculate_co2_savings(
         "co2_verbrenner_kg": co2_verbrenner_kg,
         "co2_ersparnis_kg": round(co2_verbrenner_kg - co2_ev_kg, 2),
     }
+
+
+def weekday_usage_profile(
+    daily_kwh: dict, first_date: str, last_date: str, min_days: int = 7
+) -> Optional[dict]:
+    """Durchschnittlicher kWh-Bedarf pro Wochentag (0=Montag..6=Sonntag),
+    aus taeglich aufsummierten Fahrtenbuch-kWh (siehe coordinator.py fuer
+    die Aggregation aus den einzelnen Fahrten).
+
+    `daily_kwh` (ISO-Datum -> kWh) enthaelt nur Tage mit mindestens einer
+    Fahrt. Tage OHNE Fahrt fehlen darin, zaehlen aber trotzdem mit 0 kWh in
+    den Durchschnitt -- sonst wuerde z.B. "faehrt nie sonntags" faelschlich
+    ignoriert statt den Sonntags-Schnitt korrekt niedrig zu halten. Dafuer
+    wird ueber JEDEN Kalendertag zwischen first_date und last_date
+    (inklusive) iteriert, nicht nur ueber die Tage in daily_kwh.
+
+    first_date/last_date (ISO, inklusive) legen den Beobachtungszeitraum
+    fest. Gibt None zurueck, wenn der Zeitraum kuerzer als `min_days` ist
+    (zu wenig Historie fuer ein aussagekraeftiges Profil) -- min_days=7
+    garantiert dabei automatisch, dass jeder Wochentag mindestens einmal
+    vorkommt (jede zusammenhaengende Folge von >=7 Tagen deckt alle 7
+    Wochentage ab)."""
+    start = date.fromisoformat(first_date)
+    end = date.fromisoformat(last_date)
+    total_days = (end - start).days + 1
+    if total_days < min_days:
+        return None
+    totals = [0.0] * 7
+    counts = [0] * 7
+    d = start
+    while d <= end:
+        wd = d.weekday()
+        counts[wd] += 1
+        totals[wd] += daily_kwh.get(d.isoformat(), 0.0)
+        d += timedelta(days=1)
+    return {wd: round(totals[wd] / counts[wd], 2) for wd in range(7)}

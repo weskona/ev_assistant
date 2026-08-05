@@ -59,7 +59,8 @@
           "gps_entity": "Orts-Vorschlag (person-, device_tracker- oder sensor-Entität)",
           "motor_entity": "Motor-/Fahr-Sensor (optional, binary_sensor)",
           "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)",
-          "trip_auto_confirm": "Fahrt automatisch ins Fahrtenbuch übernehmen (ohne manuelle Bestätigung)"
+          "trip_auto_confirm": "Fahrt automatisch ins Fahrtenbuch übernehmen (ohne manuelle Bestätigung)",
+          "usage_profile_buffer_pct": "Puffer für Nutzungsprofil (%, auf den Wochentags-Durchschnitt)"
         }
       },
       "vergleich": {
@@ -140,7 +141,8 @@
           "gps_entity": "Orts-Vorschlag (person-, device_tracker- oder sensor-Entität)",
           "motor_entity": "Motor-/Fahr-Sensor (optional, binary_sensor)",
           "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)",
-          "trip_auto_confirm": "Fahrt automatisch ins Fahrtenbuch übernehmen (ohne manuelle Bestätigung)"
+          "trip_auto_confirm": "Fahrt automatisch ins Fahrtenbuch übernehmen (ohne manuelle Bestätigung)",
+          "usage_profile_buffer_pct": "Puffer für Nutzungsprofil (%, auf den Wochentags-Durchschnitt)"
         }
       },
       "vergleich": {
@@ -276,6 +278,15 @@
       },
       "cost_year": {
         "name": "Kosten (Jahr)"
+      },
+      "usage_profile": {
+        "name": "Nutzungsprofil"
+      },
+      "usage_profile_tomorrow": {
+        "name": "Nutzungsprofil (morgen benötigt)"
+      },
+      "available_kwh": {
+        "name": "Verfügbare kWh"
       }
     },
     "binary_sensor": {
@@ -284,6 +295,9 @@
       },
       "trip_pending": {
         "name": "Fahrt Erfassung offen"
+      },
+      "charge_before_pv_recommended": {
+        "name": "Laden vor PV empfehlenswert"
       }
     }
   }

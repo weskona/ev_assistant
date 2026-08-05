@@ -4,6 +4,7 @@ import pytest
 from engine import (
     ChargeDetector, ChargeSample, EfficiencyCalibrator, SignalDebouncer, TripDetector, TripSample,
     average_efficiency, calculate_co2_savings, calculate_savings, merge_pending, pop_pending,
+    weekday_usage_profile,
 )
 
 
@@ -544,3 +545,36 @@ def test_active_property_zeigt_idle_zu_fahrt_uebergang():
 
     det.update(TripSample(ts=310, odo_km=110.0))  # 130s Stillstand -> Fahrt endet
     assert det.active is False
+
+
+# ----- weekday_usage_profile: Wochentags-Nutzungsprofil --------------------
+
+def test_weekday_usage_profile_zu_kurzer_zeitraum_liefert_none():
+    # 2024-01-01 ist ein Montag; nur 5 Tage Beobachtung -- unter min_days=7.
+    assert weekday_usage_profile({}, "2024-01-01", "2024-01-05") is None
+
+
+def test_weekday_usage_profile_genau_eine_woche():
+    daily = {"2024-01-01": 12.0}  # Montag
+    profil = weekday_usage_profile(daily, "2024-01-01", "2024-01-07")
+    assert profil == {0: 12.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0, 5: 0.0, 6: 0.0}
+
+
+def test_weekday_usage_profile_tage_ohne_fahrt_zaehlen_mit_null():
+    # Zwei Wochen, nur am ersten Montag eine Fahrt -- der zweite Montag
+    # (ohne Fahrt) muss den Schnitt trotzdem auf die Haelfte druecken.
+    daily = {"2024-01-01": 12.0}
+    profil = weekday_usage_profile(daily, "2024-01-01", "2024-01-14")
+    assert profil[0] == 6.0
+    assert profil[6] == 0.0
+
+
+def test_weekday_usage_profile_durchschnitt_ueber_mehrere_wochen():
+    daily = {
+        "2024-01-01": 10.0, "2024-01-08": 20.0,  # zwei Montage
+        "2024-01-06": 5.0, "2024-01-13": 15.0,   # zwei Samstage
+    }
+    profil = weekday_usage_profile(daily, "2024-01-01", "2024-01-14")
+    assert profil[0] == 15.0  # (10+20)/2
+    assert profil[5] == 10.0  # (5+15)/2
+    assert profil[1] == 0.0

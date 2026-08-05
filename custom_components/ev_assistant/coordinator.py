@@ -28,6 +28,7 @@ from .const import (
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE,
     CONF_ODO_ENTITY, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE,
     CONF_START_DELTA, CONF_TRIP_AUTO_CONFIRM, CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM, CONF_USABLE_KWH,
+    CONF_USAGE_PROFILE_BUFFER_PCT,
     CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL,
     CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY,
     CONF_VERBRENNER_PRICE_PER_LITER, CONF_TANKERKOENIG_FUEL_TYPE, CONF_WALLBOX_ENERGY_ENTITY,
@@ -37,15 +38,16 @@ from .const import (
     DEFAULT_IDLE_TIMEOUT, DEFAULT_MOTOR_DEBOUNCE, DEFAULT_NOISE, DEFAULT_PLUG_DEBOUNCE, DEFAULT_POWER_IS_AC,
     DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
     DEFAULT_TRIP_AUTO_CONFIRM, DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM,
-    DEFAULT_USABLE_KWH, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
+    DEFAULT_USABLE_KWH, DEFAULT_USAGE_PROFILE_BUFFER_PCT, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
     EFF_MAX_EFFICIENCY, EFF_MIN_SAMPLES, EFF_MIN_SOC_DELTA,
     EVENT_DELETED, EVENT_EDITED, EVENT_LOGGED, EVENT_PENDING, EVENT_TRIP_DELETED,
     EVENT_TRIP_EDITED, EVENT_TRIP_IMPORTED, EVENT_TRIP_LOGGED, EVENT_TRIP_PENDING,
-    MILES_TO_KM, NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
+    MILES_TO_KM, MIN_USAGE_PROFILE_DAYS, NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
 )
 from .engine import (
     ChargeDetector, ChargeSample, EfficiencyCalibrator, SignalDebouncer, TripDetector, TripSample,
     average_efficiency, calculate_co2_savings, calculate_savings, merge_pending, pop_pending,
+    weekday_usage_profile,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,6 +59,8 @@ _INVALID = ("unknown", "unavailable", "none", "", None)
 # eine Wallbox-Ladeleistung von evcc/Warp), daher muss ein numerischer Wert
 # als Schwellwert statt als Text-Vergleich ausgewertet werden.
 _HOME_POWER_THRESHOLD_KW = 0.1
+# Index = date.weekday() (0=Montag..6=Sonntag), fuer usage_profile_tomorrow().
+_WEEKDAY_NAMES_DE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 
 
 def _empty_data() -> dict:
@@ -1897,6 +1901,91 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             verbrenner_l_100km=float(verbrenner_l) if verbrenner_l is not None else None,
             co2_per_liter_kg=self._co2_per_liter_kg(),
         )
+
+    def _daily_kwh_from_trips(self) -> dict:
+        """Fahrtenbuch-kWh pro Kalendertag (lokale Zeit, ISO-Datum -> kWh),
+        fuer usage_profile()/engine.py::weekday_usage_profile(). Nutzt pro
+        Fahrt verbrauch_kwh, falls vorhanden, sonst km * Fahrzeug-
+        Durchschnittsverbrauch als Schaetzung (siehe
+        _vehicle_avg_consumption_kwh_per_100km()) -- Fahrten ohne SoC-Delta
+        (z.B. importierte ohne verbrauch_kwh) haetten sonst gar keinen
+        Energiewert."""
+        fahrten = self.data.get("fahrten") or []
+        avg_consumption = self._vehicle_avg_consumption_kwh_per_100km()
+        daily: dict = {}
+        for t in fahrten:
+            ts = t.get("start_ts")
+            if ts is None:
+                continue
+            kwh = t.get("verbrauch_kwh")
+            if kwh is None:
+                km = t.get("km")
+                if km is not None and avg_consumption is not None:
+                    kwh = km * avg_consumption / 100.0
+            if kwh is None:
+                continue
+            day = dt_util.as_local(dt_util.utc_from_timestamp(ts)).date().isoformat()
+            daily[day] = daily.get(day, 0.0) + kwh
+        return daily
+
+    def usage_profile(self) -> Optional[dict]:
+        """Durchschnittlicher kWh-Bedarf pro Wochentag (siehe
+        engine.py::weekday_usage_profile()), aus der gesamten
+        Fahrtenbuch-Historie seit der ersten bestaetigten Fahrt. None ohne
+        Fahrten oder mit weniger als MIN_USAGE_PROFILE_DAYS Tagen Historie
+        (zu wenig fuer ein aussagekraeftiges Profil)."""
+        fahrten = self.data.get("fahrten") or []
+        ts_values = [t["start_ts"] for t in fahrten if t.get("start_ts") is not None]
+        if not ts_values:
+            return None
+        first_date = dt_util.as_local(dt_util.utc_from_timestamp(min(ts_values))).date().isoformat()
+        last_date = dt_util.now().date().isoformat()
+        return weekday_usage_profile(
+            self._daily_kwh_from_trips(), first_date, last_date, min_days=MIN_USAGE_PROFILE_DAYS
+        )
+
+    def usage_profile_tomorrow(self) -> Optional[dict]:
+        """Wochentags-Bedarf (siehe usage_profile()) fuer den morgigen
+        Wochentag, zzgl. CONF_USAGE_PROFILE_BUFFER_PCT Puffer -- direkt mit
+        available_kwh() vergleichbar, um zu entscheiden, ob heute noch
+        (z.B. ohne PV-Ueberschuss) nachgeladen werden muss."""
+        profile = self.usage_profile()
+        if profile is None:
+            return None
+        tomorrow_wd = (dt_util.now().date() + timedelta(days=1)).weekday()
+        raw = profile.get(tomorrow_wd)
+        if raw is None:
+            return None
+        buffer_pct = float(self._opt(CONF_USAGE_PROFILE_BUFFER_PCT, DEFAULT_USAGE_PROFILE_BUFFER_PCT))
+        return {
+            "wochentag": _WEEKDAY_NAMES_DE[tomorrow_wd],
+            "roh_kwh": raw,
+            "puffer_prozent": buffer_pct,
+            "benoetigt_kwh": round(raw * (1.0 + buffer_pct / 100.0), 2),
+        }
+
+    def available_kwh(self) -> Optional[float]:
+        """Aktuell verfuegbare Batteriekapazitaet in kWh (SoC% * nutzbare
+        Kapazitaet) -- fuer den Vergleich mit usage_profile_tomorrow()."""
+        if self._soc is None:
+            return None
+        usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+        return round(self._soc / 100.0 * usable_kwh, 2)
+
+    def charge_before_pv_recommended(self) -> Optional[dict]:
+        """Empfehlung, ob vor dem naechsten PV-Ueberschuss noch nachgeladen
+        werden sollte: verfuegbare kWh reichen nicht fuer den morgigen
+        (gepufferten) Bedarf. None, wenn eine der beiden Groessen fehlt
+        (siehe available_kwh()/usage_profile_tomorrow())."""
+        need = self.usage_profile_tomorrow()
+        available = self.available_kwh()
+        if need is None or available is None:
+            return None
+        return {
+            "verfuegbare_kwh": available,
+            "benoetigt_morgen_kwh": need["benoetigt_kwh"],
+            "empfehlung": available < need["benoetigt_kwh"],
+        }
 
     async def _dismiss(self) -> None:
         try:

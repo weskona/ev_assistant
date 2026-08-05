@@ -230,6 +230,7 @@ class EVAssistantPanel extends HTMLElement {
     const TAB_DEFS = [
       ["uebersicht", "mdi:view-dashboard-outline", "Übersicht"],
       ["fahrzeuge",  "mdi:car-electric",           "Fahrzeuge"],
+      ["profil",     "mdi:calendar-week",          "Nutzungsprofil"],
     ];
     this._tabs = {};
     for (const [id, icon, label] of TAB_DEFS) {
@@ -255,6 +256,7 @@ class EVAssistantPanel extends HTMLElement {
     this._edgeSig = {};
     if (view === "uebersicht") this._main.appendChild(this._buildOverview());
     else if (view === "fahrzeuge") this._main.appendChild(this._buildVehicle());
+    else if (view === "profil") this._main.appendChild(this._buildProfil());
     this._update();
   }
 
@@ -933,12 +935,118 @@ class EVAssistantPanel extends HTMLElement {
     this._histHomeSig = null;
   }
 
+  // --- Nutzungsprofil-Tab -------------------------------------------------
+
+  _buildProfil() {
+    const wrap = document.createElement("div");
+    wrap.className = "tab-wrap";
+    wrap.innerHTML = `
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:calendar-week"></ha-icon></span><h2>Nutzungsprofil</h2>
+        </div>
+        <div class="profil-empty hidden" id="profil-empty">
+          Noch nicht genug Fahrtenbuch-Historie (mindestens 7 Tage) für ein aussagekräftiges Nutzungsprofil.
+          Bestätige weiter Fahrten, das Profil füllt sich automatisch.
+        </div>
+        <div id="profil-content">
+          <div class="profil-recommend" id="profil-recommend">
+            <ha-icon class="profil-recommend-icon" id="profil-recommend-icon" icon="mdi:battery-charging"></ha-icon>
+            <div class="profil-recommend-text" id="profil-recommend-text">—</div>
+          </div>
+          <div class="kpi-row">
+            <div class="kpi"><div class="kv" id="profil-available">—</div><div class="kl">kWh verfügbar</div></div>
+            <div class="kpi"><div class="kv" id="profil-need-tomorrow">—</div><div class="kl">kWh benötigt morgen</div></div>
+            <div class="kpi"><div class="kv" id="profil-buffer">—</div><div class="kl">% Puffer</div></div>
+          </div>
+          <div class="divider"></div>
+          <div class="sub-head">Ø kWh-Bedarf pro Wochentag</div>
+          <div class="weekday-chart" id="profil-weekday-chart"></div>
+        </div>
+      </div>`;
+
+    const q = (s) => wrap.querySelector(s);
+    this._r = {
+      profilEmpty:        q("#profil-empty"),
+      profilContent:       q("#profil-content"),
+      profilRecommendIcon: q("#profil-recommend-icon"),
+      profilRecommendText: q("#profil-recommend-text"),
+      profilAvailable:     q("#profil-available"),
+      profilNeedTomorrow:  q("#profil-need-tomorrow"),
+      profilBuffer:        q("#profil-buffer"),
+      profilWeekdayChart:  q("#profil-weekday-chart"),
+    };
+    return wrap;
+  }
+
+  _updateProfil() {
+    const r = this._r;
+    if (!r.profilRecommendText) return;
+
+    const profile = this._eid("usage_profile") ? this._hass.states[this._eid("usage_profile")] : null;
+    const hasProfile = !!(profile && profile.attributes && profile.attributes.montag !== undefined);
+    r.profilEmpty.classList.toggle("hidden", hasProfile);
+    r.profilContent.classList.toggle("hidden", !hasProfile);
+    if (!hasProfile) return;
+
+    const WEEKDAYS = [
+      ["montag", "Mo"], ["dienstag", "Di"], ["mittwoch", "Mi"], ["donnerstag", "Do"],
+      ["freitag", "Fr"], ["samstag", "Sa"], ["sonntag", "So"],
+    ];
+    const values = WEEKDAYS.map(([key]) => parseFloat(profile.attributes[key]) || 0);
+    const maxVal = Math.max(...values, 0.1);
+    const todayWd = new Date().getDay(); // 0=Sonntag..6=Samstag (JS-Konvention)
+    const todayIdx = todayWd === 0 ? 6 : todayWd - 1; // -> 0=Montag..6=Sonntag
+    const tomorrowIdx = (todayIdx + 1) % 7;
+
+    r.profilWeekdayChart.innerHTML = WEEKDAYS.map(([, label], i) => {
+      const pct = Math.max(2, Math.round((values[i] / maxVal) * 100));
+      const cls = i === tomorrowIdx ? "wd-bar tomorrow" : (i === todayIdx ? "wd-bar today" : "wd-bar");
+      return `
+        <div class="wd-col">
+          <div class="wd-val">${this._fmtNum(values[i], 1)}</div>
+          <div class="wd-bar-track"><div class="${cls}" style="height:${pct}%"></div></div>
+          <div class="wd-label">${label}</div>
+        </div>`;
+    }).join("");
+
+    const availEid = this._eid("available_kwh");
+    const available = availEid ? parseFloat(this._raw(availEid)) : NaN;
+    r.profilAvailable.textContent = isNaN(available) ? "—" : this._fmtNum(available, 1);
+
+    const needEid = this._eid("usage_profile_tomorrow");
+    const needState = needEid ? this._hass.states[needEid] : null;
+    const need = needState ? parseFloat(needState.state) : NaN;
+    r.profilNeedTomorrow.textContent = isNaN(need) ? "—" : this._fmtNum(need, 1);
+    const bufferPct = needState && needState.attributes ? parseFloat(needState.attributes.puffer_prozent) : NaN;
+    r.profilBuffer.textContent = isNaN(bufferPct) ? "—" : this._fmtNum(bufferPct, 0);
+
+    const recEid = this._eid("charge_before_pv_recommended");
+    const recState = recEid ? this._hass.states[recEid] : null;
+    if (!recState || recState.state === "unknown" || recState.state === "unavailable") {
+      r.profilRecommendIcon.setAttribute("icon", "mdi:battery-unknown");
+      r.profilRecommendText.textContent = "Noch keine Empfehlung möglich.";
+      r.profilRecommendText.parentElement.classList.remove("rec-yes", "rec-no");
+    } else if (recState.state === "on") {
+      r.profilRecommendIcon.setAttribute("icon", "mdi:battery-alert");
+      r.profilRecommendText.textContent = "Laden empfehlenswert — der aktuelle Akkustand reicht laut Profil nicht sicher bis morgen.";
+      r.profilRecommendText.parentElement.classList.add("rec-yes");
+      r.profilRecommendText.parentElement.classList.remove("rec-no");
+    } else {
+      r.profilRecommendIcon.setAttribute("icon", "mdi:battery-charging-100");
+      r.profilRecommendText.textContent = "Reicht bis morgen — Laden kann warten, z.B. auf PV-Überschuss.";
+      r.profilRecommendText.parentElement.classList.add("rec-no");
+      r.profilRecommendText.parentElement.classList.remove("rec-yes");
+    }
+  }
+
   // --- Update loop ------------------------------------------------------------
 
   _update() {
     if (!this._built || !this._hass) return;
     if (this._view === "uebersicht") this._updateOverview();
     else if (this._view === "fahrzeuge") this._updateVehicle();
+    else if (this._view === "profil") this._updateProfil();
   }
 
   _updateOverview() {
@@ -2380,6 +2488,30 @@ class EVAssistantPanel extends HTMLElement {
       .kv-sm   { font-size: 0.9rem;  font-weight: 600; line-height: 1.3; color: var(--ink); }
       .kl      { font-size: 0.7rem; color: var(--ink-mid); margin-top: 2px; }
       .kv.green { color: #4ade80; }
+
+      /* Nutzungsprofil-Tab */
+      .profil-empty { color: var(--ink-dim); font-size: 0.85rem; line-height: 1.5; padding: 8px 0 4px; }
+      .profil-recommend {
+        display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 10px;
+        background: var(--bg-0); border: 1px solid var(--line); margin-bottom: 14px;
+      }
+      .profil-recommend-icon { --mdc-icon-size: 28px; flex-shrink: 0; color: var(--ink-dim); }
+      .profil-recommend-text { font-size: 0.88rem; font-weight: 600; line-height: 1.35; }
+      .profil-recommend.rec-yes { background: rgba(245, 158, 11, 0.12); border-color: #f59e0b; }
+      .profil-recommend.rec-yes .profil-recommend-icon { color: #f59e0b; }
+      .profil-recommend.rec-no  { background: rgba(74, 222, 128, 0.10); border-color: #4ade80; }
+      .profil-recommend.rec-no  .profil-recommend-icon { color: #4ade80; }
+      .weekday-chart { display: flex; align-items: flex-end; gap: 6px; height: 130px; margin-top: 4px; }
+      .wd-col { flex: 1; display: flex; flex-direction: column; align-items: center; height: 100%; min-width: 0; }
+      .wd-val { font-size: 0.68rem; color: var(--ink-mid); margin-bottom: 4px; }
+      .wd-bar-track {
+        flex: 1; width: 100%; max-width: 28px; display: flex; align-items: flex-end;
+        background: var(--bg-0); border-radius: 5px; overflow: hidden;
+      }
+      .wd-bar { width: 100%; border-radius: 5px 5px 0 0; background: var(--line-s); transition: height 0.4s ease; }
+      .wd-bar.today    { background: var(--accent); }
+      .wd-bar.tomorrow { background: #4ade80; }
+      .wd-label { font-size: 0.7rem; color: var(--ink-dim); margin-top: 6px; font-weight: 600; }
 
       /* Farbige Summary-Cards — HA Energiedashboard-Farben */
       :host { --c-home: #ff9800; --c-ext: #488fc2; --c-trip: #14b8a6; --c-solar: #4ade80; }

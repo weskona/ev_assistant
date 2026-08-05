@@ -60,6 +60,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         CostWeekSensor(coordinator, entry),
         CostMonthSensor(coordinator, entry),
         CostYearSensor(coordinator, entry),
+        UsageProfileSensor(coordinator, entry),
+        UsageProfileTomorrowSensor(coordinator, entry),
+        AvailableKwhSensor(coordinator, entry),
     ])
 
 
@@ -867,3 +870,79 @@ class CostYearSensor(_CostPeriodSensor):
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry, "cost_year")
+
+
+class UsageProfileSensor(EvAssistantEntity, SensorEntity):
+    """Durchschnittlicher kWh-Bedarf pro Wochentag aus der Fahrtenbuch-
+    Historie (siehe coordinator.py::usage_profile()/engine.py::
+    weekday_usage_profile()) -- native_value ist der heutige Wochentag,
+    alle 7 Werte stehen als Attribute zur Verfuegung (z.B. fuer das
+    Nutzungsprofil-Tab im Panel). unknown, solange weniger als 7 Tage
+    Fahrtenbuch-Historie vorliegen."""
+
+    _attr_translation_key = "usage_profile"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:calendar-week"
+
+    _WEEKDAY_KEYS = ["montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag"]
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "usage_profile")
+
+    @property
+    def native_value(self):
+        profile = self.coordinator.usage_profile()
+        if not profile:
+            return None
+        today_wd = dt_util.now().weekday()
+        return profile.get(today_wd)
+
+    @property
+    def extra_state_attributes(self):
+        profile = self.coordinator.usage_profile()
+        if not profile:
+            return {}
+        return {self._WEEKDAY_KEYS[wd]: kwh for wd, kwh in profile.items()}
+
+
+class UsageProfileTomorrowSensor(EvAssistantEntity, SensorEntity):
+    """Gepufferter kWh-Bedarf fuer morgen (siehe
+    coordinator.py::usage_profile_tomorrow()) -- direkt mit dem SoC-
+    basierten `available_kwh`-Sensor vergleichbar, um zu entscheiden, ob
+    heute noch (z.B. ohne PV-Ueberschuss) nachgeladen werden muss."""
+
+    _attr_translation_key = "usage_profile_tomorrow"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:calendar-arrow-right"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "usage_profile_tomorrow")
+
+    @property
+    def native_value(self):
+        need = self.coordinator.usage_profile_tomorrow()
+        return need["benoetigt_kwh"] if need else None
+
+    @property
+    def extra_state_attributes(self):
+        need = self.coordinator.usage_profile_tomorrow()
+        return dict(need) if need else {}
+
+
+class AvailableKwhSensor(EvAssistantEntity, SensorEntity):
+    """Aktuell verfuegbare Batteriekapazitaet in kWh (siehe
+    coordinator.py::available_kwh()) -- SoC% * nutzbare Kapazitaet."""
+
+    _attr_translation_key = "available_kwh"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:battery-high"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "available_kwh")
+
+    @property
+    def native_value(self):
+        return self.coordinator.available_kwh()
