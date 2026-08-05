@@ -614,8 +614,7 @@ class EVAssistantPanel extends HTMLElement {
       vehicles.forEach((v, idx) => {
         const btn = document.createElement("button");
         btn.className = "vt-pill" + (idx === this._vehicleIdx ? " active" : "");
-        const label = v.title.replace(/^EV\s*Assistant\s*\(/i, "").replace(/\)\s*$/, "").trim() || v.title;
-        btn.textContent = label;
+        btn.textContent = v.name || v.title;
         btn.addEventListener("click", () => this._switchVehicle(idx));
         this._vtBtns.push(btn);
         pills.appendChild(btn);
@@ -1253,8 +1252,7 @@ class EVAssistantPanel extends HTMLElement {
 
     // Fahrzeugname
     if (r.vhVehName) {
-      const label = (this._vehicleConf().title || "").replace(/^EV\s*Assistant\s*\(/i, "").replace(/\)\s*$/, "").trim();
-      r.vhVehName.textContent = label || "—";
+      r.vhVehName.textContent = this._vehicleConf().name || "—";
     }
 
     // SOC — von der Fahrzeug-eigenen SoC-Entitaet (Schritt 1, immer konfiguriert),
@@ -1778,8 +1776,7 @@ class EVAssistantPanel extends HTMLElement {
         if (match) this._homeVehicleFilter = match;
       } else if (vehicles.length > 1) {
         // Auto-Erkennung: Tab-Bezeichnung gegen evcc-Fahrzeugnamen abgleichen
-        const label = (this._vehicleConf().title || "")
-          .replace(/^EV\s*Assistant\s*\(/i, "").replace(/\)\s*$/, "").trim().toLowerCase();
+        const label = (this._vehicleConf().name || "").toLowerCase();
         const match = vehicles.find((v) =>
           label.includes(v.toLowerCase()) || v.toLowerCase().split(/\s+/).every((w) => label.includes(w))
         );

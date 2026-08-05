@@ -13,6 +13,7 @@ from .const import (
     SERVICE_DISCARD_TRIP, SERVICE_EDIT, SERVICE_EDIT_TRIP, SERVICE_EXPORT_TRIPS,
     SERVICE_IMPORT_TRIPS, SERVICE_LOG, SERVICE_LOG_TRIP, SERVICE_SIMULATE, SERVICE_SIMULATE_TRIP,
     EVCC_CONF_KEYS, CONF_EVCC_VEHICLE_NAME, CONF_SOC_ENTITY,
+    CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL,
 )
 from .coordinator import EvAssistantCoordinator
 
@@ -24,6 +25,21 @@ _PANEL_TITLE = "EV Assistant"
 _PANEL_ICON = "mdi:car-electric"
 _STATIC_REGISTERED = "_ev_panel_static"
 _PANEL_REGISTERED = "_ev_panel"
+
+
+def _vehicle_display_name(ev_entry: ConfigEntry) -> str:
+    """Hersteller + Modell, exakt dieselbe Berechnung wie entity.py's
+    DeviceInfo.name -- damit das Panel den Fahrzeugnamen direkt aus der
+    Konfiguration bezieht statt ihn aus entry.title herzuleiten. entry.title
+    (z.B. "EV Assistant (Peugeot eRifter)" oder aelter "EV Assistant Peugeot
+    eRifter" ohne Klammern, je nach dem Code-Stand beim Anlegen) wird nur
+    EINMAL bei der Erstellung gesetzt und nie automatisch aktualisiert --
+    ein Parsen dieses Titels im Panel ist daher fragil gegenueber
+    Formatwechseln zwischen Versionen."""
+    hersteller = ev_entry.options.get(CONF_VEHICLE_HERSTELLER) or ev_entry.data.get(CONF_VEHICLE_HERSTELLER)
+    modell = ev_entry.options.get(CONF_VEHICLE_MODELL) or ev_entry.data.get(CONF_VEHICLE_MODELL)
+    fahrzeug = f"{hersteller or ''} {modell or ''}".strip()
+    return fahrzeug or ev_entry.title
 
 
 def _build_entity_map(ent_reg, ev_entry, evcc_conf_keys) -> dict:
@@ -79,6 +95,7 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
             vehicle: dict = {
                 "config_entry_id": ev_entry.entry_id,
                 "title": ev_entry.title,
+                "name": _vehicle_display_name(ev_entry),
                 "entities": ev_map,
             }
             evcc_vname = ev_entry.options.get(CONF_EVCC_VEHICLE_NAME) or ev_entry.data.get(CONF_EVCC_VEHICLE_NAME)
@@ -90,6 +107,7 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
         entity_map = _build_entity_map(ent_reg, entry, EVCC_CONF_KEYS)
         panel_config: dict = {
             "title": entry.title,
+            "name": _vehicle_display_name(entry),
             "entities": entity_map,
             "config_entry_id": entry.entry_id,
             "vehicles": vehicles,

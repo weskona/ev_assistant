@@ -2,6 +2,16 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.31.0] - 2026-08-05
+
+### Added
+
+- **New optional `trip_auto_confirm` setting**: a detected trip is added to the trip log immediately instead of waiting as a "pending" entry for manual start/end-location confirmation. Start/end location come from the GPS location suggestion (`gps_entity`) if configured, otherwise stay empty (still editable later via `edit_trip`).
+
+### Fixed
+
+- **Panel vehicle name no longer shows a leftover "EV Assistant" prefix**: the name was previously parsed out of the config entry's title with a regex that only handled the current `"EV Assistant (Manufacturer Model)"` format — entries created under an older title format (`"EV Assistant Manufacturer Model"`, no parentheses) still showed the full un-stripped title. The panel now gets the vehicle name directly from the same manufacturer/model configuration the HA device name is already built from, independent of the entry title's format.
+
 ## [0.30.0] - 2026-08-04
 
 ### Added

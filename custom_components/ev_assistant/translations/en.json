@@ -58,7 +58,8 @@
           "trip_idle_timeout_s": "Idle time until trip end (s)",
           "gps_entity": "Location suggestion (person, device_tracker, or sensor entity)",
           "motor_entity": "Motor/driving sensor (optional, binary_sensor)",
-          "motor_debounce_s": "Debounce for motor/driving sensor (s)"
+          "motor_debounce_s": "Debounce for motor/driving sensor (s)",
+          "trip_auto_confirm": "Automatically add trips to the log (without manual confirmation)"
         }
       },
       "vergleich": {
@@ -137,7 +138,8 @@
           "trip_idle_timeout_s": "Idle time until trip end (s)",
           "gps_entity": "Location suggestion (person, device_tracker, or sensor entity)",
           "motor_entity": "Motor/driving sensor (optional, binary_sensor)",
-          "motor_debounce_s": "Debounce for motor/driving sensor (s)"
+          "motor_debounce_s": "Debounce for motor/driving sensor (s)",
+          "trip_auto_confirm": "Automatically add trips to the log (without manual confirmation)"
         }
       },
       "vergleich": {

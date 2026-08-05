@@ -58,7 +58,8 @@
           "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s)",
           "gps_entity": "Orts-Vorschlag (person-, device_tracker- oder sensor-Entität)",
           "motor_entity": "Motor-/Fahr-Sensor (optional, binary_sensor)",
-          "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)"
+          "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)",
+          "trip_auto_confirm": "Fahrt automatisch ins Fahrtenbuch übernehmen (ohne manuelle Bestätigung)"
         }
       },
       "vergleich": {
@@ -137,7 +138,8 @@
           "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s)",
           "gps_entity": "Orts-Vorschlag (person-, device_tracker- oder sensor-Entität)",
           "motor_entity": "Motor-/Fahr-Sensor (optional, binary_sensor)",
-          "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)"
+          "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)",
+          "trip_auto_confirm": "Fahrt automatisch ins Fahrtenbuch übernehmen (ohne manuelle Bestätigung)"
         }
       },
       "vergleich": {

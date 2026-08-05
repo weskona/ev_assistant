@@ -55,6 +55,12 @@ CONF_GPS_ENTITY = "gps_entity"
 # einzige Quelle fuer die gefahrene Strecke (siehe engine.py::TripDetector).
 CONF_MOTOR_ENTITY = "motor_entity"
 CONF_MOTOR_DEBOUNCE = "motor_debounce_s"
+# Optional: eine erkannte Fahrt wird sofort ins Fahrtenbuch uebernommen statt
+# als "pending_trips"-Eintrag auf eine manuelle Bestaetigung mit Start-/
+# Zielort zu warten (siehe coordinator.py::_handle_pending_trip). Start-/
+# Zielort kommen dabei aus dem GPS-Ortsvorschlag (CONF_GPS_ENTITY), falls
+# konfiguriert, sonst bleiben sie leer (spaeter per edit_trip nachtragbar).
+CONF_TRIP_AUTO_CONFIRM = "trip_auto_confirm"
 
 # Kostenvergleich gegenueber einem Verbrenner (alle optional -- ohne sie
 # bleiben die Ersparnis-Sensoren unbekannt statt einen Fehler zu werfen).
@@ -127,6 +133,7 @@ DEFAULT_TRIP_IDLE_TIMEOUT = 300.0
 # die eigentliche Kulanzzeit fuer normale Fahrpausen (Ampel, Stopp-Start-
 # Automatik) liefert bereits DEFAULT_TRIP_IDLE_TIMEOUT.
 DEFAULT_MOTOR_DEBOUNCE = 60.0
+DEFAULT_TRIP_AUTO_CONFIRM = False
 
 STORAGE_VERSION = 1
 STORAGE_KEY = "ev_assistant_data"

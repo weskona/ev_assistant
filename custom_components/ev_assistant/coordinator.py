@@ -25,14 +25,14 @@ from .const import (
     CONF_PLUG_DEBOUNCE, CONF_PLUG_ENTITY,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE,
     CONF_ODO_ENTITY, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE,
-    CONF_START_DELTA, CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM, CONF_USABLE_KWH,
+    CONF_START_DELTA, CONF_TRIP_AUTO_CONFIRM, CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM, CONF_USABLE_KWH,
     CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY,
     CONF_VERBRENNER_PRICE_PER_LITER, CONF_TANKERKOENIG_FUEL_TYPE, CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE,
     DEFAULT_DROP_ENDS, DEFAULT_EFFICIENCY,
     DEFAULT_IDLE_TIMEOUT, DEFAULT_MOTOR_DEBOUNCE, DEFAULT_NOISE, DEFAULT_PLUG_DEBOUNCE, DEFAULT_POWER_IS_AC,
     DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
-    DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM,
+    DEFAULT_TRIP_AUTO_CONFIRM, DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
     EFF_MAX_EFFICIENCY, EFF_MIN_SAMPLES, EFF_MIN_SOC_DELTA,
     EVENT_DELETED, EVENT_EDITED, EVENT_LOGGED, EVENT_PENDING, EVENT_TRIP_DELETED,
@@ -1072,8 +1072,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     async def _handle_pending_trip(self, pend: dict) -> None:
         """Analog _handle_pending() fuer Fremdladungen: "pending_trips" ist
         eine Liste (mehrere gleichzeitig offene, noch nicht bestaetigte
-        Fahrten moeglich), neue Fahrten werden angehaengt, nie ueberschrieben."""
+        Fahrten moeglich), neue Fahrten werden angehaengt, nie ueberschrieben
+        -- AUSSER CONF_TRIP_AUTO_CONFIRM ist aktiv, dann direkt ins
+        Fahrtenbuch uebernehmen (siehe const.py)."""
         pend["config_entry_id"] = self.entry.entry_id
+        if self._opt(CONF_TRIP_AUTO_CONFIRM, DEFAULT_TRIP_AUTO_CONFIRM):
+            rec = self._build_trip_record(pend, pend.get("start_ort_vorschlag"), pend.get("end_ort_vorschlag"))
+            self._finalize_trip_record(rec)
+            await self._save()
+            self.hass.bus.async_fire(EVENT_TRIP_LOGGED, rec)
+            self.async_set_updated_data(self.data)
+            return
         self.data.setdefault("pending_trips", []).append(pend)
         await self._save()
         self.hass.bus.async_fire(EVENT_TRIP_PENDING, pend)
@@ -1157,25 +1166,20 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         except Exception:  # noqa: BLE001
             pass
 
-    async def async_log_trip(self, start_ort: str, end_ort: str, start_ts: Optional[float] = None) -> None:
-        """Bestaetigt eine offene Fahrt mit Start-/Zielort. Bei mehreren
-        gleichzeitig offenen waehlt `start_ts` die gemeinte aus; ohne Angabe
-        die aelteste (FIFO). Anders als async_log_charge gibt es KEINEN
-        Fallback auf einen manuellen Einzeleintrag ohne offene Fahrt --
-        odo_start/odo_end/km stammen ausschliesslich aus der Erkennung."""
-        pending_list = list(self.data.get("pending_trips") or [])
-        pend = pop_pending(pending_list, start_ts)
-        if pend is None:
-            _LOGGER.warning("ev_assistant: keine offene Fahrt zum Bestaetigen gefunden")
-            return
-        self.data["pending_trips"] = pending_list
-
+    def _build_trip_record(self, pend: dict, start_ort: Optional[str], end_ort: Optional[str]) -> dict:
+        """Baut den Fahrtenbuch-Eintrag aus einer offenen Fahrt (siehe
+        pend-Schema in _run_trip_detection()) -- gemeinsam genutzt von
+        async_log_trip() (manuelle Bestaetigung) und _handle_pending_trip()
+        (CONF_TRIP_AUTO_CONFIRM, siehe const.py). start_ort/end_ort leer
+        (None/"") ist hier zulaessig -- anders als beim manuellen Bestaetigen
+        ueber das Panel/den Service gibt es beim Auto-Confirm ohne
+        CONF_GPS_ENTITY keinen anderen Wert."""
         rec = {
             "config_entry_id": self.entry.entry_id,
             "datum": date.fromtimestamp(pend["start_ts"]).isoformat(),
             "start_ts": pend["start_ts"], "end_ts": pend["end_ts"],
             "odo_start": pend["odo_start"], "odo_end": pend["odo_end"],
-            "km": pend["km"], "start_ort": start_ort, "end_ort": end_ort,
+            "km": pend["km"], "start_ort": start_ort or "", "end_ort": end_ort or "",
             "erfasst_ts": int(time.time()),
         }
         if pend.get("soc_start") is not None:
@@ -1191,10 +1195,29 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 # waehrend der Fahrt per saldo hat steigen lassen.
                 usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
                 rec["verbrauch_kwh"] = round(max(0.0, -rec["delta_soc"]) / 100.0 * usable_kwh, 2)
+        return rec
+
+    def _finalize_trip_record(self, rec: dict) -> None:
         self.data.setdefault("fahrten", []).insert(0, rec)
         totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
         totals["km"] = round(totals.get("km", 0.0) + rec["km"], 2)
         totals["count"] = totals.get("count", 0) + 1
+
+    async def async_log_trip(self, start_ort: str, end_ort: str, start_ts: Optional[float] = None) -> None:
+        """Bestaetigt eine offene Fahrt mit Start-/Zielort. Bei mehreren
+        gleichzeitig offenen waehlt `start_ts` die gemeinte aus; ohne Angabe
+        die aelteste (FIFO). Anders als async_log_charge gibt es KEINEN
+        Fallback auf einen manuellen Einzeleintrag ohne offene Fahrt --
+        odo_start/odo_end/km stammen ausschliesslich aus der Erkennung."""
+        pending_list = list(self.data.get("pending_trips") or [])
+        pend = pop_pending(pending_list, start_ts)
+        if pend is None:
+            _LOGGER.warning("ev_assistant: keine offene Fahrt zum Bestaetigen gefunden")
+            return
+        self.data["pending_trips"] = pending_list
+
+        rec = self._build_trip_record(pend, start_ort, end_ort)
+        self._finalize_trip_record(rec)
         await self._save()
         self.hass.bus.async_fire(EVENT_TRIP_LOGGED, rec)
         if pending_list:
