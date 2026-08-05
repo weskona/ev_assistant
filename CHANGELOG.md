@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.32.0] - 2026-08-05
+
+### Fixed
+
+- **evcc vehicle auto-detection (used when `evcc_vehicle_name` isn't set) no longer parses the config entry title**: same underlying issue as the panel vehicle name fix in 0.31.0 — the title-parsing regex only handled the current `"EV Assistant (Manufacturer Model)"` format, not older entries created without parentheses. Now built directly from the manufacturer/model configuration instead.
+
 ## [0.31.0] - 2026-08-05
 
 ### Added

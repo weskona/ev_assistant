@@ -26,6 +26,7 @@ from .const import (
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE,
     CONF_ODO_ENTITY, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE,
     CONF_START_DELTA, CONF_TRIP_AUTO_CONFIRM, CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM, CONF_USABLE_KWH,
+    CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL,
     CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY,
     CONF_VERBRENNER_PRICE_PER_LITER, CONF_TANKERKOENIG_FUEL_TYPE, CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE,
@@ -1597,16 +1598,20 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     def _evcc_vehicle_key(self) -> Optional[str]:
         """Fahrzeugname in evcc: aus Konfiguration oder via Auto-Erkennung
-        anhand des Entry-Titels (z.B. 'EV Assistant (VW ID4)' → 'ID4')."""
+        anhand von Hersteller/Modell (z.B. 'VW ID4' -> 'id4') -- dieselbe
+        Berechnung wie der Geraetename (siehe entity.py/__init__.py), NICHT
+        aus entry.title geparst: dessen Format war nicht immer
+        "EV Assistant (Hersteller Modell)" (aeltere Eintraege wurden ohne
+        Klammern angelegt), ein Parsen dort ist daher fragil."""
         configured = self._opt(CONF_EVCC_VEHICLE_NAME)
         if configured:
             return configured
         state = self.hass.states.get("sensor.evcc_charging_sessions_vehicles")
         if not state:
             return None
-        import re
-        label = re.sub(r"^EV\s*Assistant\s*\(", "", self.entry.title or "", flags=re.IGNORECASE)
-        label = re.sub(r"\)\s*$", "", label).strip().lower()
+        hersteller = self._opt(CONF_VEHICLE_HERSTELLER) or ""
+        modell = self._opt(CONF_VEHICLE_MODELL) or ""
+        label = f"{hersteller} {modell}".strip().lower()
         _skip = {"state_class", "icon", "friendly_name", "unit_of_measurement", "device_class"}
         for key, val in state.attributes.items():
             if key in _skip or not isinstance(val, dict):
