@@ -73,6 +73,8 @@ def _empty_data() -> dict:
         "evcc_vehicle_kwh_start": None,
         "evcc_stat_total_kwh_start": None,
         "evcc_vehicle_cost_start": None,
+        "savings_home_kwh_start": None,
+        "savings_home_cost_start": None,
         "detector_state": None,
         "plug_debounce_state": None,
         "motor_debounce_state": None,
@@ -1594,7 +1596,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         km = self._km_driven()
         if km is None or km <= 0:
             return None
-        home_kwh = self._home_kwh() or 0.0
+        home_kwh = self._home_kwh_since_setup() or 0.0
         external_kwh = self.data.get("totals", {}).get("kwh", 0.0)
         total_kwh = home_kwh + external_kwh
         return round(total_kwh / km * 100.0, 2)
@@ -1653,8 +1655,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         EV-Assistant-Instanzen faelschlich auch einem Fahrzeug zugerechnet
         wuerde, das gar nicht zuhause laedt, (3) Differenz des Wallbox-
         Energiezaehlers seit Einrichtung. (1) und (2) sind evccs eigene,
-        kumulative Statistiken -- ueber _since_setup() auf "seit
-        EV-Assistant-Einrichtung" normiert, analog zu (3)."""
+        kumulative Statistiken -- werden ungekuerzt uebernommen, da evcc
+        die praeziseste Quelle ist. Fuer Savings/kWh100km gibt
+        _home_kwh_since_setup() das Delta seit ev_assistant-Einrichtung."""
         veh = self._evcc_vehicle_key()
         if veh:
             state = self.hass.states.get("sensor.evcc_charging_sessions_vehicles")
@@ -1663,7 +1666,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 if isinstance(veh_data, dict):
                     energy = veh_data.get("chargedEnergy")
                     if energy is not None:
-                        return self._since_setup(float(energy), "evcc_vehicle_kwh_start")
+                        return round(float(energy), 2)
         if self._opt(CONF_WALLBOX_ENERGY_ENTITY):
             kwh_entity = self._opt(CONF_EVCC_STAT_TOTAL_KWH)
             if kwh_entity:
@@ -1674,7 +1677,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                     except (ValueError, TypeError):
                         value = None
                     if value is not None:
-                        return self._since_setup(value, "evcc_stat_total_kwh_start")
+                        return round(value, 2)
         start = self.data.get("wallbox_energy_start")
         if self._wallbox_energy is None or start is None:
             return None
@@ -1684,9 +1687,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         """Heimladen-Kosten direkt aus evccs Fahrzeug-Session-Statistik,
         falls verfuegbar -- praeziser als home_kwh * home_price, da evcc
         pro Session mit dem tatsaechlichen Tarif rechnet statt mit dem
-        standortweiten Durchschnittspreis. Wie bei _home_kwh() ist das
-        evccs eigene, kumulative Statistik -- ueber _since_setup() auf
-        "seit EV-Assistant-Einrichtung" normiert."""
+        standortweiten Durchschnittspreis. Wie bei _home_kwh() wird der
+        kumulative evcc-Wert ungekuerzt uebernommen; das Delta seit
+        ev_assistant-Einrichtung liefert _home_cost_since_setup()."""
         veh = self._evcc_vehicle_key()
         if veh:
             state = self.hass.states.get("sensor.evcc_charging_sessions_vehicles")
@@ -1696,10 +1699,39 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                     cost = veh_data.get("cost")
                     if cost is not None:
                         try:
-                            return self._since_setup(float(cost), "evcc_vehicle_cost_start")
+                            return round(float(cost), 2)
                         except (ValueError, TypeError):
                             pass
         return None
+
+    def _home_kwh_since_setup(self) -> Optional[float]:
+        """home_kwh-Anteil seit ev_assistant-Einrichtung — fuer Savings und
+        kWh/100km. Setzt einmalig beim ersten Aufruf den Referenzwert auf den
+        aktuellen absoluten Zaehlerstand und gibt danach nur das Delta zurueck.
+        Wird nie automatisch zurueckgesetzt, damit das Datum der Einrichtung
+        erhalten bleibt, auch wenn der absolute evcc-Zaehler weiterlaeuft."""
+        kwh = self._home_kwh()
+        if kwh is None:
+            return None
+        start = self.data.get("savings_home_kwh_start")
+        if start is None:
+            self.data["savings_home_kwh_start"] = kwh
+            self.hass.async_create_task(self._save())
+            start = kwh
+        return round(max(0.0, kwh - start), 2)
+
+    def _home_cost_since_setup(self) -> Optional[float]:
+        """home_cost-Anteil seit ev_assistant-Einrichtung — fuer Savings.
+        Analoges Prinzip zu _home_kwh_since_setup()."""
+        cost = self._home_cost()
+        if cost is None:
+            return None
+        start = self.data.get("savings_home_cost_start")
+        if start is None:
+            self.data["savings_home_cost_start"] = cost
+            self.hass.async_create_task(self._save())
+            start = cost
+        return round(max(0.0, cost - start), 2)
 
     def _home_price(self) -> Optional[float]:
         """Heimstrompreis. Prioritaet: (1) evccs standortweite
@@ -1749,12 +1781,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 verbrenner_price = avg
         return calculate_savings(
             km_driven=self._km_driven(),
-            home_kwh=self._home_kwh(),
+            home_kwh=self._home_kwh_since_setup(),
             home_price_kwh=self._home_price(),
             fremdladen_kosten=self.data.get("totals", {}).get("kosten", 0.0),
             verbrenner_l_100km=float(verbrenner_l) if verbrenner_l is not None else None,
             verbrenner_price_per_liter=float(verbrenner_price) if verbrenner_price is not None else None,
-            home_cost=self._home_cost(),
+            home_cost=self._home_cost_since_setup(),
         )
 
     async def _dismiss(self) -> None:

@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.35.0] - 2026-08-05
+
+### Fixed
+
+- **`Home Charging kWh (total)` and `Home Charging Cost (total)` now show the full evcc cumulative history, not just since the ev_assistant upgrade**: v0.33.0 introduced a reference-delta mechanism to normalise evcc's own cumulative counters so that `Vehicle Avg Consumption` reflected only the period since ev_assistant was set up. That was correct for the consumption calculation, but the same subtraction was mistakenly also applied to the display sensors — so after upgrading to v0.33.0 both sensors showed only the kWh/cost accumulated since the upgrade, losing all earlier evcc history. The display sensors now return evcc's raw cumulative value without any subtraction.
+- **Savings and kWh/100 km use a separate "since ev_assistant setup" baseline**: the per-setup normalisation that v0.33.0 intended is now stored in two new fields (`savings_home_kwh_start` / `savings_home_cost_start`), captured once the first time the coordinator runs after installation. The display sensors show the full evcc total; the cost comparison and average consumption calculation accumulate from the point ev_assistant was first configured. For new installations this is automatic. Existing installations that upgraded through v0.33.0 have the baseline set at upgrade time — the display sensors now show the correct full history, and savings/kWh100km accumulate from the upgrade point onward (no further action required).
+
 ## [0.34.0] - 2026-08-05
 
 ### Fixed
