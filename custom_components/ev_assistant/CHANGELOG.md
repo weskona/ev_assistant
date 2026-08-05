@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.34.0] - 2026-08-05
+
+### Fixed
+
+- **`edit_trip` failed with "extra keys not allowed @ data['start_ts']" when correcting a trip's date/time**: the service's actual validation schema (registered in `__init__.py`) was never updated to accept `start_ts`/`end_ts` when that capability was added in 0.31.0 — only `services.yaml` (UI documentation) and the coordinator/panel side were. The handler now also accepts and forwards both fields. Verified live (edited and reverted a real trip's `start_ts`). Audited all other services' schemas against `services.yaml` for the same class of mismatch — none found.
+
 ## [0.33.0] - 2026-08-05
 
 ### Fixed
