@@ -659,3 +659,24 @@ def weekday_usage_profile(
         totals[wd] += daily_kwh.get(d.isoformat(), 0.0)
         d += timedelta(days=1)
     return {wd: round(totals[wd] / counts[wd], 2) for wd in range(7)}
+
+
+def charge_before_pv_decision(
+    available_kwh: float, needed_kwh: float, pv_forecast_kwh: Optional[float] = None
+) -> bool:
+    """True heisst: jetzt laden (z.B. aus dem Netz) statt auf morgige PV zu
+    warten.
+
+    Ohne pv_forecast_kwh (keine PV-Prognose-Entitaet konfiguriert): einfacher
+    Vergleich, ob der aktuelle Akkustand allein fuer den morgigen Bedarf
+    reicht.
+
+    Mit pv_forecast_kwh: die morgen erwartete PV-Erzeugung darf eine Luecke
+    schliessen, die der aktuelle Akkustand allein nicht abdeckt -- das ist
+    der eigentliche Sinn der Empfehlung ("heute ohne PV nachladen, oder
+    reicht es, bis zur PV von morgen zu warten"). Rohe Ertragsprognose ohne
+    Abzug fuer den Haus-Eigenverbrauch, siehe coordinator.py fuer die
+    Einheitenumrechnung und Dokumentation dieser Vereinfachung."""
+    if pv_forecast_kwh is None:
+        return available_kwh < needed_kwh
+    return (available_kwh + pv_forecast_kwh) < needed_kwh

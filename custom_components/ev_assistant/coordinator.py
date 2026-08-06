@@ -25,7 +25,7 @@ from .const import (
     CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
     CONF_IDLE_TIMEOUT, CONF_MOTOR_DEBOUNCE, CONF_MOTOR_ENTITY, CONF_NOISE, CONF_NOTIFY_SERVICE,
     CONF_PLUG_DEBOUNCE, CONF_PLUG_ENTITY,
-    CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE,
+    CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE, CONF_PV_FORECAST_ENTITY,
     CONF_ODO_ENTITY, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE,
     CONF_START_DELTA, CONF_TRIP_AUTO_CONFIRM, CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM, CONF_USABLE_KWH,
     CONF_USAGE_PROFILE_BUFFER_PCT,
@@ -46,8 +46,8 @@ from .const import (
 )
 from .engine import (
     ChargeDetector, ChargeSample, EfficiencyCalibrator, SignalDebouncer, TripDetector, TripSample,
-    average_efficiency, calculate_co2_savings, calculate_savings, merge_pending, pop_pending,
-    weekday_usage_profile,
+    average_efficiency, calculate_co2_savings, calculate_savings, charge_before_pv_decision,
+    merge_pending, pop_pending, weekday_usage_profile,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -1972,20 +1972,45 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
         return round(self._soc / 100.0 * usable_kwh, 2)
 
+    def _pv_forecast_tomorrow_kwh(self) -> Optional[float]:
+        """Liest die optionale CONF_PV_FORECAST_ENTITY roh aus -- eine
+        beliebige Sensor-Entitaet mit der PV-Ertragsprognose fuer morgen
+        (z.B. Solcast "Forecast Tomorrow", Forecast.Solar "Estimated Energy
+        Production - Tomorrow"). Rechnet Wh automatisch in kWh um; andere
+        Integrationen liefern i.d.R. bereits kWh. None ohne konfigurierte
+        Entitaet oder bei unknown/unavailable/nicht-numerischem Zustand."""
+        entity_id = self._opt(CONF_PV_FORECAST_ENTITY)
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in (None, "unknown", "unavailable"):
+            return None
+        try:
+            value = float(state.state)
+        except (TypeError, ValueError):
+            return None
+        if state.attributes.get("unit_of_measurement") == "Wh":
+            value /= 1000.0
+        return value
+
     def charge_before_pv_recommended(self) -> Optional[dict]:
         """Empfehlung, ob vor dem naechsten PV-Ueberschuss noch nachgeladen
-        werden sollte: verfuegbare kWh reichen nicht fuer den morgigen
-        (gepufferten) Bedarf. None, wenn eine der beiden Groessen fehlt
-        (siehe available_kwh()/usage_profile_tomorrow())."""
+        werden sollte. None, wenn available_kwh()/usage_profile_tomorrow()
+        fehlt -- siehe charge_before_pv_decision() in engine.py fuer die
+        eigentliche Entscheidung (mit optionaler PV-Prognose)."""
         need = self.usage_profile_tomorrow()
         available = self.available_kwh()
         if need is None or available is None:
             return None
-        return {
+        pv_forecast = self._pv_forecast_tomorrow_kwh()
+        result = {
             "verfuegbare_kwh": available,
             "benoetigt_morgen_kwh": need["benoetigt_kwh"],
-            "empfehlung": available < need["benoetigt_kwh"],
+            "empfehlung": charge_before_pv_decision(available, need["benoetigt_kwh"], pv_forecast),
         }
+        if pv_forecast is not None:
+            result["pv_prognose_morgen_kwh"] = round(pv_forecast, 2)
+        return result
 
     async def _dismiss(self) -> None:
         try:

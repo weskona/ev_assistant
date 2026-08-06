@@ -66,6 +66,14 @@ CONF_TRIP_AUTO_CONFIRM = "trip_auto_confirm"
 # coordinator.py::usage_profile_tomorrow()) -- soll verhindern, dass ein
 # leicht ueberdurchschnittlicher Tag den Akku knapp werden laesst.
 CONF_USAGE_PROFILE_BUFFER_PCT = "usage_profile_buffer_pct"
+# Optional: beliebige Sensor-Entitaet mit der PV-Ertragsprognose fuer morgen
+# (kWh oder Wh, z.B. Solcast "Forecast Tomorrow" oder Forecast.Solar
+# "Estimated Energy Production - Tomorrow") -- siehe
+# coordinator.py::_pv_forecast_tomorrow_kwh(). Ohne sie vergleicht
+# charge_before_pv_recommended() nur den aktuellen Akkustand gegen den
+# morgigen Bedarf; mit ihr darf die morgen erwartete PV-Erzeugung eine
+# Luecke schliessen, auch wenn der Akku allein nicht reicht.
+CONF_PV_FORECAST_ENTITY = "pv_forecast_entity"
 
 # Kostenvergleich gegenueber einem Verbrenner (alle optional -- ohne sie
 # bleiben die Ersparnis-Sensoren unbekannt statt einen Fehler zu werfen).

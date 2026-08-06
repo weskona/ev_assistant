@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.38.0] - 2026-08-06
+
+### Added
+
+- **Usage Profile PV forecast**: new optional config field `pv_forecast_entity` (step 6) — point it at any sensor entity providing tomorrow's solar-yield forecast (e.g. Solcast's "Forecast Tomorrow" or Forecast.Solar's "Estimated Energy Production - Tomorrow"; kWh or Wh, auto-converted). With it configured, `Charge Before Solar Recommended` lets tomorrow's expected PV generation cover a shortfall the current battery charge alone can't, instead of only comparing the battery charge to tomorrow's typical need. New `pv_prognose_morgen_kwh` attribute on the binary sensor; shown as an extra KPI in the "Usage Profile" panel tab when configured. Without this field, behavior is unchanged from 0.37.0.
+
 ## [0.37.0] - 2026-08-06
 
 ### Added

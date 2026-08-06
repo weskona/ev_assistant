@@ -3,8 +3,8 @@
 import pytest
 from engine import (
     ChargeDetector, ChargeSample, EfficiencyCalibrator, SignalDebouncer, TripDetector, TripSample,
-    average_efficiency, calculate_co2_savings, calculate_savings, merge_pending, pop_pending,
-    weekday_usage_profile,
+    average_efficiency, calculate_co2_savings, calculate_savings, charge_before_pv_decision,
+    merge_pending, pop_pending, weekday_usage_profile,
 )
 
 
@@ -578,3 +578,23 @@ def test_weekday_usage_profile_durchschnitt_ueber_mehrere_wochen():
     assert profil[0] == 15.0  # (10+20)/2
     assert profil[5] == 10.0  # (5+15)/2
     assert profil[1] == 0.0
+
+
+# ----- charge_before_pv_decision: Lade-Empfehlung ---------------------------
+
+def test_charge_before_pv_decision_ohne_prognose_akku_reicht():
+    assert charge_before_pv_decision(available_kwh=20.0, needed_kwh=15.0) is False
+
+
+def test_charge_before_pv_decision_ohne_prognose_akku_reicht_nicht():
+    assert charge_before_pv_decision(available_kwh=10.0, needed_kwh=15.0) is True
+
+
+def test_charge_before_pv_decision_mit_prognose_schliesst_luecke():
+    # Akku allein reicht nicht (10 < 15), aber PV-Prognose deckt die Luecke.
+    assert charge_before_pv_decision(available_kwh=10.0, needed_kwh=15.0, pv_forecast_kwh=8.0) is False
+
+
+def test_charge_before_pv_decision_mit_prognose_luecke_bleibt():
+    # PV-Prognose reicht nicht aus, um die Luecke zu schliessen.
+    assert charge_before_pv_decision(available_kwh=10.0, needed_kwh=15.0, pv_forecast_kwh=2.0) is True

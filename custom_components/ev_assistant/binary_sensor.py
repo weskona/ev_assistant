@@ -71,9 +71,11 @@ class ChargeBeforePvBinarySensor(EvAssistantEntity, BinarySensorEntity):
     """Empfehlung, ob vor dem naechsten PV-Ueberschuss noch nachgeladen
     werden sollte (siehe coordinator.py::charge_before_pv_recommended()):
     verfuegbare Batteriekapazitaet reicht nicht fuer den morgigen,
-    historisch-typischen (gepufferten) Wochentags-Bedarf. unknown, solange
-    kein Nutzungsprofil vorliegt (siehe UsageProfileSensor) oder kein SoC
-    bekannt ist."""
+    historisch-typischen (gepufferten) Wochentags-Bedarf. Mit optionaler
+    CONF_PV_FORECAST_ENTITY darf die morgen erwartete PV-Erzeugung eine
+    Luecke schliessen (siehe engine.py::charge_before_pv_decision()).
+    unknown, solange kein Nutzungsprofil vorliegt (siehe UsageProfileSensor)
+    oder kein SoC bekannt ist."""
 
     _attr_translation_key = "charge_before_pv_recommended"
     _attr_icon = "mdi:battery-charging-outline"
@@ -91,4 +93,7 @@ class ChargeBeforePvBinarySensor(EvAssistantEntity, BinarySensorEntity):
         rec = self.coordinator.charge_before_pv_recommended()
         if not rec:
             return {}
-        return {"verfuegbare_kwh": rec["verfuegbare_kwh"], "benoetigt_morgen_kwh": rec["benoetigt_morgen_kwh"]}
+        attrs = {"verfuegbare_kwh": rec["verfuegbare_kwh"], "benoetigt_morgen_kwh": rec["benoetigt_morgen_kwh"]}
+        if "pv_prognose_morgen_kwh" in rec:
+            attrs["pv_prognose_morgen_kwh"] = rec["pv_prognose_morgen_kwh"]
+        return attrs

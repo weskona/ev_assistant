@@ -18,7 +18,7 @@ from .const import (
     CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_IDLE_TIMEOUT,
     CONF_MOTOR_DEBOUNCE, CONF_MOTOR_ENTITY,
     CONF_NOISE, CONF_NOTIFY_SERVICE, CONF_ODO_ENTITY, CONF_PLUG_DEBOUNCE, CONF_PLUG_ENTITY,
-    CONF_POWER_ENTITY, CONF_POWER_IS_AC,
+    CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_PV_FORECAST_ENTITY,
     CONF_SOC_ENTITY, CONF_START_DELTA,
     CONF_TRIP_AUTO_CONFIRM, CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM, CONF_USAGE_PROFILE_BUFFER_PCT,
     CONF_USABLE_KWH, CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL,
@@ -69,6 +69,9 @@ _PLUG_ENTITY = selector.EntitySelector(
 )
 _MOTOR_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="binary_sensor")
+)
+_PV_FORECAST_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="sensor")
 )
 _TANKERKOENIG_FUEL_TYPE = selector.SelectSelector(
     selector.SelectSelectorConfig(
@@ -248,6 +251,7 @@ def build_trip_schema(cur: dict) -> vol.Schema:
             CONF_USAGE_PROFILE_BUFFER_PCT,
             default=cur.get(CONF_USAGE_PROFILE_BUFFER_PCT, DEFAULT_USAGE_PROFILE_BUFFER_PCT),
         ): vol.Coerce(float),
+        vol.Optional(CONF_PV_FORECAST_ENTITY, description=sv(CONF_PV_FORECAST_ENTITY)): _PV_FORECAST_ENTITY,
     })
 
 

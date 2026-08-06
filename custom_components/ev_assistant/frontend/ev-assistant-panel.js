@@ -958,6 +958,7 @@ class EVAssistantPanel extends HTMLElement {
             <div class="kpi"><div class="kv" id="profil-available">—</div><div class="kl">kWh verfügbar</div></div>
             <div class="kpi"><div class="kv" id="profil-need-tomorrow">—</div><div class="kl">kWh benötigt morgen</div></div>
             <div class="kpi"><div class="kv" id="profil-buffer">—</div><div class="kl">% Puffer</div></div>
+            <div class="kpi hidden" id="profil-pv-forecast-kpi"><div class="kv" id="profil-pv-forecast">—</div><div class="kl">kWh PV-Prognose morgen</div></div>
           </div>
           <div class="divider"></div>
           <div class="sub-head">Ø kWh-Bedarf pro Wochentag</div>
@@ -974,6 +975,8 @@ class EVAssistantPanel extends HTMLElement {
       profilAvailable:     q("#profil-available"),
       profilNeedTomorrow:  q("#profil-need-tomorrow"),
       profilBuffer:        q("#profil-buffer"),
+      profilPvForecastKpi: q("#profil-pv-forecast-kpi"),
+      profilPvForecast:    q("#profil-pv-forecast"),
       profilWeekdayChart:  q("#profil-weekday-chart"),
     };
     return wrap;
@@ -1023,18 +1026,27 @@ class EVAssistantPanel extends HTMLElement {
 
     const recEid = this._eid("charge_before_pv_recommended");
     const recState = recEid ? this._hass.states[recEid] : null;
+    const pvForecast = recState && recState.attributes ? parseFloat(recState.attributes.pv_prognose_morgen_kwh) : NaN;
+    const hasPvForecast = !isNaN(pvForecast);
+    r.profilPvForecastKpi.classList.toggle("hidden", !hasPvForecast);
+    if (hasPvForecast) r.profilPvForecast.textContent = this._fmtNum(pvForecast, 1);
+
     if (!recState || recState.state === "unknown" || recState.state === "unavailable") {
       r.profilRecommendIcon.setAttribute("icon", "mdi:battery-unknown");
       r.profilRecommendText.textContent = "Noch keine Empfehlung möglich.";
       r.profilRecommendText.parentElement.classList.remove("rec-yes", "rec-no");
     } else if (recState.state === "on") {
       r.profilRecommendIcon.setAttribute("icon", "mdi:battery-alert");
-      r.profilRecommendText.textContent = "Laden empfehlenswert — der aktuelle Akkustand reicht laut Profil nicht sicher bis morgen.";
+      r.profilRecommendText.textContent = hasPvForecast
+        ? "Laden empfehlenswert — Akkustand plus PV-Prognose für morgen reichen laut Profil nicht sicher aus."
+        : "Laden empfehlenswert — der aktuelle Akkustand reicht laut Profil nicht sicher bis morgen.";
       r.profilRecommendText.parentElement.classList.add("rec-yes");
       r.profilRecommendText.parentElement.classList.remove("rec-no");
     } else {
       r.profilRecommendIcon.setAttribute("icon", "mdi:battery-charging-100");
-      r.profilRecommendText.textContent = "Reicht bis morgen — Laden kann warten, z.B. auf PV-Überschuss.";
+      r.profilRecommendText.textContent = hasPvForecast
+        ? "Reicht bis morgen — Akkustand plus PV-Prognose decken den Bedarf, Laden kann warten."
+        : "Reicht bis morgen — Laden kann warten, z.B. auf PV-Überschuss.";
       r.profilRecommendText.parentElement.classList.add("rec-no");
       r.profilRecommendText.parentElement.classList.remove("rec-yes");
     }
