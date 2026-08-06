@@ -49,6 +49,21 @@ log_charge:
       selector:
         number:
           mode: box
+    start_fee:
+      name: Start-/Blockiergebühr
+      description: >
+        Optional. Pauschale Gebühr manche Ladenetze/Ladepunkte zusätzlich
+        zum kWh-Preis (z.B. eine Startgebühr oder Blockiergebühr vom
+        Beleg), unabhängig von der geladenen Menge. Ohne Angabe: 0.
+      required: false
+      example: 1.0
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.01
+          unit_of_measurement: EUR
+          mode: box
 
 discard_pending:
   name: Offene Fremdladung verwerfen
@@ -83,7 +98,8 @@ edit_charge:
     Gesamtsummen (kWh/Kosten) werden um die Differenz angepasst, die
     Anzahl bleibt unveraendert. Der zu korrigierende Eintrag wird ueber
     erfasst_ts identifiziert (Wert aus dessen erfasst_ts-Attribut in der
-    Historie).
+    Historie). Ohne start_fee bleibt dessen zuvor erfasste Start-/
+    Blockiergebühr unveraendert.
   fields:
     config_entry_id:
       name: Fahrzeug
@@ -123,6 +139,20 @@ edit_charge:
           max: 5
           step: 0.001
           unit_of_measurement: EUR/kWh
+          mode: box
+    start_fee:
+      name: Start-/Blockiergebühr
+      description: >
+        Optional. Korrigierte pauschale Start-/Blockiergebühr. Ohne Angabe
+        bleibt die zuvor erfasste Gebühr des Eintrags unveraendert.
+      required: false
+      example: 1.0
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.01
+          unit_of_measurement: EUR
           mode: box
 
 delete_charge:

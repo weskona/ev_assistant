@@ -69,7 +69,7 @@ Das HA-Gerät heißt `{Hersteller} {Modell}` (z. B. „VW ID.4"), Entitätsnamen
 | `pending` | Fremdladung Erfassung offen | Binary Sensor — **on**, solange ≥ 1 Ladung auf Bestätigung wartet. Attribute: `anzahl_offen`, `offene_ladungen`. |
 | `pending_estimate` | Fremdladung ausstehend | Geschätzte kWh der ältesten offenen Ladung. `unknown`, wenn nichts aussteht. |
 | `last_kwh` | Fremdladung kWh (letzte) | kWh aus dem Kassenbon der zuletzt bestätigten Ladung. |
-| `last_cost` | Fremdladung Kosten (letzte) | Kosten der zuletzt bestätigten Ladung (kWh × Preis). |
+| `last_cost` | Fremdladung Kosten (letzte) | Kosten der zuletzt bestätigten Ladung (kWh × Preis, zzgl. eventueller `start_fee`). |
 | `last_price` | Fremdladung Preis (letzter) | Eingegebener Preis pro kWh der letzten Ladung. |
 | `last_duration` | Fremdladung Ladezeit (letzte) | Dauer der erkannten Sitzung in Minuten. |
 | `last_charge_power` | Fremdladung Ø Leistung (letzte) | Durchschnittliche Ladeleistung (kW) der zuletzt bestätigten Ladung, aus kWh ÷ Dauer. Sitzungen < 5 min oder mit unplausibler Leistung (< 1 kW oder > 350 kW) liefern `unknown`. |
@@ -154,7 +154,7 @@ Fahrzeugspezifisches Dashboard in einem Drei-Spalten-Layout:
 | Spalte | Inhalt |
 |--------|--------|
 | **Heimladen** | Heimlade-Gesamtwerte (kWh, EUR, Sitzungsanzahl, Ø Solaranteil), letzte Sitzungs-KPIs, vollständige evcc-Sitzungshistorie. Jeder Eintrag zeigt SOC Start→Ende, kWh, Ø Ladeleistung, EUR/kWh, Kosten, Solaranteil, Dauer und einen SOC-Balken. |
-| **Fremdladung** | Fremdladungs-Gesamtwerte, letzte Sitzungs-KPIs, editierbare Historie. Jeder Eintrag zeigt kWh, Ø Ladeleistung, Kosten und einen SOC-Balken. |
+| **Fremdladung** | Fremdladungs-Gesamtwerte, letzte Sitzungs-KPIs, editierbare Historie. Jeder Eintrag zeigt kWh, Ø Ladeleistung, Kosten und einen SOC-Balken; Einträge mit `start_fee` zeigen diese zusätzlich als eigene Zeile neben dem Preis. |
 | **Fahrtenbuch** | Fahrt-Gesamtwerte, letzte Fahrt-KPIs (km, Route), editierbare Fahrthistorie. |
 
 ### Nutzungsprofil-Tab
@@ -175,9 +175,9 @@ Alle Dienste benötigen `config_entry_id`, um bei mehreren konfigurierten Eintr�
 
 | Dienst | Parameter | Beschreibung |
 |--------|-----------|--------------|
-| `log_charge` | `config_entry_id`, `kwh`, `price_kwh`, `start_ts`* | Ausstehende Fremdladung mit Kassenbon-Werten bestätigen. `start_ts` wählt die Ladung aus (älteste, wenn weggelassen). |
+| `log_charge` | `config_entry_id`, `kwh`, `price_kwh`, `start_ts`*, `start_fee`* | Ausstehende Fremdladung mit Kassenbon-Werten bestätigen. `start_ts` wählt die Ladung aus (älteste, wenn weggelassen). `start_fee` ist eine optionale Pauschalgebühr mancher Ladenetze/-punkte zusätzlich zum kWh-Preis (z.B. Start- oder Blockiergebühr), Standard 0. |
 | `discard_pending` | `config_entry_id`, `start_ts`* | Ausstehende Fremdladung verwerfen (Fehlalarm). |
-| `edit_charge` | `config_entry_id`, `erfasst_ts`, `kwh`, `price_kwh` | kWh/Preis eines bereits bestätigten Historieneintrags korrigieren. Gesamtsummen werden um die Differenz angepasst. |
+| `edit_charge` | `config_entry_id`, `erfasst_ts`, `kwh`, `price_kwh`, `start_fee`* | kWh/Preis/Startgebühr eines bereits bestätigten Historieneintrags korrigieren. Gesamtsummen werden um die Differenz angepasst. Ohne `start_fee` bleibt die zuvor erfasste Gebühr des Eintrags unverändert. |
 | `delete_charge` | `config_entry_id`, `erfasst_ts` | Bestätigten Historieneintrag entfernen. **Nicht rückgängig machbar.** |
 | `simulate_event` | `config_entry_id`, `soc_start`, `soc_end`, `energy_source`* | Test-Fremdladungsereignis ohne Auto auslösen. |
 | `log_trip` | `config_entry_id`, `start_ort`, `end_ort`, `start_ts`* | Ausstehende Fahrt mit Start-/Zielort bestätigen. |

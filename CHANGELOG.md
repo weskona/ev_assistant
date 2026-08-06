@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.39.0] - 2026-08-06
+
+### Added
+
+- **External charging start/blocking fee**: new optional `start_fee` field on `log_charge` and `edit_charge` — some charging networks/points bill a flat fee on top of the kWh price (e.g. a start or blocking fee). New `engine.charge_cost()` adds it to the stored cost; entries carry a `startgebuehr` value (0 for older entries or when none is entered). The panel's pending-charge confirmation form and history edit form both gained an optional "Startgebühr" input; history entries with a fee show it as a separate line next to the price.
+
 ## [0.38.0] - 2026-08-06
 
 ### Added

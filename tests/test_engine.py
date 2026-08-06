@@ -3,7 +3,7 @@
 import pytest
 from engine import (
     ChargeDetector, ChargeSample, EfficiencyCalibrator, SignalDebouncer, TripDetector, TripSample,
-    average_efficiency, calculate_co2_savings, calculate_savings, charge_before_pv_decision,
+    average_efficiency, calculate_co2_savings, calculate_savings, charge_before_pv_decision, charge_cost,
     merge_pending, pop_pending, weekday_usage_profile,
 )
 
@@ -598,3 +598,17 @@ def test_charge_before_pv_decision_mit_prognose_schliesst_luecke():
 def test_charge_before_pv_decision_mit_prognose_luecke_bleibt():
     # PV-Prognose reicht nicht aus, um die Luecke zu schliessen.
     assert charge_before_pv_decision(available_kwh=10.0, needed_kwh=15.0, pv_forecast_kwh=2.0) is True
+
+
+# ----- charge_cost: Fremdladungs-Gesamtkosten inkl. Start-/Blockiergebuehr --
+
+def test_charge_cost_ohne_gebuehr():
+    assert charge_cost(kwh=20.0, price_kwh=0.5) == 10.0
+
+
+def test_charge_cost_mit_gebuehr():
+    assert charge_cost(kwh=20.0, price_kwh=0.5, start_fee=1.5) == 11.5
+
+
+def test_charge_cost_rundet_auf_zwei_nachkommastellen():
+    assert charge_cost(kwh=10.333, price_kwh=0.333, start_fee=0.001) == 3.44

@@ -159,6 +159,7 @@ LOG_SCHEMA = vol.Schema({
     vol.Required("kwh"): vol.Coerce(float),
     vol.Required("price_kwh"): vol.Coerce(float),
     vol.Optional("start_ts"): vol.Coerce(float),
+    vol.Optional("start_fee", default=0.0): vol.Coerce(float),
 })
 
 DISCARD_SCHEMA = vol.Schema({
@@ -178,6 +179,7 @@ EDIT_SCHEMA = vol.Schema({
     vol.Required("erfasst_ts"): vol.Coerce(int),
     vol.Required("kwh"): vol.Coerce(float),
     vol.Required("price_kwh"): vol.Coerce(float),
+    vol.Optional("start_fee"): vol.Coerce(float),
 })
 
 DELETE_SCHEMA = vol.Schema({
@@ -265,7 +267,8 @@ def _register_services(hass: HomeAssistant) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
             await coordinator.async_log_charge(
-                call.data["kwh"], call.data["price_kwh"], call.data.get("start_ts")
+                call.data["kwh"], call.data["price_kwh"], call.data.get("start_ts"),
+                call.data.get("start_fee", 0.0),
             )
 
     async def _handle_discard(call: ServiceCall) -> None:
@@ -284,7 +287,8 @@ def _register_services(hass: HomeAssistant) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
             await coordinator.async_edit_charge(
-                call.data["erfasst_ts"], call.data["kwh"], call.data["price_kwh"]
+                call.data["erfasst_ts"], call.data["kwh"], call.data["price_kwh"],
+                call.data.get("start_fee"),
             )
 
     async def _handle_delete(call: ServiceCall) -> None:

@@ -46,7 +46,7 @@ from .const import (
 )
 from .engine import (
     ChargeDetector, ChargeSample, EfficiencyCalibrator, SignalDebouncer, TripDetector, TripSample,
-    average_efficiency, calculate_co2_savings, calculate_savings, charge_before_pv_decision,
+    average_efficiency, calculate_co2_savings, calculate_savings, charge_before_pv_decision, charge_cost,
     merge_pending, pop_pending, weekday_usage_profile,
 )
 
@@ -1493,15 +1493,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 odo_end = t["odo_end"] if t["odo_end"] is not None else ""
                 writer.writerow([t["datum"], t["start_ort"], t["end_ort"], odo_start, odo_end, t["km"]])
 
-    async def async_log_charge(self, kwh: float, price: float, start_ts: Optional[float] = None) -> None:
+    async def async_log_charge(
+        self, kwh: float, price: float, start_ts: Optional[float] = None, start_fee: float = 0.0
+    ) -> None:
         """Bestaetigt eine offene Fremdladung. Bei mehreren gleichzeitig
         offenen waehlt `start_ts` die gemeinte aus; ohne Angabe wird die
-        aelteste bestaetigt (FIFO)."""
+        aelteste bestaetigt (FIFO). `start_fee` ist eine optionale pauschale
+        Start-/Blockiergebuehr manche Ladenetze/Ladepunkte, zusaetzlich zum
+        kWh-Preis (siehe engine.charge_cost())."""
         kwh = round(float(kwh), 2)
         price = round(float(price), 4)
+        start_fee = round(float(start_fee), 2)
         rec = {
             "config_entry_id": self.entry.entry_id,
-            "kwh": kwh, "preis_kwh": price, "kosten": round(kwh * price, 2),
+            "kwh": kwh, "preis_kwh": price, "startgebuehr": start_fee,
+            "kosten": charge_cost(kwh, price, start_fee),
             "erfasst_ts": int(time.time()),
         }
         pending_list = list(self.data.get("pending") or [])
@@ -1531,12 +1537,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             await self._dismiss()
         self.async_set_updated_data(self.data)
 
-    async def async_edit_charge(self, erfasst_ts: int, kwh: float, price: float) -> bool:
+    async def async_edit_charge(
+        self, erfasst_ts: int, kwh: float, price: float, start_fee: Optional[float] = None
+    ) -> bool:
         """Korrigiert einen bereits bestaetigten Historien-Eintrag (z.B.
-        Tippfehler bei kWh/Preis beim Erfassen bemerkt). Passt die
-        laufenden Summen um die Differenz an statt sie aus der Historie neu
-        zu berechnen. Gibt False zurueck, wenn kein Eintrag mit erfasst_ts
-        gefunden wurde."""
+        Tippfehler bei kWh/Preis beim Erfassen bemerkt). `start_fee`
+        optional -- ohne Angabe bleibt die zuvor erfasste Start-/
+        Blockiergebuehr des Eintrags unveraendert (siehe async_log_charge()).
+        Passt die laufenden Summen um die Differenz an statt sie aus der
+        Historie neu zu berechnen. Gibt False zurueck, wenn kein Eintrag mit
+        erfasst_ts gefunden wurde."""
         history = self.data.get("history") or []
         for rec in history:
             if rec.get("erfasst_ts") == erfasst_ts:
@@ -1544,12 +1554,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 old_kosten = rec["kosten"]
                 kwh = round(float(kwh), 2)
                 price = round(float(price), 4)
-                kosten = round(kwh * price, 2)
+                fee = round(float(start_fee), 2) if start_fee is not None else rec.get("startgebuehr", 0.0)
+                kosten = charge_cost(kwh, price, fee)
                 totals = self.data["totals"]
                 totals["kwh"] = round(totals.get("kwh", 0.0) - old_kwh + kwh, 2)
                 totals["kosten"] = round(totals.get("kosten", 0.0) - old_kosten + kosten, 2)
                 rec["kwh"] = kwh
                 rec["preis_kwh"] = price
+                rec["startgebuehr"] = fee
                 rec["kosten"] = kosten
                 if history[0] is rec:
                     self.data["last_price"] = price

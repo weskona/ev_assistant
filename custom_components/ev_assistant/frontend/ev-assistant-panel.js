@@ -1454,7 +1454,7 @@ class EVAssistantPanel extends HTMLElement {
     items.forEach((p) => {
       const key = p.start_ts;
       const fs = (this._formState.charge ||= {});
-      const st = (fs[key] ||= { kwh: p.energy_kwh != null ? Number(p.energy_kwh).toFixed(2) : "", price: "" });
+      const st = (fs[key] ||= { kwh: p.energy_kwh != null ? Number(p.energy_kwh).toFixed(2) : "", price: "", fee: "" });
 
       const soc = (p.soc_start != null && p.soc_end != null)
         ? `${Math.round(p.soc_start)}% → ${Math.round(p.soc_end)}%` : "";
@@ -1479,6 +1479,7 @@ class EVAssistantPanel extends HTMLElement {
         <div class="pend-inputs">
           <label>kWh (Beleg)<input type="text" inputmode="decimal" class="pf-kwh" value="${st.kwh}"></label>
           <label>EUR/kWh (Beleg)<input type="text" inputmode="decimal" class="pf-price" value="${st.price}" placeholder="0,000"></label>
+          <label>Startgebühr € (optional)<input type="text" inputmode="decimal" class="pf-fee" value="${st.fee}" placeholder="0,00"></label>
         </div>
         <div class="pend-actions">
           <button class="btn btn-ghost pf-discard">Verwerfen</button>
@@ -1487,6 +1488,7 @@ class EVAssistantPanel extends HTMLElement {
 
       const kwhInput = row.querySelector(".pf-kwh");
       const priceInput = row.querySelector(".pf-price");
+      const feeInput = row.querySelector(".pf-fee");
       const confirmBtn = row.querySelector(".pf-confirm");
       const updateValidity = () => {
         const valid = !isNaN(parseFloat(st.kwh)) && !isNaN(parseFloat(st.price));
@@ -1497,10 +1499,12 @@ class EVAssistantPanel extends HTMLElement {
 
       kwhInput.addEventListener("input", (e) => { st.kwh = e.target.value.replace(",", "."); updateValidity(); });
       priceInput.addEventListener("input", (e) => { st.price = e.target.value.replace(",", "."); updateValidity(); });
+      feeInput.addEventListener("input", (e) => { st.fee = e.target.value.replace(",", "."); });
       confirmBtn.addEventListener("click", () => {
         const kwh = parseFloat(st.kwh), price = parseFloat(st.price);
         if (isNaN(kwh) || isNaN(price)) return;
-        this._call("log_charge", { kwh, price_kwh: price, start_ts: key });
+        const fee = parseFloat(st.fee);
+        this._call("log_charge", { kwh, price_kwh: price, start_ts: key, start_fee: isNaN(fee) ? 0 : fee });
         delete fs[key];
       });
       row.querySelector(".pf-discard").addEventListener("click", () => {
@@ -1632,6 +1636,7 @@ class EVAssistantPanel extends HTMLElement {
             <span class="hist-kwh">${this._fmtNum(h.kwh, 2)}<small>kWh</small></span>
             ${(() => { const p = h.dauer_min >= 5 ? h.kwh / (h.dauer_min / 60) : null; return (p >= 1 && p <= 350) ? `<span class="hist-power">Ø ${this._fmtNum(p, 1)}<small>kW</small></span>` : ""; })()}
             <span class="hist-price">${this._fmtNum(h.preis_kwh, 3)} €/kWh</span>
+            ${h.startgebuehr ? `<span class="hist-fee">+ ${this._fmtNum(h.startgebuehr, 2)} € Startgebühr</span>` : ""}
           </div>
           <span class="hist-cost">${this._fmtNum(h.kosten, 2)} €</span>
         </div>
@@ -1639,6 +1644,7 @@ class EVAssistantPanel extends HTMLElement {
         <div class="hist-edit-form hidden">
           <label>kWh<input type="text" inputmode="decimal" class="hf-kwh" value="${h.kwh}"></label>
           <label>EUR/kWh<input type="text" inputmode="decimal" class="hf-price" value="${h.preis_kwh}"></label>
+          <label>Startgebühr €<input type="text" inputmode="decimal" class="hf-fee" value="${h.startgebuehr || 0}"></label>
           <button class="btn btn-primary hf-save">Speichern</button>
           <button class="btn btn-ghost hf-cancel">Abbrechen</button>
         </div>
@@ -1657,8 +1663,9 @@ class EVAssistantPanel extends HTMLElement {
       row.querySelector(".hf-save").addEventListener("click", () => {
         const kwh = parseFloat(row.querySelector(".hf-kwh").value.replace(",", "."));
         const price = parseFloat(row.querySelector(".hf-price").value.replace(",", "."));
+        const fee = parseFloat(row.querySelector(".hf-fee").value.replace(",", "."));
         if (isNaN(kwh) || isNaN(price)) return;
-        this._call("edit_charge", { erfasst_ts: ts, kwh, price_kwh: price });
+        this._call("edit_charge", { erfasst_ts: ts, kwh, price_kwh: price, start_fee: isNaN(fee) ? 0 : fee });
         form.classList.add("hidden");
       });
       row.querySelector(".hist-delete").addEventListener("click", () => {
@@ -2748,6 +2755,7 @@ class EVAssistantPanel extends HTMLElement {
       .hist-power { font-size: 0.85rem; font-weight: 500; color: var(--ink-mid); font-variant-numeric: tabular-nums; }
       .hist-power small { font-size: 0.75em; font-weight: 400; color: var(--ink-dim); margin-left: 2px; }
       .hist-price { font-size: 12px; color: var(--ink-mid); white-space: nowrap; font-variant-numeric: tabular-nums; }
+      .hist-fee   { font-size: 12px; color: var(--ink-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
       .hist-cost { font-size: 1.05rem; font-weight: 700; color: var(--ink); white-space: nowrap; font-variant-numeric: tabular-nums; }
       .hist-card .hist-actions { display: flex; gap: 4px; }
       .hist-row .hist-actions { display: flex; gap: 6px; margin-top: 6px; justify-content: flex-end; }
