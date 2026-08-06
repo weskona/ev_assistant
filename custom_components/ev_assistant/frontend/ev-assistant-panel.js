@@ -702,6 +702,18 @@ class EVAssistantPanel extends HTMLElement {
           </div>
           <div class="vh-bottom-divider"></div>
           <div class="vh-bottom-col">
+            <div class="sub-head">Kosten</div>
+            <div class="km-grid km-grid-1col">
+              <div class="km-col">
+                <div class="km-item"><span class="km-label">Heute</span><span class="km-val vh-cost-day">—</span><span class="km-unit">EUR</span></div>
+                <div class="km-item"><span class="km-label">Woche</span><span class="km-val vh-cost-week">—</span><span class="km-unit">EUR</span></div>
+                <div class="km-item"><span class="km-label">Monat</span><span class="km-val vh-cost-month">—</span><span class="km-unit">EUR</span></div>
+                <div class="km-item"><span class="km-label">Jahr</span><span class="km-val vh-cost-year">—</span><span class="km-unit">EUR</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="vh-bottom-divider"></div>
+          <div class="vh-bottom-col">
             <div class="sub-head">Verbrenner-Vergleich</div>
             <div class="sav-grid">
               <div class="km-item"><span class="km-label">Ersparnis</span><span class="km-val green vh-sav-ersparnis">—</span><span class="km-unit">EUR</span></div>
@@ -882,6 +894,10 @@ class EVAssistantPanel extends HTMLElement {
       vhAvgYear:      q(".vh-avg-year"),
       vhYearProj:     q(".vh-year-proj"),
       vhAnnualReg:    q(".vh-annual-reg"),
+      vhCostDay:      q(".vh-cost-day"),
+      vhCostWeek:     q(".vh-cost-week"),
+      vhCostMonth:    q(".vh-cost-month"),
+      vhCostYear:     q(".vh-cost-year"),
 
       vhEfficiency:    q(".vh-efficiency"),
       vhSavings:       q(".vh-savings"),
@@ -1348,6 +1364,10 @@ class EVAssistantPanel extends HTMLElement {
     r.vhAvgYear.textContent      = this._num("odo_avg_year", 0);
     r.vhYearProj.textContent     = this._num("odo_year_projected", 0);
     r.vhAnnualReg.textContent    = this._num("odo_annual_from_reg", 0);
+    r.vhCostDay.textContent      = this._num("cost_day", 2);
+    r.vhCostWeek.textContent     = this._num("cost_week", 2);
+    r.vhCostMonth.textContent    = this._num("cost_month", 2);
+    r.vhCostYear.textContent     = this._num("cost_year", 2);
     r.vhEfficiency.textContent   = this._num("measured_efficiency", 1);
     r.vhSavings.textContent      = this._num("savings", 2);
 
@@ -1645,6 +1665,10 @@ class EVAssistantPanel extends HTMLElement {
           <label>kWh<input type="text" inputmode="decimal" class="hf-kwh" value="${h.kwh}"></label>
           <label>EUR/kWh<input type="text" inputmode="decimal" class="hf-price" value="${h.preis_kwh}"></label>
           <label>Startgebühr €<input type="text" inputmode="decimal" class="hf-fee" value="${h.startgebuehr || 0}"></label>
+          <label>Start<input type="datetime-local" class="hf-start-ts" value="${this._toDatetimeLocal(h.start_ts)}"></label>
+          <label>Ende<input type="datetime-local" class="hf-end-ts" value="${this._toDatetimeLocal(endTs)}"></label>
+          <label>SoC Start (%)<input type="text" inputmode="decimal" class="hf-soc-start" value="${h.soc_start ?? ""}"></label>
+          <label>SoC Ende (%)<input type="text" inputmode="decimal" class="hf-soc-end" value="${h.soc_end ?? ""}"></label>
           <button class="btn btn-primary hf-save">Speichern</button>
           <button class="btn btn-ghost hf-cancel">Abbrechen</button>
         </div>
@@ -1661,11 +1685,23 @@ class EVAssistantPanel extends HTMLElement {
       });
       row.querySelector(".hf-cancel").addEventListener("click", () => form.classList.add("hidden"));
       row.querySelector(".hf-save").addEventListener("click", () => {
-        const kwh = parseFloat(row.querySelector(".hf-kwh").value.replace(",", "."));
-        const price = parseFloat(row.querySelector(".hf-price").value.replace(",", "."));
-        const fee = parseFloat(row.querySelector(".hf-fee").value.replace(",", "."));
-        if (isNaN(kwh) || isNaN(price)) return;
-        this._call("edit_charge", { erfasst_ts: ts, kwh, price_kwh: price, start_fee: isNaN(fee) ? 0 : fee });
+        const num = (sel) => {
+          const raw = row.querySelector(sel).value.trim().replace(",", ".");
+          if (raw === "") return null;
+          const v = parseFloat(raw);
+          return isNaN(v) ? null : v;
+        };
+        const payload = { erfasst_ts: ts };
+        const kwh = num(".hf-kwh"); if (kwh != null) payload.kwh = kwh;
+        const price = num(".hf-price"); if (price != null) payload.price_kwh = price;
+        const fee = num(".hf-fee"); if (fee != null) payload.start_fee = fee;
+        const startTsVal = this._fromDatetimeLocal(row.querySelector(".hf-start-ts").value);
+        if (startTsVal != null) payload.start_ts = startTsVal;
+        const endTsVal = this._fromDatetimeLocal(row.querySelector(".hf-end-ts").value);
+        if (endTsVal != null) payload.end_ts = endTsVal;
+        const socStart = num(".hf-soc-start"); if (socStart != null) payload.soc_start = socStart;
+        const socEnd = num(".hf-soc-end"); if (socEnd != null) payload.soc_end = socEnd;
+        this._call("edit_charge", payload);
         form.classList.add("hidden");
       });
       row.querySelector(".hist-delete").addEventListener("click", () => {
@@ -2535,10 +2571,11 @@ class EVAssistantPanel extends HTMLElement {
       /* Farbige Summary-Cards — HA Energiedashboard-Farben */
       :host { --c-home: #ff9800; --c-ext: #488fc2; --c-trip: #14b8a6; --c-solar: #4ade80; }
 
-      /* Fahrzeug-Card Unterer Bereich: 2-Spalten-Grid */
-      .vh-bottom-grid { display: grid; grid-template-columns: 1fr auto 1fr; gap: 0; margin-top: 0; }
+      /* Fahrzeug-Card Unterer Bereich: 3-Spalten-Grid (Kilometerleistung | Kosten | Verbrenner-Vergleich) */
+      .vh-bottom-grid { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; gap: 0; margin-top: 0; }
       .vh-bottom-col { min-width: 0; }
       .vh-bottom-divider { width: 1px; background: var(--line); margin: 0 16px; }
+      .km-grid-1col { grid-template-columns: 1fr; }
       @media (max-width: 500px) {
         .vh-bottom-grid { grid-template-columns: 1fr; }
         .vh-bottom-divider { width: auto; height: 1px; margin: 12px 0; }

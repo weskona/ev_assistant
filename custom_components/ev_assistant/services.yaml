@@ -93,13 +93,15 @@ discard_pending:
 edit_charge:
   name: Fremdladung nachträglich korrigieren
   description: >
-    Korrigiert kWh und/oder Preis eines bereits erfassten Historien-
-    Eintrags nachtraeglich (z.B. Tippfehler beim Erfassen bemerkt). Die
-    Gesamtsummen (kWh/Kosten) werden um die Differenz angepasst, die
-    Anzahl bleibt unveraendert. Der zu korrigierende Eintrag wird ueber
-    erfasst_ts identifiziert (Wert aus dessen erfasst_ts-Attribut in der
-    Historie). Ohne start_fee bleibt dessen zuvor erfasste Start-/
-    Blockiergebühr unveraendert.
+    Korrigiert einen bereits bestätigten Historien-Eintrag nachträglich
+    (z.B. Tippfehler beim Erfassen bemerkt). Alle Felder außer
+    config_entry_id/erfasst_ts sind optional -- nur mitgegebene Werte
+    werden geändert. Ändern sich kwh/price_kwh/start_fee, wird kosten aus
+    den effektiven (neuen oder bisherigen) Werten neu berechnet und die
+    Gesamtsummen (kWh/Kosten) um die Differenz angepasst. Ändern sich
+    soc_start/soc_end, wird delta_soc automatisch neu berechnet. Der zu
+    korrigierende Eintrag wird über erfasst_ts identifiziert (Wert aus
+    dessen erfasst_ts-Attribut in der Historie).
   fields:
     config_entry_id:
       name: Fahrzeug
@@ -119,7 +121,7 @@ edit_charge:
     kwh:
       name: Geladene kWh
       description: Korrigierte Energiemenge.
-      required: true
+      required: false
       example: 21.4
       selector:
         number:
@@ -131,7 +133,7 @@ edit_charge:
     price_kwh:
       name: Preis pro kWh
       description: Korrigierter Preis pro Kilowattstunde.
-      required: true
+      required: false
       example: 0.59
       selector:
         number:
@@ -154,6 +156,41 @@ edit_charge:
           step: 0.01
           unit_of_measurement: EUR
           mode: box
+    start_ts:
+      name: Startzeit (Unix)
+      required: false
+      example: 1751884800
+      selector:
+        number:
+          mode: box
+    end_ts:
+      name: Endzeit (Unix)
+      description: >
+        Optional. Wird zusammen mit dem (neuen oder bisherigen) start_ts
+        in die Ladedauer umgerechnet.
+      required: false
+      example: 1751886600
+      selector:
+        number:
+          mode: box
+    soc_start:
+      name: SoC Start (%)
+      required: false
+      example: 32
+      selector:
+        number:
+          mode: box
+          min: 0
+          max: 100
+    soc_end:
+      name: SoC Ende (%)
+      required: false
+      example: 74
+      selector:
+        number:
+          mode: box
+          min: 0
+          max: 100
 
 delete_charge:
   name: Fremdladung löschen

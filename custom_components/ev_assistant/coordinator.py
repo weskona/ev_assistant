@@ -1538,13 +1538,25 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.async_set_updated_data(self.data)
 
     async def async_edit_charge(
-        self, erfasst_ts: int, kwh: float, price: float, start_fee: Optional[float] = None
+        self,
+        erfasst_ts: int,
+        kwh: Optional[float] = None,
+        price: Optional[float] = None,
+        start_fee: Optional[float] = None,
+        start_ts: Optional[float] = None,
+        end_ts: Optional[float] = None,
+        soc_start: Optional[float] = None,
+        soc_end: Optional[float] = None,
     ) -> bool:
-        """Korrigiert einen bereits bestaetigten Historien-Eintrag (z.B.
-        Tippfehler bei kWh/Preis beim Erfassen bemerkt). `start_fee`
-        optional -- ohne Angabe bleibt die zuvor erfasste Start-/
-        Blockiergebuehr des Eintrags unveraendert (siehe async_log_charge()).
-        Passt die laufenden Summen um die Differenz an statt sie aus der
+        """Korrigiert einen bereits bestaetigten Historien-Eintrag -- alle
+        Felder optional, nur mitgegebene Werte werden geaendert (analog
+        async_edit_trip()). kwh/price/start_fee: fehlende Werte bleiben
+        unveraendert, kosten wird aus den effektiven (neuen oder bisherigen)
+        Werten neu berechnet (engine.charge_cost()). end_ts wird nicht
+        direkt gespeichert, sondern zusammen mit dem effektiven start_ts zu
+        dauer_min umgerechnet (dieselbe Ableitung wie beim Bestaetigen).
+        soc_start/soc_end: delta_soc wird neu berechnet. Passt die
+        laufenden Summen (kwh/kosten) um die Differenz an statt sie aus der
         Historie neu zu berechnen. Gibt False zurueck, wenn kein Eintrag mit
         erfasst_ts gefunden wurde."""
         history = self.data.get("history") or []
@@ -1552,8 +1564,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             if rec.get("erfasst_ts") == erfasst_ts:
                 old_kwh = rec["kwh"]
                 old_kosten = rec["kosten"]
-                kwh = round(float(kwh), 2)
-                price = round(float(price), 4)
+                kwh = round(float(kwh), 2) if kwh is not None else rec["kwh"]
+                price = round(float(price), 4) if price is not None else rec["preis_kwh"]
                 fee = round(float(start_fee), 2) if start_fee is not None else rec.get("startgebuehr", 0.0)
                 kosten = charge_cost(kwh, price, fee)
                 totals = self.data["totals"]
@@ -1563,6 +1575,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 rec["preis_kwh"] = price
                 rec["startgebuehr"] = fee
                 rec["kosten"] = kosten
+                if start_ts is not None:
+                    rec["start_ts"] = start_ts
+                if end_ts is not None and rec.get("start_ts") is not None:
+                    rec["dauer_min"] = round((end_ts - rec["start_ts"]) / 60.0, 1)
+                if soc_start is not None:
+                    rec["soc_start"] = round(float(soc_start), 1)
+                if soc_end is not None:
+                    rec["soc_end"] = round(float(soc_end), 1)
+                if soc_start is not None or soc_end is not None:
+                    if rec.get("soc_start") is not None and rec.get("soc_end") is not None:
+                        rec["delta_soc"] = round(rec["soc_end"] - rec["soc_start"], 1)
                 if history[0] is rec:
                     self.data["last_price"] = price
                 await self._save()

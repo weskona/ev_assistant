@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.41.0] - 2026-08-06
+
+### Added
+
+- **Cost column in the vehicle card**: a new column between the km grid and the ICE comparison shows combined home + external charging cost for today/week/month/year, from the existing `cost_day`/`cost_week`/`cost_month`/`cost_year` sensors (introduced in 0.36.0, not previously surfaced in the panel).
+
+## [0.40.0] - 2026-08-06
+
+### Changed
+
+- **`edit_charge` now supports correcting any field of an external-charge history entry, not just kWh/price**: `kwh`/`price_kwh` are now optional (only given fields change, same model as `edit_trip`), and new optional fields `start_ts`, `end_ts`, `soc_start`, `soc_end` were added. `kosten` is always re-derived from the effective kWh/price/fee; `soc_start`/`soc_end` changes recompute `delta_soc`; `end_ts` is converted to `dauer_min` together with the effective `start_ts`. The panel's history edit form gained matching Start/End/SoC fields.
+
 ## [0.39.0] - 2026-08-06
 
 ### Added

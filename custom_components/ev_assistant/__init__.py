@@ -177,9 +177,13 @@ SIMULATE_SCHEMA = vol.Schema({
 EDIT_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
     vol.Required("erfasst_ts"): vol.Coerce(int),
-    vol.Required("kwh"): vol.Coerce(float),
-    vol.Required("price_kwh"): vol.Coerce(float),
+    vol.Optional("kwh"): vol.Coerce(float),
+    vol.Optional("price_kwh"): vol.Coerce(float),
     vol.Optional("start_fee"): vol.Coerce(float),
+    vol.Optional("start_ts"): vol.Coerce(float),
+    vol.Optional("end_ts"): vol.Coerce(float),
+    vol.Optional("soc_start"): vol.Coerce(float),
+    vol.Optional("soc_end"): vol.Coerce(float),
 })
 
 DELETE_SCHEMA = vol.Schema({
@@ -287,8 +291,14 @@ def _register_services(hass: HomeAssistant) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
             await coordinator.async_edit_charge(
-                call.data["erfasst_ts"], call.data["kwh"], call.data["price_kwh"],
+                call.data["erfasst_ts"],
+                call.data.get("kwh"),
+                call.data.get("price_kwh"),
                 call.data.get("start_fee"),
+                call.data.get("start_ts"),
+                call.data.get("end_ts"),
+                call.data.get("soc_start"),
+                call.data.get("soc_end"),
             )
 
     async def _handle_delete(call: ServiceCall) -> None:
