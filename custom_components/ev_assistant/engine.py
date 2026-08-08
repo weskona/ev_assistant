@@ -165,6 +165,18 @@ class ChargeDetector:
             self._anchor_ts = s.ts
             return None
         if s.soc - self._anchor_soc >= self.start_delta:
+            if s.plugged_in is False:
+                # Bestaetigt AUSGESTECKT (siehe SignalDebouncer) -- ein SoC-
+                # Anstieg kann dann keine Fremdladung sein, sondern ist z.B.
+                # Rekuperation (Bremsenergie-Rueckgewinnung) waehrend der
+                # Fahrt. Anker trotzdem auf den neuen (hoeheren) Wert
+                # nachfuehren, sonst wuerde derselbe Anstieg bei der naechsten
+                # Messung erneut ausgewertet. Kein Steckersensor konfiguriert
+                # (plugged_in bleibt immer None): unveraendertes Verhalten,
+                # ein SoC-Anstieg startet weiterhin eine Erkennung.
+                self._anchor_soc = s.soc
+                self._anchor_ts = s.ts
+                return None
             self._active = True
             self._start_ts = self._anchor_ts
             self._start_soc = self._anchor_soc

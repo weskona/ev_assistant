@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.42.0] - 2026-08-08
+
+### Fixed
+
+- **A brief regenerative-braking SoC uptick while driving (unplugged) could be misdetected as the start of an external charge**: the charge detector only checked the confirmed plug state (`plug_entity`) when deciding whether to *end* a session, not when deciding whether to *start* one — so a few percentage points of recovered SoC from regen braking, with no external charger involved at all, could kick off a spurious "Fremdladung". With a `plug_entity` configured, a SoC rise now only starts a new detection while the vehicle is confirmed plugged in; a rise while confirmed unplugged just moves the internal reference point forward instead (so the same recovered SoC isn't re-evaluated on the next reading). Setups without `plug_entity` configured are unaffected — SoC rises still start detection as before.
+
 ## [0.41.0] - 2026-08-06
 
 ### Added

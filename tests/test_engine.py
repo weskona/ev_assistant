@@ -111,6 +111,33 @@ def test_plugged_in_none_faellt_auf_idle_timeout_zurueck():
     assert (ev.soc_start, ev.soc_end) == (30, 50)
 
 
+def test_soc_anstieg_bei_bestaetigt_ausgesteckt_startet_keine_ladung():
+    # Bestaetigt ausgesteckt (z.B. Rekuperation waehrend der Fahrt) -- ein
+    # SoC-Anstieg darf dann keine Fremdladung starten.
+    det = ChargeDetector(start_delta=3.0)
+    samples = stream([70, 73], start_ts=0, step=30, plug=False)
+    assert run(det, samples) == []
+
+
+def test_soc_anstieg_bei_ausgesteckt_verschiebt_anker_statt_erneut_zu_triggern():
+    # Nach einem ignorierten Anstieg (Rekuperation) darf derselbe Anstieg bei
+    # der naechsten Messung nicht nochmal ausgewertet werden -- der Anker
+    # wird auf den neuen (hoeheren) Wert nachgefuehrt.
+    det = ChargeDetector(start_delta=3.0)
+    run(det, stream([70, 73], start_ts=0, step=30, plug=False))
+    # Kein weiterer Anstieg -- bleibt bei 73, keine Ladung.
+    assert run(det, stream([73], start_ts=60, plug=False)) == []
+
+
+def test_soc_anstieg_bei_eingesteckt_startet_ladung_normal():
+    # Gegenprobe: mit bestaetigt eingestecktem Stecker startet derselbe
+    # SoC-Anstieg ganz normal eine Fremdladung.
+    det = ChargeDetector(start_delta=3.0, idle_timeout_s=60)
+    run(det, stream([70, 73], start_ts=0, step=30, plug=True))
+    ev = run(det, stream([73], start_ts=200, plug=False))[0]
+    assert (ev.soc_start, ev.soc_end) == (70, 73)
+
+
 # ----- SignalDebouncer: Flacker-/Aussetzer-Filterung -------------------------
 
 def test_plug_debouncer_unbekannt_vor_erster_bestaetigung():
