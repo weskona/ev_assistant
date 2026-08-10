@@ -23,10 +23,11 @@ from .const import (
     CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_EVCC_STAT_AVG_PRICE, CONF_EVCC_STAT_TOTAL_KWH,
     CONF_EVCC_VEHICLE_NAME, CONF_GPS_ENTITY, CONF_HOME_ENTITY,
     CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
-    CONF_IDLE_TIMEOUT, CONF_MOTOR_DEBOUNCE, CONF_MOTOR_ENTITY, CONF_NOISE, CONF_NOTIFY_SERVICE,
+    CONF_IDLE_TIMEOUT, CONF_MOTOR_DEBOUNCE, CONF_MOTOR_ENTITY, CONF_NOISE,
+    CONF_NOTIFY_ENTITIES, CONF_NOTIFY_EVENTS,
     CONF_PLUG_DEBOUNCE, CONF_PLUG_ENTITY,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE, CONF_PV_FORECAST_ENTITY,
-    CONF_ODO_ENTITY, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE,
+    CONF_ODO_ENTITY, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_THRESHOLDS,
     CONF_START_DELTA, CONF_TRIP_AUTO_CONFIRM, CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM, CONF_USABLE_KWH,
     CONF_USAGE_PROFILE_BUFFER_PCT,
     CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL,
@@ -35,14 +36,16 @@ from .const import (
     CONF_WALLBOX_ENERGY_TEMPLATE,
     DEFAULT_CO2_PER_KWH_G, DEFAULT_CO2_PER_LITER_KG,
     DEFAULT_DROP_ENDS, DEFAULT_EFFICIENCY,
-    DEFAULT_IDLE_TIMEOUT, DEFAULT_MOTOR_DEBOUNCE, DEFAULT_NOISE, DEFAULT_PLUG_DEBOUNCE, DEFAULT_POWER_IS_AC,
-    DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
+    DEFAULT_IDLE_TIMEOUT, DEFAULT_MOTOR_DEBOUNCE, DEFAULT_NOISE, DEFAULT_NOTIFY_EVENTS,
+    DEFAULT_PLUG_DEBOUNCE, DEFAULT_POWER_IS_AC,
+    DEFAULT_SOC_THRESHOLDS, DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
     DEFAULT_TRIP_AUTO_CONFIRM, DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH, DEFAULT_USAGE_PROFILE_BUFFER_PCT, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
     EFF_MAX_EFFICIENCY, EFF_MIN_SAMPLES, EFF_MIN_SOC_DELTA,
     EVENT_DELETED, EVENT_EDITED, EVENT_LOGGED, EVENT_PENDING, EVENT_TRIP_DELETED,
     EVENT_TRIP_EDITED, EVENT_TRIP_IMPORTED, EVENT_TRIP_LOGGED, EVENT_TRIP_PENDING,
-    MILES_TO_KM, MIN_USAGE_PROFILE_DAYS, NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
+    MILES_TO_KM, MIN_USAGE_PROFILE_DAYS, NOTIFY_EVENT_FAHRT, NOTIFY_EVENT_FREMDLADUNG,
+    NOTIFY_EVENT_SOC_SCHWELLE, NOTIFY_EVENT_TANKERKOENIG, NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
 )
 from .engine import (
     ChargeDetector, ChargeSample, EfficiencyCalibrator, SignalDebouncer, TripDetector, TripSample,
@@ -83,6 +86,7 @@ def _empty_data() -> dict:
         "savings_home_kwh_start": None,
         "savings_home_cost_start": None,
         "detector_state": None,
+        "soc_thresholds_notified": [],
         "plug_debounce_state": None,
         "motor_debounce_state": None,
         "verbrenner_price_last": None,
@@ -908,9 +912,32 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         )
         event = self._detector.update(sample)
         self.data["detector_state"] = self._detector.get_state()
+        self._check_soc_thresholds()
         await self._save()
         if event is not None:
             await self._handle_pending(event.as_dict())
+
+    def _check_soc_thresholds(self) -> None:
+        """Benachrichtigung, wenn der SoC waehrend eines laufenden
+        Ladevorgangs (Heim- ODER Fremdladung) einen der konfigurierten
+        Schwellenwerte ueberschreitet. Der Satz bereits gemeldeter
+        Schwellen wird persistiert (ueberlebt einen HA-Neustart mitten in
+        der Session) und erst zurueckgesetzt, sobald das Laden endet --
+        ein erneuter Anstieg danach ist eine neue Session."""
+        thresholds = [int(v) for v in self._opt(CONF_SOC_THRESHOLDS, DEFAULT_SOC_THRESHOLDS)]
+        if not thresholds or self._soc is None:
+            return
+        is_charging = bool(self._home) or self._detector.active
+        if not is_charging:
+            if self.data.get("soc_thresholds_notified"):
+                self.data["soc_thresholds_notified"] = []
+            return
+        notified = set(self.data.get("soc_thresholds_notified") or [])
+        for t in sorted(thresholds):
+            if t not in notified and self._soc >= t:
+                notified.add(t)
+                self.hass.async_create_task(self._notify_soc_threshold(t))
+        self.data["soc_thresholds_notified"] = sorted(notified)
 
     async def _periodic_check(self, _now) -> None:
         """Stoesst _run_detection()/_run_trip_detection() auch ohne neue
@@ -1090,28 +1117,60 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 ]
                 message = f"{len(pending_list)} offene Fremdladungen:\n" + "\n".join(lines) + "\nkWh und Preis eintragen."
 
-        notify_service = self._opt(CONF_NOTIFY_SERVICE)
-        if notify_service:
-            try:
-                await self.hass.services.async_call(
-                    "notify", notify_service,
-                    {
-                        "title": title,
-                        "message": message,
-                        "data": {
-                            "tag": self._notify_tag,
-                            "persistent": True,
-                            "actions": [{"action": "URI", "title": "Enter" if en else "Eintragen", "uri": "/lovelace"}],
-                        },
-                    },
-                    blocking=False,
-                )
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.warning("notify.%s fehlgeschlagen: %s", notify_service, err)
+        await self._push(
+            NOTIFY_EVENT_FREMDLADUNG, title, message,
+            data={
+                "tag": self._notify_tag,
+                "persistent": True,
+                "actions": [{"action": "URI", "title": "Enter" if en else "Eintragen", "uri": "/lovelace"}],
+            },
+        )
         try:
             await self.hass.services.async_call(
                 "persistent_notification", "create",
                 {"notification_id": self._notify_tag, "title": title, "message": message},
+                blocking=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    async def _push(
+        self, event_key: str, title: str, message: str, data: Optional[dict] = None,
+    ) -> None:
+        """Sendet eine Push-Benachrichtigung an die konfigurierten Notify-
+        Entitaeten (moderne, entity-basierte Notify-Plattform), aber nur
+        wenn event_key zu den in Schritt 4 ausgewaehlten Ereignissen gehoert
+        (siehe const.py::NOTIFY_EVENTS) -- die persistent_notification im
+        HA-Bereich "Benachrichtigungen" erscheint davon unabhaengig immer
+        und wird von den Aufrufern separat erzeugt."""
+        events = self._opt(CONF_NOTIFY_EVENTS, DEFAULT_NOTIFY_EVENTS)
+        entities = self._opt(CONF_NOTIFY_ENTITIES)
+        if event_key not in events or not entities:
+            return
+        payload = {"entity_id": entities, "title": title, "message": message}
+        if data:
+            payload["data"] = data
+        try:
+            await self.hass.services.async_call("notify", "send_message", payload, blocking=False)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("notify.send_message fehlgeschlagen: %s", err)
+
+    async def _notify_soc_threshold(self, threshold: int) -> None:
+        """Push + persistent_notification, wenn der SoC waehrend eines
+        laufenden Ladevorgangs threshold erreicht -- siehe
+        _check_soc_thresholds()."""
+        en = self._en()
+        title = f"{threshold}% SoC reached" if en else f"{threshold} % SoC erreicht"
+        message = (
+            f"Vehicle battery reached {threshold}%."
+            if en else
+            f"Fahrzeug-Akku hat {threshold} % erreicht."
+        )
+        await self._push(NOTIFY_EVENT_SOC_SCHWELLE, title, message)
+        try:
+            await self.hass.services.async_call(
+                "persistent_notification", "create",
+                {"notification_id": f"{self._notify_tag}_soc_{threshold}", "title": title, "message": message},
                 blocking=False,
             )
         except Exception:  # noqa: BLE001
@@ -1162,6 +1221,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 title = f"{len(pending_list)} Fahrten erkannt"
                 message = f"{len(pending_list)} offene Fahrten:\n" + "\n".join(lines) + "\nStart-/Zielort eintragen."
 
+        await self._push(
+            NOTIFY_EVENT_FAHRT, title, message,
+            data={
+                "tag": f"{self._notify_tag}_trip",
+                "persistent": True,
+                "actions": [{"action": "URI", "title": "Enter" if en else "Eintragen", "uri": "/lovelace"}],
+            },
+        )
         try:
             await self.hass.services.async_call(
                 "persistent_notification", "create",
@@ -1197,6 +1264,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "Kraftstoffpreis gelesen werden — der Kostenvergleich rechnet "
             "stattdessen mit dem letzten bekannten bzw. festen Fallback-Preis weiter."
         )
+        await self._push(NOTIFY_EVENT_TANKERKOENIG, title, message)
         try:
             await self.hass.services.async_call(
                 "persistent_notification", "create",

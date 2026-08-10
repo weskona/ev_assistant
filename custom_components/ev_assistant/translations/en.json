@@ -16,26 +16,40 @@
       },
       "evcc": {
         "title": "EV Assistant - evcc & Wallbox",
-        "description": "Step 2/7: Wallbox and site entities (charge power, PV, grid, tariffs, statistics) are automatically imported from the evcc integration. Only needed here: the vehicle name in evcc (filters home-charging history) and the power entity of your wallbox. The wallbox power entity is used for yes/no detection of 'currently charging at home' — without it, every SoC increase will be incorrectly classified as external charging.",
+        "description": "Step 2/7: Wallbox and site entities (charge power, PV, grid, tariffs, statistics) are automatically imported from the evcc integration. Only needed here: the vehicle name in evcc (filters home-charging history) and the power entity of your wallbox. The wallbox power entity is used ONLY for yes/no detection of 'currently charging at home' (not an energy value, and it naturally only reports anything while at home) — without it, every SoC increase will be incorrectly classified as external charging. For energy measurement during external charging, see step 3 (vehicle charge power, from vehicle telemetry).",
         "data": {
           "evcc_vehicle_name": "Vehicle name in evcc",
           "home_entity": "Wallbox charge power"
+        },
+        "data_description": {
+          "home_entity": "Just a yes/no threshold (>0.1 kW = 'currently charging at home') — not an energy value, and only reports anything while the vehicle is plugged into this wallbox."
         }
       },
       "ladeleistung": {
         "title": "EV Assistant - Charge Power",
-        "description": "Step 3/7: optional vehicle charge power and wallbox energy measurement. The vehicle charge power improves energy estimates for external charging sessions. The wallbox energy meter is a cumulative kWh counter — it enables charging efficiency calibration and home-charging cost tracking in step 7.",
+        "description": "Step 3/7: optional vehicle charge power and wallbox energy measurement. The vehicle charge power improves energy estimates for external charging sessions — unlike the wallbox power entity from step 2, it comes from vehicle telemetry and therefore also reports values away from your own wallbox. The wallbox energy meter is a cumulative kWh counter and is only evaluated during home charging: it calibrates the real charging efficiency from it (which then replaces the initial value from step 1, e.g. for SoC-based estimates during external charging) and, with variable tariffs, weights the home electricity price for step 7 by the amount actually charged.",
         "data": {
           "power_entity": "Vehicle charge power (W/kW)",
           "power_is_ac": "Charge power is AC-side (charge point) not DC-side (battery)",
           "wallbox_energy_entity": "Wallbox energy meter (cumulative kWh counter)"
+        },
+        "data_description": {
+          "power_is_ac": "Only relevant if a vehicle charge power sensor is set above — without it, this setting has no effect.",
+          "wallbox_energy_entity": "Only active during home charging: calibrates the real charging efficiency from it (replaces the initial value from step 1) and weights the home electricity price for step 7 by the amount actually charged."
         }
       },
       "ausgabe": {
         "title": "EV Assistant - Notifications",
-        "description": "Step 4/7: how you get notified about a detected external charging session. A notification in the HA 'Notifications' area appears AUTOMATICALLY — a notify service additionally sends a push message (e.g. to your phone).",
+        "description": "Step 4/7: push target devices and what triggers a notification. A notification in the HA 'Notifications' area ALWAYS appears automatically for external charging, trips, and Tankerkönig outages, regardless of the selection below — the selected notify target devices additionally receive a push (e.g. to your phone), but only for the events selected here. SoC thresholds only trigger a push and apply to any charging session in progress, whether at home or away.",
         "data": {
-          "notify_service": "notify service for push notification"
+          "notify_entities": "Notify target devices (push)",
+          "notify_events": "Events that trigger a push",
+          "soc_thresholds": "SoC thresholds (%)"
+        },
+        "data_description": {
+          "notify_entities": "One or more notify entities (phone, tablet, email, ...). Without a selection, you only get the notification in the HA 'Notifications' area, no push.",
+          "notify_events": "Only controls whether a push is additionally sent to the notify target devices above — the notification in the HA 'Notifications' area always appears for external charging/trips/Tankerkönig regardless.",
+          "soc_thresholds": "Only triggers a push if 'SoC threshold reached' is selected above and at least one notify target device is set. Applies to any charging session in progress (home or external)."
         }
       },
       "erkennung": {
@@ -103,22 +117,36 @@
         "data": {
           "evcc_vehicle_name": "Vehicle name in evcc",
           "home_entity": "Wallbox charge power"
+        },
+        "data_description": {
+          "home_entity": "Just a yes/no threshold (>0.1 kW = 'currently charging at home') — not an energy value, and only reports anything while the vehicle is plugged into this wallbox."
         }
       },
       "ladeleistung": {
         "title": "EV Assistant - Charge Power",
-        "description": "Step 3/7: optional vehicle charge power and wallbox energy meter.",
+        "description": "Step 3/7: optional vehicle charge power (from vehicle telemetry — also reports data away from home) and wallbox energy meter (calibrates charging efficiency and the home-charging price for step 7).",
         "data": {
           "power_entity": "Vehicle charge power (W/kW)",
           "power_is_ac": "Charge power is AC-side (charge point) not DC-side (battery)",
           "wallbox_energy_entity": "Wallbox energy meter (cumulative kWh counter)"
+        },
+        "data_description": {
+          "wallbox_energy_entity": "Only active during home charging: calibrates the real charging efficiency from it (replaces the initial value from step 1) and weights the home electricity price for step 7 by the amount actually charged.",
+          "power_is_ac": "Only relevant if a vehicle charge power sensor is set above — without it, this setting has no effect."
         }
       },
       "ausgabe": {
         "title": "EV Assistant - Notifications",
-        "description": "Step 4/7: push notification for detected external charging sessions.",
+        "description": "Step 4/7: push target devices, events, and SoC thresholds for notifications.",
         "data": {
-          "notify_service": "notify service for push notification"
+          "notify_entities": "Notify target devices (push)",
+          "notify_events": "Events that trigger a push",
+          "soc_thresholds": "SoC thresholds (%)"
+        },
+        "data_description": {
+          "notify_entities": "One or more notify entities (phone, tablet, email, ...). Without a selection, you only get the notification in the HA 'Notifications' area, no push.",
+          "notify_events": "Only controls whether a push is additionally sent to the notify target devices above — the notification in the HA 'Notifications' area always appears for external charging/trips/Tankerkönig regardless.",
+          "soc_thresholds": "Only triggers a push if 'SoC threshold reached' is selected above and at least one notify target device is set. Applies to any charging session in progress (home or external)."
         }
       },
       "erkennung": {
@@ -163,6 +191,16 @@
     },
     "error": {
       "vehicle_name_required": "Please enter manufacturer and model."
+    }
+  },
+  "selector": {
+    "notify_event": {
+      "options": {
+        "fremdladung": "External charge detected",
+        "soc_schwelle": "SoC threshold reached",
+        "fahrt": "Trip detected",
+        "tankerkoenig": "Tankerkönig unavailable"
+      }
     }
   },
   "entity": {

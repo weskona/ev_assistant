@@ -2,6 +2,21 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.43.0] - 2026-08-10
+
+### Fixed
+
+- **Clearing an optional entity field via Configure (e.g. vehicle charge-power or wallbox energy meter) didn't actually remove it**: the options flow only ever wrote the new values into the config entry's `options`, while every read site falls back to `options.get(key) or data.get(key)` — so a field cleared in the form correctly disappeared from `options`, but the original value set during initial setup remained in `data` and kept being used regardless. The options flow now writes the fully-resolved configuration directly into `data` (fields outside the 7-step forms, e.g. legacy template overrides, are preserved untouched) and clears `options`, so a cleared field is actually gone afterwards.
+
+### Added
+
+- **Reworked notifications (step 4, "Notifications")**: the old free-text `notify_service` field is replaced by `notify_entities`, a multi-select picker for one or more modern `notify.*` target devices (phone, tablet, email, ...), sent via the unified `notify.send_message` service instead of the legacy per-service `notify.<name>` call. A new `notify_events` multi-select chooses which events additionally push to those devices — external charge detected (the previous, now-optional default), SoC threshold reached, trip detected, Tankerkönig unavailable. The persistent HA notification for external-charge/trip/Tankerkönig events keeps appearing automatically regardless of this selection.
+- **SoC threshold notifications**: a new `soc_thresholds` multi-select (50/60/70/80/90/100%) fires a notification once per threshold as the battery crosses it during any charging session in progress — home or external. The set of already-notified thresholds is persisted and resets once the session ends, so a restart mid-session doesn't cause repeats and a new session re-arms all thresholds.
+
+### Changed
+
+- Expanded the config-flow help text for `power_is_ac`, the wallbox charge-power entity (step 2), and the wallbox energy meter (step 3) to explain exactly when each setting has an effect (only with a vehicle charge-power sensor configured; only a home-charging on/off signal, never an energy value; only evaluated during home charging for efficiency calibration and price weighting).
+
 ## [0.42.0] - 2026-08-08
 
 ### Fixed

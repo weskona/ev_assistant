@@ -17,9 +17,10 @@ from .const import (
     CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_ERSTZULASSUNG, CONF_GPS_ENTITY, CONF_HOME_ENTITY,
     CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_IDLE_TIMEOUT,
     CONF_MOTOR_DEBOUNCE, CONF_MOTOR_ENTITY,
-    CONF_NOISE, CONF_NOTIFY_SERVICE, CONF_ODO_ENTITY, CONF_PLUG_DEBOUNCE, CONF_PLUG_ENTITY,
+    CONF_NOISE, CONF_NOTIFY_ENTITIES, CONF_NOTIFY_EVENTS, CONF_ODO_ENTITY,
+    CONF_PLUG_DEBOUNCE, CONF_PLUG_ENTITY,
     CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_PV_FORECAST_ENTITY,
-    CONF_SOC_ENTITY, CONF_START_DELTA,
+    CONF_SOC_ENTITY, CONF_SOC_THRESHOLDS, CONF_START_DELTA,
     CONF_TRIP_AUTO_CONFIRM, CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM, CONF_USAGE_PROFILE_BUFFER_PCT,
     CONF_USABLE_KWH, CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL,
     CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY, CONF_VERBRENNER_PRICE_PER_LITER,
@@ -35,9 +36,11 @@ from .const import (
     DEFAULT_CO2_PER_KWH_G,
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY, DEFAULT_IDLE_TIMEOUT, DEFAULT_MOTOR_DEBOUNCE, DEFAULT_NOISE, DEFAULT_PLUG_DEBOUNCE,
-    DEFAULT_POWER_IS_AC, DEFAULT_START_DELTA,
+    DEFAULT_NOTIFY_EVENTS,
+    DEFAULT_POWER_IS_AC, DEFAULT_SOC_THRESHOLDS, DEFAULT_START_DELTA,
     DEFAULT_TRIP_AUTO_CONFIRM, DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM, DEFAULT_USAGE_PROFILE_BUFFER_PCT,
     DEFAULT_USABLE_KWH, DOMAIN,
+    NOTIFY_EVENTS, SOC_THRESHOLD_OPTIONS,
 )
 
 _SOC_ENTITY = selector.EntitySelector(
@@ -86,6 +89,24 @@ _TANKERKOENIG_FUEL_TYPE = selector.SelectSelector(
 
 _EVCC_VEHICLE_NAME = selector.TextSelector(
     selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
+)
+_NOTIFY_ENTITIES = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="notify", multiple=True)
+)
+_NOTIFY_EVENTS = selector.SelectSelector(
+    selector.SelectSelectorConfig(
+        options=NOTIFY_EVENTS,
+        translation_key="notify_event",
+        multiple=True,
+        mode=selector.SelectSelectorMode.LIST,
+    )
+)
+_SOC_THRESHOLDS = selector.SelectSelector(
+    selector.SelectSelectorConfig(
+        options=[{"value": str(v), "label": f"{v} %"} for v in SOC_THRESHOLD_OPTIONS],
+        multiple=True,
+        mode=selector.SelectSelectorMode.LIST,
+    )
 )
 
 
@@ -206,9 +227,18 @@ def build_power_schema(cur: dict) -> vol.Schema:
 
 
 def build_output_schema(cur: dict) -> vol.Schema:
-    """Schritt 4: Push-Benachrichtigung."""
+    """Schritt 4: Wie (Zielgeraete) und wofuer (Ereignisse) benachrichtigt wird."""
+    def sv(key):
+        return {"suggested_value": cur.get(key)}
+
     return vol.Schema({
-        vol.Optional(CONF_NOTIFY_SERVICE, default=cur.get(CONF_NOTIFY_SERVICE, "")): str,
+        vol.Optional(CONF_NOTIFY_ENTITIES, description=sv(CONF_NOTIFY_ENTITIES)): _NOTIFY_ENTITIES,
+        vol.Optional(
+            CONF_NOTIFY_EVENTS, default=cur.get(CONF_NOTIFY_EVENTS, DEFAULT_NOTIFY_EVENTS)
+        ): _NOTIFY_EVENTS,
+        vol.Optional(
+            CONF_SOC_THRESHOLDS, default=cur.get(CONF_SOC_THRESHOLDS, DEFAULT_SOC_THRESHOLDS)
+        ): _SOC_THRESHOLDS,
     })
 
 
@@ -281,6 +311,16 @@ def build_comparison_schema(cur: dict) -> vol.Schema:
 
 def _has_vehicle_name(data: dict) -> bool:
     return bool(data.get(CONF_VEHICLE_HERSTELLER)) and bool(data.get(CONF_VEHICLE_MODELL))
+
+
+def _all_step_schema_keys() -> set[str]:
+    """Alle Config-Keys, die eines der 7 Options-Flow-Formulare abdeckt."""
+    schemas = (
+        build_vehicle_schema({}), build_evcc_schema({}), build_power_schema({}),
+        build_output_schema({}), build_detection_schema({}), build_trip_schema({}),
+        build_comparison_schema({}),
+    )
+    return {str(key) for schema in schemas for key in schema.schema}
 
 
 class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -467,7 +507,22 @@ class EvAssistantOptionsFlow(OptionsFlow):
             cleaned = _clean(user_input)
             self._data = {**self._data, **cleaned}
             self._data = {**self._data, **await _discover_evcc_entities(self.hass)}
-            return self.async_create_entry(title="", data=self._data)
+            # self._data ist an dieser Stelle bereits die vollstaendige,
+            # ueber alle 7 Schritte neu aufgebaute Konfiguration (geleerte
+            # Optionale fehlen absichtlich). Wuerde sie wie zuvor per
+            # async_create_entry(data=...) nur in entry.options geschrieben,
+            # wuerden geleerte Felder nie tatsaechlich entfernt: die
+            # Lesestellen (z.B. entry.options.get(key) or entry.data.get(key))
+            # fallen dann weiter auf den alten Wert aus entry.data zurueck,
+            # der von der Ersteinrichtung stammt und sonst nie angefasst wird.
+            # Deshalb direkt in entry.data schreiben (Keys ausserhalb der
+            # Formulare, z.B. Legacy-Templates, bleiben dabei unangetastet)
+            # und entry.options leeren.
+            step_keys = _all_step_schema_keys()
+            preserved = {k: v for k, v in self._entry.data.items() if k not in step_keys}
+            new_data = {**preserved, **self._data}
+            self.hass.config_entries.async_update_entry(self._entry, data=new_data)
+            return self.async_create_entry(title="", data={})
 
         return self.async_show_form(
             step_id="vergleich", data_schema=build_comparison_schema(self._current())

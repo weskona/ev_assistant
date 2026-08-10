@@ -15,7 +15,34 @@ CONF_POWER_ENTITY = "power_entity"
 CONF_POWER_TEMPLATE = "power_template"
 CONF_WALLBOX_ENERGY_ENTITY = "wallbox_energy_entity"
 CONF_WALLBOX_ENERGY_TEMPLATE = "wallbox_energy_template"
-CONF_NOTIFY_SERVICE = "notify_service"
+# Push-Benachrichtigungen: Zielgeraete (notify.*-Entitaeten der modernen,
+# entity-basierten Notify-Plattform statt der alten "notify.<service>"-
+# Aufrufe per Freitext) + welche Ereignisse ueberhaupt einen Push ausloesen
+# sollen. Die persistent_notification im HA-Bereich "Benachrichtigungen"
+# erscheint davon unabhaengig immer (siehe coordinator.py::_push()).
+CONF_NOTIFY_ENTITIES = "notify_entities"
+CONF_NOTIFY_EVENTS = "notify_events"
+
+NOTIFY_EVENT_FREMDLADUNG = "fremdladung"
+NOTIFY_EVENT_SOC_SCHWELLE = "soc_schwelle"
+NOTIFY_EVENT_FAHRT = "fahrt"
+NOTIFY_EVENT_TANKERKOENIG = "tankerkoenig"
+NOTIFY_EVENTS = [
+    NOTIFY_EVENT_FREMDLADUNG, NOTIFY_EVENT_SOC_SCHWELLE,
+    NOTIFY_EVENT_FAHRT, NOTIFY_EVENT_TANKERKOENIG,
+]
+# Verhaelt sich wie vor Einfuehrung der Auswahl: nur Fremdladung loeste einen
+# Push aus.
+DEFAULT_NOTIFY_EVENTS = [NOTIFY_EVENT_FREMDLADUNG]
+
+# SoC-Schwellenwerte (%) fuer eine Benachrichtigung waehrend eines laufenden
+# Ladevorgangs (Heim- ODER Fremdladung, siehe coordinator.py::
+# _check_soc_thresholds()). Feste Auswahl statt Freitext, um krumme/
+# widersinnige Werte auszuschliessen. Werte kommen als Strings aus dem
+# SelectSelector zurueck und werden erst beim Auswerten zu int.
+CONF_SOC_THRESHOLDS = "soc_thresholds"
+SOC_THRESHOLD_OPTIONS = [50, 60, 70, 80, 90, 100]
+DEFAULT_SOC_THRESHOLDS = []
 CONF_USABLE_KWH = "usable_kwh"
 CONF_EFFICIENCY = "charge_efficiency"
 CONF_POWER_IS_AC = "power_is_ac"

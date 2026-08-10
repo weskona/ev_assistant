@@ -117,6 +117,13 @@ class ChargeDetector:
             return self._update_idle(s)
         return self._update_charging(s)
 
+    @property
+    def active(self) -> bool:
+        """Ob aktuell eine Fremdladung erkannt/laeuft (fuer Signale, die von
+        aussen auf diesen Zustand reagieren muessen, z.B. SoC-Schwellenwert-
+        Benachrichtigungen -- siehe coordinator.py::_check_soc_thresholds())."""
+        return self._active
+
     def get_state(self) -> dict:
         """Momentaufnahme des Zustandsautomaten (Anker, laufende Session,
         Peak, ...) zum Persistieren -- siehe load_state(). Ohne das wuerde

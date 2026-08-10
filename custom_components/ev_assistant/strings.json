@@ -16,26 +16,40 @@
       },
       "evcc": {
         "title": "EV Assistant - evcc & Wallbox",
-        "description": "Schritt 2/7: Wallbox- und Standort-Entitäten (Ladeleistung, PV, Netz, Tarife, Statistiken) werden automatisch aus der evcc-Integration übernommen. Hier nur noch: Fahrzeugname in evcc (filtert die Heimladen-Historie) und die Leistungsentität deiner Wallbox. Die Wallbox-Leistungsentität dient der Ja/Nein-Erkennung \"lädt gerade zuhause\" — ohne sie wird jede SoC-Zunahme fälschlich als Fremdladen erkannt.",
+        "description": "Schritt 2/7: Wallbox- und Standort-Entitäten (Ladeleistung, PV, Netz, Tarife, Statistiken) werden automatisch aus der evcc-Integration übernommen. Hier nur noch: Fahrzeugname in evcc (filtert die Heimladen-Historie) und die Leistungsentität deiner Wallbox. Die Wallbox-Leistungsentität dient NUR der Ja/Nein-Erkennung \"lädt gerade zuhause\" (kein Energie-Messwert, liefert naturgemäß nur zuhause Werte) — ohne sie wird jede SoC-Zunahme fälschlich als Fremdladen erkannt. Für die Energie-Messung bei einer Fremdladung unterwegs siehe Schritt 3 (Fahrzeug-Ladeleistung, aus der Fahrzeug-Telemetrie).",
         "data": {
           "evcc_vehicle_name": "Fahrzeugname in evcc",
           "home_entity": "Wallbox Ladeleistung"
+        },
+        "data_description": {
+          "home_entity": "Nur ein Ja/Nein-Schwellwert (>0,1 kW = \"lädt gerade zuhause\") — kein Energie-Messwert und liefert nur Werte, während das Fahrzeug an dieser Wallbox hängt."
         }
       },
       "ladeleistung": {
         "title": "EV Assistant - Ladeleistung",
-        "description": "Schritt 3/7: optionale Ladeleistungs- und Wallbox-Energiemessung. Die Fahrzeug-Ladeleistung verbessert die Energie-Schätzung auch bei Fremdladungen unterwegs. Der Wallbox-Energiezähler ist ein kumulativer kWh-Zähler — er ermöglicht die Kalibrierung des Ladewirkungsgrads und die Heimladen-Kosten in Schritt 7.",
+        "description": "Schritt 3/7: optionale Ladeleistungs- und Wallbox-Energiemessung. Die Fahrzeug-Ladeleistung verbessert die Energie-Schätzung auch bei Fremdladungen unterwegs — im Unterschied zur Wallbox-Leistungsentität aus Schritt 2 kommt sie aus der Fahrzeug-Telemetrie und liefert daher auch abseits der eigenen Wallbox Werte. Der Wallbox-Energiezähler ist ein kumulativer kWh-Zähler und wird nur bei Heimladen ausgewertet: er kalibriert daraus den echten Ladewirkungsgrad (ersetzt danach den Startwert aus Schritt 1, z.B. für die SoC-Schätzung bei Fremdladungen) und gewichtet bei variablen Tarifen den Heimstrompreis für Schritt 7 nach tatsächlich geladener Menge.",
         "data": {
           "power_entity": "Fahrzeug-Ladeleistung (Watt/kW)",
           "power_is_ac": "Ladeleistung ist AC-seitig (Ladepunkt) statt DC-seitig (Batterie)",
           "wallbox_energy_entity": "Wallbox-Energiezähler (kumulativer kWh-Zähler)"
+        },
+        "data_description": {
+          "power_is_ac": "Wirkt sich nur aus, wenn oben eine Fahrzeug-Ladeleistung eingetragen ist — ohne sie hat diese Einstellung keine Wirkung.",
+          "wallbox_energy_entity": "Nur bei Heimladen aktiv: kalibriert daraus den echten Ladewirkungsgrad (ersetzt den Startwert aus Schritt 1) und gewichtet den Heimstrompreis für Schritt 7 nach tatsächlich geladener Menge."
         }
       },
       "ausgabe": {
-        "title": "EV Assistant - Ausgabe",
-        "description": "Schritt 4/7: wie du zusätzlich über eine erkannte Fremdladung informiert wirst. Eine Benachrichtigung im HA-Bereich \"Benachrichtigungen\" erscheint IMMER automatisch — ein notify-Service schickt zusätzlich eine Push-Nachricht (z.B. aufs Handy).",
+        "title": "EV Assistant - Benachrichtigungen",
+        "description": "Schritt 4/7: Push-Zielgeräte und wofür benachrichtigt wird. Eine Benachrichtigung im HA-Bereich \"Benachrichtigungen\" erscheint bei Fremdladung, Fahrt und Tankerkönig-Ausfall IMMER automatisch, unabhängig von der Auswahl unten — die ausgewählten Notify-Zielgeräte erhalten zusätzlich einen Push (z.B. aufs Handy), aber nur für die hier ausgewählten Ereignisse. SoC-Schwellenwerte lösen ausschließlich einen Push aus und gelten für jeden laufenden Ladevorgang, egal ob zuhause oder unterwegs.",
         "data": {
-          "notify_service": "notify-Service für Push-Benachrichtigung"
+          "notify_entities": "Notify-Zielgeräte (Push)",
+          "notify_events": "Ereignisse, die einen Push auslösen",
+          "soc_thresholds": "SoC-Schwellenwerte (%)"
+        },
+        "data_description": {
+          "notify_entities": "Eine oder mehrere notify-Entitäten (Handy, Tablet, E-Mail, ...). Ohne Auswahl gibt es nur die Benachrichtigung im HA-Bereich \"Benachrichtigungen\", keinen Push.",
+          "notify_events": "Bestimmt nur, ob zusätzlich ein Push an die Notify-Zielgeräte oben geschickt wird — die Benachrichtigung im HA-Bereich \"Benachrichtigungen\" erscheint bei Fremdladung/Fahrt/Tankerkönig davon unabhängig immer.",
+          "soc_thresholds": "Löst nur einen Push aus, wenn oben \"SoC-Schwelle erreicht\" ausgewählt ist und mindestens ein Notify-Zielgerät gesetzt ist. Gilt für jeden laufenden Ladevorgang (Heim- oder Fremdladung)."
         }
       },
       "erkennung": {
@@ -103,22 +117,36 @@
         "data": {
           "evcc_vehicle_name": "Fahrzeugname in evcc",
           "home_entity": "Wallbox Ladeleistung"
+        },
+        "data_description": {
+          "home_entity": "Nur ein Ja/Nein-Schwellwert (>0,1 kW = \"lädt gerade zuhause\") — kein Energie-Messwert und liefert nur Werte, während das Fahrzeug an dieser Wallbox hängt."
         }
       },
       "ladeleistung": {
         "title": "EV Assistant - Ladeleistung",
-        "description": "Schritt 3/7: optionale Fahrzeug-Ladeleistung und Wallbox-Energiezähler.",
+        "description": "Schritt 3/7: optionale Fahrzeug-Ladeleistung (aus der Fahrzeug-Telemetrie, liefert auch unterwegs Werte) und Wallbox-Energiezähler (kalibriert den Ladewirkungsgrad und den Heimladen-Preis für Schritt 7).",
         "data": {
           "power_entity": "Fahrzeug-Ladeleistung (Watt/kW)",
           "power_is_ac": "Ladeleistung ist AC-seitig (Ladepunkt) statt DC-seitig (Batterie)",
           "wallbox_energy_entity": "Wallbox-Energiezähler (kumulativer kWh-Zähler)"
+        },
+        "data_description": {
+          "wallbox_energy_entity": "Nur bei Heimladen aktiv: kalibriert daraus den echten Ladewirkungsgrad (ersetzt den Startwert aus Schritt 1) und gewichtet den Heimstrompreis für Schritt 7 nach tatsächlich geladener Menge.",
+          "power_is_ac": "Wirkt sich nur aus, wenn oben eine Fahrzeug-Ladeleistung eingetragen ist — ohne sie hat diese Einstellung keine Wirkung."
         }
       },
       "ausgabe": {
-        "title": "EV Assistant - Ausgabe",
-        "description": "Schritt 4/7: Push-Benachrichtigung bei erkannter Fremdladung.",
+        "title": "EV Assistant - Benachrichtigungen",
+        "description": "Schritt 4/7: Push-Zielgeräte, Ereignisse und SoC-Schwellenwerte für Benachrichtigungen.",
         "data": {
-          "notify_service": "notify-Service für Push-Benachrichtigung"
+          "notify_entities": "Notify-Zielgeräte (Push)",
+          "notify_events": "Ereignisse, die einen Push auslösen",
+          "soc_thresholds": "SoC-Schwellenwerte (%)"
+        },
+        "data_description": {
+          "notify_entities": "Eine oder mehrere notify-Entitäten (Handy, Tablet, E-Mail, ...). Ohne Auswahl gibt es nur die Benachrichtigung im HA-Bereich \"Benachrichtigungen\", keinen Push.",
+          "notify_events": "Bestimmt nur, ob zusätzlich ein Push an die Notify-Zielgeräte oben geschickt wird — die Benachrichtigung im HA-Bereich \"Benachrichtigungen\" erscheint bei Fremdladung/Fahrt/Tankerkönig davon unabhängig immer.",
+          "soc_thresholds": "Löst nur einen Push aus, wenn oben \"SoC-Schwelle erreicht\" ausgewählt ist und mindestens ein Notify-Zielgerät gesetzt ist. Gilt für jeden laufenden Ladevorgang (Heim- oder Fremdladung)."
         }
       },
       "erkennung": {
@@ -163,6 +191,16 @@
     },
     "error": {
       "vehicle_name_required": "Bitte Hersteller und Modell angeben."
+    }
+  },
+  "selector": {
+    "notify_event": {
+      "options": {
+        "fremdladung": "Fremdladung erkannt",
+        "soc_schwelle": "SoC-Schwelle erreicht",
+        "fahrt": "Fahrt erkannt",
+        "tankerkoenig": "Tankerkönig nicht verfügbar"
+      }
     }
   },
   "entity": {
