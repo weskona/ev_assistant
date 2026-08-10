@@ -2,6 +2,22 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.44.0] - 2026-08-10
+
+### Fixed
+
+- **SoC threshold notifications (added in 0.43.0) fired retroactively for every already-passed threshold at the start of a charging session**: e.g. plugging in at 85% with thresholds at 50/60/70/80/90/100% immediately notified for 50/60/70/80% at once, even though those had been reached in a previous session, not just now. Thresholds already at or below the current SoC when a session starts are now silently seeded as "already notified" instead — only thresholds actually crossed after that point fire a notification.
+- **Bulk trip import (`import_fahrtenbuch`) could give multiple imported trips the same `erfasst_ts`**, since it read `int(time.time())` fresh in a tight loop with no delay between rows — `erfasst_ts` is the sole lookup key for `edit_trip`/`delete_trip`, so editing/deleting one imported trip could silently affect a different one. Each imported row now gets a unique offset from a single base timestamp.
+- **Auto-discovered evcc entities (PV power, grid power, session data, etc.) were never removed from the stored configuration once evcc stopped reporting them** (e.g. after renaming/removing a loadpoint in evcc) — they'd persist as stale, dead entity references indefinitely. Reconfigure now drops any previously-discovered evcc key that isn't found again this run, as long as evcc discovery found at least one entity (so a temporary evcc outage doesn't wipe everything).
+- **Five statistics sensors used the wrong state class for values that can decrease**: `total_kwh`, `total_cost`, `count`, `trip_count`, and `total_trip_km` were `total_increasing`, but `edit_charge`/`delete_charge`/`edit_trip`/`delete_trip` can lower their backing totals — Home Assistant's recorder treats a decrease on a `total_increasing` sensor as a meter reset, which can corrupt long-term statistics. Changed to `total` (no reset semantics). The two sensors that mirror genuinely monotonic physical counters (odometer, raw wallbox energy meter) were left unchanged.
+- **The "external charge open"/"trip open" binary sensors could miss UI updates** when only the open count changed (e.g. 1 → 2 simultaneously open external charges) without the on/off state itself changing — added `force_update`, matching the existing fix on the sibling `pending_estimate` sensor.
+- **A brief odometer sensor glitch while parked (e.g. briefly reporting 0) could corrupt the next trip's distance**: `TripDetector` tracked the resting-position anchor without a floor while idle, unlike the guard already in place while driving. The anchor can no longer drop below the last confirmed odometer value.
+- **`noise` could be configured `>=` `start_delta`**, silently breaking charge detection (every reading would look like a charge start) despite the setup text saying it must always be smaller. Now validated on save, with a clear error instead of a silent footgun.
+
+### Changed
+
+- **Persistence writes are now batched for frequent, non-critical state** (sensor mirror values, plug/motor debounce state, daily rollovers, price-averaging bookkeeping, the routine per-sample detector snapshots) using a 10s delayed write instead of writing to disk immediately on every single update — previously every SoC/odometer/wallbox-energy sample triggered an immediate synchronous save. Actually important events (new/edited/deleted charges and trips, pending confirmations, imports) still save immediately; Home Assistant still flushes pending writes on an orderly shutdown.
+
 ## [0.43.0] - 2026-08-10
 
 ### Fixed

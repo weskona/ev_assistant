@@ -22,6 +22,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 class PendingBinarySensor(EvAssistantEntity, BinarySensorEntity):
     _attr_translation_key = "pending"
     _attr_icon = "mdi:bell-ring"
+    # force_update: is_on bleibt oft gleich, waehrend sich nur Attribute
+    # aendern (z.B. anzahl_offen 1->2 bei mehreren offenen Ladungen) --
+    # siehe PendingEstimateSensor in sensor.py fuer denselben Fall.
+    _attr_force_update = True
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry, "pending")
@@ -49,6 +53,8 @@ class TripPendingBinarySensor(EvAssistantEntity, BinarySensorEntity):
 
     _attr_translation_key = "trip_pending"
     _attr_icon = "mdi:map-marker-distance"
+    # Siehe Kommentar bei PendingBinarySensor.
+    _attr_force_update = True
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry, "trip_pending")

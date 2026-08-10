@@ -93,7 +93,8 @@
       }
     },
     "error": {
-      "vehicle_name_required": "Bitte Hersteller und Modell angeben."
+      "vehicle_name_required": "Bitte Hersteller und Modell angeben.",
+      "noise_too_high": "Das SoC-Rauschen muss kleiner sein als die Start-Schwelle."
     }
   },
   "options": {
@@ -190,7 +191,8 @@
       }
     },
     "error": {
-      "vehicle_name_required": "Bitte Hersteller und Modell angeben."
+      "vehicle_name_required": "Bitte Hersteller und Modell angeben.",
+      "noise_too_high": "Das SoC-Rauschen muss kleiner sein als die Start-Schwelle."
     }
   },
   "selector": {

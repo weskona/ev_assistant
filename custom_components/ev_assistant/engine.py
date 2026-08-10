@@ -510,8 +510,14 @@ class TripDetector:
         # Anfang -- bei reinem Odometer-Vergleich ist odo_km hier ohnehin
         # unveraendert, bei motor-basierter Erkennung haelt das den Anker
         # trotz ggf. verzoegert eintreffender Odometer-Werte aktuell.
+        # max() statt s.odo_km direkt (analog zur aktiven Fahrt oben):
+        # _moved() hat bereits ausgeschlossen, dass s.odo_km > _last_odo ist,
+        # ein niedrigerer Wert hier kann also nur ein kurzer Sensor-Glitch
+        # im Stand sein -- ohne die Schranke wuerde der Anker auf den
+        # Glitch-Wert absinken und die naechste echte Fahrt faelschlich viel
+        # zu lang aussehen lassen (start_odo kommt aus dem Anker).
         self._anchor_ts = s.ts
-        self._anchor_odo = s.odo_km
+        self._anchor_odo = max(self._last_odo, s.odo_km)
         return None
 
     def _update_driving(self, s: TripSample) -> Optional[TripEvent]:

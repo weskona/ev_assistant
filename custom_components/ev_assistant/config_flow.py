@@ -33,6 +33,7 @@ from .const import (
     CONF_EVCC_STAT_TOTAL_KWH, CONF_EVCC_STAT_SOLAR_PCT, CONF_EVCC_STAT_AVG_PRICE,
     CONF_EVCC_PV_POWER, CONF_EVCC_GRID_POWER, CONF_EVCC_BATTERY_POWER,
     CONF_EVCC_VEHICLE_NAME,
+    EVCC_CONF_KEYS,
     DEFAULT_CO2_PER_KWH_G,
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY, DEFAULT_IDLE_TIMEOUT, DEFAULT_MOTOR_DEBOUNCE, DEFAULT_NOISE, DEFAULT_PLUG_DEBOUNCE,
@@ -313,6 +314,17 @@ def _has_vehicle_name(data: dict) -> bool:
     return bool(data.get(CONF_VEHICLE_HERSTELLER)) and bool(data.get(CONF_VEHICLE_MODELL))
 
 
+def _noise_ok(data: dict) -> bool:
+    """SoC-Rauschen muss kleiner sein als die Start-Schwelle (siehe
+    strings.json-Beschreibung von Schritt 5) -- sonst sieht jede Messung wie
+    ein Ladestart aus (start_delta wird durch Rauschen allein erreicht).
+    Beide Felder haben in build_detection_schema() einen Default, sind in
+    cleaned user_input also immer vorhanden."""
+    noise = data.get(CONF_NOISE, DEFAULT_NOISE)
+    start_delta = data.get(CONF_START_DELTA, DEFAULT_START_DELTA)
+    return noise < start_delta
+
+
 def _all_step_schema_keys() -> set[str]:
     """Alle Config-Keys, die eines der 7 Options-Flow-Formulare abdeckt."""
     schemas = (
@@ -389,13 +401,18 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_erkennung(self, user_input=None) -> FlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            self._data = {**self._data, **_clean(user_input)}
-            return await self.async_step_fahrtenbuch()
+            cleaned = _clean(user_input)
+            if not _noise_ok(cleaned):
+                errors["base"] = "noise_too_high"
+            else:
+                self._data = {**self._data, **cleaned}
+                return await self.async_step_fahrtenbuch()
 
         cur = user_input if user_input is not None else self._data
         return self.async_show_form(
-            step_id="erkennung", data_schema=build_detection_schema(cur)
+            step_id="erkennung", data_schema=build_detection_schema(cur), errors=errors
         )
 
     async def async_step_fahrtenbuch(self, user_input=None) -> FlowResult:
@@ -485,12 +502,17 @@ class EvAssistantOptionsFlow(OptionsFlow):
         )
 
     async def async_step_erkennung(self, user_input=None) -> FlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            self._data = {**self._data, **_clean(user_input)}
-            return await self.async_step_fahrtenbuch()
+            cleaned = _clean(user_input)
+            if not _noise_ok(cleaned):
+                errors["base"] = "noise_too_high"
+            else:
+                self._data = {**self._data, **cleaned}
+                return await self.async_step_fahrtenbuch()
 
         return self.async_show_form(
-            step_id="erkennung", data_schema=build_detection_schema(self._current())
+            step_id="erkennung", data_schema=build_detection_schema(self._current()), errors=errors
         )
 
     async def async_step_fahrtenbuch(self, user_input=None) -> FlowResult:
@@ -506,7 +528,8 @@ class EvAssistantOptionsFlow(OptionsFlow):
         if user_input is not None:
             cleaned = _clean(user_input)
             self._data = {**self._data, **cleaned}
-            self._data = {**self._data, **await _discover_evcc_entities(self.hass)}
+            discovered = await _discover_evcc_entities(self.hass)
+            self._data = {**self._data, **discovered}
             # self._data ist an dieser Stelle bereits die vollstaendige,
             # ueber alle 7 Schritte neu aufgebaute Konfiguration (geleerte
             # Optionale fehlen absichtlich). Wuerde sie wie zuvor per
@@ -520,6 +543,18 @@ class EvAssistantOptionsFlow(OptionsFlow):
             # und entry.options leeren.
             step_keys = _all_step_schema_keys()
             preserved = {k: v for k, v in self._entry.data.items() if k not in step_keys}
+            if discovered:
+                # Evcc-Entitaeten, die diesmal nicht mehr gefunden wurden
+                # (z.B. Loadpoint in evcc umbenannt/entfernt), sollen
+                # verschwinden statt als Karteileiche aus einem frueheren
+                # Lauf in entry.data zu ueberleben -- aber nur, wenn evcc
+                # ueberhaupt etwas gefunden hat, sonst wuerde ein
+                # voruebergehender evcc_intg-Ausfall alle Panel-Entitaeten
+                # loeschen.
+                preserved = {
+                    k: v for k, v in preserved.items()
+                    if k not in EVCC_CONF_KEYS or k in discovered
+                }
             new_data = {**preserved, **self._data}
             self.hass.config_entries.async_update_entry(self._entry, data=new_data)
             return self.async_create_entry(title="", data={})

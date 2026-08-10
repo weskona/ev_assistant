@@ -62,6 +62,11 @@ _INVALID = ("unknown", "unavailable", "none", "", None)
 # eine Wallbox-Ladeleistung von evcc/Warp), daher muss ein numerischer Wert
 # als Schwellwert statt als Text-Vergleich ausgewertet werden.
 _HOME_POWER_THRESHOLD_KW = 0.1
+# Sekunden, um die unkritische Zwischenstaende (Sensor-Mirrorwerte, Debounce-/
+# Rollover-/Kalibrierungs-Buchhaltung) gebuendelt werden, statt bei jedem
+# einzelnen Update sofort synchron auf die Disk zu schreiben -- siehe
+# EvAssistantCoordinator._save_soon().
+_SAVE_DELAY = 10
 # Index = date.weekday() (0=Montag..6=Sonntag), fuer usage_profile_tomorrow().
 _WEEKDAY_NAMES_DE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 
@@ -87,6 +92,7 @@ def _empty_data() -> dict:
         "savings_home_cost_start": None,
         "detector_state": None,
         "soc_thresholds_notified": [],
+        "soc_thresholds_was_charging": False,
         "plug_debounce_state": None,
         "motor_debounce_state": None,
         "verbrenner_price_last": None,
@@ -551,7 +557,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return
         self._plugged_in = self._plug_debouncer.update(time.time(), value)
         self.data["plug_debounce_state"] = self._plug_debouncer.get_state()
-        self.hass.async_create_task(self._save())
+        self._save_soon()
 
     @callback
     def _set_motor(self, raw: Optional[str]) -> None:
@@ -565,7 +571,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return
         self._driving = self._motor_debouncer.update(time.time(), value)
         self.data["motor_debounce_state"] = self._motor_debouncer.get_state()
-        self.hass.async_create_task(self._save())
+        self._save_soon()
         # Sofort neu pruefen statt auf die naechste Odometer-Aenderung oder
         # den 60s-Periodic-Check zu warten -- der Motor-Sensor soll die
         # Fahrt ja gerade unmittelbar starten/beenden (siehe const.py bei
@@ -599,7 +605,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         ):
             self.data["wallbox_energy_start"] = self._wallbox_energy
             self.data["wallbox_energy_start_source"] = source
-            self.hass.async_create_task(self._save())
+            self._save_soon()
         elif stored_source is None:
             self.data["wallbox_energy_start_source"] = source
         self.async_set_updated_data(self.data)
@@ -643,7 +649,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["odo_unit"] = unit
         self._update_odo_periods(value_km)
         self.async_set_updated_data(self.data)
-        self.hass.async_create_task(self._save())
+        self._save_soon()
         self.hass.async_create_task(self._run_trip_detection())
 
     @staticmethod
@@ -703,7 +709,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return
         self._update_odo_periods(odo_km)
         self.async_set_updated_data(self.data)
-        await self._save()
+        self._save_soon()
 
     async def _daily_cost_period_rollover(self) -> None:
         """Rollt die Tag/Woche/Monat/Jahr-Kosten-Baselines (siehe
@@ -713,7 +719,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         einzelnes Ereignis, das den Rollover sonst anstossen wuerde)."""
         self._update_cost_periods()
         self.async_set_updated_data(self.data)
-        await self._save()
+        self._save_soon()
 
     async def async_refresh_lts_data(self) -> None:
         """LTS-Summen des Odometer-Sensors abfragen fuer Perioden-Projektionen.
@@ -885,7 +891,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # async_setup(), das diesen Wert als Startwert wiederherstellt).
         self.data["verbrenner_price_last"] = self._verbrenner_price_live
         self.async_set_updated_data(self.data)
-        self.hass.async_create_task(self._save())
+        self._save_soon()
 
     @callback
     def _set_home_price(self, raw) -> None:
@@ -901,7 +907,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # async_setup(), das diesen Wert als Startwert wiederherstellt).
         self.data["home_price_last"] = self._home_price_live
         self.async_set_updated_data(self.data)
-        self.hass.async_create_task(self._save())
+        self._save_soon()
 
     async def _run_detection(self) -> None:
         if self._soc is None or self._detector is None:
@@ -913,7 +919,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         event = self._detector.update(sample)
         self.data["detector_state"] = self._detector.get_state()
         self._check_soc_thresholds()
-        await self._save()
+        self._save_soon()
         if event is not None:
             await self._handle_pending(event.as_dict())
 
@@ -923,16 +929,29 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Schwellenwerte ueberschreitet. Der Satz bereits gemeldeter
         Schwellen wird persistiert (ueberlebt einen HA-Neustart mitten in
         der Session) und erst zurueckgesetzt, sobald das Laden endet --
-        ein erneuter Anstieg danach ist eine neue Session."""
+        ein erneuter Anstieg danach ist eine neue Session.
+
+        Beim Start einer Session werden bereits erreichte Schwellen (SoC war
+        schon vorher hoch, z.B. Einstecken bei 85 % mit Schwelle 80 %)
+        sofort als "schon gemeldet" markiert statt eine Benachrichtigung
+        auszuloesen -- sonst wuerden beim ersten Sample alle bis dahin
+        erreichten Schwellen auf einmal nachtraeglich feuern, obwohl sie
+        nicht gerade jetzt ueberschritten wurden."""
         thresholds = [int(v) for v in self._opt(CONF_SOC_THRESHOLDS, DEFAULT_SOC_THRESHOLDS)]
         if not thresholds or self._soc is None:
             return
         is_charging = bool(self._home) or self._detector.active
+        was_charging = bool(self.data.get("soc_thresholds_was_charging"))
         if not is_charging:
+            if was_charging:
+                self.data["soc_thresholds_was_charging"] = False
             if self.data.get("soc_thresholds_notified"):
                 self.data["soc_thresholds_notified"] = []
             return
         notified = set(self.data.get("soc_thresholds_notified") or [])
+        if not was_charging:
+            notified |= {t for t in thresholds if self._soc >= t}
+            self.data["soc_thresholds_was_charging"] = True
         for t in sorted(thresholds):
             if t not in notified and self._soc >= t:
                 notified.add(t)
@@ -1024,7 +1043,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self.data["trip_start_zone"] = self._trip_start_zone
             self._trip_start_soc = self._soc
             self.data["trip_start_soc"] = self._trip_start_soc
-        await self._save()
+        self._save_soon()
         if event is not None:
             pend = event.as_dict()
             pend["start_ort_vorschlag"] = self._trip_start_zone
@@ -1050,7 +1069,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self.data["measured_efficiency"] = measured
             if measured is not None and self._detector is not None:
                 self._detector.charge_efficiency = measured
-        await self._save()
+        self._save_soon()
         self.async_set_updated_data(self.data)
 
     # ----- Event-/Persistenz-Logik ---------------------------------------
@@ -1453,6 +1472,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         importierter Fahrten zurueck."""
         existing_starts = {rec.get("start_ts") for rec in self.data.get("fahrten") or []}
         imported: list[dict] = []
+        # Ein Basiswert + laufender Index statt in jeder Iteration neu
+        # int(time.time()) zu lesen -- sonst bekaemen mehrere Fahrten in
+        # einem Aufruf denselben (ganzzahligen) erfasst_ts, der als
+        # alleiniger Schluessel fuer edit_trip()/delete_trip() dient und
+        # dann versehentlich die falsche Fahrt trifft.
+        erfasst_ts_base = int(time.time())
         for row in trips:
             try:
                 start_dt = datetime.strptime(row["start"], "%Y-%m-%d %H:%M:%S").replace(
@@ -1471,7 +1496,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                     "odo_start": None, "odo_end": None,
                     "km": round(float(row["strecke"]), 2),
                     "start_ort": row["start_ort"], "end_ort": row["ziel_ort"],
-                    "erfasst_ts": int(time.time()), "quelle": "import",
+                    "erfasst_ts": erfasst_ts_base + len(imported), "quelle": "import",
                 }
                 for key in ("verbrauch_kwh", "avg_verbrauch", "avg_speed"):
                     if row.get(key) is not None:
@@ -1804,7 +1829,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         start = self.data.get(start_key)
         if start is None:
             self.data[start_key] = value
-            self.hass.async_create_task(self._save())
+            self._save_soon()
             start = value
         return round(max(0.0, value - start), 2)
 
@@ -1880,7 +1905,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         start = self.data.get("savings_home_kwh_start")
         if start is None:
             self.data["savings_home_kwh_start"] = kwh
-            self.hass.async_create_task(self._save())
+            self._save_soon()
             start = kwh
         return round(max(0.0, kwh - start), 2)
 
@@ -1893,7 +1918,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         start = self.data.get("savings_home_cost_start")
         if start is None:
             self.data["savings_home_cost_start"] = cost
-            self.hass.async_create_task(self._save())
+            self._save_soon()
             start = cost
         return round(max(0.0, cost - start), 2)
 
@@ -2125,6 +2150,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     async def _save(self) -> None:
         await self._store.async_save(self.data)
+
+    def _save_soon(self) -> None:
+        """Wie _save(), aber gebuendelt mit _SAVE_DELAY statt sofort
+        synchron zu schreiben -- fuer haeufige, unkritische Zwischenstaende
+        (Sensor-Mirrorwerte, Debounce-/Rollover-/Kalibrierungs-Buchhaltung),
+        die beim naechsten Update ohnehin neu ankommen bzw. sich selbst
+        heilen. Tatsaechlich wichtige Ereignisse (neue/bearbeitete/
+        geloeschte Ladungen und Fahrten, offene Bestaetigungen) speichern
+        weiterhin sofort ueber _save(). Schreibt trotzdem garantiert vor
+        einem geordneten HA-Shutdown (siehe Store.async_delay_save())."""
+        self._store.async_delay_save(lambda: self.data, _SAVE_DELAY)
 
     async def async_shutdown(self) -> None:
         for unsub in self._unsub:

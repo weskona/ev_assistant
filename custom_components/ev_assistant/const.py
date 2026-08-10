@@ -6,7 +6,12 @@ PLATFORMS = ["sensor", "binary_sensor"]
 # Config / Options Keys
 # Pro Signal: eine HA-Entitaet, optional per Template umgerechnet (z.B. andere
 # Einheit). Templates bleiben nuetzlich unabhaengig von der Quelle, MQTT-Topics
-# als Alternative wurden entfernt (siehe CHANGELOG).
+# als Alternative wurden entfernt (siehe CHANGELOG). Die *_TEMPLATE-Keys sind
+# absichtlich in keinem der 7 Config-Flow-Schritte als Feld vorhanden (wie
+# z.B. EFF_MIN_SOC_DELTA unten, um die Formulare nicht mit Nischen-Reglern zu
+# ueberladen) -- nur per direkter entry.data-Bearbeitung erreichbar, fuer den
+# seltenen Fall einer Quell-Entitaet mit unpassender Einheit/Skalierung.
+# Ohne gesetztes Template greift ueberall DEFAULT_TEMPLATE ("{{ value }}").
 CONF_SOC_ENTITY = "soc_entity"
 CONF_SOC_TEMPLATE = "soc_template"
 CONF_HOME_ENTITY = "home_entity"
@@ -32,8 +37,12 @@ NOTIFY_EVENTS = [
     NOTIFY_EVENT_FAHRT, NOTIFY_EVENT_TANKERKOENIG,
 ]
 # Verhaelt sich wie vor Einfuehrung der Auswahl: nur Fremdladung loeste einen
-# Push aus.
-DEFAULT_NOTIFY_EVENTS = [NOTIFY_EVENT_FREMDLADUNG]
+# Push aus. Tupel statt Liste: DEFAULT_NOTIFY_EVENTS wird an vielen Stellen
+# (mehrere Config Entries, jedes Mal derselbe Objektverweis) als Fallback-
+# Wert zurueckgegeben -- ein Tupel schliesst aus, dass eine versehentliche
+# In-Place-Mutation (z.B. .append()) diesen Fallback fuer alle Entries
+# gleichzeitig verfaelscht.
+DEFAULT_NOTIFY_EVENTS = (NOTIFY_EVENT_FREMDLADUNG,)
 
 # SoC-Schwellenwerte (%) fuer eine Benachrichtigung waehrend eines laufenden
 # Ladevorgangs (Heim- ODER Fremdladung, siehe coordinator.py::
@@ -42,7 +51,8 @@ DEFAULT_NOTIFY_EVENTS = [NOTIFY_EVENT_FREMDLADUNG]
 # SelectSelector zurueck und werden erst beim Auswerten zu int.
 CONF_SOC_THRESHOLDS = "soc_thresholds"
 SOC_THRESHOLD_OPTIONS = [50, 60, 70, 80, 90, 100]
-DEFAULT_SOC_THRESHOLDS = []
+# Tupel statt Liste: siehe Kommentar bei DEFAULT_NOTIFY_EVENTS.
+DEFAULT_SOC_THRESHOLDS = ()
 CONF_USABLE_KWH = "usable_kwh"
 CONF_EFFICIENCY = "charge_efficiency"
 CONF_POWER_IS_AC = "power_is_ac"

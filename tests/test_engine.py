@@ -138,6 +138,31 @@ def test_soc_anstieg_bei_eingesteckt_startet_ladung_normal():
     assert (ev.soc_start, ev.soc_end) == (70, 73)
 
 
+def test_active_property_zeigt_idle_zu_ladung_uebergang():
+    """Der Coordinator nutzt .active, um eine laufende Fremdladung von
+    Heimladen zu unterscheiden (siehe coordinator.py::
+    _check_soc_thresholds) -- die Eigenschaft muss also genau am
+    idle->aktiv-Uebergang von False auf True kippen, analog
+    TripDetector.active."""
+    det = ChargeDetector(start_delta=3.0, idle_timeout_s=60)
+    assert det.active is False
+
+    det.update(ChargeSample(ts=0, soc=70, home_charging=False))  # Anker-Init
+    assert det.active is False
+
+    det.update(ChargeSample(ts=30, soc=70, home_charging=False))  # kein Anstieg
+    assert det.active is False
+
+    det.update(ChargeSample(ts=60, soc=73, home_charging=False))  # Ladung beginnt
+    assert det.active is True
+
+    det.update(ChargeSample(ts=90, soc=75, home_charging=False))  # laedt weiter
+    assert det.active is True
+
+    det.update(ChargeSample(ts=160, soc=75, home_charging=False))  # 100s Timeout -> Ende
+    assert det.active is False
+
+
 # ----- SignalDebouncer: Flacker-/Aussetzer-Filterung -------------------------
 
 def test_plug_debouncer_unbekannt_vor_erster_bestaetigung():
@@ -453,6 +478,23 @@ def test_kleine_strecke_unter_min_km_wird_verworfen():
     det = TripDetector(min_km=0.5, idle_timeout_s=300)
     samples = trip_stream([50.0, 50.0], step=60) + trip_stream([50.2], start_ts=120) + trip_stream([50.2], start_ts=500)
     assert run_trips(det, samples) == []
+
+
+def test_kilometerstand_ruecksprung_im_stand_korrumpiert_anker_nicht():
+    # Kurzer Sensor-Glitch im Stand (z.B. Odometer meldet kurzzeitig 0) darf
+    # den Anker nicht auf den Glitch-Wert absinken lassen -- sonst sieht die
+    # naechste echte Fahrt (ab dem korrekten, hoeheren Wert) faelschlich
+    # riesig aus, weil start_odo aus dem Anker kommt.
+    det = TripDetector(min_km=0.5, idle_timeout_s=300)
+    samples = (
+        trip_stream([1000.0, 1000.0], step=60)  # steht bei 1000 km
+        + trip_stream([0.0], start_ts=120)  # Glitch: kurz 0 km
+        + trip_stream([1005.0], start_ts=180)  # echte Fahrt ab 1000 km
+        + trip_stream([1005.0], start_ts=541)  # Stillstand -> finalize
+    )
+    ev = run_trips(det, samples)[0]
+    assert (ev.odo_start, ev.odo_end) == (1000.0, 1005.0)
+    assert ev.km == 5.0
 
 
 def test_zwei_fahrten_getrennt_durch_standzeit():

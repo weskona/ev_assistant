@@ -93,7 +93,8 @@
       }
     },
     "error": {
-      "vehicle_name_required": "Please enter manufacturer and model."
+      "vehicle_name_required": "Please enter manufacturer and model.",
+      "noise_too_high": "The SoC noise value must be smaller than the start threshold."
     }
   },
   "options": {
@@ -190,7 +191,8 @@
       }
     },
     "error": {
-      "vehicle_name_required": "Please enter manufacturer and model."
+      "vehicle_name_required": "Please enter manufacturer and model.",
+      "noise_too_high": "The SoC noise value must be smaller than the start threshold."
     }
   },
   "selector": {

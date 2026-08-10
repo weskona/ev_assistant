@@ -139,7 +139,12 @@ class LastKwhSensor(EvAssistantEntity, SensorEntity):
 class TotalKwhSensor(EvAssistantEntity, SensorEntity):
     _attr_translation_key = "total_kwh"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    # TOTAL statt TOTAL_INCREASING: edit_charge()/delete_charge() koennen den
+    # zugrunde liegenden totals["kwh"]-Wert auch VERRINGERN (Korrektur/
+    # Loeschung eines Eintrags) -- der Recorder wuerde ein Absinken bei
+    # TOTAL_INCREASING als Zaehler-Reset werten und die Langzeitstatistik
+    # verfaelschen.
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:counter"
 
     def __init__(self, coordinator, entry):
@@ -153,7 +158,9 @@ class TotalKwhSensor(EvAssistantEntity, SensorEntity):
 class TotalCostSensor(EvAssistantEntity, SensorEntity):
     _attr_translation_key = "total_cost"
     _attr_native_unit_of_measurement = "EUR"
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    # Siehe Kommentar bei TotalKwhSensor -- totals["kosten"] kann durch
+    # edit_charge()/delete_charge() sinken.
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:cash-multiple"
 
     def __init__(self, coordinator, entry):
@@ -166,7 +173,9 @@ class TotalCostSensor(EvAssistantEntity, SensorEntity):
 
 class CountSensor(EvAssistantEntity, SensorEntity):
     _attr_translation_key = "count"
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    # Siehe Kommentar bei TotalKwhSensor -- totals["count"] kann durch
+    # delete_charge() sinken.
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:format-list-numbered"
 
     def __init__(self, coordinator, entry):
@@ -687,7 +696,9 @@ class TripCountSensor(EvAssistantEntity, SensorEntity):
     """Anzahl bestaetigter Fahrtenbuch-Eintraege -- analog CountSensor."""
 
     _attr_translation_key = "trip_count"
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    # Siehe Kommentar bei TotalKwhSensor -- trip_totals["count"] kann durch
+    # delete_trip() sinken.
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:format-list-numbered"
 
     def __init__(self, coordinator, entry):
@@ -703,7 +714,9 @@ class TotalTripKmSensor(EvAssistantEntity, SensorEntity):
 
     _attr_translation_key = "total_trip_km"
     _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
-    _attr_state_class = SensorStateClass.TOTAL_INCREASING
+    # Siehe Kommentar bei TotalKwhSensor -- trip_totals["km"] kann durch
+    # edit_trip()/delete_trip() sinken.
+    _attr_state_class = SensorStateClass.TOTAL
     _attr_icon = "mdi:counter"
 
     def __init__(self, coordinator, entry):
