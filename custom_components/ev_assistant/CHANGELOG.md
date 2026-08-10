@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.45.0] - 2026-08-10
+
+### Changed
+
+- **Trip-log aggregate calculations (average consumption, daily kWh, weekday usage profile) are now cached instead of recomputed from the full trip log on every single coordinator update** (every SoC/odometer/wallbox-energy sample) — since the trip log has grown unbounded and without a size cap since 0.20.1, this was doing full-list work far more often than needed. Results are now cached and only recomputed when a trip is actually added, edited, deleted, or imported (or, for the usage profile, once per calendar day). No behavior change for users — trip log entries are still kept indefinitely, nothing is capped or dropped.
+- Removed the unused `HISTORY_MAX` constant, a leftover from before 0.20.1 removed the (now long-gone) 100-entry history cap.
+
 ## [0.44.0] - 2026-08-10
 
 ### Fixed

@@ -172,6 +172,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._detector: Optional[ChargeDetector] = None
         self._calibrator: Optional[EfficiencyCalibrator] = None
         self._trip_detector: Optional[TripDetector] = None
+        # Version-Zaehler fuer data["fahrten"] -- erhoeht sich bei jeder
+        # Mutation (neue/bearbeitete/geloeschte/importierte Fahrt, siehe
+        # _finalize_trip_record()/async_edit_trip()/async_delete_trip()/
+        # async_import_fahrtenbuch()). _trip_avg_consumption_kwh(),
+        # _daily_kwh_from_trips() und usage_profile() iterieren sonst bei
+        # JEDEM Coordinator-Update (jedes SoC-/Odo-/Wallbox-Sample) die
+        # komplette, seit Einrichtung unbegrenzt wachsende Fahrtenbuch-Liste
+        # neu -- die drei Caches unten sorgen dafuer, dass das nur bei
+        # tatsaechlicher Aenderung passiert, nicht bei jedem Sensor-Update.
+        # Rein im Arbeitsspeicher (kein Persistenzbedarf: nach einem Neustart
+        # ist das erste Ergebnis ohnehin ein Cache-Miss).
+        self._fahrten_version = 0
+        self._trip_avg_cache: Optional[tuple[int, Optional[float]]] = None
+        self._daily_kwh_cache: Optional[tuple[int, dict]] = None
+        self._usage_profile_cache: Optional[tuple[int, str, Optional[dict]]] = None
         self.data = _empty_data()
 
     def _opt(self, key, default=None):
@@ -1009,7 +1024,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         nutzbare kWh. delta_soc ist beim Fahren negativ (SoC sinkt) -- auf
         >= 0 geklemmt, falls Rekuperation den SoC waehrend der Fahrt per
         saldo hat steigen lassen. None ohne einen einzigen Eintrag mit
-        bekanntem Verbrauch."""
+        bekanntem Verbrauch. Ergebnis wird pro _fahrten_version zwischen-
+        gespeichert (siehe __init__) -- ohne das wuerde die komplette, seit
+        Einrichtung unbegrenzt wachsende Fahrtenbuch-Liste bei jedem
+        Coordinator-Update (jedes SoC-/Odo-/Wallbox-Sample) neu durchlaufen,
+        nicht nur wenn sich tatsaechlich eine Fahrt geaendert hat."""
+        if self._trip_avg_cache is not None and self._trip_avg_cache[0] == self._fahrten_version:
+            return self._trip_avg_cache[1]
         fahrten = self.data.get("fahrten") or []
         usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
         values: list[float] = []
@@ -1021,9 +1042,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             delta_soc = rec.get("delta_soc")
             if delta_soc is not None:
                 values.append(max(0.0, -delta_soc) / 100.0 * usable_kwh)
-        if not values:
-            return None
-        return round(sum(values) / len(values), 2)
+        result = round(sum(values) / len(values), 2) if values else None
+        self._trip_avg_cache = (self._fahrten_version, result)
+        return result
 
     async def _run_trip_detection(self) -> None:
         km = self._odo_km()
@@ -1338,6 +1359,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
         totals["km"] = round(totals.get("km", 0.0) + rec["km"], 2)
         totals["count"] = totals.get("count", 0) + 1
+        self._fahrten_version += 1
 
     async def async_log_trip(self, start_ort: str, end_ort: str, start_ts: Optional[float] = None) -> None:
         """Bestaetigt eine offene Fahrt mit Start-/Zielort. Bei mehreren
@@ -1432,6 +1454,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                             rec["verbrauch_kwh"] = round(max(0.0, -rec["delta_soc"]) / 100.0 * usable_kwh, 2)
                 if verbrauch_kwh is not None:
                     rec["verbrauch_kwh"] = round(float(verbrauch_kwh), 2)
+                self._fahrten_version += 1
                 await self._save()
                 self.hass.bus.async_fire(EVENT_TRIP_EDITED, rec)
                 self.async_set_updated_data(self.data)
@@ -1451,6 +1474,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
                 totals["km"] = round(totals.get("km", 0.0) - rec["km"], 2)
                 totals["count"] = max(0, totals.get("count", 0) - 1)
+                self._fahrten_version += 1
                 await self._save()
                 self.hass.bus.async_fire(EVENT_TRIP_DELETED, rec)
                 self.async_set_updated_data(self.data)
@@ -1518,6 +1542,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
         totals["km"] = round(totals.get("km", 0.0) + sum(r["km"] for r in imported), 2)
         totals["count"] = totals.get("count", 0) + len(imported)
+        self._fahrten_version += 1
 
         await self._save()
         self.hass.bus.async_fire(EVENT_TRIP_IMPORTED, {"anzahl": len(imported)})
@@ -2037,7 +2062,23 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Durchschnittsverbrauch als Schaetzung (siehe
         _vehicle_avg_consumption_kwh_per_100km()) -- Fahrten ohne SoC-Delta
         (z.B. importierte ohne verbrauch_kwh) haetten sonst gar keinen
-        Energiewert."""
+        Energiewert.
+
+        Ergebnis wird pro _fahrten_version zwischengespeichert (siehe
+        __init__ und _trip_avg_consumption_kwh()) -- Kehrseite: avg_
+        consumption selbst haengt ueber die seit Einrichtung gefahrenen
+        Gesamt-km/kWh von JEDEM Odo-/Wallbox-Sample ab, wuerde man das mit
+        in den Cache-Schluessel aufnehmen, waere der Cache waehrend einer
+        laufenden Fahrt/Ladung wertlos (genau dort, wo er am meisten
+        bringt). Der Cache haengt daher bewusst NUR an _fahrten_version --
+        die geschaetzte kWh fuer Fahrten ohne verbrauch_kwh (der einzige
+        Ort, an dem avg_consumption ueberhaupt einfliesst) kann dadurch bis
+        zur naechsten Fahrtenbuch-Aenderung geringfuegig hinter dem
+        allerneuesten Durchschnitt zuruecklaufen -- bei einem Lebenszeit-
+        Durchschnitt, der sich pro einzelnem Sample nur marginal
+        verschiebt, in der Praxis nicht wahrnehmbar."""
+        if self._daily_kwh_cache is not None and self._daily_kwh_cache[0] == self._fahrten_version:
+            return self._daily_kwh_cache[1]
         fahrten = self.data.get("fahrten") or []
         avg_consumption = self._vehicle_avg_consumption_kwh_per_100km()
         daily: dict = {}
@@ -2054,6 +2095,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 continue
             day = dt_util.as_local(dt_util.utc_from_timestamp(ts)).date().isoformat()
             daily[day] = daily.get(day, 0.0) + kwh
+        self._daily_kwh_cache = (self._fahrten_version, daily)
         return daily
 
     def usage_profile(self) -> Optional[dict]:
@@ -2061,16 +2103,31 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         engine.py::weekday_usage_profile()), aus der gesamten
         Fahrtenbuch-Historie seit der ersten bestaetigten Fahrt. None ohne
         Fahrten oder mit weniger als MIN_USAGE_PROFILE_DAYS Tagen Historie
-        (zu wenig fuer ein aussagekraeftiges Profil)."""
+        (zu wenig fuer ein aussagekraeftiges Profil).
+
+        Ergebnis wird pro (_fahrten_version, heutiges Datum) zwischen-
+        gespeichert -- das Datum gehoert mit in den Schluessel, weil
+        last_date sich auch ohne jede Fahrtenbuch-Aenderung einmal pro Tag
+        weiterbewegt (siehe _fahrten_version-Kommentar in __init__ und bei
+        _daily_kwh_from_trips())."""
+        today = dt_util.now().date().isoformat()
+        if (
+            self._usage_profile_cache is not None
+            and self._usage_profile_cache[0] == self._fahrten_version
+            and self._usage_profile_cache[1] == today
+        ):
+            return self._usage_profile_cache[2]
         fahrten = self.data.get("fahrten") or []
         ts_values = [t["start_ts"] for t in fahrten if t.get("start_ts") is not None]
         if not ts_values:
-            return None
-        first_date = dt_util.as_local(dt_util.utc_from_timestamp(min(ts_values))).date().isoformat()
-        last_date = dt_util.now().date().isoformat()
-        return weekday_usage_profile(
-            self._daily_kwh_from_trips(), first_date, last_date, min_days=MIN_USAGE_PROFILE_DAYS
-        )
+            result = None
+        else:
+            first_date = dt_util.as_local(dt_util.utc_from_timestamp(min(ts_values))).date().isoformat()
+            result = weekday_usage_profile(
+                self._daily_kwh_from_trips(), first_date, today, min_days=MIN_USAGE_PROFILE_DAYS
+            )
+        self._usage_profile_cache = (self._fahrten_version, today, result)
+        return result
 
     def usage_profile_tomorrow(self) -> Optional[dict]:
         """Wochentags-Bedarf (siehe usage_profile()) fuer den morgigen
