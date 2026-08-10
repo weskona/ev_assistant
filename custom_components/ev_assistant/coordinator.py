@@ -2215,11 +2215,23 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         die beim naechsten Update ohnehin neu ankommen bzw. sich selbst
         heilen. Tatsaechlich wichtige Ereignisse (neue/bearbeitete/
         geloeschte Ladungen und Fahrten, offene Bestaetigungen) speichern
-        weiterhin sofort ueber _save(). Schreibt trotzdem garantiert vor
-        einem geordneten HA-Shutdown (siehe Store.async_delay_save())."""
+        weiterhin sofort ueber _save(). Schreibt garantiert vor einem
+        geordneten HA-Shutdown (Store.async_delay_save() eigener
+        EVENT_HOMEASSISTANT_FINAL_WRITE-Listener) -- das greift aber NICHT
+        bei einem Entry-Reload/-Unload waehrend HA weiterlaeuft (z.B. nach
+        jeder Reconfigure, siehe __init__.py::_async_reload()), daher
+        flusht async_shutdown() unten zusaetzlich explizit."""
         self._store.async_delay_save(lambda: self.data, _SAVE_DELAY)
 
     async def async_shutdown(self) -> None:
+        # _save_soon() gebuendelte Schreibvorgaenge sind hier noch nicht
+        # unbedingt geschrieben (bis zu _SAVE_DELAY alt) -- Store's eigener
+        # Shutdown-Schutz greift nur bei einem kompletten HA-Stopp, nicht
+        # bei einem Entry-Unload/-Reload waehrend HA weiterlaeuft. Ohne
+        # diesen expliziten Flush wuerde der letzte unkritische
+        # Zwischenstand (z.B. SoC-/Odo-Mirrorwert) bei einem Reload
+        # (jede Reconfigure!) verloren gehen.
+        await self._save()
         for unsub in self._unsub:
             try:
                 unsub()

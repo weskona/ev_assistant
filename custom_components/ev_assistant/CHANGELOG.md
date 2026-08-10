@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.46.0] - 2026-08-10
+
+### Fixed
+
+- **A pending batched write (from 0.44.0's delayed-save change) could be lost on a config entry reload**: Home Assistant's own delayed-save protection only flushes on a full HA shutdown, not when a single entry is unloaded/reloaded — which happens on every Configure/Reconfigure. `async_shutdown()` now explicitly flushes any pending write first, so a reconfigure right after a routine sensor update (SoC/odometer/wallbox-energy) can no longer drop it.
+
 ## [0.45.0] - 2026-08-10
 
 ### Changed
