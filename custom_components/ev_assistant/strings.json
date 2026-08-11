@@ -95,6 +95,9 @@
     "error": {
       "vehicle_name_required": "Bitte Hersteller und Modell angeben.",
       "noise_too_high": "Das SoC-Rauschen muss kleiner sein als die Start-Schwelle."
+    },
+    "abort": {
+      "already_configured": "Für diese SoC-Entität ist bereits ein Fahrzeug eingerichtet."
     }
   },
   "options": {
@@ -341,6 +344,48 @@
       "charge_before_pv_recommended": {
         "name": "Laden vor PV empfehlenswert"
       }
+    }
+  },
+  "issues": {
+    "entity_unavailable_soc_entity": {
+      "title": "Fahrzeug SOC nicht verfügbar",
+      "description": "Die konfigurierte Entität `{entity_id}` ist seit mindestens {minuten} Minuten nicht verfügbar (unavailable/unknown) oder wurde aus Home Assistant entfernt. Solange das so bleibt, bekommt die Fremdladungs-/Ladewirkungsgrad-Erkennung keine neuen SoC-Werte und rechnet mit veralteten Daten weiter. Prüfe die Quell-Integration bzw. den Sensor (z.B. Konnektivität, Neustart)."
+    },
+    "entity_unavailable_odo_entity": {
+      "title": "Kilometerstand nicht verfügbar",
+      "description": "Die konfigurierte Entität `{entity_id}` ist seit mindestens {minuten} Minuten nicht verfügbar (unavailable/unknown) oder wurde aus Home Assistant entfernt. Solange das so bleibt, bleibt die Fahrten-Erkennung stehen und alle Kilometerstand-Statistiken/Projektionen laufen auf dem letzten bekannten Stand weiter."
+    },
+    "entity_unavailable_plug_entity": {
+      "title": "Stecker-Sensor nicht verfügbar",
+      "description": "Die konfigurierte Entität `{entity_id}` ist seit mindestens {minuten} Minuten nicht verfügbar (unavailable/unknown) oder wurde aus Home Assistant entfernt. Die Fremdladungs-Erkennung fällt in der Zwischenzeit auf reine Timeout-Logik zurück, statt Ein-/Ausstecken direkt zu erkennen."
+    },
+    "entity_unavailable_motor_entity": {
+      "title": "Motor-/Fahr-Sensor nicht verfügbar",
+      "description": "Die konfigurierte Entität `{entity_id}` ist seit mindestens {minuten} Minuten nicht verfügbar (unavailable/unknown) oder wurde aus Home Assistant entfernt. Die Fahrten-Erkennung verlässt sich in der Zwischenzeit nur noch auf den Kilometerstand."
+    },
+    "entity_unavailable_home_entity": {
+      "title": "Wallbox Ladeleistung nicht verfügbar",
+      "description": "Die konfigurierte Entität `{entity_id}` ist seit mindestens {minuten} Minuten nicht verfügbar (unavailable/unknown) oder wurde aus Home Assistant entfernt. Die Ja/Nein-Erkennung \"lädt gerade zuhause\" fällt in der Zwischenzeit aus — ein SoC-Anstieg könnte fälschlich als Fremdladung erkannt werden."
+    },
+    "entity_unavailable_power_entity": {
+      "title": "Fahrzeug-Ladeleistung nicht verfügbar",
+      "description": "Die konfigurierte Entität `{entity_id}` ist seit mindestens {minuten} Minuten nicht verfügbar (unavailable/unknown) oder wurde aus Home Assistant entfernt. Die Energie-Schätzung einer Fremdladung fällt in der Zwischenzeit auf die reine SoC-Delta-Schätzung zurück."
+    },
+    "entity_unavailable_wallbox_energy_entity": {
+      "title": "Wallbox-Energiezähler nicht verfügbar",
+      "description": "Die konfigurierte Entität `{entity_id}` ist seit mindestens {minuten} Minuten nicht verfügbar (unavailable/unknown) oder wurde aus Home Assistant entfernt. Die Ladewirkungsgrad-Kalibrierung und die Heimladen-Kosten-Gewichtung pausieren in der Zwischenzeit."
+    },
+    "entity_unavailable_gps_entity": {
+      "title": "Orts-Vorschlag-Entität nicht verfügbar",
+      "description": "Die konfigurierte Entität `{entity_id}` ist seit mindestens {minuten} Minuten nicht verfügbar (unavailable/unknown) oder wurde aus Home Assistant entfernt. Neue Fahrten bekommen in der Zwischenzeit keinen automatischen Start-/Ziel-Ort-Vorschlag mehr (weiterhin nachträglich per edit_trip korrigierbar)."
+    },
+    "entity_unavailable_home_price_entity": {
+      "title": "Heimstrompreis-Entität nicht verfügbar",
+      "description": "Die konfigurierte Entität `{entity_id}` ist seit mindestens {minuten} Minuten nicht verfügbar (unavailable/unknown) oder wurde aus Home Assistant entfernt. Der Heimstrompreis fällt in der Zwischenzeit auf den letzten bekannten bzw. festen Wert zurück."
+    },
+    "entity_unavailable_verbrenner_price_entity": {
+      "title": "Kraftstoffpreis-Entität nicht verfügbar",
+      "description": "Die konfigurierte Entität `{entity_id}` ist seit mindestens {minuten} Minuten nicht verfügbar (unavailable/unknown) oder wurde aus Home Assistant entfernt. Der Kraftstoffpreis fällt in der Zwischenzeit auf den letzten bekannten bzw. festen Wert zurück (falls keine Tankerkönig-Kraftstoffsorte konfiguriert ist, die ohnehin Vorrang hätte)."
     }
   }
 }

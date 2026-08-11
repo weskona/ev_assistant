@@ -6,50 +6,118 @@ import logging
 import os
 import time
 from datetime import date, datetime, timedelta
-from homeassistant.util import dt as dt_util
 from typing import Callable, Optional
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change, async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.template import Template
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CO2_PER_LITER_KG,
     CONF_CO2_PER_KWH,
-    CONF_DROP_ENDS, CONF_EFFICIENCY, CONF_EVCC_STAT_AVG_PRICE, CONF_EVCC_STAT_TOTAL_KWH,
-    CONF_EVCC_VEHICLE_NAME, CONF_GPS_ENTITY, CONF_HOME_ENTITY,
-    CONF_HOME_PRICE_ENTITY, CONF_HOME_PRICE_KWH, CONF_HOME_TEMPLATE,
-    CONF_IDLE_TIMEOUT, CONF_MOTOR_DEBOUNCE, CONF_MOTOR_ENTITY, CONF_NOISE,
-    CONF_NOTIFY_ENTITIES, CONF_NOTIFY_EVENTS,
-    CONF_PLUG_DEBOUNCE, CONF_PLUG_ENTITY,
-    CONF_POWER_ENTITY, CONF_POWER_IS_AC, CONF_POWER_TEMPLATE, CONF_PV_FORECAST_ENTITY,
-    CONF_ODO_ENTITY, CONF_SOC_ENTITY, CONF_SOC_TEMPLATE, CONF_SOC_THRESHOLDS,
-    CONF_START_DELTA, CONF_TRIP_AUTO_CONFIRM, CONF_TRIP_IDLE_TIMEOUT, CONF_TRIP_MIN_KM, CONF_USABLE_KWH,
+    CONF_DROP_ENDS,
+    CONF_EFFICIENCY,
+    CONF_EVCC_STAT_AVG_PRICE,
+    CONF_EVCC_STAT_TOTAL_KWH,
+    CONF_EVCC_VEHICLE_NAME,
+    CONF_GPS_ENTITY,
+    CONF_HOME_ENTITY,
+    CONF_HOME_PRICE_ENTITY,
+    CONF_HOME_PRICE_KWH,
+    CONF_HOME_TEMPLATE,
+    CONF_IDLE_TIMEOUT,
+    CONF_MOTOR_DEBOUNCE,
+    CONF_MOTOR_ENTITY,
+    CONF_NOISE,
+    CONF_NOTIFY_ENTITIES,
+    CONF_NOTIFY_EVENTS,
+    CONF_ODO_ENTITY,
+    CONF_PLUG_DEBOUNCE,
+    CONF_PLUG_ENTITY,
+    CONF_POWER_ENTITY,
+    CONF_POWER_IS_AC,
+    CONF_POWER_TEMPLATE,
+    CONF_PV_FORECAST_ENTITY,
+    CONF_SOC_ENTITY,
+    CONF_SOC_TEMPLATE,
+    CONF_SOC_THRESHOLDS,
+    CONF_START_DELTA,
+    CONF_TANKERKOENIG_FUEL_TYPE,
+    CONF_TRIP_AUTO_CONFIRM,
+    CONF_TRIP_IDLE_TIMEOUT,
+    CONF_TRIP_MIN_KM,
+    CONF_USABLE_KWH,
     CONF_USAGE_PROFILE_BUFFER_PCT,
-    CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL,
-    CONF_VERBRENNER_L_100KM, CONF_VERBRENNER_PRICE_ENTITY,
-    CONF_VERBRENNER_PRICE_PER_LITER, CONF_TANKERKOENIG_FUEL_TYPE, CONF_WALLBOX_ENERGY_ENTITY,
+    CONF_VEHICLE_HERSTELLER,
+    CONF_VEHICLE_MODELL,
+    CONF_VERBRENNER_L_100KM,
+    CONF_VERBRENNER_PRICE_ENTITY,
+    CONF_VERBRENNER_PRICE_PER_LITER,
+    CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE,
-    DEFAULT_CO2_PER_KWH_G, DEFAULT_CO2_PER_LITER_KG,
-    DEFAULT_DROP_ENDS, DEFAULT_EFFICIENCY,
-    DEFAULT_IDLE_TIMEOUT, DEFAULT_MOTOR_DEBOUNCE, DEFAULT_NOISE, DEFAULT_NOTIFY_EVENTS,
-    DEFAULT_PLUG_DEBOUNCE, DEFAULT_POWER_IS_AC,
-    DEFAULT_SOC_THRESHOLDS, DEFAULT_START_DELTA, DEFAULT_TEMPLATE,
-    DEFAULT_TRIP_AUTO_CONFIRM, DEFAULT_TRIP_IDLE_TIMEOUT, DEFAULT_TRIP_MIN_KM,
-    DEFAULT_USABLE_KWH, DEFAULT_USAGE_PROFILE_BUFFER_PCT, DOMAIN, EFF_MAX_SAMPLES, EFF_MIN_EFFICIENCY,
-    EFF_MAX_EFFICIENCY, EFF_MIN_SAMPLES, EFF_MIN_SOC_DELTA,
-    EVENT_DELETED, EVENT_EDITED, EVENT_LOGGED, EVENT_PENDING, EVENT_TRIP_DELETED,
-    EVENT_TRIP_EDITED, EVENT_TRIP_IMPORTED, EVENT_TRIP_LOGGED, EVENT_TRIP_PENDING,
-    MILES_TO_KM, MIN_USAGE_PROFILE_DAYS, NOTIFY_EVENT_FAHRT, NOTIFY_EVENT_FREMDLADUNG,
-    NOTIFY_EVENT_SOC_SCHWELLE, NOTIFY_EVENT_TANKERKOENIG, NOTIFY_TAG, STORAGE_KEY, STORAGE_VERSION,
+    DEFAULT_CO2_PER_KWH_G,
+    DEFAULT_CO2_PER_LITER_KG,
+    DEFAULT_DROP_ENDS,
+    DEFAULT_EFFICIENCY,
+    DEFAULT_IDLE_TIMEOUT,
+    DEFAULT_MOTOR_DEBOUNCE,
+    DEFAULT_NOISE,
+    DEFAULT_NOTIFY_EVENTS,
+    DEFAULT_PLUG_DEBOUNCE,
+    DEFAULT_POWER_IS_AC,
+    DEFAULT_SOC_THRESHOLDS,
+    DEFAULT_START_DELTA,
+    DEFAULT_TEMPLATE,
+    DEFAULT_TRIP_AUTO_CONFIRM,
+    DEFAULT_TRIP_IDLE_TIMEOUT,
+    DEFAULT_TRIP_MIN_KM,
+    DEFAULT_USABLE_KWH,
+    DEFAULT_USAGE_PROFILE_BUFFER_PCT,
+    DOMAIN,
+    EFF_MAX_EFFICIENCY,
+    EFF_MAX_SAMPLES,
+    EFF_MIN_EFFICIENCY,
+    EFF_MIN_SAMPLES,
+    EFF_MIN_SOC_DELTA,
+    EVENT_DELETED,
+    EVENT_EDITED,
+    EVENT_LOGGED,
+    EVENT_PENDING,
+    EVENT_TRIP_DELETED,
+    EVENT_TRIP_EDITED,
+    EVENT_TRIP_IMPORTED,
+    EVENT_TRIP_LOGGED,
+    EVENT_TRIP_PENDING,
+    MILES_TO_KM,
+    MIN_USAGE_PROFILE_DAYS,
+    NOTIFY_EVENT_FAHRT,
+    NOTIFY_EVENT_FREMDLADUNG,
+    NOTIFY_EVENT_SOC_SCHWELLE,
+    NOTIFY_EVENT_TANKERKOENIG,
+    NOTIFY_TAG,
+    STORAGE_KEY,
+    STORAGE_VERSION,
 )
 from .engine import (
-    ChargeDetector, ChargeSample, EfficiencyCalibrator, SignalDebouncer, TripDetector, TripSample,
-    average_efficiency, calculate_co2_savings, calculate_savings, charge_before_pv_decision, charge_cost,
-    merge_pending, pop_pending, weekday_usage_profile,
+    ChargeDetector,
+    ChargeSample,
+    EfficiencyCalibrator,
+    SignalDebouncer,
+    TripDetector,
+    TripSample,
+    average_efficiency,
+    calculate_co2_savings,
+    calculate_savings,
+    charge_before_pv_decision,
+    charge_cost,
+    merge_pending,
+    pop_pending,
+    weekday_usage_profile,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -68,6 +136,21 @@ _HOME_POWER_THRESHOLD_KW = 0.1
 _SAVE_DELAY = 10
 # Index = date.weekday() (0=Montag..6=Sonntag), fuer usage_profile_tomorrow().
 _WEEKDAY_NAMES_DE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+
+# Sekunden, die eine konfigurierte Quell-Entitaet mindestens unavailable/
+# unknown/entfernt sein muss, bevor ein Repair-Issue erscheint (siehe
+# _check_entity_health()) -- deutlich laenger als kurze Aussetzer/Wach-
+# Fenster-Bliips, aber kurz genug, um denselben Tag noch zu merken.
+_ENTITY_STALE_THRESHOLD_S = 1800
+# Alle verdrahteten Quell-Entitaeten (siehe async_setup()), die ueberwacht
+# werden -- fuer jede hat strings.json einen eigenen
+# "entity_unavailable_<key>"-Uebersetzungsschluessel (Titel nennt das Feld
+# konkret, Text ist gemeinsam mit {entity_id}/{minuten} parametrisiert).
+_HEALTH_MONITORED_KEYS = (
+    CONF_SOC_ENTITY, CONF_ODO_ENTITY, CONF_PLUG_ENTITY, CONF_MOTOR_ENTITY,
+    CONF_HOME_ENTITY, CONF_POWER_ENTITY, CONF_WALLBOX_ENERGY_ENTITY,
+    CONF_GPS_ENTITY, CONF_HOME_PRICE_ENTITY, CONF_VERBRENNER_PRICE_ENTITY,
+)
 
 
 def _empty_data() -> dict:
@@ -186,6 +269,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._trip_avg_cache: Optional[tuple[int, Optional[float]]] = None
         self._daily_kwh_cache: Optional[tuple[int, dict]] = None
         self._usage_profile_cache: Optional[tuple[int, str, Optional[dict]]] = None
+        # Repair-Issues fuer laenger unavailable/entfernte Quell-Entitaeten
+        # (siehe _check_entity_health()) -- rein im Arbeitsspeicher, ein
+        # Neustart faengt frisch mit "noch nicht lange genug schlecht" an,
+        # statt sofort ein Issue aus der vorherigen Session zu recyceln.
+        self._entity_bad_since: dict[str, float] = {}
+        self._entity_issue_active: set[str] = set()
         self.data = _empty_data()
 
     def _opt(self, key, default=None):
@@ -391,7 +480,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         def _recompute(_event=None) -> None:
             open_prices: list[float] = []
             all_prices: list[float] = []
-            for price_id, stat_id in zip(price_ids, status_ids):
+            for price_id, stat_id in zip(price_ids, status_ids, strict=True):
                 price_state = self.hass.states.get(price_id)
                 if price_state is None or price_state.state in _INVALID:
                     continue
@@ -981,6 +1070,53 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._recheck_motor()
         await self._run_detection()
         await self._run_trip_detection()
+        self._check_entity_health()
+
+    def _check_entity_health(self) -> None:
+        """Repair-Issue anlegen/entfernen fuer konfigurierte Quell-Entitaeten,
+        die seit mindestens _ENTITY_STALE_THRESHOLD_S unavailable/unknown
+        oder entfernt sind -- macht den haeufigsten stillen Fehlerfall
+        (Quelle liefert keine Werte mehr, abhaengige Berechnungen laufen
+        unbemerkt auf veralteten Daten weiter, siehe z.B. die eRifter-SoC-
+        Faelle) sichtbar, statt ihn nur in falschen Sensorwerten auftauchen
+        zu lassen."""
+        now = time.time()
+        for conf_key in _HEALTH_MONITORED_KEYS:
+            entity_id = self._opt(conf_key)
+            issue_id = f"{self.entry.entry_id}_{conf_key}_unavailable"
+            if not entity_id:
+                # Feld nicht (mehr) konfiguriert -- ggf. verwaistes Issue aus
+                # einer frueheren Konfiguration aufraeumen. Nur tatsaechlich
+                # aufrufen, wenn hier je etwas getrackt war, sonst wuerde
+                # jedes nie konfigurierte Feld bei jedem 60s-Tick unnoetig
+                # async_delete_issue() aufrufen.
+                was_tracked = self._entity_bad_since.pop(conf_key, None) is not None
+                was_active = conf_key in self._entity_issue_active
+                self._entity_issue_active.discard(conf_key)
+                if was_tracked or was_active:
+                    ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+                continue
+            state = self.hass.states.get(entity_id)
+            bad = state is None or state.state in ("unavailable", "unknown")
+            if not bad:
+                self._entity_bad_since.pop(conf_key, None)
+                if conf_key in self._entity_issue_active:
+                    self._entity_issue_active.discard(conf_key)
+                    ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+                continue
+            since = self._entity_bad_since.setdefault(conf_key, now)
+            if now - since >= _ENTITY_STALE_THRESHOLD_S and conf_key not in self._entity_issue_active:
+                self._entity_issue_active.add(conf_key)
+                ir.async_create_issue(
+                    self.hass, DOMAIN, issue_id,
+                    is_fixable=False,
+                    severity=ir.IssueSeverity.WARNING,
+                    translation_key=f"entity_unavailable_{conf_key}",
+                    translation_placeholders={
+                        "entity_id": entity_id,
+                        "minuten": str(_ENTITY_STALE_THRESHOLD_S // 60),
+                    },
+                )
 
     def _recheck_motor(self) -> None:
         """Analog _recheck_plug() oben, fuer den optionalen Motor-Sensor."""

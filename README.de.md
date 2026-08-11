@@ -23,6 +23,7 @@ Eine umfassende **EV-Monitoring-Integration für Home Assistant**. EV Assistant 
 - **Vollständiges Seitenleisten-Panel** — ein eingebautes EV-Dashboard; kein Lovelace-Karten-Setup erforderlich.
 - **Mehrfahrzeug-Unterstützung** — pro Fahrzeug einen Integrationseintrag konfigurieren; das Panel zeigt Tabs zum Wechsel zwischen den Fahrzeugen.
 - **Diagnose** — lädt eine anonymisierte Config- und Zustands-Momentaufnahme herunter (Einstellungen → Geräte & Dienste → EV Assistant → ⋮ → Diagnose herunterladen), für Fehlersuche oder Bug-Reports.
+- **Repair-Hinweise bei hängenden Sensoren** — fällt eine konfigurierte Quell-Entität (SoC, Kilometerstand, Stecker-Sensor, ...) für mindestens 30 Minuten aus oder wird entfernt, zeigt ein Repair-Hinweis (Einstellungen → System → Repariere) genau, was betroffen ist, statt dass Schätzungen unbemerkt mit veralteten Daten weiterlaufen.
 
 ---
 

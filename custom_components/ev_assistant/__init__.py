@@ -9,11 +9,25 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 
 from .const import (
-    DOMAIN, PLATFORMS, SERVICE_DELETE, SERVICE_DELETE_TRIP, SERVICE_DISCARD,
-    SERVICE_DISCARD_TRIP, SERVICE_EDIT, SERVICE_EDIT_TRIP, SERVICE_EXPORT_TRIPS,
-    SERVICE_IMPORT_TRIPS, SERVICE_LOG, SERVICE_LOG_TRIP, SERVICE_SIMULATE, SERVICE_SIMULATE_TRIP,
-    EVCC_CONF_KEYS, CONF_EVCC_VEHICLE_NAME, CONF_SOC_ENTITY,
-    CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL,
+    CONF_EVCC_VEHICLE_NAME,
+    CONF_SOC_ENTITY,
+    CONF_VEHICLE_HERSTELLER,
+    CONF_VEHICLE_MODELL,
+    DOMAIN,
+    EVCC_CONF_KEYS,
+    PLATFORMS,
+    SERVICE_DELETE,
+    SERVICE_DELETE_TRIP,
+    SERVICE_DISCARD,
+    SERVICE_DISCARD_TRIP,
+    SERVICE_EDIT,
+    SERVICE_EDIT_TRIP,
+    SERVICE_EXPORT_TRIPS,
+    SERVICE_IMPORT_TRIPS,
+    SERVICE_LOG,
+    SERVICE_LOG_TRIP,
+    SERVICE_SIMULATE,
+    SERVICE_SIMULATE_TRIP,
 )
 from .coordinator import EvAssistantCoordinator
 
@@ -242,6 +256,15 @@ IMPORT_TRIPS_SCHEMA = vol.Schema({
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    # Backfill fuer Entries von vor Einfuehrung der unique_id (siehe
+    # EvAssistantConfigFlow.async_step_fahrzeug) -- ohne das wuerde der
+    # Duplikat-Schutz fuer bereits bestehende Fahrzeuge nie greifen, weil sie
+    # schlicht keine unique_id haben, mit der eine neu angelegte kollidieren
+    # koennte.
+    if entry.unique_id is None:
+        soc_entity = entry.options.get(CONF_SOC_ENTITY) or entry.data.get(CONF_SOC_ENTITY)
+        if soc_entity:
+            hass.config_entries.async_update_entry(entry, unique_id=soc_entity)
     coordinator = EvAssistantCoordinator(hass, entry)
     await coordinator.async_setup()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
@@ -375,8 +398,12 @@ def _register_services(hass: HomeAssistant) -> None:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        coordinator = hass.data[DOMAIN].pop(entry.entry_id)
-        await coordinator.async_shutdown()
+        # Default statt KeyError: async_unload_entry kann theoretisch auch
+        # aufgerufen werden, wenn der Eintrag hier nie ankam (z.B. wenn
+        # async_setup_entry vor dem hass.data-Eintrag fehlgeschlagen ist).
+        coordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
+        if coordinator is not None:
+            await coordinator.async_shutdown()
         if not hass.data[DOMAIN]:
             _async_unregister_panel(hass)
             for service in (

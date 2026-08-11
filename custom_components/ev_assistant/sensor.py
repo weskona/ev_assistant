@@ -12,9 +12,14 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from .const import (
-    CONF_EFFICIENCY, CONF_ERSTZULASSUNG, DEFAULT_EFFICIENCY,
-    CONF_TANKERKOENIG_FUEL_TYPE, CONF_VERBRENNER_PRICE_ENTITY, CONF_VERBRENNER_PRICE_PER_LITER,
-    DOMAIN, EFF_MIN_SAMPLES,
+    CONF_EFFICIENCY,
+    CONF_ERSTZULASSUNG,
+    CONF_TANKERKOENIG_FUEL_TYPE,
+    CONF_VERBRENNER_PRICE_ENTITY,
+    CONF_VERBRENNER_PRICE_PER_LITER,
+    DEFAULT_EFFICIENCY,
+    DOMAIN,
+    EFF_MIN_SAMPLES,
 )
 from .entity import EvAssistantEntity
 

@@ -2,6 +2,20 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.48.0] - 2026-08-11
+
+### Added
+
+- **Repair issues for stuck source entities**: if a configured source entity (vehicle SOC, odometer, plug/motor sensor, wallbox charge power, vehicle charge power, wallbox energy meter, location suggestion, home electricity/fuel price) is unavailable, unknown, or removed for at least 30 minutes, a Repair issue now appears (Settings → System → Repairs) explaining exactly what's affected, instead of the integration silently continuing to compute estimates from stale data. Clears automatically once the entity recovers.
+- **Duplicate-vehicle protection**: adding a vehicle now sets a unique ID from its SoC entity, so accidentally configuring the same vehicle twice is rejected with a clear message. Existing installs are migrated automatically (no action needed).
+- Set up [ruff](https://docs.astral.sh/ruff/) linting (`pyproject.toml`) and added it as a third CI check alongside HACS and hassfest validation.
+
+### Fixed
+
+- **Two test functions silently never ran**: `test_get_state_load_state_ueberlebt_simulierten_neustart` and `test_load_state_ohne_gespeicherten_zustand_ist_no_op` each existed twice (once for `ChargeDetector`, once for `TripDetector`) — Python silently keeps only the last definition of a duplicate top-level function name, so the `ChargeDetector` versions were replaced by the `TripDetector` versions and never executed. Found by the new ruff CI check. Renamed so both run; both pass.
+- `zip()` without `strict=True` in the Tankerkönig price-averaging loop (harmless in practice since both lists are always the same length by construction, but now explicit).
+- `async_unload_entry` used `.pop(entry.entry_id)` without a default, which would raise `KeyError` instead of failing gracefully in the unlikely case it's called for an entry that never finished setup.
+
 ## [0.47.0] - 2026-08-11
 
 ### Added

@@ -2,9 +2,20 @@
 
 import pytest
 from engine import (
-    ChargeDetector, ChargeSample, EfficiencyCalibrator, SignalDebouncer, TripDetector, TripSample,
-    average_efficiency, calculate_co2_savings, calculate_savings, charge_before_pv_decision, charge_cost,
-    merge_pending, pop_pending, weekday_usage_profile,
+    ChargeDetector,
+    ChargeSample,
+    EfficiencyCalibrator,
+    SignalDebouncer,
+    TripDetector,
+    TripSample,
+    average_efficiency,
+    calculate_co2_savings,
+    calculate_savings,
+    charge_before_pv_decision,
+    charge_cost,
+    merge_pending,
+    pop_pending,
+    weekday_usage_profile,
 )
 
 
@@ -232,7 +243,7 @@ def test_as_dict_schema():
     assert d["energy_kwh"] >= d["energy_batt_kwh"]
 
 
-def test_get_state_load_state_ueberlebt_simulierten_neustart():
+def test_charge_get_state_load_state_ueberlebt_simulierten_neustart():
     """Ein HA-Neustart darf eine bereits laufende (noch nicht
     abgeschlossene) Fremdladung nicht verwerfen -- get_state()/load_state()
     muss denselben Ablauf liefern wie ohne Neustart dazwischen."""
@@ -257,7 +268,7 @@ def test_get_state_load_state_ueberlebt_simulierten_neustart():
     assert d_ref[0]["soc_end"] == 83.0
 
 
-def test_load_state_ohne_gespeicherten_zustand_ist_no_op():
+def test_charge_load_state_ohne_gespeicherten_zustand_ist_no_op():
     det = ChargeDetector(usable_kwh=45)
     det.load_state(None)
     det.load_state({})
@@ -554,7 +565,7 @@ def test_driving_none_faellt_auf_odometer_vergleich_zurueck():
     assert (ev.odo_start, ev.odo_end) == (10.0, 15.0)
 
 
-def test_get_state_load_state_ueberlebt_simulierten_neustart():
+def test_trip_get_state_load_state_ueberlebt_simulierten_neustart():
     """Wie bei ChargeDetector: eine noch nicht abgeschlossene Fahrt darf
     einen HA-Neustart nicht verwerfen."""
     samples = trip_stream([200.0, 200.0], step=60) + trip_stream([205.0], start_ts=120) + trip_stream([205.0], start_ts=460)
@@ -577,7 +588,7 @@ def test_get_state_load_state_ueberlebt_simulierten_neustart():
     assert d_ref[0]["odo_end"] == 205.0
 
 
-def test_load_state_ohne_gespeicherten_zustand_ist_no_op():
+def test_trip_load_state_ohne_gespeicherten_zustand_ist_no_op():
     det = TripDetector()
     det.load_state(None)
     det.load_state({})

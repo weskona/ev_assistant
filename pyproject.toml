@@ -1,0 +1,26 @@
+[tool.ruff]
+target-version = "py313"
+line-length = 130
+
+[tool.ruff.lint]
+# E/F/W: Basisfehler (pycodestyle/pyflakes) -- fangen u.a. unbenutzte Importe
+# und (wichtig, hat hier einen echten Bug gefunden) doppelt benannte
+# Top-Level-Funktionen, die sich in Python stillschweigend gegenseitig
+# ueberschreiben (F811).
+# B: bugbear -- reale Fehlermuster (z.B. zip() ohne strict=).
+# I: Import-Sortierung.
+select = ["E", "F", "W", "B", "I"]
+ignore = [
+    # E701 (mehrere Anweisungen in einer Zeile): in coordinator.py bewusst
+    # fuer eine Reihe optisch ausgerichteter "if x is not None: y = x"-Zeilen
+    # verwendet -- Umformatieren wuerde die Ausrichtung zerstoeren, ohne
+    # einen echten Fehler zu beheben.
+    "E701",
+]
+
+# UP (pyupgrade, z.B. Optional[X] -> X | None) und SIM (z.B. try/except/pass
+# -> contextlib.suppress) sind bewusst NICHT aktiviert: der gesamte
+# Code nutzt durchgaengig Optional[]/try-except-pass -- das waere ein rein
+# stilistischer Umbau ueber die ganze Codebase ohne funktionalen Nutzen
+# (from __future__ import annotations macht beide Schreibweisen ohnehin
+# aequivalent).

@@ -95,6 +95,9 @@
     "error": {
       "vehicle_name_required": "Please enter manufacturer and model.",
       "noise_too_high": "The SoC noise value must be smaller than the start threshold."
+    },
+    "abort": {
+      "already_configured": "A vehicle is already configured for this SoC entity."
     }
   },
   "options": {
@@ -341,6 +344,48 @@
       "charge_before_pv_recommended": {
         "name": "Charge Before Solar Recommended"
       }
+    }
+  },
+  "issues": {
+    "entity_unavailable_soc_entity": {
+      "title": "Vehicle SOC unavailable",
+      "description": "The configured entity `{entity_id}` has been unavailable/unknown or removed from Home Assistant for at least {minuten} minutes. While this persists, external-charge and charging-efficiency detection get no new SoC values and keep working off stale data. Check the source integration/sensor (e.g. connectivity, restart it)."
+    },
+    "entity_unavailable_odo_entity": {
+      "title": "Odometer unavailable",
+      "description": "The configured entity `{entity_id}` has been unavailable/unknown or removed from Home Assistant for at least {minuten} minutes. While this persists, trip detection stalls and all odometer statistics/projections keep showing the last known figures."
+    },
+    "entity_unavailable_plug_entity": {
+      "title": "Plug sensor unavailable",
+      "description": "The configured entity `{entity_id}` has been unavailable/unknown or removed from Home Assistant for at least {minuten} minutes. External-charge detection falls back to plain timeout logic in the meantime instead of detecting plug-in/unplug directly."
+    },
+    "entity_unavailable_motor_entity": {
+      "title": "Motor/driving sensor unavailable",
+      "description": "The configured entity `{entity_id}` has been unavailable/unknown or removed from Home Assistant for at least {minuten} minutes. Trip detection relies solely on the odometer in the meantime."
+    },
+    "entity_unavailable_home_entity": {
+      "title": "Wallbox charge power unavailable",
+      "description": "The configured entity `{entity_id}` has been unavailable/unknown or removed from Home Assistant for at least {minuten} minutes. The yes/no detection of \"currently charging at home\" is out in the meantime — a SoC increase could be incorrectly classified as an external charge."
+    },
+    "entity_unavailable_power_entity": {
+      "title": "Vehicle charge power unavailable",
+      "description": "The configured entity `{entity_id}` has been unavailable/unknown or removed from Home Assistant for at least {minuten} minutes. The energy estimate for an external charge falls back to the plain SoC-delta estimate in the meantime."
+    },
+    "entity_unavailable_wallbox_energy_entity": {
+      "title": "Wallbox energy meter unavailable",
+      "description": "The configured entity `{entity_id}` has been unavailable/unknown or removed from Home Assistant for at least {minuten} minutes. Charging-efficiency calibration and home-charging price weighting are paused in the meantime."
+    },
+    "entity_unavailable_gps_entity": {
+      "title": "Location suggestion entity unavailable",
+      "description": "The configured entity `{entity_id}` has been unavailable/unknown or removed from Home Assistant for at least {minuten} minutes. New trips get no automatic start/end location suggestion in the meantime (still correctable afterwards via edit_trip)."
+    },
+    "entity_unavailable_home_price_entity": {
+      "title": "Home electricity price entity unavailable",
+      "description": "The configured entity `{entity_id}` has been unavailable/unknown or removed from Home Assistant for at least {minuten} minutes. The home electricity price falls back to the last known or fixed value in the meantime."
+    },
+    "entity_unavailable_verbrenner_price_entity": {
+      "title": "Fuel price entity unavailable",
+      "description": "The configured entity `{entity_id}` has been unavailable/unknown or removed from Home Assistant for at least {minuten} minutes. The fuel price falls back to the last known or fixed value in the meantime (unless a Tankerkönig fuel type is configured, which takes priority anyway)."
     }
   }
 }

@@ -23,6 +23,7 @@ A comprehensive **EV monitoring integration for Home Assistant**. EV Assistant c
 - **Full sidebar panel** — a built-in EV dashboard; no Lovelace card setup needed.
 - **Multi-vehicle support** — configure one integration entry per vehicle; the panel shows pill tabs to switch between them.
 - **Diagnostics** — download a redacted config + state snapshot (Settings → Devices & Services → EV Assistant → ⋮ → Download Diagnostics) for troubleshooting or bug reports.
+- **Repair issues for stuck sensors** — if a configured source entity (SoC, odometer, plug sensor, ...) goes unavailable or is removed for 30+ minutes, a Repair issue (Settings → System → Repairs) tells you exactly what's affected, instead of estimates silently running on stale data.
 
 ---
 
