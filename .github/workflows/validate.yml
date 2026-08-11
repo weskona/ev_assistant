@@ -16,3 +16,13 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
+
+  hassfest:
+    name: Validate hassfest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Hassfest validation
+        uses: home-assistant/actions/hassfest@master
