@@ -22,6 +22,7 @@ Eine umfassende **EV-Monitoring-Integration für Home Assistant**. EV Assistant 
 - **Fahrtenbuch-Import** — historische Fahrten aus einer anderen Fahrtenbuch-App/einem Export per Service-Aufruf in einem Rutsch importieren, für einen einmaligen Rückstand ohne die Kilometerstand-Erkennung.
 - **Vollständiges Seitenleisten-Panel** — ein eingebautes EV-Dashboard; kein Lovelace-Karten-Setup erforderlich.
 - **Mehrfahrzeug-Unterstützung** — pro Fahrzeug einen Integrationseintrag konfigurieren; das Panel zeigt Tabs zum Wechsel zwischen den Fahrzeugen.
+- **Diagnose** — lädt eine anonymisierte Config- und Zustands-Momentaufnahme herunter (Einstellungen → Geräte & Dienste → EV Assistant → ⋮ → Diagnose herunterladen), für Fehlersuche oder Bug-Reports.
 
 ---
 

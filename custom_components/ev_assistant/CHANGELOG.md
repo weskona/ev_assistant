@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.47.0] - 2026-08-11
+
+### Added
+
+- **Diagnostics support**: Settings → Devices & Services → EV Assistant → ⋮ → Download Diagnostics now works. Includes the full config and coordinator state for troubleshooting; trip-log locations (`start_ort`/`end_ort`/`trip_start_zone`) are redacted, and the trip/charge history is capped to the newest 20 entries (with a total count alongside) to keep the file a reasonable size.
+- CI now also runs [hassfest](https://developers.home-assistant.io/blog/2020/04/16/hassfest/) validation on every push/PR, in addition to the existing HACS validation.
+
+### Fixed
+
+- **A HA crash exactly in the few seconds after a trip started could lose the trip's start location/SoC** (introduced in 0.44.0's delayed-write change): the routine per-sample trip-detector save was batched, but freezing the start location suggestion and start SoC at the idle→driving transition needs to save immediately — losing it would silently attribute the *previous* trip's start location/SoC to this one once it's confirmed. Now saves immediately at that specific moment; the routine per-sample mirror in between stays batched.
+- `manifest.json`: declared `http`/`recorder` as `after_dependencies` (used defensively for the sidebar panel and long-term-statistics queries; hassfest was flagging their absence) and sorted manifest keys alphabetically as hassfest requires.
+
 ## [0.46.0] - 2026-08-10
 
 ### Fixed

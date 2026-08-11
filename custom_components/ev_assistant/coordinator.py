@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import csv
-import json
 import logging
 import os
 import time
@@ -1056,15 +1055,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["trip_detector_state"] = self._trip_detector.get_state()
         # Fahrtbeginn erkannt (idle -> aktiv): aktuelle Zone als Start-Ort-
         # Vorschlag sowie den aktuellen SoC als Start-SoC einfrieren, bevor
-        # sich beide waehrend der Fahrt aendern. Persistiert, damit ein
-        # HA-Neustart waehrend der Fahrt weder Vorschlag noch Start-SoC
-        # verliert (siehe async_setup()).
+        # sich beide waehrend der Fahrt aendern. Sofort (nicht ueber
+        # _save_soon() gebuendelt) persistiert, damit ein HA-Neustart
+        # waehrend der Fahrt weder Vorschlag noch Start-SoC verliert (siehe
+        # async_setup()) -- anders als der routinemaessige
+        # trip_detector_state-Mirror unten heilt sich ein Verlust hier
+        # NICHT selbst: faellt die Fahrt spaeter fertig, wuerden die
+        # Start-Werte der VORHERIGEN Fahrt (oder None) uebernommen.
         if not was_active and self._trip_detector.active:
             self._trip_start_zone = self._person_zone
             self.data["trip_start_zone"] = self._trip_start_zone
             self._trip_start_soc = self._soc
             self.data["trip_start_soc"] = self._trip_start_soc
-        self._save_soon()
+            await self._save()
+        else:
+            self._save_soon()
         if event is not None:
             pend = event.as_dict()
             pend["start_ort_vorschlag"] = self._trip_start_zone

@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.47.0] - 2026-08-11
+
+### Added
+
+- **Diagnostics support**: Settings → Devices & Services → EV Assistant → ⋮ → Download Diagnostics now works. Includes the full config and coordinator state for troubleshooting; trip-log locations (`start_ort`/`end_ort`/`trip_start_zone`) are redacted, and the trip/charge history is capped to the newest 20 entries (with a total count alongside) to keep the file a reasonable size.
+- CI now also runs [hassfest](https://developers.home-assistant.io/blog/2020/04/16/hassfest/) validation on every push/PR, in addition to the existing HACS validation.
+
+### Fixed
+
+- **A HA crash exactly in the few seconds after a trip started could lose the trip's start location/SoC** (introduced in 0.44.0's delayed-write change): the routine per-sample trip-detector save was batched, but freezing the start location suggestion and start SoC at the idle→driving transition needs to save immediately — losing it would silently attribute the *previous* trip's start location/SoC to this one once it's confirmed. Now saves immediately at that specific moment; the routine per-sample mirror in between stays batched.
+- `manifest.json`: declared `http`/`recorder` as `after_dependencies` (used defensively for the sidebar panel and long-term-statistics queries; hassfest was flagging their absence) and sorted manifest keys alphabetically as hassfest requires.
+
 ## [0.46.0] - 2026-08-10
 
 ### Fixed
@@ -368,6 +380,37 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 - **Renamed sensors**: `pending_estimate` (previously "Fremdladung Schätzung") is now **"Fremdladung ausstehend"**; `trip_pending_estimate` (previously "Fahrt Schätzung") is now **"Fahrt ausstehend"**. Translation keys are unchanged; HA entity IDs are unaffected.
 - **Vehicle card km section redesigned** — replaced the three stacked KPI rows with a compact 2-column grid: driven km per period (today / week / month / year) on the left, average and projected km on the right. The overall vehicle card now uses a side-by-side layout with km on the left and the Verbrenner-Vergleich on the right, separated by a vertical divider.
 - **Chart card is now mobile-responsive** — on screens ≤ 600 px the three charts (charging overview, cost overview, solar share) stack vertically with horizontal dividers between them. The chart card header is reorganised: period pills and the week/month navigation now sit in a flex-column block, keeping the header compact on narrow screens.
+
+## [0.20.2] - 2026-08-02
+
+### Fixed
+
+- Removed `evcc_intg` from `dependencies` in `manifest.json` — HA cannot resolve custom (HACS) integrations as hard dependencies, causing ev_assistant and potentially other integrations to fail loading entirely.
+
+## [0.20.1] - 2026-08-02
+
+### Fixed
+
+- External charge history and trip log no longer drop old entries — the 100-entry cap (`HISTORY_MAX`) has been removed. All records are kept indefinitely in HA storage.
+
+## [0.20.0] - 2026-08-02
+
+### Changed
+
+- **Config flow reduced from 9 to 7 steps**: the `grundsignale` step (SOC entity, home-charging entity) and the `wallbox` step (evcc live entities) have been removed. SOC entity is now in step 1 (vehicle details) and is a **required** field; home-charging entity (wallbox charge power) moved to step 2 alongside the evcc vehicle name.
+- **All evcc entities auto-discovered**: `evcc_intg` is now declared as a Home Assistant dependency. During setup the integration automatically reads all enabled entities from the evcc integration config entry and maps them to the corresponding `CONF_EVCC_*` keys — no manual entity selection needed for PV, grid, battery, tariff, and loadpoint entities.
+- **Step 2 (evcc) simplified**: only two optional fields remain — the vehicle name in evcc (for filtering home-charging history) and the wallbox charge power entity (yes/no signal for "currently charging at home").
+- **All template fields removed** (`soc_template`, `home_template`, `power_template`, `wallbox_energy_template`) — direct entity selection is now used exclusively.
+- Translation files (`de.json`, `en.json`, `strings.json`) completely rewritten to match the new 7-step structure with updated step numbers and labels.
+
+### Added
+
+- **Home charging kWh via evcc vehicle statistics**: the coordinator now reads `sensor.evcc_charging_sessions_vehicles` to get per-vehicle total home-charging energy directly from evcc. Falls back to wallbox energy meter delta if the evcc vehicle key cannot be resolved.
+- **Auto-detection of evcc vehicle key**: if no vehicle name is configured manually, the coordinator attempts to match the config entry title (e.g. `EV Assistant (VW ID4)`) against the vehicle keys in the evcc charging-sessions sensor attributes.
+
+### Fixed
+
+- `verbrenner_price_entity` in the cost-comparison step was using the home-price entity selector instead of its own dedicated entity selector.
 
 ## [0.19.0] - 2026-08-01
 

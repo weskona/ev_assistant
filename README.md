@@ -22,6 +22,7 @@ A comprehensive **EV monitoring integration for Home Assistant**. EV Assistant c
 - **Trip import** — bulk-import historical trips from another trip-log app/export via a service call, for a one-time backfill without needing the odometer detector.
 - **Full sidebar panel** — a built-in EV dashboard; no Lovelace card setup needed.
 - **Multi-vehicle support** — configure one integration entry per vehicle; the panel shows pill tabs to switch between them.
+- **Diagnostics** — download a redacted config + state snapshot (Settings → Devices & Services → EV Assistant → ⋮ → Download Diagnostics) for troubleshooting or bug reports.
 
 ---
 
