@@ -674,6 +674,7 @@ class EVAssistantPanel extends HTMLElement {
         <div class="divider"></div>
         <div class="kpi-row">
           <div class="kpi"><div class="kv vh-odo">—</div><div class="kl">km Kilometerstand</div></div>
+          <div class="kpi"><div class="kv vh-range">—</div><div class="kl">km Reichweite (geschätzt)</div></div>
           <div class="kpi"><div class="kv vh-avg-consumption">—</div><div class="kl">kWh/100km Ø Verbrauch</div></div>
           <div class="kpi"><div class="kv vh-efficiency">—</div><div class="kl">% Ladewirkungsgrad</div></div>
           <div class="kpi"><div class="kv green vh-savings">—</div><div class="kl">EUR Ersparnis ggü. Verbrenner</div></div>
@@ -717,6 +718,7 @@ class EVAssistantPanel extends HTMLElement {
             <div class="sub-head">Verbrenner-Vergleich</div>
             <div class="sav-grid">
               <div class="km-item"><span class="km-label">Ersparnis</span><span class="km-val green vh-sav-ersparnis">—</span><span class="km-unit">EUR</span></div>
+              <div class="km-item"><span class="km-label">CO₂-Ersparnis</span><span class="km-val green vh-sav-co2">—</span><span class="km-unit">kg</span></div>
               <div class="km-sep"></div>
               <div class="km-item"><span class="km-label">EV-Kosten</span><span class="km-val vh-sav-ev-cost">—</span><span class="km-unit">EUR</span></div>
               <div class="km-item"><span class="km-label">Verbrenner</span><span class="km-val vh-sav-verb-cost">—</span><span class="km-unit">EUR</span></div>
@@ -883,6 +885,7 @@ class EVAssistantPanel extends HTMLElement {
       vhTripKmTotal:   q(".vh-trip-km-total"),
       vhTripRouteLast: q(".vh-trip-route-last"),
       vhOdo:          q(".vh-odo"),
+      vhRange:        q(".vh-range"),
       vhAvgConsumption: q(".vh-avg-consumption"),
       vhOdoDay:       q(".vh-odo-day"),
       vhOdoWeek:      q(".vh-odo-week"),
@@ -902,6 +905,7 @@ class EVAssistantPanel extends HTMLElement {
       vhEfficiency:    q(".vh-efficiency"),
       vhSavings:       q(".vh-savings"),
       vhSavErsparnis:  q(".vh-sav-ersparnis"),
+      vhSavCo2:        q(".vh-sav-co2"),
       vhSavEvCost:     q(".vh-sav-ev-cost"),
       vhSavVerbCost:   q(".vh-sav-verb-cost"),
       vhSavEvPer100:   q(".vh-sav-ev-per100"),
@@ -1353,6 +1357,7 @@ class EVAssistantPanel extends HTMLElement {
     this._renderAllCharts();
     r.vhTripKmTotal.textContent  = this._num("total_trip_km", 0);
     r.vhOdo.textContent          = this._num("odo", 0);
+    r.vhRange.textContent       = this._num("range_estimate", 0);
     r.vhAvgConsumption.textContent = this._num("vehicle_avg_consumption", 1);
     r.vhOdoDay.textContent       = this._num("odo_day_km", 0);
     r.vhOdoWeek.textContent      = this._num("odo_week_km", 0);
@@ -1382,6 +1387,7 @@ class EVAssistantPanel extends HTMLElement {
       const gefahrenKm  = parseFloat(attr.gefahrene_km);
       const fmt2 = (v) => isNaN(v) ? "—" : this._fmtNum(v, 2);
       r.vhSavErsparnis.textContent  = fmt2(ersparnis);
+      r.vhSavCo2.textContent        = this._num("co2_savings", 1);
       r.vhSavEvCost.textContent     = fmt2(evCost);
       r.vhSavVerbCost.textContent   = fmt2(verbCost);
       r.vhSavEvPer100.textContent   = (!isNaN(evCost) && !isNaN(gefahrenKm) && gefahrenKm > 0)
@@ -1784,7 +1790,7 @@ class EVAssistantPanel extends HTMLElement {
           <div class="hist-figures-left">
             ${tSocStr ? `<span class="hist-soc">${tSocStr}</span>` : ""}
             <span class="hist-kwh">${this._fmtNum(h.km, 1)}<small>km</small></span>
-            ${(h.verbrauch_kwh != null) ? `<span class="hist-power">${this._fmtNum(h.verbrauch_kwh, 1)}<small>kWh</small></span>` : ""}
+            ${(h.verbrauch_kwh != null) ? `<span class="hist-power" title="${h.verbrauch_unsicher ? "Aus SoC-Delta geschätzt, unplausibel (evtl. Sensor-Aussetzer) – bitte prüfen" : ""}">${h.verbrauch_unsicher ? "⚠️ " : ""}${this._fmtNum(h.verbrauch_kwh, 1)}<small>kWh</small></span>` : ""}
             ${(tSpeed && tSpeed > 0 && tSpeed < 300) ? `<span class="hist-power">Ø ${this._fmtNum(tSpeed, 0)}<small>km/h</small></span>` : ""}
           </div>
         </div>

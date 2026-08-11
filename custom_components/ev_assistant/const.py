@@ -182,6 +182,13 @@ DEFAULT_START_DELTA = 1.0
 DEFAULT_NOISE = 0.5
 DEFAULT_IDLE_TIMEOUT = 600.0
 DEFAULT_DROP_ENDS = 1.0
+
+# Plausibilitaetsband fuer aus SoC-Delta geschaetzten Fahrt-Verbrauch (siehe
+# engine.is_plausible_trip_consumption) -- bewusst kein Config-Flow-Feld,
+# analog EFF_MIN_SOC_DELTA: grobe interne Heuristik, keine Nutzer-Einstellung.
+TRIP_CONSUMPTION_MIN_KWH_100KM = 8.0
+TRIP_CONSUMPTION_MAX_KWH_100KM = 40.0
+TRIP_CONSUMPTION_CHECK_MIN_KM = 5.0
 # Grosszuegig, da Hersteller-/Dongle-APIs den Steckerstatus teils verzoegert
 # oder kurzzeitig unzuverlaessig melden (siehe engine.py::SignalDebouncer).
 DEFAULT_PLUG_DEBOUNCE = 300.0

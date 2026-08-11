@@ -10,11 +10,14 @@ from engine import (
     TripSample,
     average_efficiency,
     calculate_co2_savings,
+    calculate_range_km,
     calculate_savings,
     charge_before_pv_decision,
     charge_cost,
+    is_plausible_trip_consumption,
     merge_pending,
     pop_pending,
+    rolling_consumption_kwh_per_100km,
     weekday_usage_profile,
 )
 
@@ -692,3 +695,106 @@ def test_charge_cost_mit_gebuehr():
 
 def test_charge_cost_rundet_auf_zwei_nachkommastellen():
     assert charge_cost(kwh=10.333, price_kwh=0.333, start_fee=0.001) == 3.44
+
+
+# ----- rolling_consumption_kwh_per_100km: Realverbrauch der letzten X Tage -
+
+def _fahrt(start_ts, km, verbrauch_kwh=None):
+    rec = {"start_ts": start_ts, "km": km}
+    if verbrauch_kwh is not None:
+        rec["verbrauch_kwh"] = verbrauch_kwh
+    return rec
+
+
+def test_rolling_consumption_durchgerechnetes_beispiel():
+    now = 1_000_000.0
+    fahrten = [
+        _fahrt(now - 1 * 86400, km=50.0, verbrauch_kwh=10.0),
+        _fahrt(now - 2 * 86400, km=50.0, verbrauch_kwh=10.0),
+    ]
+    # 100 km gesamt, 20 kWh gesamt -> 20 kWh/100km.
+    assert rolling_consumption_kwh_per_100km(fahrten, now, window_days=30, min_km=50.0) == 20.0
+
+
+def test_rolling_consumption_fahrten_ausserhalb_des_fensters_zaehlen_nicht():
+    now = 1_000_000.0
+    fahrten = [
+        _fahrt(now - 1 * 86400, km=50.0, verbrauch_kwh=10.0),
+        _fahrt(now - 60 * 86400, km=999.0, verbrauch_kwh=999.0),  # ausserhalb 30-Tage-Fenster
+    ]
+    assert rolling_consumption_kwh_per_100km(fahrten, now, window_days=30, min_km=10.0) == 20.0
+
+
+def test_rolling_consumption_fahrt_ohne_verbrauch_kwh_zaehlt_km_nicht_mit():
+    # Eine Fahrt ohne verbrauch_kwh darf ihre km nicht in den Nenner
+    # einbringen, ohne die zugehoerige Energie zu kennen -- sonst waere das
+    # Ergebnis zu niedrig verzerrt.
+    now = 1_000_000.0
+    fahrten = [
+        _fahrt(now - 1 * 86400, km=50.0, verbrauch_kwh=10.0),
+        _fahrt(now - 1 * 86400, km=200.0),  # kein verbrauch_kwh
+    ]
+    assert rolling_consumption_kwh_per_100km(fahrten, now, window_days=30, min_km=10.0) == 20.0
+
+
+def test_rolling_consumption_unter_min_km_liefert_none():
+    now = 1_000_000.0
+    fahrten = [_fahrt(now - 1 * 86400, km=10.0, verbrauch_kwh=2.0)]
+    assert rolling_consumption_kwh_per_100km(fahrten, now, window_days=30, min_km=50.0) is None
+
+
+def test_rolling_consumption_leere_liste_liefert_none():
+    assert rolling_consumption_kwh_per_100km([], now_ts=1_000_000.0, window_days=30, min_km=50.0) is None
+
+
+# ----- calculate_range_km: Restreichweite aus SoC und Realverbrauch --------
+
+def test_calculate_range_km_durchgerechnetes_beispiel():
+    # 60% von 50 kWh = 30 kWh Akku, bei 15 kWh/100km -> 200 km.
+    assert calculate_range_km(soc_pct=60.0, usable_kwh=50.0, consumption_kwh_per_100km=15.0) == 200.0
+
+
+@pytest.mark.parametrize("soc_pct,consumption", [
+    (None, 15.0),
+    (60.0, None),
+    (60.0, 0.0),
+    (60.0, -5.0),
+])
+def test_calculate_range_km_fehlende_oder_unplausible_eingabe_liefert_none(soc_pct, consumption):
+    assert calculate_range_km(soc_pct=soc_pct, usable_kwh=50.0, consumption_kwh_per_100km=consumption) is None
+
+
+# ----- is_plausible_trip_consumption: Ausreisser aus SoC-Delta erkennen ----
+
+def test_is_plausible_trip_consumption_normaler_verbrauch_ist_plausibel():
+    # 15.6 kWh auf 84.3 km = 18.5 kWh/100km -- typischer EV-Verbrauch.
+    assert is_plausible_trip_consumption(15.6, 84.3) is True
+
+
+def test_is_plausible_trip_consumption_eingefrorener_soc_ist_unplausibel():
+    # Beobachteter Fall: 147.1 km, aber wegen WiCAN-Ausfall nur 5.5 kWh
+    # (statt real ~29 kWh) aus dem SoC-Delta geschaetzt.
+    assert is_plausible_trip_consumption(5.5, 147.1) is False
+
+
+def test_is_plausible_trip_consumption_zu_hoher_verbrauch_ist_unplausibel():
+    assert is_plausible_trip_consumption(50.0, 50.0) is False  # 100 kWh/100km
+
+
+@pytest.mark.parametrize("kwh,km", [(None, 50.0), (10.0, None), (10.0, 0.0), (10.0, -5.0)])
+def test_is_plausible_trip_consumption_ohne_pruefbare_daten_liefert_true(kwh, km):
+    assert is_plausible_trip_consumption(kwh, km) is True
+
+
+def test_is_plausible_trip_consumption_kurze_strecke_wird_nicht_geprueft():
+    # 1km/1% SoC-Delta ergibt rechnerisch 50 kWh/100km -- reines Artefakt der
+    # Ganzprozent-Quantisierung, kein Sensorproblem. Unter min_km ausgenommen.
+    assert is_plausible_trip_consumption(0.5, 1.0) is True
+    assert is_plausible_trip_consumption(0.1, 4.9) is True
+    assert is_plausible_trip_consumption(0.1, 5.0) is False
+
+
+def test_is_plausible_trip_consumption_grenzwerte_inklusiv():
+    assert is_plausible_trip_consumption(8.0, 100.0, 8.0, 40.0) is True
+    assert is_plausible_trip_consumption(40.0, 100.0, 8.0, 40.0) is True
+    assert is_plausible_trip_consumption(7.99, 100.0, 8.0, 40.0) is False

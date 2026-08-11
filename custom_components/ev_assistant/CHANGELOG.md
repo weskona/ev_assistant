@@ -2,6 +2,17 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.49.0] - 2026-08-11
+
+### Added
+
+- **Estimated range sensor**: new `sensor.<vehicle>_geschatzte_reichweite`, calculated from the current SoC and your actual rolling 30-day consumption (falls back to the lifetime average until 30 days/50 km of trip history are available) instead of a generic manufacturer figure. Shown alongside CO₂ savings on the vehicle card in the panel.
+- **Plausibility flag for SoC-delta-estimated trip consumption**: when a trip has no directly-reported consumption, it's estimated from the SoC drop during the trip — but that estimate is only as good as the SoC readings at trip start/end, and a temporary vehicle connectivity gap can freeze one of them at trip start or end, producing a wildly wrong number. Trips whose resulting estimate falls outside a plausible ~8–40 kWh/100km band (trips under 5 km are exempt — whole-percent SoC quantization alone distorts the ratio at that distance) are now marked `verbrauch_unsicher` and shown with a ⚠️ in the panel's trip history, instead of being displayed as if certain. Manually entering a real consumption value (e.g. from the vehicle's app) always clears the flag.
+
+### Fixed
+
+- **The estimated range sensor (and other live-SoC-dependent values) could show a stale reading**: the coordinator only pushed an update to entities after a charge event fully finished, not on every routine SoC sample — so a value depending directly on the *current* SoC (rather than an accumulated total) could lag behind the real state by a long margin. Routine detection runs now always push the update.
+
 ## [0.48.0] - 2026-08-11
 
 ### Added

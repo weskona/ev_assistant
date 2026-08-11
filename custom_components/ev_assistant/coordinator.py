@@ -102,6 +102,9 @@ from .const import (
     NOTIFY_TAG,
     STORAGE_KEY,
     STORAGE_VERSION,
+    TRIP_CONSUMPTION_CHECK_MIN_KM,
+    TRIP_CONSUMPTION_MAX_KWH_100KM,
+    TRIP_CONSUMPTION_MIN_KWH_100KM,
 )
 from .engine import (
     ChargeDetector,
@@ -112,11 +115,14 @@ from .engine import (
     TripSample,
     average_efficiency,
     calculate_co2_savings,
+    calculate_range_km,
     calculate_savings,
     charge_before_pv_decision,
     charge_cost,
+    is_plausible_trip_consumption,
     merge_pending,
     pop_pending,
+    rolling_consumption_kwh_per_100km,
     weekday_usage_profile,
 )
 
@@ -151,6 +157,17 @@ _HEALTH_MONITORED_KEYS = (
     CONF_HOME_ENTITY, CONF_POWER_ENTITY, CONF_WALLBOX_ENERGY_ENTITY,
     CONF_GPS_ENTITY, CONF_HOME_PRICE_ENTITY, CONF_VERBRENNER_PRICE_ENTITY,
 )
+
+# Rolling-Fenster fuer den Realverbrauch (siehe engine.py::
+# rolling_consumption_kwh_per_100km()) -- deutlich kuerzer als der
+# Lebenszeit-Durchschnitt seit Einrichtung, damit sich Jahreszeit/aktueller
+# Fahrstil in der Reichweitenschaetzung abbilden statt ueber Monate/Jahre
+# verwaschen zu werden.
+_ROLLING_CONSUMPTION_WINDOW_DAYS = 30
+# Mindest-km im Rolling-Fenster, bevor ihm statt dem Lebenszeit-Durchschnitt
+# vertraut wird -- sonst wuerde z.B. eine einzelne kurze Kaltstart-/
+# Stadtfahrt direkt nach einer laengeren Standzeit den Verbrauch verzerren.
+_ROLLING_CONSUMPTION_MIN_KM = 50.0
 
 
 def _empty_data() -> dict:
@@ -275,6 +292,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # statt sofort ein Issue aus der vorherigen Session zu recyceln.
         self._entity_bad_since: dict[str, float] = {}
         self._entity_issue_active: set[str] = set()
+        # Cache fuer den rollierenden Realverbrauch, analog
+        # _usage_profile_cache (Schluessel: _fahrten_version + heutiges
+        # Datum, da das Rolling-Fenster auch ohne Fahrtenbuch-Aenderung
+        # einmal pro Tag weiterwandert).
+        self._rolling_consumption_cache: Optional[tuple[int, str, Optional[float]]] = None
         self.data = _empty_data()
 
     def _opt(self, key, default=None):
@@ -1022,6 +1044,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         event = self._detector.update(sample)
         self.data["detector_state"] = self._detector.get_state()
         self._check_soc_thresholds()
+        # Push bei JEDEM SoC-Sample, nicht nur wenn dabei eine Fremdladung
+        # abgeschlossen wird (das pusht selbst schon ueber _handle_pending()
+        # unten) -- sonst wuerden Entitaeten, die vom live self._soc abhaengen
+        # (z.B. range_estimate_km()), erst beim naechsten ZUFAELLIGEN Push
+        # ueber einen anderen Trigger (Odometer-/Preis-Update) aktualisiert,
+        # nicht beim eigentlichen SoC-Wechsel selbst.
+        self.async_set_updated_data(self.data)
         self._save_soon()
         if event is not None:
             await self._handle_pending(event.as_dict())
@@ -1493,6 +1522,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 # waehrend der Fahrt per saldo hat steigen lassen.
                 usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
                 rec["verbrauch_kwh"] = round(max(0.0, -rec["delta_soc"]) / 100.0 * usable_kwh, 2)
+                # Reine SoC-Delta-Schaetzung: bei WiCAN-Ausfall waehrend der
+                # Fahrt (siehe soc.yaml) kann start_soc/end_soc eingefroren
+                # sein statt live -- markiere unplausible Werte statt sie
+                # kommentarlos anzuzeigen (siehe engine.is_plausible_trip_consumption).
+                rec["verbrauch_unsicher"] = not is_plausible_trip_consumption(
+                    rec["verbrauch_kwh"], rec["km"],
+                    TRIP_CONSUMPTION_MIN_KWH_100KM, TRIP_CONSUMPTION_MAX_KWH_100KM,
+                    TRIP_CONSUMPTION_CHECK_MIN_KM,
+                )
         return rec
 
     def _finalize_trip_record(self, rec: dict) -> None:
@@ -1593,8 +1631,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                         if verbrauch_kwh is None:
                             usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
                             rec["verbrauch_kwh"] = round(max(0.0, -rec["delta_soc"]) / 100.0 * usable_kwh, 2)
+                            rec["verbrauch_unsicher"] = not is_plausible_trip_consumption(
+                                rec["verbrauch_kwh"], rec.get("km"),
+                                TRIP_CONSUMPTION_MIN_KWH_100KM, TRIP_CONSUMPTION_MAX_KWH_100KM,
+                            )
                 if verbrauch_kwh is not None:
+                    # Explizit angegebener Verbrauch (z.B. reale Werte aus der
+                    # Fahrzeug-App) gilt als bestaetigt -- kein Delta-Schaetzwert
+                    # mehr, daher kein Unsicher-Flag.
                     rec["verbrauch_kwh"] = round(float(verbrauch_kwh), 2)
+                    rec["verbrauch_unsicher"] = False
                 self._fahrten_version += 1
                 await self._save()
                 self.hass.bus.async_fire(EVENT_TRIP_EDITED, rec)
@@ -1955,6 +2001,42 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if km is None or km <= 0:
             return None
         return round(self._ev_kwh_total_since_setup() / km * 100.0, 2)
+
+    def _vehicle_avg_consumption_kwh_per_100km_rolling(self) -> Optional[float]:
+        """Wie _vehicle_avg_consumption_kwh_per_100km(), aber nur ueber die
+        letzten _ROLLING_CONSUMPTION_WINDOW_DAYS Tage Fahrtenbuch (siehe
+        engine.py::rolling_consumption_kwh_per_100km()) -- fuer
+        range_estimate_km(), wo der AKTUELLE Verbrauch (Jahreszeit,
+        Fahrstil) interessiert statt des ueber die gesamte Nutzungsdauer
+        gemittelten Werts. Faellt auf den Lebenszeit-Durchschnitt zurueck,
+        wenn das Rolling-Fenster zu wenig Fahrstrecke enthaelt.
+
+        Ergebnis wird pro (_fahrten_version, heutiges Datum)
+        zwischengespeichert, analog usage_profile()."""
+        today = dt_util.now().date().isoformat()
+        if (
+            self._rolling_consumption_cache is not None
+            and self._rolling_consumption_cache[0] == self._fahrten_version
+            and self._rolling_consumption_cache[1] == today
+        ):
+            return self._rolling_consumption_cache[2]
+        fahrten = self.data.get("fahrten") or []
+        result = rolling_consumption_kwh_per_100km(
+            fahrten, time.time(), _ROLLING_CONSUMPTION_WINDOW_DAYS, _ROLLING_CONSUMPTION_MIN_KM,
+        )
+        if result is None:
+            result = self._vehicle_avg_consumption_kwh_per_100km()
+        self._rolling_consumption_cache = (self._fahrten_version, today, result)
+        return result
+
+    def range_estimate_km(self) -> Optional[float]:
+        """Geschaetzte Restreichweite: aktueller SoC * nutzbare kWh ueber den
+        rollierenden Realverbrauch (siehe oben) -- ehrlicher als eine
+        Bordanzeige, weil tatsaechlicher Fahrstil/Jahreszeit einfliessen
+        statt eines werksseitig pauschalen Verbrauchswerts."""
+        usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+        consumption = self._vehicle_avg_consumption_kwh_per_100km_rolling()
+        return calculate_range_km(self._soc, usable_kwh, consumption)
 
     def _evcc_vehicle_key(self) -> Optional[str]:
         """Fahrzeugname in evcc: aus Konfiguration oder via Auto-Erkennung

@@ -712,3 +712,77 @@ def charge_before_pv_decision(
     if pv_forecast_kwh is None:
         return available_kwh < needed_kwh
     return (available_kwh + pv_forecast_kwh) < needed_kwh
+
+
+def rolling_consumption_kwh_per_100km(
+    fahrten: list, now_ts: float, window_days: float, min_km: float,
+) -> Optional[float]:
+    """Realverbrauch (kWh/100km) nur aus Fahrtenbuch-Eintraegen der letzten
+    `window_days` Tage -- bildet den aktuellen Fahrstil/die Jahreszeit ab,
+    statt sie im Lebenszeit-Durchschnitt seit Einrichtung zu verwaschen
+    (siehe coordinator.py::_vehicle_avg_consumption_kwh_per_100km()).
+
+    Nur Fahrten mit BEIDEN Werten (km und verbrauch_kwh) zaehlen in Zaehler
+    UND Nenner -- eine Fahrt ohne verbrauch_kwh (z.B. importiert ohne
+    SoC-Delta und ohne mitgeliefertem Wert) darf die km nicht mitzaehlen,
+    ohne die zugehoerige Energie zu kennen, sonst waere das Ergebnis zu
+    niedrig verzerrt.
+
+    None, wenn im Fenster weniger als `min_km` zusammenkommen (zu wenig
+    frische Fahrten fuer einen belastbaren Wert, z.B. direkt nach
+    Einrichtung oder nach laengerer Standzeit/Urlaub) -- der Aufrufer faellt
+    dann auf den Lebenszeit-Durchschnitt zurueck."""
+    cutoff = now_ts - window_days * 86400
+    km_sum = 0.0
+    kwh_sum = 0.0
+    for t in fahrten:
+        ts = t.get("start_ts")
+        km = t.get("km")
+        kwh = t.get("verbrauch_kwh")
+        if ts is None or km is None or kwh is None or ts < cutoff:
+            continue
+        km_sum += km
+        kwh_sum += kwh
+    if km_sum < min_km:
+        return None
+    return round(kwh_sum / km_sum * 100.0, 2)
+
+
+def calculate_range_km(
+    soc_pct: Optional[float], usable_kwh: float, consumption_kwh_per_100km: Optional[float],
+) -> Optional[float]:
+    """Geschaetzte Restreichweite in km: aktueller Akkustand (SoC% * nutzbare
+    kWh) ueber den tatsaechlichen Verbrauch statt eines werksseitig
+    pauschalen Bordanzeige-Wertes. None ohne SoC oder ohne jeden
+    Verbrauchswert (weder rollierend noch Lebenszeit-Fallback verfuegbar,
+    siehe rolling_consumption_kwh_per_100km())."""
+    if soc_pct is None or consumption_kwh_per_100km is None or consumption_kwh_per_100km <= 0:
+        return None
+    battery_kwh = soc_pct / 100.0 * usable_kwh
+    return round(battery_kwh / consumption_kwh_per_100km * 100.0, 1)
+
+
+def is_plausible_trip_consumption(
+    verbrauch_kwh: Optional[float],
+    km: Optional[float],
+    min_kwh_per_100km: float = 8.0,
+    max_kwh_per_100km: float = 40.0,
+    min_km: float = 5.0,
+) -> bool:
+    """Grobe Plausibilitaetspruefung fuer einen aus SoC-Delta geschaetzten
+    Fahrt-Verbrauch (siehe coordinator.py::_build_trip_record). Diese
+    Schaetzung ist komplett von der Genauigkeit von start_soc/end_soc
+    abhaengig -- faellt eine der beiden Ablesungen in eine WiCAN-
+    Verbindungsluecke (siehe soc.yaml-Historie), liefert der eingefrorene
+    SoC-Wert einen viel zu kleinen oder grossen delta_soc und damit einen
+    physikalisch unplausiblen Verbrauch (beobachtet: 5,5 statt ~29 kWh auf
+    derselben 147km-Fahrt). True ohne km/verbrauch_kwh (nichts zu pruefen,
+    z.B. bei importierten Fahrten ohne SoC-Daten), km <= 0, oder km <
+    min_km -- SoC wird nur in ganzen Prozent gemeldet, auf sehr kurzen
+    Strecken verzerrt allein diese Quantisierung den kWh/100km-Wert massiv
+    (1km/1% SoC ergibt rechnerisch 50 kWh/100km, voellig unabhaengig vom
+    echten Verbrauch), ohne dass ein Sensor-Problem vorliegt."""
+    if verbrauch_kwh is None or not km or km <= 0 or km < min_km:
+        return True
+    per_100km = verbrauch_kwh / km * 100.0
+    return min_kwh_per_100km <= per_100km <= max_kwh_per_100km

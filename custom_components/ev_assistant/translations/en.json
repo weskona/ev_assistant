@@ -306,6 +306,9 @@
       "vehicle_avg_consumption": {
         "name": "Vehicle Avg Consumption"
       },
+      "range_estimate": {
+        "name": "Estimated Range"
+      },
       "co2_savings": {
         "name": "CO2 Savings vs. ICE Vehicle"
       },

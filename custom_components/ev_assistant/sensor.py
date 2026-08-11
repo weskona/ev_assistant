@@ -59,6 +59,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         TotalTripKmSensor(coordinator, entry),
         TripAvgConsumptionSensor(coordinator, entry),
         VehicleAvgConsumptionSensor(coordinator, entry),
+        RangeEstimateSensor(coordinator, entry),
         Co2SavingsSensor(coordinator, entry),
         HomeVsExternalPriceSensor(coordinator, entry),
         CostDaySensor(coordinator, entry),
@@ -769,6 +770,34 @@ class VehicleAvgConsumptionSensor(EvAssistantEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator._vehicle_avg_consumption_kwh_per_100km()
+
+
+class RangeEstimateSensor(EvAssistantEntity, SensorEntity):
+    """Geschaetzte Restreichweite: aktueller SoC * nutzbare kWh ueber den
+    Realverbrauch der letzten 30 Tage (siehe coordinator.py::
+    range_estimate_km()) -- ehrlicher als eine Bordanzeige, weil
+    tatsaechlicher Fahrstil/Jahreszeit einfliessen statt eines werksseitig
+    pauschalen Verbrauchswerts. unknown ohne aktuellen SoC oder ganz ohne
+    Fahrtenbuch-Verbrauchsdaten (weder rollierend noch Lebenszeit-
+    Fallback verfuegbar, z.B. direkt nach Einrichtung)."""
+
+    _attr_translation_key = "range_estimate"
+    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
+    _attr_device_class = SensorDeviceClass.DISTANCE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:map-marker-distance"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "range_estimate")
+
+    @property
+    def native_value(self):
+        return self.coordinator.range_estimate_km()
+
+    @property
+    def extra_state_attributes(self):
+        consumption = self.coordinator._vehicle_avg_consumption_kwh_per_100km_rolling()
+        return {"verbrauch_kwh_100km": consumption} if consumption is not None else {}
 
 
 class Co2SavingsSensor(EvAssistantEntity, SensorEntity):

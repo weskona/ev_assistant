@@ -306,6 +306,9 @@
       "vehicle_avg_consumption": {
         "name": "Fahrzeug Durchschnittsverbrauch"
       },
+      "range_estimate": {
+        "name": "Geschätzte Reichweite"
+      },
       "co2_savings": {
         "name": "CO2-Ersparnis ggü. Verbrenner"
       },
