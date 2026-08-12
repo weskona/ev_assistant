@@ -18,6 +18,10 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    BATTERY_CAPACITY_HOME_MAX_STORED,
+    BATTERY_CAPACITY_MAX_SAMPLES,
+    BATTERY_CAPACITY_MIN_SAMPLES,
+    BATTERY_CAPACITY_MIN_SOC_DELTA,
     CO2_PER_LITER_KG,
     CONF_CO2_PER_KWH,
     CONF_DROP_ENDS,
@@ -114,11 +118,14 @@ from .engine import (
     TripDetector,
     TripSample,
     average_efficiency,
+    battery_capacity_samples,
     calculate_co2_savings,
     calculate_range_km,
     calculate_savings,
     charge_before_pv_decision,
     charge_cost,
+    estimate_battery_capacity_kwh,
+    home_capacity_sample,
     is_plausible_trip_consumption,
     merge_pending,
     pop_pending,
@@ -178,6 +185,7 @@ def _empty_data() -> dict:
         "pending": [],
         "efficiency_samples": [],
         "measured_efficiency": None,
+        "home_capacity_samples": [],
         "odo": None,
         "odo_unit": None,
         "odo_start": None,
@@ -297,6 +305,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Datum, da das Rolling-Fenster auch ohne Fahrtenbuch-Aenderung
         # einmal pro Tag weiterwandert).
         self._rolling_consumption_cache: Optional[tuple[int, str, Optional[float]]] = None
+        # Analog _fahrten_version, aber fuer "history" (Fremdladungen) --
+        # bislang gab es dort noch keinen darauf angewiesenen Cache.
+        self._history_version = 0
+        # Analog fuer Heim-Session-Kapazitaets-Stichproben (siehe
+        # _set_home()/_record_home_capacity_sample()) -- eigener Zaehler,
+        # da diese unabhaengig von Fremdladungen dazukommen.
+        self._home_capacity_version = 0
+        self._battery_capacity_cache: Optional[tuple[tuple[int, int], Optional[float]]] = None
+        # Start-Anker (SoC + Wallbox-kWh) einer laufenden Heim-Ladesession,
+        # analog EfficiencyCalibrator._anchor_*, aber unabhaengig davon
+        # gefuehrt: die Kapazitaets-Schwelle (BATTERY_CAPACITY_MIN_SOC_DELTA)
+        # ist deutlich breiter als EfficiencyCalibrator.min_soc_delta, beide
+        # Zwecke sollen sich nicht gegenseitig beeinflussen.
+        self._capacity_anchor_soc: Optional[float] = None
+        self._capacity_anchor_wallbox_kwh: Optional[float] = None
         self.data = _empty_data()
 
     def _opt(self, key, default=None):
@@ -658,10 +681,22 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return
         if not was_home and self._home:
             self._calibrator.start(self._soc, self._wallbox_energy)
+            self._capacity_anchor_soc = self._soc
+            self._capacity_anchor_wallbox_kwh = self._wallbox_energy
         elif was_home and not self._home:
             sample = self._calibrator.end(self._soc, self._wallbox_energy)
             if sample is not None:
                 self.hass.async_create_task(self._record_efficiency_sample(sample))
+            cap_sample = home_capacity_sample(
+                self._capacity_anchor_soc, self._capacity_anchor_wallbox_kwh,
+                self._soc, self._wallbox_energy,
+                self.data.get("measured_efficiency"),
+                BATTERY_CAPACITY_MIN_SOC_DELTA,
+            )
+            self._capacity_anchor_soc = None
+            self._capacity_anchor_wallbox_kwh = None
+            if cap_sample is not None:
+                self.hass.async_create_task(self._record_home_capacity_sample(cap_sample))
 
     @callback
     def _set_power(self, raw) -> None:
@@ -1263,6 +1298,20 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._save_soon()
         self.async_set_updated_data(self.data)
 
+    async def _record_home_capacity_sample(self, value: float) -> None:
+        """Neue Kapazitaets-Stichprobe aus einer abgeschlossenen Heim-
+        Ladesession mit ausreichend grossem SoC-Hub (siehe _set_home()/
+        engine.home_capacity_sample()) -- neueste zuerst, analog "history"/
+        "fahrten", damit battery_capacity_kwh() sie direkt mit den aus
+        Fremdladungen abgeleiteten Stichproben nach Zeitstempel mischen
+        kann."""
+        samples = list(self.data.get("home_capacity_samples") or [])
+        samples.insert(0, {"value": value, "ts": time.time()})
+        self.data["home_capacity_samples"] = samples[:BATTERY_CAPACITY_HOME_MAX_STORED]
+        self._home_capacity_version += 1
+        self._save_soon()
+        self.async_set_updated_data(self.data)
+
     # ----- Event-/Persistenz-Logik ---------------------------------------
     async def _handle_pending(self, pend: dict) -> None:
         # config_entry_id im Event, damit Automationen (z.B. packages/
@@ -1829,6 +1878,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["pending"] = pending_list
 
         self.data.setdefault("history", []).insert(0, rec)
+        self._history_version += 1
         totals = self.data["totals"]
         totals["kwh"] = round(totals.get("kwh", 0.0) + kwh, 2)
         totals["kosten"] = round(totals.get("kosten", 0.0) + rec["kosten"], 2)
@@ -1893,6 +1943,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                         rec["delta_soc"] = round(rec["soc_end"] - rec["soc_start"], 1)
                 if history[0] is rec:
                     self.data["last_price"] = price
+                self._history_version += 1
                 await self._save()
                 self.hass.bus.async_fire(EVENT_EDITED, rec)
                 self.async_set_updated_data(self.data)
@@ -1918,6 +1969,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 totals["count"] = max(0, totals.get("count", 0) - 1)
                 if was_newest:
                     self.data["last_price"] = history[0]["preis_kwh"] if history else 0.0
+                self._history_version += 1
                 await self._save()
                 self.hass.bus.async_fire(EVENT_DELETED, rec)
                 self.async_set_updated_data(self.data)
@@ -2037,6 +2089,27 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
         consumption = self._vehicle_avg_consumption_kwh_per_100km_rolling()
         return calculate_range_km(self._soc, usable_kwh, consumption)
+
+    def battery_capacity_kwh(self) -> Optional[float]:
+        """Rollierend geschaetzte tatsaechliche Akku-Gesamtkapazitaet aus
+        Fremd- UND Heim-Ladesessions mit ausreichend grossem SoC-Hub (siehe
+        engine.battery_capacity_samples/home_capacity_sample/
+        estimate_battery_capacity_kwh, sowie _set_home() fuer die Heim-
+        Stichproben) -- der absolute Wert liegt wegen nicht herausgerechneter
+        Ladeverluste typischerweise ueber der echten Kapazitaet (siehe
+        Docstrings dort), ein Absinken ueber Monate/Jahre ist trotzdem das
+        eigentliche Alterungssignal. Ergebnis wird pro (_history_version,
+        _home_capacity_version) zwischengespeichert (siehe _trip_avg_cache-
+        Kommentar in __init__ fuer die Begruendung)."""
+        cache_key = (self._history_version, self._home_capacity_version)
+        if self._battery_capacity_cache is not None and self._battery_capacity_cache[0] == cache_key:
+            return self._battery_capacity_cache[1]
+        history = self.data.get("history") or []
+        samples = battery_capacity_samples(history, BATTERY_CAPACITY_MIN_SOC_DELTA)
+        samples += self.data.get("home_capacity_samples") or []
+        result = estimate_battery_capacity_kwh(samples, BATTERY_CAPACITY_MAX_SAMPLES, BATTERY_CAPACITY_MIN_SAMPLES)
+        self._battery_capacity_cache = (cache_key, result)
+        return result
 
     def _evcc_vehicle_key(self) -> Optional[str]:
         """Fahrzeugname in evcc: aus Konfiguration oder via Auto-Erkennung

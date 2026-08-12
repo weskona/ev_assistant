@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.50.0] - 2026-08-13
+
+### Added
+
+- **Measured battery capacity sensor**: new `sensor.<vehicle>_batteriekapazitat_gemessen`, a rolling average of implied battery capacity derived from your own charging history — from external charges with a wide SoC swing (≥20 percentage points), and from home charging sessions once a measured charge efficiency is available. The absolute value typically runs above the vehicle's real usable capacity (charging losses aren't modeled — there's no independent second measurement to calibrate them out, unlike AC efficiency for home sessions), so it's not meant to be compared 1:1 against a spec sheet; a decline over months/years is the actual aging signal to watch, not the single current value. Requires at least 2 qualifying sessions before showing anything.
+
 ## [0.49.0] - 2026-08-11
 
 ### Added

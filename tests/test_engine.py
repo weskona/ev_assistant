@@ -11,9 +11,12 @@ from engine import (
     average_efficiency,
     calculate_co2_savings,
     calculate_range_km,
+    battery_capacity_samples,
     calculate_savings,
     charge_before_pv_decision,
     charge_cost,
+    estimate_battery_capacity_kwh,
+    home_capacity_sample,
     is_plausible_trip_consumption,
     merge_pending,
     pop_pending,
@@ -798,3 +801,86 @@ def test_is_plausible_trip_consumption_grenzwerte_inklusiv():
     assert is_plausible_trip_consumption(8.0, 100.0, 8.0, 40.0) is True
     assert is_plausible_trip_consumption(40.0, 100.0, 8.0, 40.0) is True
     assert is_plausible_trip_consumption(7.99, 100.0, 8.0, 40.0) is False
+
+
+# ----- battery_capacity_samples / home_capacity_sample /                  --
+# ----- estimate_battery_capacity_kwh ----------------------------------------
+
+def test_battery_capacity_samples_filtert_kleine_huebe_und_fehlende_felder_raus():
+    history = [
+        {"kwh": 22.33, "delta_soc": 38.0, "erfasst_ts": 100},   # 58.76 kWh -> zaehlt
+        {"kwh": 1.0, "delta_soc": 2.0, "erfasst_ts": 200},       # zu kleiner Hub -> raus
+        {"kwh": 25.65, "delta_soc": -45.0, "erfasst_ts": 300},   # negativer delta_soc, |45| zaehlt
+        {"kwh": None, "delta_soc": 30.0, "erfasst_ts": 400},     # kein kwh -> raus
+        {"kwh": 10.0, "delta_soc": None, "erfasst_ts": 500},     # kein delta_soc -> raus
+        {"kwh": 10.0, "delta_soc": 30.0},                        # kein erfasst_ts -> raus
+    ]
+    samples = battery_capacity_samples(history, min_soc_delta=20.0)
+    assert samples == [
+        {"value": 58.76, "ts": 100},
+        {"value": 57.0, "ts": 300},
+    ]
+
+
+# ----- home_capacity_sample --------------------------------------------------
+
+def test_home_capacity_sample_durchgerechnetes_beispiel():
+    # 20 kWh Wallbox-Delta * 0.9 Wirkungsgrad = 18 kWh Batterie; 30% SoC-Hub
+    # -> 18 / 0.3 = 60 kWh implizite Kapazitaet.
+    assert home_capacity_sample(
+        anchor_soc=30.0, anchor_wallbox_kwh=100.0,
+        soc=60.0, wallbox_kwh=120.0,
+        efficiency=0.9, min_soc_delta=20.0,
+    ) == 60.0
+
+
+def test_home_capacity_sample_zu_kleiner_hub_liefert_none():
+    assert home_capacity_sample(
+        anchor_soc=60.0, anchor_wallbox_kwh=100.0,
+        soc=65.0, wallbox_kwh=103.0,
+        efficiency=0.9, min_soc_delta=20.0,
+    ) is None
+
+
+@pytest.mark.parametrize("anchor_soc,anchor_kwh,soc,kwh,eff", [
+    (None, 100.0, 60.0, 120.0, 0.9),
+    (30.0, None, 60.0, 120.0, 0.9),
+    (30.0, 100.0, None, 120.0, 0.9),
+    (30.0, 100.0, 60.0, None, 0.9),
+    (30.0, 100.0, 60.0, 120.0, None),
+    (30.0, 100.0, 60.0, 120.0, 0.0),
+])
+def test_home_capacity_sample_fehlende_werte_liefert_none(anchor_soc, anchor_kwh, soc, kwh, eff):
+    assert home_capacity_sample(anchor_soc, anchor_kwh, soc, kwh, eff, min_soc_delta=20.0) is None
+
+
+def test_home_capacity_sample_wallbox_ohne_zuwachs_liefert_none():
+    # z.B. Session sofort wieder abgebrochen, keine Energie geflossen.
+    assert home_capacity_sample(
+        anchor_soc=30.0, anchor_wallbox_kwh=100.0,
+        soc=60.0, wallbox_kwh=100.0,
+        efficiency=0.9, min_soc_delta=20.0,
+    ) is None
+
+
+# ----- estimate_battery_capacity_kwh -----------------------------------------
+
+def test_estimate_battery_capacity_kwh_sortiert_gemischte_quellen_nach_ts():
+    # Absichtlich NICHT vorsortiert -- muss selbst nach ts absteigend
+    # sortieren, unabhaengig davon, aus welcher Quelle (Fremd-/Heimladung)
+    # ein Sample stammt.
+    samples = [
+        {"value": 40.0, "ts": 100},   # alt, Ausreisser
+        {"value": 60.0, "ts": 400},   # neueste
+        {"value": 58.0, "ts": 300},
+        {"value": 56.0, "ts": 200},
+    ]
+    assert estimate_battery_capacity_kwh(samples, max_samples=3, min_samples=2) == 58.0
+
+
+def test_estimate_battery_capacity_kwh_unter_min_samples_liefert_none():
+    assert estimate_battery_capacity_kwh([{"value": 55.0, "ts": 1}], max_samples=5, min_samples=2) is None
+
+
+def test_estimate_battery_capacity_kwh_leere_liste_liefert_none():
+    assert estimate_battery_capacity_kwh([], max_samples=5, min_samples=2) is None

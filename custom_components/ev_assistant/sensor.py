@@ -60,6 +60,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         TripAvgConsumptionSensor(coordinator, entry),
         VehicleAvgConsumptionSensor(coordinator, entry),
         RangeEstimateSensor(coordinator, entry),
+        BatteryCapacitySensor(coordinator, entry),
         Co2SavingsSensor(coordinator, entry),
         HomeVsExternalPriceSensor(coordinator, entry),
         CostDaySensor(coordinator, entry),
@@ -798,6 +799,34 @@ class RangeEstimateSensor(EvAssistantEntity, SensorEntity):
     def extra_state_attributes(self):
         consumption = self.coordinator._vehicle_avg_consumption_kwh_per_100km_rolling()
         return {"verbrauch_kwh_100km": consumption} if consumption is not None else {}
+
+
+class BatteryCapacitySensor(EvAssistantEntity, SensorEntity):
+    """Rollierend geschaetzte tatsaechliche Akku-Gesamtkapazitaet aus
+    Fremdladungen mit grossem SoC-Hub (siehe coordinator.py::
+    battery_capacity_kwh()). Der absolute Wert liegt typischerweise UEBER
+    dem Datenblatt-Wert: DC-Schnellladung hat reale Ladeverluste (Innen-
+    widerstand, BMS-Balancing), die hier nicht herausgerechnet werden
+    (anders als bei Heim-Sessions gibt es keinen unabhaengigen zweiten
+    Messwert, aus dem sich ein DC-Wirkungsgrad kalibrieren liesse) -- die
+    gemeldete kWh-Energie ist also etwas mehr, als tatsaechlich in der
+    Batterie ankommt, was die berechnete Kapazitaet nach oben verzerrt.
+    Deshalb bewusst kein Vergleichswert gegen das eingetragene usable_kwh
+    hier: das eigentliche Gesundheitssignal ist der Trend ueber Monate/
+    Jahre, nicht die absolute Zahl. unknown ohne mindestens zwei
+    ausreichend breite Fremdladungen."""
+
+    _attr_translation_key = "battery_capacity"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:battery-heart-variant"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "battery_capacity")
+
+    @property
+    def native_value(self):
+        return self.coordinator.battery_capacity_kwh()
 
 
 class Co2SavingsSensor(EvAssistantEntity, SensorEntity):

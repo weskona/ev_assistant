@@ -786,3 +786,86 @@ def is_plausible_trip_consumption(
         return True
     per_100km = verbrauch_kwh / km * 100.0
     return min_kwh_per_100km <= per_100km <= max_kwh_per_100km
+
+
+def battery_capacity_samples(history: list, min_soc_delta: float = 20.0) -> list[dict]:
+    """Leitet aus abgeschlossenen Fremdladungen (coordinator.py "history")
+    mit ausreichend grossem SoC-Hub eine implizite Akku-Gesamtkapazitaet ab:
+    kwh / (|delta_soc| / 100). WICHTIG: "kwh" ist die vom Ladepunkt
+    gemeldete/abgerechnete Energie, NICHT 1:1 die tatsaechlich in der
+    Batterie gespeicherte -- auch DC-Schnellladung hat reale Ladeverluste
+    (Innenwiderstand, BMS-Balancing, ueblich ~10-15%), die hier NICHT
+    herausgerechnet werden (anders als bei Heim-Sessions, siehe
+    home_capacity_sample(), gibt es fuer Fremdladungen keinen unabhaengigen
+    zweiten Messwert, aus dem sich ein DC-Wirkungsgrad kalibrieren liesse).
+    Das Ergebnis liegt deshalb typischerweise ueber der echten Kapazitaet --
+    als Momentaufnahme unbrauchbar, aber als TREND ueber Monate/Jahre (faellt
+    der Wert?) immer noch aussagekraeftig, da der unbekannte Verlustfaktor
+    fuer ein bestimmtes Fahrzeug/Ladeverhalten ueber die Zeit ungefaehr
+    konstant bleiben sollte. Ein zu kleiner Hub wird ausgeschlossen, weil die
+    Ganzprozent-SoC-Quantisierung das Ergebnis sonst zusaetzlich dominiert.
+    Rueckgabe: Liste von {"value": kWh, "ts": erfasst_ts} -- ungeordnet
+    bezueglich Zeit sind nur Eintraege ohne erfasst_ts (uebersprungen);
+    siehe estimate_battery_capacity_kwh() fuers zeitliche Zusammenfuehren
+    mit anderen Quellen (z.B. Heim-Sessions)."""
+    samples: list[dict] = []
+    for rec in history:
+        delta = rec.get("delta_soc")
+        kwh = rec.get("kwh")
+        ts = rec.get("erfasst_ts")
+        if delta is None or kwh is None or ts is None or abs(delta) < min_soc_delta:
+            continue
+        samples.append({"value": round(kwh / (abs(delta) / 100.0), 2), "ts": ts})
+    return samples
+
+
+def home_capacity_sample(
+    anchor_soc: Optional[float],
+    anchor_wallbox_kwh: Optional[float],
+    soc: Optional[float],
+    wallbox_kwh: Optional[float],
+    efficiency: Optional[float],
+    min_soc_delta: float = 20.0,
+) -> Optional[float]:
+    """Analog battery_capacity_samples(), aber fuer eine einzelne
+    abgeschlossene Heim-Ladesession: battery_kwh = wallbox_delta *
+    efficiency (AC->Batterie-Wirkungsgrad, siehe EfficiencyCalibrator/
+    measured_efficiency); implizite Kapazitaet = battery_kwh /
+    (|delta_soc| / 100). Anders als bei Fremdladungen gibt es hier also
+    tatsaechlich eine Wirkungsgradkorrektur -- der Ladepunkt (Wallbox)
+    misst AC-Energie, nicht das, was am Ende in der Batterie ankommt.
+    None ohne Anker/aktuelle Werte/Wirkungsgrad, oder wenn der SoC-Hub zu
+    klein ist bzw. die Wallbox-Energie nicht gestiegen ist (z.B. Session
+    zu kurz fuer eine belastbare Messung)."""
+    if (
+        anchor_soc is None or anchor_wallbox_kwh is None
+        or soc is None or wallbox_kwh is None
+        or efficiency is None or efficiency <= 0
+    ):
+        return None
+    soc_delta = soc - anchor_soc
+    wallbox_delta = wallbox_kwh - anchor_wallbox_kwh
+    if abs(soc_delta) < min_soc_delta or wallbox_delta <= 0:
+        return None
+    battery_kwh = wallbox_delta * efficiency
+    return round(battery_kwh / (abs(soc_delta) / 100.0), 2)
+
+
+def estimate_battery_capacity_kwh(
+    samples: list[dict], max_samples: int = 5, min_samples: int = 2
+) -> Optional[float]:
+    """Rollierender Schnitt der `max_samples` zeitlich neuesten Kapazitaets-
+    Stichproben aus `samples` (Liste von {"value":..., "ts":...}, beliebige
+    Quellen/Reihenfolge -- z.B. Fremdladungen aus battery_capacity_samples()
+    gemischt mit Heim-Sessions aus home_capacity_sample(); wird hier explizit
+    nach ts absteigend sortiert, damit die tatsaechlich neuesten Werte
+    unabhaengig von der jeweiligen Quellen-Reihenfolge gewinnen). None unter
+    `min_samples` -- eine einzelne Stichprobe kann ein Ausreisser sein, erst
+    mehrere gemeinsam sind ein verlaessliches Signal fuer den tatsaechlichen
+    Alterungstrend."""
+    ordered = sorted(samples, key=lambda s: s["ts"], reverse=True)
+    recent = ordered[:max_samples]
+    if len(recent) < min_samples:
+        return None
+    values = [s["value"] for s in recent]
+    return round(sum(values) / len(values), 2)

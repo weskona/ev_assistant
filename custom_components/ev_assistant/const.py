@@ -189,6 +189,17 @@ DEFAULT_DROP_ENDS = 1.0
 TRIP_CONSUMPTION_MIN_KWH_100KM = 8.0
 TRIP_CONSUMPTION_MAX_KWH_100KM = 40.0
 TRIP_CONSUMPTION_CHECK_MIN_KM = 5.0
+
+# Geschaetzte Akkukapazitaet aus Fremdladungen (siehe engine.battery_capacity_
+# samples/estimate_battery_capacity_kwh) -- ebenfalls interne Heuristik, kein
+# Config-Flow-Feld.
+BATTERY_CAPACITY_MIN_SOC_DELTA = 20.0
+BATTERY_CAPACITY_MAX_SAMPLES = 5
+BATTERY_CAPACITY_MIN_SAMPLES = 2
+# Wie viele Heim-Session-Kapazitaets-Stichproben dauerhaft aufbewahrt werden
+# (mehr als BATTERY_CAPACITY_MAX_SAMPLES, damit auch bei laengerer Pause
+# ohne Fremdladung noch genug Historie fuer den rollierenden Schnitt da ist).
+BATTERY_CAPACITY_HOME_MAX_STORED = 10
 # Grosszuegig, da Hersteller-/Dongle-APIs den Steckerstatus teils verzoegert
 # oder kurzzeitig unzuverlaessig melden (siehe engine.py::SignalDebouncer).
 DEFAULT_PLUG_DEBOUNCE = 300.0

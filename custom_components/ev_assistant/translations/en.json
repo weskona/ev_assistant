@@ -309,6 +309,9 @@
       "range_estimate": {
         "name": "Estimated Range"
       },
+      "battery_capacity": {
+        "name": "Battery Capacity (Measured)"
+      },
       "co2_savings": {
         "name": "CO2 Savings vs. ICE Vehicle"
       },

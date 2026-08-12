@@ -675,6 +675,7 @@ class EVAssistantPanel extends HTMLElement {
         <div class="kpi-row">
           <div class="kpi"><div class="kv vh-odo">—</div><div class="kl">km Kilometerstand</div></div>
           <div class="kpi"><div class="kv vh-range">—</div><div class="kl">km Reichweite (geschätzt)</div></div>
+          <div class="kpi"><div class="kv vh-battery-capacity">—</div><div class="kl">kWh Batteriekapazität</div></div>
           <div class="kpi"><div class="kv vh-avg-consumption">—</div><div class="kl">kWh/100km Ø Verbrauch</div></div>
           <div class="kpi"><div class="kv vh-efficiency">—</div><div class="kl">% Ladewirkungsgrad</div></div>
           <div class="kpi"><div class="kv green vh-savings">—</div><div class="kl">EUR Ersparnis ggü. Verbrenner</div></div>
@@ -886,6 +887,7 @@ class EVAssistantPanel extends HTMLElement {
       vhTripRouteLast: q(".vh-trip-route-last"),
       vhOdo:          q(".vh-odo"),
       vhRange:        q(".vh-range"),
+      vhBatteryCapacity: q(".vh-battery-capacity"),
       vhAvgConsumption: q(".vh-avg-consumption"),
       vhOdoDay:       q(".vh-odo-day"),
       vhOdoWeek:      q(".vh-odo-week"),
@@ -1358,6 +1360,7 @@ class EVAssistantPanel extends HTMLElement {
     r.vhTripKmTotal.textContent  = this._num("total_trip_km", 0);
     r.vhOdo.textContent          = this._num("odo", 0);
     r.vhRange.textContent       = this._num("range_estimate", 0);
+    r.vhBatteryCapacity.textContent = this._num("battery_capacity", 1);
     r.vhAvgConsumption.textContent = this._num("vehicle_avg_consumption", 1);
     r.vhOdoDay.textContent       = this._num("odo_day_km", 0);
     r.vhOdoWeek.textContent      = this._num("odo_week_km", 0);

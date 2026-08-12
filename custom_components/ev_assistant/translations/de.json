@@ -309,6 +309,9 @@
       "range_estimate": {
         "name": "Geschätzte Reichweite"
       },
+      "battery_capacity": {
+        "name": "Batteriekapazität (gemessen)"
+      },
       "co2_savings": {
         "name": "CO2-Ersparnis ggü. Verbrenner"
       },
