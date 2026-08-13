@@ -231,6 +231,7 @@ class EVAssistantPanel extends HTMLElement {
       ["uebersicht", "mdi:view-dashboard-outline", "Übersicht"],
       ["fahrzeuge",  "mdi:car-electric",           "Fahrzeuge"],
       ["profil",     "mdi:calendar-week",          "Nutzungsprofil"],
+      ["analyse",    "mdi:chart-line",             "Analyse"],
     ];
     this._tabs = {};
     for (const [id, icon, label] of TAB_DEFS) {
@@ -257,6 +258,7 @@ class EVAssistantPanel extends HTMLElement {
     if (view === "uebersicht") this._main.appendChild(this._buildOverview());
     else if (view === "fahrzeuge") this._main.appendChild(this._buildVehicle());
     else if (view === "profil") this._main.appendChild(this._buildProfil());
+    else if (view === "analyse") this._main.appendChild(this._buildAnalyse());
     this._update();
   }
 
@@ -675,7 +677,6 @@ class EVAssistantPanel extends HTMLElement {
         <div class="kpi-row">
           <div class="kpi"><div class="kv vh-odo">—</div><div class="kl">km Kilometerstand</div></div>
           <div class="kpi"><div class="kv vh-range">—</div><div class="kl">km Reichweite (geschätzt)</div></div>
-          <div class="kpi"><div class="kv vh-battery-capacity">—</div><div class="kl">kWh Batteriekapazität</div></div>
           <div class="kpi"><div class="kv vh-avg-consumption">—</div><div class="kl">kWh/100km Ø Verbrauch</div></div>
           <div class="kpi"><div class="kv vh-efficiency">—</div><div class="kl">% Ladewirkungsgrad</div></div>
           <div class="kpi"><div class="kv green vh-savings">—</div><div class="kl">EUR Ersparnis ggü. Verbrenner</div></div>
@@ -887,7 +888,6 @@ class EVAssistantPanel extends HTMLElement {
       vhTripRouteLast: q(".vh-trip-route-last"),
       vhOdo:          q(".vh-odo"),
       vhRange:        q(".vh-range"),
-      vhBatteryCapacity: q(".vh-battery-capacity"),
       vhAvgConsumption: q(".vh-avg-consumption"),
       vhOdoDay:       q(".vh-odo-day"),
       vhOdoWeek:      q(".vh-odo-week"),
@@ -1004,6 +1004,54 @@ class EVAssistantPanel extends HTMLElement {
     return wrap;
   }
 
+  // --- Tab: Analyse ------------------------------------------------------
+
+  _buildAnalyse() {
+    const wrap = document.createElement("div");
+    wrap.className = "tab-wrap";
+    wrap.innerHTML = `
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:battery-heart-variant"></ha-icon></span><h2>Batteriekapazität</h2>
+        </div>
+        <div class="kpi-row">
+          <div class="kpi"><div class="kv" id="analyse-capacity">—</div><div class="kl">kWh geschätzte Kapazität</div></div>
+        </div>
+        <div class="profil-empty">
+          Rollierender Schnitt aus Fremd- und Heim-Ladesessions mit großem SoC-Hub. Der absolute Wert liegt
+          typischerweise über der echten Kapazität (Ladeverluste nicht modelliert) — entscheidend ist der Trend
+          über Monate/Jahre, nicht die einzelne Zahl.
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:thermometer"></ha-icon></span><h2>Verbrauch nach Temperatur</h2>
+        </div>
+        <div class="kpi-row">
+          <div class="kpi"><div class="kv" id="analyse-outside-temp">—</div><div class="kl">°C Außentemperatur aktuell</div></div>
+        </div>
+        <div class="divider"></div>
+        <div class="profil-empty hidden" id="analyse-temp-empty">
+          Noch keine Außentemperatur-Entität konfiguriert oder noch nicht genug Fahrten pro Temperaturband
+          (mindestens 3) für einen verlässlichen Schnitt.
+        </div>
+        <div id="analyse-temp-content">
+          <div class="sub-head">Ø kWh/100km je Temperaturband</div>
+          <div class="weekday-chart" id="analyse-temp-chart"></div>
+        </div>
+      </div>`;
+
+    const q = (s) => wrap.querySelector(s);
+    this._r = {
+      analyseCapacity:    q("#analyse-capacity"),
+      analyseOutsideTemp: q("#analyse-outside-temp"),
+      analyseTempEmpty:   q("#analyse-temp-empty"),
+      analyseTempContent: q("#analyse-temp-content"),
+      analyseTempChart:   q("#analyse-temp-chart"),
+    };
+    return wrap;
+  }
+
   _updateProfil() {
     const r = this._r;
     if (!r.profilRecommendText) return;
@@ -1074,6 +1122,41 @@ class EVAssistantPanel extends HTMLElement {
     }
   }
 
+  _updateAnalyse() {
+    const r = this._r;
+    if (!r.analyseCapacity) return;
+
+    r.analyseCapacity.textContent = this._num("battery_capacity", 1);
+
+    const rangeEid = this._eid("range_estimate");
+    const rangeState = rangeEid ? this._hass.states[rangeEid] : null;
+    const attrs = (rangeState && rangeState.attributes) || {};
+    const outsideTemp = attrs.aussentemperatur;
+    r.analyseOutsideTemp.textContent = typeof outsideTemp === "number" ? this._fmtNum(outsideTemp, 1) : "—";
+    const buckets = attrs.verbrauch_nach_temperatur || null;
+    const activeBucket = attrs.temperaturband_aktuell || null;
+    const hasBuckets = !!(buckets && Object.keys(buckets).length > 0);
+    r.analyseTempEmpty.classList.toggle("hidden", hasBuckets);
+    r.analyseTempContent.classList.toggle("hidden", !hasBuckets);
+    if (!hasBuckets) return;
+
+    const ORDER = ["<0°C", "0-10°C", "10-20°C", ">20°C"];
+    const labels = ORDER.filter((k) => buckets[k] !== undefined);
+    const values = labels.map((k) => buckets[k]);
+    const maxVal = Math.max(...values, 0.1);
+
+    r.analyseTempChart.innerHTML = labels.map((label, i) => {
+      const pct = Math.max(2, Math.round((values[i] / maxVal) * 100));
+      const cls = label === activeBucket ? "wd-bar today" : "wd-bar";
+      return `
+        <div class="wd-col">
+          <div class="wd-val">${this._fmtNum(values[i], 1)}</div>
+          <div class="wd-bar-track"><div class="${cls}" style="height:${pct}%"></div></div>
+          <div class="wd-label">${label}</div>
+        </div>`;
+    }).join("");
+  }
+
   // --- Update loop ------------------------------------------------------------
 
   _update() {
@@ -1081,6 +1164,7 @@ class EVAssistantPanel extends HTMLElement {
     if (this._view === "uebersicht") this._updateOverview();
     else if (this._view === "fahrzeuge") this._updateVehicle();
     else if (this._view === "profil") this._updateProfil();
+    else if (this._view === "analyse") this._updateAnalyse();
   }
 
   _updateOverview() {
@@ -1360,7 +1444,6 @@ class EVAssistantPanel extends HTMLElement {
     r.vhTripKmTotal.textContent  = this._num("total_trip_km", 0);
     r.vhOdo.textContent          = this._num("odo", 0);
     r.vhRange.textContent       = this._num("range_estimate", 0);
-    r.vhBatteryCapacity.textContent = this._num("battery_capacity", 1);
     r.vhAvgConsumption.textContent = this._num("vehicle_avg_consumption", 1);
     r.vhOdoDay.textContent       = this._num("odo_day_km", 0);
     r.vhOdoWeek.textContent      = this._num("odo_week_km", 0);

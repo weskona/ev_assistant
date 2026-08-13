@@ -112,6 +112,17 @@ CONF_USAGE_PROFILE_BUFFER_PCT = "usage_profile_buffer_pct"
 # Luecke schliessen, auch wenn der Akku allein nicht reicht.
 CONF_PV_FORECAST_ENTITY = "pv_forecast_entity"
 
+# Optionale Aussentemperatur-Entitaet (Wetter-Integration oder beliebiger
+# Temperatursensor) fuer temperaturabhaengige Verbrauchs-/Reichweiten-
+# Auswertung -- siehe engine.temperature_bucket()/consumption_by_temp_bucket()
+# sowie coordinator.py::_extract_temp()/range_estimate_km().
+CONF_OUTSIDE_TEMP_ENTITY = "outside_temp_entity"
+# Baender in °C: (0, 10, 20) -> "<0°C", "0-10°C", "10-20°C", ">20°C".
+TEMP_BUCKET_BOUNDARIES = (0.0, 10.0, 20.0)
+# Wie viele Fahrten mit bekannter Start-Temperatur mindestens in einem Band
+# liegen muessen, bevor dessen Durchschnitt als verlaesslich gilt.
+TEMP_BUCKET_MIN_SAMPLES = 3
+
 # Kostenvergleich gegenueber einem Verbrenner (alle optional -- ohne sie
 # bleiben die Ersparnis-Sensoren unbekannt statt einen Fehler zu werfen).
 # Heimstrompreis UND Kraftstoffpreis: jeweils fester Wert ODER live-Entitaet

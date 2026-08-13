@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.51.0] - 2026-08-13
+
+### Added
+
+- **Temperature-aware range estimate**: an optional `outside_temp_entity` (step 6 — Trip Log; accepts a plain temperature sensor or a `weather.*` entity) groups your trip consumption into four bands (<0°C, 0–10°C, 10–20°C, >20°C). Once a band has at least 3 trips, `range_estimate` uses that band's average instead of the flat rolling 30-day figure — the current temperature, its consumption band, and the full per-band breakdown are exposed as attributes (`aussentemperatur`, `temperaturband_aktuell`, `verbrauch_nach_temperatur`).
+- **New "Analyse" panel tab**: the measured battery capacity sensor (moved off the vehicle card) and the new temperature/consumption breakdown now live on their own tab, keeping the main vehicle card focused on day-to-day numbers.
+
 ## [0.50.0] - 2026-08-13
 
 ### Added

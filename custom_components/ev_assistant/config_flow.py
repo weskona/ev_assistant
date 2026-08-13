@@ -47,6 +47,7 @@ from .const import (
     CONF_NOTIFY_ENTITIES,
     CONF_NOTIFY_EVENTS,
     CONF_ODO_ENTITY,
+    CONF_OUTSIDE_TEMP_ENTITY,
     CONF_PLUG_DEBOUNCE,
     CONF_PLUG_ENTITY,
     CONF_POWER_ENTITY,
@@ -121,6 +122,13 @@ _MOTOR_ENTITY = selector.EntitySelector(
 )
 _PV_FORECAST_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor")
+)
+_OUTSIDE_TEMP_ENTITY = selector.EntitySelector(
+    # Kein device_class-Filter: weather.*-Entitaeten setzen "device_class"
+    # nicht (die Temperatur steckt im Attribut "temperature", siehe
+    # coordinator.py::_extract_temp()), der Filter wuerde sie sonst
+    # ausschliessen.
+    selector.EntitySelectorConfig(domain=["sensor", "weather"])
 )
 _TANKERKOENIG_FUEL_TYPE = selector.SelectSelector(
     selector.SelectSelectorConfig(
@@ -328,6 +336,7 @@ def build_trip_schema(cur: dict) -> vol.Schema:
             default=cur.get(CONF_USAGE_PROFILE_BUFFER_PCT, DEFAULT_USAGE_PROFILE_BUFFER_PCT),
         ): vol.Coerce(float),
         vol.Optional(CONF_PV_FORECAST_ENTITY, description=sv(CONF_PV_FORECAST_ENTITY)): _PV_FORECAST_ENTITY,
+        vol.Optional(CONF_OUTSIDE_TEMP_ENTITY, description=sv(CONF_OUTSIDE_TEMP_ENTITY)): _OUTSIDE_TEMP_ENTITY,
     })
 
 

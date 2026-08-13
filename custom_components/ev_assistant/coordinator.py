@@ -41,6 +41,7 @@ from .const import (
     CONF_NOTIFY_ENTITIES,
     CONF_NOTIFY_EVENTS,
     CONF_ODO_ENTITY,
+    CONF_OUTSIDE_TEMP_ENTITY,
     CONF_PLUG_DEBOUNCE,
     CONF_PLUG_ENTITY,
     CONF_POWER_ENTITY,
@@ -106,6 +107,8 @@ from .const import (
     NOTIFY_TAG,
     STORAGE_KEY,
     STORAGE_VERSION,
+    TEMP_BUCKET_BOUNDARIES,
+    TEMP_BUCKET_MIN_SAMPLES,
     TRIP_CONSUMPTION_CHECK_MIN_KM,
     TRIP_CONSUMPTION_MAX_KWH_100KM,
     TRIP_CONSUMPTION_MIN_KWH_100KM,
@@ -124,12 +127,14 @@ from .engine import (
     calculate_savings,
     charge_before_pv_decision,
     charge_cost,
+    consumption_by_temp_bucket,
     estimate_battery_capacity_kwh,
     home_capacity_sample,
     is_plausible_trip_consumption,
     merge_pending,
     pop_pending,
     rolling_consumption_kwh_per_100km,
+    temperature_bucket,
     weekday_usage_profile,
 )
 
@@ -229,6 +234,7 @@ def _empty_data() -> dict:
         "trip_detector_state": None,
         "trip_start_zone": None,
         "trip_start_soc": None,
+        "trip_start_temp": None,
         "odo_periods": {},
         "cost_periods": {},
         "odo_lts": {},
@@ -272,6 +278,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._person_zone: Optional[str] = None
         self._trip_start_zone: Optional[str] = None
         self._trip_start_soc: Optional[float] = None
+        # Optionale Aussentemperatur (Wetter-Integration oder Sensor) fuer
+        # temperaturabhaengige Verbrauchs-/Reichweiten-Auswertung -- siehe
+        # _wire_outside_temp()/_extract_temp() sowie engine.temperature_
+        # bucket()/consumption_by_temp_bucket(). _trip_start_temp wird wie
+        # _trip_start_soc beim Fahrtbeginn eingefroren (siehe
+        # _run_trip_detection()).
+        self._outside_temp: Optional[float] = None
+        self._trip_start_temp: Optional[float] = None
         # Ob gerade eine "Tankerkoenig nicht verfuegbar"-Benachrichtigung
         # aktiv ist -- verhindert wiederholte create/dismiss-Serviceaufrufe
         # bei jedem einzelnen _recompute()-Tick (siehe _wire_tankerkoenig_price()).
@@ -305,6 +319,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Datum, da das Rolling-Fenster auch ohne Fahrtenbuch-Aenderung
         # einmal pro Tag weiterwandert).
         self._rolling_consumption_cache: Optional[tuple[int, str, Optional[float]]] = None
+        # Cache fuer den Verbrauch je Temperaturband (siehe
+        # _consumption_by_temp_bucket()) -- analog _trip_avg_cache.
+        self._temp_bucket_cache: Optional[tuple[int, dict]] = None
         # Analog _fahrten_version, aber fuer "history" (Fremdladungen) --
         # bislang gab es dort noch keinen darauf angewiesenen Cache.
         self._history_version = 0
@@ -348,6 +365,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # laufenden Fahrt, aus demselben Grund wie detector_state/trip_detector_state.
         self._trip_start_zone = self.data.get("trip_start_zone")
         self._trip_start_soc = self.data.get("trip_start_soc")
+        self._trip_start_temp = self.data.get("trip_start_temp")
         self._build_detector()
         self._build_trip_detector()
         await self._setup_sources()
@@ -439,6 +457,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._wire_home_price()
         self._wire_gps()
         self._wire_motor()
+        self._wire_outside_temp()
 
     def _wire_home_price(self) -> None:
         """Heimstrompreis: optionale Live-Entitaet (z.B. ein dynamischer
@@ -632,6 +651,44 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         state = self.hass.states.get(entity_id)
         if state is not None and state.state not in _INVALID:
             self._set_person_zone(state.state)
+
+    def _wire_outside_temp(self) -> None:
+        """Optionale Aussentemperatur-Entitaet fuer temperaturabhaengige
+        Verbrauchs-/Reichweiten-Auswertung (siehe engine.temperature_
+        bucket()/consumption_by_temp_bucket()). Der aktuelle Wert wird
+        live nachgefuehrt (fuer range_estimate_km()); beim Fahrtbeginn
+        wird er zusaetzlich als Start-Temperatur eingefroren (siehe
+        _run_trip_detection())."""
+        entity_id = self._opt(CONF_OUTSIDE_TEMP_ENTITY)
+        if not entity_id:
+            return
+
+        @callback
+        def _on_state(event) -> None:
+            new = event.data.get("new_state")
+            if new is None or new.state in _INVALID:
+                return
+            self._outside_temp = self._extract_temp(new)
+
+        self._unsub.append(async_track_state_change_event(self.hass, [entity_id], _on_state))
+        state = self.hass.states.get(entity_id)
+        if state is not None and state.state not in _INVALID:
+            self._outside_temp = self._extract_temp(state)
+
+    @staticmethod
+    def _extract_temp(state) -> Optional[float]:
+        """Akzeptiert sowohl eine reine Temperatursensor-Entitaet (state
+        ist direkt die Zahl) als auch eine weather.*-Entitaet (state ist
+        ein Wetter-Text wie "sunny", die Temperatur steckt im Attribut
+        "temperature")."""
+        try:
+            return float(state.state)
+        except (ValueError, TypeError):
+            pass
+        try:
+            return float(state.attributes.get("temperature"))
+        except (ValueError, TypeError):
+            return None
 
     def _wire(self, entity_key, tmpl_key, setter: Callable[[object], None]) -> None:
         entity_id = self._opt(entity_key)
@@ -1267,6 +1324,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self.data["trip_start_zone"] = self._trip_start_zone
             self._trip_start_soc = self._soc
             self.data["trip_start_soc"] = self._trip_start_soc
+            self._trip_start_temp = self._outside_temp
+            self.data["trip_start_temp"] = self._trip_start_temp
             await self._save()
         else:
             self._save_soon()
@@ -1278,6 +1337,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 pend["soc_start"] = round(self._trip_start_soc, 1)
                 pend["soc_end"] = round(self._soc, 1)
                 pend["delta_soc"] = round(self._soc - self._trip_start_soc, 1)
+            if self._trip_start_temp is not None:
+                pend["temp_start"] = round(self._trip_start_temp, 1)
             await self._handle_pending_trip(pend)
 
     async def _record_efficiency_sample(self, sample: float) -> None:
@@ -1558,6 +1619,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "km": pend["km"], "start_ort": start_ort or "", "end_ort": end_ort or "",
             "erfasst_ts": int(time.time()),
         }
+        if pend.get("temp_start") is not None:
+            rec["temp_start"] = pend["temp_start"]
         if pend.get("soc_start") is not None:
             rec["soc_start"] = pend["soc_start"]
             rec["soc_end"] = pend.get("soc_end")
@@ -2081,13 +2144,40 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._rolling_consumption_cache = (self._fahrten_version, today, result)
         return result
 
+    def _consumption_by_temp_bucket(self) -> dict:
+        """Durchschnittsverbrauch je Temperaturband (siehe engine.
+        consumption_by_temp_bucket()) -- nur Baender mit genug Fahrten
+        (TEMP_BUCKET_MIN_SAMPLES) sind enthalten. Ergebnis wird pro
+        _fahrten_version zwischengespeichert, analog _trip_avg_cache."""
+        if self._temp_bucket_cache is not None and self._temp_bucket_cache[0] == self._fahrten_version:
+            return self._temp_bucket_cache[1]
+        fahrten = self.data.get("fahrten") or []
+        result = consumption_by_temp_bucket(fahrten, TEMP_BUCKET_BOUNDARIES, TEMP_BUCKET_MIN_SAMPLES)
+        self._temp_bucket_cache = (self._fahrten_version, result)
+        return result
+
+    def current_temp_bucket(self) -> Optional[str]:
+        """Temperaturband der aktuellen Aussentemperatur (siehe
+        CONF_OUTSIDE_TEMP_ENTITY), z.B. fuer die Sensor-Attribute von
+        RangeEstimateSensor. None ohne konfigurierte/aktuelle Temperatur."""
+        return temperature_bucket(self._outside_temp, TEMP_BUCKET_BOUNDARIES)
+
     def range_estimate_km(self) -> Optional[float]:
         """Geschaetzte Restreichweite: aktueller SoC * nutzbare kWh ueber den
-        rollierenden Realverbrauch (siehe oben) -- ehrlicher als eine
-        Bordanzeige, weil tatsaechlicher Fahrstil/Jahreszeit einfliessen
-        statt eines werksseitig pauschalen Verbrauchswerts."""
+        Realverbrauch -- ehrlicher als eine Bordanzeige, weil tatsaechlicher
+        Fahrstil/Jahreszeit einfliessen statt eines werksseitig pauschalen
+        Verbrauchswerts. Ist eine Aussentemperatur konfiguriert (siehe
+        CONF_OUTSIDE_TEMP_ENTITY) UND liegen fuer deren aktuelles
+        Temperaturband genug Fahrten vor, wird der bandspezifische statt
+        der rollierende 30-Tage-Schnitt verwendet -- genauer bei starken
+        Jahreszeiten-Schwankungen (Kaelte-Malus), faellt sonst auf den
+        rollierenden Schnitt zurueck."""
         usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
         consumption = self._vehicle_avg_consumption_kwh_per_100km_rolling()
+        bucket = temperature_bucket(self._outside_temp, TEMP_BUCKET_BOUNDARIES)
+        bucket_consumption = self._consumption_by_temp_bucket().get(bucket)
+        if bucket_consumption is not None:
+            consumption = bucket_consumption
         return calculate_range_km(self._soc, usable_kwh, consumption)
 
     def battery_capacity_kwh(self) -> Optional[float]:

@@ -797,8 +797,25 @@ class RangeEstimateSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        consumption = self.coordinator._vehicle_avg_consumption_kwh_per_100km_rolling()
-        return {"verbrauch_kwh_100km": consumption} if consumption is not None else {}
+        coordinator = self.coordinator
+        buckets = coordinator._consumption_by_temp_bucket()
+        bucket = coordinator.current_temp_bucket()
+        bucket_consumption = buckets.get(bucket)
+        if bucket_consumption is not None:
+            consumption = bucket_consumption
+        else:
+            consumption = coordinator._vehicle_avg_consumption_kwh_per_100km_rolling()
+        attrs = {}
+        if coordinator._outside_temp is not None:
+            attrs["aussentemperatur"] = round(coordinator._outside_temp, 1)
+        if consumption is None:
+            return attrs
+        attrs["verbrauch_kwh_100km"] = consumption
+        if bucket is not None:
+            attrs["temperaturband_aktuell"] = bucket
+        if buckets:
+            attrs["verbrauch_nach_temperatur"] = buckets
+        return attrs
 
 
 class BatteryCapacitySensor(EvAssistantEntity, SensorEntity):

@@ -66,7 +66,7 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Trip Log",
-        "description": "Step 6/7: fine-tuning of automatic trip detection, which uses the same odometer sensor from step 1. Default values work for most cases. Optional: a motor/driving sensor (e.g. ignition/\"Ready\") adds a second signal for vehicles whose odometer updates too coarsely/infrequently to derive trip start/end from it directly — distance is still always taken from the odometer.",
+        "description": "Step 6/7: fine-tuning of automatic trip detection, which uses the same odometer sensor from step 1. Default values work for most cases. Optional: a motor/driving sensor (e.g. ignition/\"Ready\") adds a second signal for vehicles whose odometer updates too coarsely/infrequently to derive trip start/end from it directly — distance is still always taken from the odometer. An optional outside temperature entity (weather integration or sensor) groups consumption by temperature band, making the estimated range winter-proof once enough trips are logged.",
         "data": {
           "trip_min_km": "Minimum distance (km)",
           "trip_idle_timeout_s": "Idle time until trip end (s)",
@@ -75,7 +75,8 @@
           "motor_debounce_s": "Debounce for motor/driving sensor (s)",
           "trip_auto_confirm": "Automatically add trips to the log (without manual confirmation)",
           "usage_profile_buffer_pct": "Buffer for usage profile (%, on the weekday average)",
-          "pv_forecast_entity": "PV forecast for tomorrow (optional, any sensor entity, e.g. Solcast/Forecast.Solar)"
+          "pv_forecast_entity": "PV forecast for tomorrow (optional, any sensor entity, e.g. Solcast/Forecast.Solar)",
+          "outside_temp_entity": "Outside temperature (optional, weather integration or sensor — for temperature-aware consumption/range estimation)"
         }
       },
       "vergleich": {
@@ -167,7 +168,7 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Trip Log",
-        "description": "Step 6/7: fine-tuning of automatic trip detection. Optional: a motor/driving sensor adds a second signal (see debounce).",
+        "description": "Step 6/7: fine-tuning of automatic trip detection. Optional: a motor/driving sensor adds a second signal (see debounce). An outside temperature entity groups consumption by temperature band for a winter-proof range estimate.",
         "data": {
           "trip_min_km": "Minimum distance (km)",
           "trip_idle_timeout_s": "Idle time until trip end (s)",
@@ -176,7 +177,8 @@
           "motor_debounce_s": "Debounce for motor/driving sensor (s)",
           "trip_auto_confirm": "Automatically add trips to the log (without manual confirmation)",
           "usage_profile_buffer_pct": "Buffer for usage profile (%, on the weekday average)",
-          "pv_forecast_entity": "PV forecast for tomorrow (optional, any sensor entity, e.g. Solcast/Forecast.Solar)"
+          "pv_forecast_entity": "PV forecast for tomorrow (optional, any sensor entity, e.g. Solcast/Forecast.Solar)",
+          "outside_temp_entity": "Outside temperature (optional, weather integration or sensor — for temperature-aware consumption/range estimation)"
         }
       },
       "vergleich": {

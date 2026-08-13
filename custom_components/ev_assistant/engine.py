@@ -869,3 +869,42 @@ def estimate_battery_capacity_kwh(
         return None
     values = [s["value"] for s in recent]
     return round(sum(values) / len(values), 2)
+
+
+def temperature_bucket(temp_c: Optional[float], boundaries: tuple = (0.0, 10.0, 20.0)) -> Optional[str]:
+    """Ordnet eine Aussentemperatur (°C) einem Band zu, z.B. fuer
+    boundaries=(0, 10, 20): "<0°C", "0-10°C", "10-20°C", ">20°C" (untere
+    Grenze eines Bands ist inklusiv). None ohne Temperatur."""
+    if temp_c is None:
+        return None
+    sorted_b = sorted(boundaries)
+    for i, b in enumerate(sorted_b):
+        if temp_c < b:
+            return f"<{b:g}°C" if i == 0 else f"{sorted_b[i - 1]:g}-{b:g}°C"
+    return f">{sorted_b[-1]:g}°C"
+
+
+def consumption_by_temp_bucket(
+    fahrten: list, boundaries: tuple = (0.0, 10.0, 20.0), min_samples: int = 3
+) -> dict:
+    """Durchschnittlicher Verbrauch (kWh/100km) je Temperaturband, aus
+    Fahrten mit bekanntem Verbrauch, km und Start-Temperatur (Feld
+    "temp_start", siehe coordinator.py::_run_trip_detection()/
+    _build_trip_record()). Baender mit weniger als `min_samples` Fahrten
+    werden ausgelassen -- zu wenige Datenpunkte waeren kein verlaesslicher
+    Schnitt und wuerden range_estimate_km() eher verschlechtern als
+    verbessern."""
+    buckets: dict[str, list[float]] = {}
+    for rec in fahrten:
+        verbrauch = rec.get("verbrauch_kwh")
+        km = rec.get("km")
+        temp = rec.get("temp_start")
+        if verbrauch is None or not km or km <= 0 or temp is None:
+            continue
+        bucket = temperature_bucket(temp, boundaries)
+        buckets.setdefault(bucket, []).append(verbrauch / km * 100.0)
+    return {
+        bucket: round(sum(values) / len(values), 2)
+        for bucket, values in buckets.items()
+        if len(values) >= min_samples
+    }

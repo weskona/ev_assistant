@@ -66,7 +66,7 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Fahrtenbuch",
-        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung, die denselben Kilometerstand-Sensor aus Schritt 1 nutzt. Standardwerte passen für die meisten Fälle. Optional: ein Motor-/Fahr-Sensor (z.B. Zündung/„Ready“) ergänzt die Erkennung um ein zweites Signal für Fahrzeuge, deren Kilometerstand zu grob/selten aktualisiert wird, um Fahrtbeginn/-ende direkt daraus abzuleiten — die Strecke stammt trotzdem immer aus dem Kilometerstand.",
+        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung, die denselben Kilometerstand-Sensor aus Schritt 1 nutzt. Standardwerte passen für die meisten Fälle. Optional: ein Motor-/Fahr-Sensor (z.B. Zündung/„Ready\") ergänzt die Erkennung um ein zweites Signal für Fahrzeuge, deren Kilometerstand zu grob/selten aktualisiert wird, um Fahrtbeginn/-ende direkt daraus abzuleiten — die Strecke stammt trotzdem immer aus dem Kilometerstand. Eine optionale Außentemperatur-Entität (Wetter-Integration oder Sensor) gruppiert den Verbrauch nach Temperaturband und macht die geschätzte Reichweite bei genug Fahrten winterfest.",
         "data": {
           "trip_min_km": "Mindest-Strecke (km)",
           "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s)",
@@ -75,7 +75,8 @@
           "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)",
           "trip_auto_confirm": "Fahrt automatisch ins Fahrtenbuch übernehmen (ohne manuelle Bestätigung)",
           "usage_profile_buffer_pct": "Puffer für Nutzungsprofil (%, auf den Wochentags-Durchschnitt)",
-          "pv_forecast_entity": "PV-Ertragsprognose für morgen (optional, beliebige sensor-Entität, z.B. Solcast/Forecast.Solar)"
+          "pv_forecast_entity": "PV-Ertragsprognose für morgen (optional, beliebige sensor-Entität, z.B. Solcast/Forecast.Solar)",
+          "outside_temp_entity": "Außentemperatur (optional, Wetter-Integration oder Sensor — für temperaturabhängige Verbrauchs-/Reichweitenschätzung)"
         }
       },
       "vergleich": {
@@ -167,7 +168,7 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Fahrtenbuch",
-        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung. Optional: ein Motor-/Fahr-Sensor ergänzt die Erkennung um ein zweites Signal (siehe Debounce).",
+        "description": "Schritt 6/7: Feinjustierung der automatischen Fahrten-Erkennung. Optional: ein Motor-/Fahr-Sensor ergänzt die Erkennung um ein zweites Signal (siehe Debounce). Eine Außentemperatur-Entität gruppiert den Verbrauch nach Temperaturband für eine winterfeste Reichweitenschätzung.",
         "data": {
           "trip_min_km": "Mindest-Strecke (km)",
           "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s)",
@@ -176,7 +177,8 @@
           "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)",
           "trip_auto_confirm": "Fahrt automatisch ins Fahrtenbuch übernehmen (ohne manuelle Bestätigung)",
           "usage_profile_buffer_pct": "Puffer für Nutzungsprofil (%, auf den Wochentags-Durchschnitt)",
-          "pv_forecast_entity": "PV-Ertragsprognose für morgen (optional, beliebige sensor-Entität, z.B. Solcast/Forecast.Solar)"
+          "pv_forecast_entity": "PV-Ertragsprognose für morgen (optional, beliebige sensor-Entität, z.B. Solcast/Forecast.Solar)",
+          "outside_temp_entity": "Außentemperatur (optional, Wetter-Integration oder Sensor — für temperaturabhängige Verbrauchs-/Reichweitenschätzung)"
         }
       },
       "vergleich": {

@@ -15,12 +15,14 @@ from engine import (
     calculate_savings,
     charge_before_pv_decision,
     charge_cost,
+    consumption_by_temp_bucket,
     estimate_battery_capacity_kwh,
     home_capacity_sample,
     is_plausible_trip_consumption,
     merge_pending,
     pop_pending,
     rolling_consumption_kwh_per_100km,
+    temperature_bucket,
     weekday_usage_profile,
 )
 
@@ -884,3 +886,42 @@ def test_estimate_battery_capacity_kwh_unter_min_samples_liefert_none():
 
 def test_estimate_battery_capacity_kwh_leere_liste_liefert_none():
     assert estimate_battery_capacity_kwh([], max_samples=5, min_samples=2) is None
+
+
+# ----- temperature_bucket / consumption_by_temp_bucket ----------------------
+
+@pytest.mark.parametrize("temp,expected", [
+    (-5.0, "<0°C"),
+    (0.0, "0-10°C"),
+    (5.0, "0-10°C"),
+    (10.0, "10-20°C"),
+    (15.0, "10-20°C"),
+    (20.0, ">20°C"),
+    (25.0, ">20°C"),
+])
+def test_temperature_bucket_zuordnung(temp, expected):
+    assert temperature_bucket(temp, boundaries=(0.0, 10.0, 20.0)) == expected
+
+
+def test_temperature_bucket_ohne_temperatur_liefert_none():
+    assert temperature_bucket(None) is None
+
+
+def test_consumption_by_temp_bucket_gruppiert_und_mittelt():
+    fahrten = [
+        {"verbrauch_kwh": 3.0, "km": 20.0, "temp_start": -5.0},   # 15.0 kWh/100km, <0°C
+        {"verbrauch_kwh": 4.0, "km": 20.0, "temp_start": -2.0},   # 20.0 kWh/100km, <0°C
+        {"verbrauch_kwh": 3.5, "km": 20.0, "temp_start": -1.0},   # 17.5 kWh/100km, <0°C
+        {"verbrauch_kwh": 2.0, "km": 20.0, "temp_start": 15.0},   # 10.0 kWh/100km, nur 1x -> raus
+    ]
+    result = consumption_by_temp_bucket(fahrten, boundaries=(0.0, 10.0, 20.0), min_samples=3)
+    assert result == {"<0°C": 17.5}
+
+
+def test_consumption_by_temp_bucket_ohne_pruefbare_daten_ausgeschlossen():
+    fahrten = [
+        {"verbrauch_kwh": None, "km": 20.0, "temp_start": 5.0},
+        {"verbrauch_kwh": 3.0, "km": None, "temp_start": 5.0},
+        {"verbrauch_kwh": 3.0, "km": 20.0, "temp_start": None},
+    ]
+    assert consumption_by_temp_bucket(fahrten, min_samples=1) == {}
