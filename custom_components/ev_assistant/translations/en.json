@@ -314,6 +314,9 @@
       "battery_capacity": {
         "name": "Battery Capacity (Measured)"
       },
+      "equivalent_full_cycles": {
+        "name": "Equivalent Full Cycles"
+      },
       "co2_savings": {
         "name": "CO2 Savings vs. ICE Vehicle"
       },

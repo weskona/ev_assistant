@@ -61,6 +61,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         VehicleAvgConsumptionSensor(coordinator, entry),
         RangeEstimateSensor(coordinator, entry),
         BatteryCapacitySensor(coordinator, entry),
+        EquivalentFullCyclesSensor(coordinator, entry),
         Co2SavingsSensor(coordinator, entry),
         HomeVsExternalPriceSensor(coordinator, entry),
         CostDaySensor(coordinator, entry),
@@ -844,6 +845,27 @@ class BatteryCapacitySensor(EvAssistantEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator.battery_capacity_kwh()
+
+
+class EquivalentFullCyclesSensor(EvAssistantEntity, SensorEntity):
+    """Aequivalente Vollzyklen (0%->100%->0% waere 1 Zyklus) aus Fahrtenbuch
+    (Entladung), Fremd- und Heim-Ladungen (Ladung), siehe coordinator.py::
+    equivalent_full_cycles() -- ergaenzt battery_capacity um die zweite,
+    bei realen Akku-Garantien uebliche Kennzahl (Zyklen zusaetzlich zu
+    Jahren). TOTAL statt TOTAL_INCREASING, da Fahrten/Fremdladungen
+    nachtraeglich geloescht werden koennen (siehe TotalKwhSensor-Kommentar)."""
+
+    _attr_translation_key = "equivalent_full_cycles"
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_icon = "mdi:battery-sync"
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "equivalent_full_cycles")
+
+    @property
+    def native_value(self):
+        return self.coordinator.equivalent_full_cycles()
 
 
 class Co2SavingsSensor(EvAssistantEntity, SensorEntity):

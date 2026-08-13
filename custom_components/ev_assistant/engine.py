@@ -908,3 +908,25 @@ def consumption_by_temp_bucket(
         for bucket, values in buckets.items()
         if len(values) >= min_samples
     }
+
+
+def equivalent_full_cycles(fahrten: list, history: list, home_charge_pct_total: float = 0.0) -> float:
+    """Aequivalente Vollzyklen (0%->100%->0% waere 1 Zyklus) aus der SoC-
+    Delta-Historie: Entladung aus `fahrten` (Fahrtenbuch, |delta_soc| je
+    Fahrt) plus Ladung aus `history` (Fremdladungen, delta_soc je Ladung,
+    auf >= 0 geklemmt) plus `home_charge_pct_total` (Summe der SoC-Zuwaechse
+    aller Heim-Ladesessions, siehe coordinator.py::_set_home()/
+    _record_home_charge_pct() -- anders als bei battery_capacity_kwh() zaehlt
+    hier JEDE Heim-Session, unabhaengig von SoC-Hub-Schwelle oder kalibriertem
+    Wirkungsgrad, da fuer die reine Prozentpunkt-Summe kein kWh-Wert noetig
+    ist). Jeder volle Zyklus zeigt sich als je ein Lade- UND ein Entlade-
+    Ereignis mit zusammen 200 Prozentpunkten, daher die Summe durch 200
+    statt 100."""
+    discharge_pct = sum(
+        abs(rec["delta_soc"]) for rec in fahrten if rec.get("delta_soc") is not None
+    )
+    charge_pct = sum(
+        max(0.0, rec["delta_soc"]) for rec in history if rec.get("delta_soc") is not None
+    )
+    charge_pct += max(0.0, home_charge_pct_total)
+    return round((discharge_pct + charge_pct) / 200.0, 2)

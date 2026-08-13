@@ -314,6 +314,9 @@
       "battery_capacity": {
         "name": "Batteriekapazität (gemessen)"
       },
+      "equivalent_full_cycles": {
+        "name": "Äquivalente Vollzyklen"
+      },
       "co2_savings": {
         "name": "CO2-Ersparnis ggü. Verbrenner"
       },

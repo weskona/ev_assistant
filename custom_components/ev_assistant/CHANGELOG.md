@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.52.0] - 2026-08-14
+
+### Added
+
+- **Equivalent full cycles sensor**: new `sensor.<vehicle>_aquivalente_vollzyklen`, summing SoC throughput from your trip log (discharge) and both external and home charging (charge) into a single "equivalent full cycles" count (0%→100%→0% counts as 1 cycle) — the complement to `battery_capacity`, since real battery warranties are usually specified in both cycles and years. Shown on the Analyse tab next to battery capacity.
+
 ## [0.51.0] - 2026-08-13
 
 ### Added

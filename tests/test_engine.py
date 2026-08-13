@@ -16,6 +16,7 @@ from engine import (
     charge_before_pv_decision,
     charge_cost,
     consumption_by_temp_bucket,
+    equivalent_full_cycles,
     estimate_battery_capacity_kwh,
     home_capacity_sample,
     is_plausible_trip_consumption,
@@ -925,3 +926,49 @@ def test_consumption_by_temp_bucket_ohne_pruefbare_daten_ausgeschlossen():
         {"verbrauch_kwh": 3.0, "km": 20.0, "temp_start": None},
     ]
     assert consumption_by_temp_bucket(fahrten, min_samples=1) == {}
+
+
+# ----- equivalent_full_cycles ------------------------------------------------
+
+def test_equivalent_full_cycles_ein_voller_zyklus():
+    # 0->100 laden, 100->0 fahren: zusammen 200 Prozentpunkte -> 1 Zyklus.
+    fahrten = [{"delta_soc": -100.0}]
+    history = [{"delta_soc": 100.0}]
+    assert equivalent_full_cycles(fahrten, history) == 1.0
+
+
+def test_equivalent_full_cycles_summiert_mehrere_teilzyklen():
+    fahrten = [{"delta_soc": -30.0}, {"delta_soc": -20.0}]  # 50 Prozentpunkte Entladung
+    history = [{"delta_soc": 40.0}, {"delta_soc": 10.0}]     # 50 Prozentpunkte Ladung
+    assert equivalent_full_cycles(fahrten, history) == 0.5
+
+
+def test_equivalent_full_cycles_negative_ladung_wird_geklemmt():
+    # Rekuperation waehrend einer Fremdladung (kaum real, aber ein negativer
+    # delta_soc auf der Lade-Seite darf die Zyklen nicht senken).
+    fahrten = [{"delta_soc": -10.0}]
+    history = [{"delta_soc": -5.0}]
+    assert equivalent_full_cycles(fahrten, history) == 0.05  # nur die 10 der Entladung zaehlen
+
+
+def test_equivalent_full_cycles_ignoriert_fehlende_delta_soc():
+    fahrten = [{"delta_soc": -10.0}, {"delta_soc": None}, {"km": 5.0}]
+    history = [{"delta_soc": 10.0}, {"delta_soc": None}]
+    assert equivalent_full_cycles(fahrten, history) == 0.1
+
+
+def test_equivalent_full_cycles_leere_listen_liefert_null():
+    assert equivalent_full_cycles([], []) == 0.0
+
+
+def test_equivalent_full_cycles_beruecksichtigt_heimladungen():
+    fahrten = [{"delta_soc": -100.0}]
+    history = []
+    # Alle 100 Prozentpunkte Ladung kommen aus Heim-Sessions statt Fremdladungen.
+    assert equivalent_full_cycles(fahrten, history, home_charge_pct_total=100.0) == 1.0
+
+
+def test_equivalent_full_cycles_negativer_heimladungs_gesamtwert_wird_geklemmt():
+    fahrten = [{"delta_soc": -10.0}]
+    history = []
+    assert equivalent_full_cycles(fahrten, history, home_charge_pct_total=-5.0) == 0.05

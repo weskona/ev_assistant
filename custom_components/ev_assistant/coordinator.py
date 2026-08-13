@@ -128,6 +128,7 @@ from .engine import (
     charge_before_pv_decision,
     charge_cost,
     consumption_by_temp_bucket,
+    equivalent_full_cycles,
     estimate_battery_capacity_kwh,
     home_capacity_sample,
     is_plausible_trip_consumption,
@@ -191,6 +192,7 @@ def _empty_data() -> dict:
         "efficiency_samples": [],
         "measured_efficiency": None,
         "home_capacity_samples": [],
+        "home_charge_pct_total": 0.0,
         "odo": None,
         "odo_unit": None,
         "odo_start": None,
@@ -322,6 +324,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Cache fuer den Verbrauch je Temperaturband (siehe
         # _consumption_by_temp_bucket()) -- analog _trip_avg_cache.
         self._temp_bucket_cache: Optional[tuple[int, dict]] = None
+        # Cache fuer equivalent_full_cycles() -- haengt an BEIDEN Versionen
+        # (Fahrtenbuch UND Fremdladungs-Historie tragen beide dazu bei).
+        self._cycles_cache: Optional[tuple[tuple[int, int, int], float]] = None
         # Analog _fahrten_version, aber fuer "history" (Fremdladungen) --
         # bislang gab es dort noch keinen darauf angewiesenen Cache.
         self._history_version = 0
@@ -750,6 +755,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 self.data.get("measured_efficiency"),
                 BATTERY_CAPACITY_MIN_SOC_DELTA,
             )
+            # Reiner SoC-Zuwachs dieser Session fuer equivalent_full_cycles()
+            # -- unabhaengig von der SoC-Hub-Schwelle/Wirkungsgrad oben, da
+            # dafuer kein kWh-Wert noetig ist (siehe engine.
+            # equivalent_full_cycles()). Jede Heim-Session zaehlt mit,
+            # nicht nur die fuer eine Kapazitaets-Stichprobe breiten.
+            if self._capacity_anchor_soc is not None and self._soc is not None:
+                raw_delta = self._soc - self._capacity_anchor_soc
+                if raw_delta > 0:
+                    self.hass.async_create_task(self._record_home_charge_pct(raw_delta))
             self._capacity_anchor_soc = None
             self._capacity_anchor_wallbox_kwh = None
             if cap_sample is not None:
@@ -1369,6 +1383,18 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         samples = list(self.data.get("home_capacity_samples") or [])
         samples.insert(0, {"value": value, "ts": time.time()})
         self.data["home_capacity_samples"] = samples[:BATTERY_CAPACITY_HOME_MAX_STORED]
+        self._home_capacity_version += 1
+        self._save_soon()
+        self.async_set_updated_data(self.data)
+
+    async def _record_home_charge_pct(self, delta_soc: float) -> None:
+        """Reiner SoC-Zuwachs (Prozentpunkte) einer abgeschlossenen Heim-
+        Ladesession fuer equivalent_full_cycles() -- siehe _set_home() fuer
+        die Berechnung. Nutzt denselben Versionszaehler wie
+        _record_home_capacity_sample(), da beide am selben Session-Ende
+        entstehen und coordinator.equivalent_full_cycles() ohnehin ueber
+        alle Aenderungen an Heim-Ladedaten neu rechnen soll."""
+        self.data["home_charge_pct_total"] = self.data.get("home_charge_pct_total", 0.0) + delta_soc
         self._home_capacity_version += 1
         self._save_soon()
         self.async_set_updated_data(self.data)
@@ -2161,6 +2187,23 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         CONF_OUTSIDE_TEMP_ENTITY), z.B. fuer die Sensor-Attribute von
         RangeEstimateSensor. None ohne konfigurierte/aktuelle Temperatur."""
         return temperature_bucket(self._outside_temp, TEMP_BUCKET_BOUNDARIES)
+
+    def equivalent_full_cycles(self) -> float:
+        """Aequivalente Vollzyklen aus Fahrtenbuch (Entladung), Fremd- und
+        Heim-Ladungen (Ladung), siehe engine.equivalent_full_cycles(). Wird
+        pro (_fahrten_version, _history_version, _home_capacity_version)
+        zwischengespeichert -- Letzteres, da home_charge_pct_total ueber
+        _record_home_charge_pct() denselben Zaehler wie die Kapazitaets-
+        Stichproben mitbenutzt (siehe dort)."""
+        cache_key = (self._fahrten_version, self._history_version, self._home_capacity_version)
+        if self._cycles_cache is not None and self._cycles_cache[0] == cache_key:
+            return self._cycles_cache[1]
+        fahrten = self.data.get("fahrten") or []
+        history = self.data.get("history") or []
+        home_charge_pct_total = self.data.get("home_charge_pct_total", 0.0)
+        result = equivalent_full_cycles(fahrten, history, home_charge_pct_total)
+        self._cycles_cache = (cache_key, result)
+        return result
 
     def range_estimate_km(self) -> Optional[float]:
         """Geschaetzte Restreichweite: aktueller SoC * nutzbare kWh ueber den

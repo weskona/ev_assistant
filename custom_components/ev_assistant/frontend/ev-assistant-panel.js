@@ -1016,11 +1016,13 @@ class EVAssistantPanel extends HTMLElement {
         </div>
         <div class="kpi-row">
           <div class="kpi"><div class="kv" id="analyse-capacity">—</div><div class="kl">kWh geschätzte Kapazität</div></div>
+          <div class="kpi"><div class="kv" id="analyse-cycles">—</div><div class="kl">äquivalente Vollzyklen</div></div>
         </div>
         <div class="profil-empty">
           Rollierender Schnitt aus Fremd- und Heim-Ladesessions mit großem SoC-Hub. Der absolute Wert liegt
           typischerweise über der echten Kapazität (Ladeverluste nicht modelliert) — entscheidend ist der Trend
-          über Monate/Jahre, nicht die einzelne Zahl.
+          über Monate/Jahre, nicht die einzelne Zahl. Vollzyklen aus Fahrtenbuch, Fremd- und Heim-Ladungen
+          (0→100→0 wäre 1 Zyklus).
         </div>
       </div>
       <div class="card">
@@ -1044,6 +1046,7 @@ class EVAssistantPanel extends HTMLElement {
     const q = (s) => wrap.querySelector(s);
     this._r = {
       analyseCapacity:    q("#analyse-capacity"),
+      analyseCycles:      q("#analyse-cycles"),
       analyseOutsideTemp: q("#analyse-outside-temp"),
       analyseTempEmpty:   q("#analyse-temp-empty"),
       analyseTempContent: q("#analyse-temp-content"),
@@ -1127,6 +1130,7 @@ class EVAssistantPanel extends HTMLElement {
     if (!r.analyseCapacity) return;
 
     r.analyseCapacity.textContent = this._num("battery_capacity", 1);
+    r.analyseCycles.textContent = this._num("equivalent_full_cycles", 1);
 
     const rangeEid = this._eid("range_estimate");
     const rangeState = rangeEid ? this._hass.states[rangeEid] : null;
