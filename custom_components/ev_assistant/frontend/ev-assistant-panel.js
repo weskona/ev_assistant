@@ -1041,6 +1041,36 @@ class EVAssistantPanel extends HTMLElement {
           <div class="sub-head">Ø kWh/100km je Temperaturband</div>
           <div class="weekday-chart" id="analyse-temp-chart"></div>
         </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:chart-donut"></ha-icon></span><h2>Ladeort-Aufschlüsselung</h2>
+        </div>
+        <div class="km-grid">
+          <div class="km-col">
+            <div class="sub-head">Heim</div>
+            <div class="km-item"><span class="km-label">kWh</span><span class="km-val" id="analyse-loc-home-kwh">—</span><span class="km-unit">kWh</span></div>
+            <div class="km-item"><span class="km-label">Kosten</span><span class="km-val" id="analyse-loc-home-cost">—</span><span class="km-unit">EUR</span></div>
+            <div class="km-item"><span class="km-label">Anteil</span><span class="km-val" id="analyse-loc-home-pct">—</span><span class="km-unit">%</span></div>
+            <div class="km-item"><span class="km-label">Ø Preis</span><span class="km-val" id="analyse-loc-home-price">—</span><span class="km-unit">EUR/kWh</span></div>
+            <div class="km-item"><span class="km-label">Solaranteil</span><span class="km-val green" id="analyse-loc-home-solar">—</span><span class="km-unit">%</span></div>
+          </div>
+          <div class="km-col">
+            <div class="sub-head">Fremd</div>
+            <div class="km-item"><span class="km-label">kWh</span><span class="km-val" id="analyse-loc-ext-kwh">—</span><span class="km-unit">kWh</span></div>
+            <div class="km-item"><span class="km-label">Kosten</span><span class="km-val" id="analyse-loc-ext-cost">—</span><span class="km-unit">EUR</span></div>
+            <div class="km-item"><span class="km-label">Anteil</span><span class="km-val" id="analyse-loc-ext-pct">—</span><span class="km-unit">%</span></div>
+            <div class="km-item"><span class="km-label">Ø Preis</span><span class="km-val" id="analyse-loc-ext-price">—</span><span class="km-unit">EUR/kWh</span></div>
+          </div>
+        </div>
+        <div class="divider"></div>
+        <div class="kpi-row">
+          <div class="kpi"><div class="kv" id="analyse-loc-eur100">—</div><div class="kl">EUR/100km gesamt (Heim + Fremd)</div></div>
+        </div>
+        <div class="profil-empty">
+          Solaranteil nur für Heimladungen, die evcc gesteuert hat. EUR/100km ist fahrzeugweit über die
+          Gesamtstrecke — km lassen sich keinem einzelnen Ladeort zuordnen.
+        </div>
       </div>`;
 
     const q = (s) => wrap.querySelector(s);
@@ -1051,6 +1081,16 @@ class EVAssistantPanel extends HTMLElement {
       analyseTempEmpty:   q("#analyse-temp-empty"),
       analyseTempContent: q("#analyse-temp-content"),
       analyseTempChart:   q("#analyse-temp-chart"),
+      analyseLocHomeKwh:   q("#analyse-loc-home-kwh"),
+      analyseLocHomeCost:  q("#analyse-loc-home-cost"),
+      analyseLocHomePct:   q("#analyse-loc-home-pct"),
+      analyseLocHomePrice: q("#analyse-loc-home-price"),
+      analyseLocHomeSolar: q("#analyse-loc-home-solar"),
+      analyseLocExtKwh:    q("#analyse-loc-ext-kwh"),
+      analyseLocExtCost:   q("#analyse-loc-ext-cost"),
+      analyseLocExtPct:    q("#analyse-loc-ext-pct"),
+      analyseLocExtPrice:  q("#analyse-loc-ext-price"),
+      analyseLocEur100:    q("#analyse-loc-eur100"),
     };
     return wrap;
   }
@@ -1131,6 +1171,23 @@ class EVAssistantPanel extends HTMLElement {
 
     r.analyseCapacity.textContent = this._num("battery_capacity", 1);
     r.analyseCycles.textContent = this._num("equivalent_full_cycles", 1);
+
+    const locEid = this._eid("charging_location_breakdown");
+    const locState = locEid ? this._hass.states[locEid] : null;
+    const locAttrs = (locState && locState.attributes) || {};
+    const fmt = (v, decimals = 1) => (typeof v === "number" ? this._fmtNum(v, decimals) : "—");
+    const heim = locAttrs.heim || {};
+    const fremd = locAttrs.fremd || {};
+    r.analyseLocHomeKwh.textContent = fmt(heim.kwh, 1);
+    r.analyseLocHomeCost.textContent = fmt(heim.kosten, 2);
+    r.analyseLocHomePct.textContent = fmt(heim.kwh_anteil_pct, 1);
+    r.analyseLocHomePrice.textContent = fmt(heim.preis_je_kwh, 3);
+    r.analyseLocHomeSolar.textContent = fmt(heim.solar_pct, 1);
+    r.analyseLocExtKwh.textContent = fmt(fremd.kwh, 1);
+    r.analyseLocExtCost.textContent = fmt(fremd.kosten, 2);
+    r.analyseLocExtPct.textContent = fmt(fremd.kwh_anteil_pct, 1);
+    r.analyseLocExtPrice.textContent = fmt(fremd.preis_je_kwh, 3);
+    r.analyseLocEur100.textContent = fmt(locAttrs.eur_je_100km, 2);
 
     const rangeEid = this._eid("range_estimate");
     const rangeState = rangeEid ? this._hass.states[rangeEid] : null;

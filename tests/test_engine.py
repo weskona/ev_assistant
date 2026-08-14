@@ -15,6 +15,7 @@ from engine import (
     calculate_savings,
     charge_before_pv_decision,
     charge_cost,
+    charging_location_breakdown,
     consumption_by_temp_bucket,
     equivalent_full_cycles,
     estimate_battery_capacity_kwh,
@@ -1022,3 +1023,107 @@ def test_home_session_solar_and_cost_ignoriert_sessions_ohne_oder_mit_null_kwh()
 
 def test_home_session_solar_and_cost_leere_liste_liefert_leeres_dict():
     assert home_session_solar_and_cost([]) == {}
+
+
+# ----- charging_location_breakdown -------------------------------------------
+
+def test_charging_location_breakdown_nur_heim():
+    result = charging_location_breakdown(
+        home_kwh=100.0, home_cost=25.0, extern_kwh=0.0, extern_cost=0.0,
+        km_driven=500.0, home_solar_pct=60.0,
+    )
+    assert result["heim"] == {
+        "kwh": 100.0, "kosten": 25.0, "kwh_anteil_pct": 100.0,
+        "kosten_anteil_pct": 100.0, "preis_je_kwh": 0.25, "solar_pct": 60.0,
+    }
+    # Fremd hat kwh=0/kosten=0 -- Rohwerte bleiben, aber kein Anteil/Preis.
+    assert result["fremd"] == {"kwh": 0.0, "kosten": 0.0}
+    assert result["eur_je_100km"] == 5.0
+
+
+def test_charging_location_breakdown_nur_fremd():
+    result = charging_location_breakdown(
+        home_kwh=0.0, home_cost=0.0, extern_kwh=50.0, extern_cost=30.0,
+        km_driven=250.0,
+    )
+    assert result["fremd"] == {
+        "kwh": 50.0, "kosten": 30.0, "kwh_anteil_pct": 100.0,
+        "kosten_anteil_pct": 100.0, "preis_je_kwh": 0.6,
+    }
+    assert result["heim"] == {"kwh": 0.0, "kosten": 0.0}
+    assert "solar_pct" not in result.get("heim", {})
+    assert result["eur_je_100km"] == 12.0
+
+
+def test_charging_location_breakdown_gemischt_anteile_summieren_zu_100():
+    result = charging_location_breakdown(
+        home_kwh=70.0, home_cost=14.0, extern_kwh=30.0, extern_cost=21.0,
+        km_driven=400.0, home_solar_pct=45.0,
+    )
+    assert result["heim"]["kwh_anteil_pct"] + result["fremd"]["kwh_anteil_pct"] == 100.0
+    assert result["heim"]["kosten_anteil_pct"] + result["fremd"]["kosten_anteil_pct"] == 100.0
+    assert result["heim"]["preis_je_kwh"] == 0.2
+    assert result["fremd"]["preis_je_kwh"] == 0.7
+    assert result["heim"]["solar_pct"] == 45.0
+    # (14+21) / 400 * 100 = 8.75
+    assert result["eur_je_100km"] == 8.75
+
+
+def test_charging_location_breakdown_km_null_liefert_kein_eur_je_100km():
+    result = charging_location_breakdown(
+        home_kwh=10.0, home_cost=2.0, extern_kwh=5.0, extern_cost=3.0, km_driven=0.0,
+    )
+    assert "eur_je_100km" not in result
+
+
+def test_charging_location_breakdown_km_none_liefert_kein_eur_je_100km():
+    result = charging_location_breakdown(
+        home_kwh=10.0, home_cost=2.0, extern_kwh=5.0, extern_cost=3.0, km_driven=None,
+    )
+    assert "eur_je_100km" not in result
+
+
+def test_charging_location_breakdown_kwh_null_an_einem_ort_kein_anteil_kein_preis():
+    result = charging_location_breakdown(
+        home_kwh=0.0, home_cost=None, extern_kwh=40.0, extern_cost=20.0, km_driven=200.0,
+    )
+    assert result["heim"] == {"kwh": 0.0}
+    assert "kwh_anteil_pct" not in result["heim"]
+    assert "preis_je_kwh" not in result["heim"]
+    assert result["fremd"]["kwh_anteil_pct"] == 100.0
+
+
+def test_charging_location_breakdown_fehlender_solaranteil_wird_ausgelassen():
+    result = charging_location_breakdown(
+        home_kwh=10.0, home_cost=2.0, extern_kwh=5.0, extern_cost=1.0,
+        km_driven=100.0, home_solar_pct=None,
+    )
+    assert "solar_pct" not in result["heim"]
+
+
+def test_charging_location_breakdown_fehlende_kosten_lassen_eur_je_100km_trotzdem_zu():
+    # home_cost unbekannt (nicht 0!) -- eur_je_100km rechnet trotzdem mit
+    # dem, was bekannt ist (analog calculate_savings()).
+    result = charging_location_breakdown(
+        home_kwh=10.0, home_cost=None, extern_kwh=20.0, extern_cost=10.0, km_driven=100.0,
+    )
+    assert "kosten" not in result["heim"]
+    assert result["eur_je_100km"] == 10.0
+
+
+def test_charging_location_breakdown_alles_none_liefert_leeres_dict():
+    result = charging_location_breakdown(
+        home_kwh=None, home_cost=None, extern_kwh=None, extern_cost=None, km_driven=None,
+    )
+    assert result == {}
+
+
+def test_charging_location_breakdown_leere_eingaben_liefert_partielles_dict():
+    # home komplett unbekannt (None, nicht 0) -- die Gesamtsumme besteht
+    # dann nur aus dem bekannten Fremd-Anteil, der folgerichtig 100% ist
+    # (analog calculate_savings(): fehlende Heimladen-Daten blockieren die
+    # Rechnung mit dem, was bekannt ist, nicht).
+    result = charging_location_breakdown(
+        home_kwh=None, home_cost=None, extern_kwh=15.0, extern_cost=None, km_driven=None,
+    )
+    assert result == {"fremd": {"kwh": 15.0, "kwh_anteil_pct": 100.0}}

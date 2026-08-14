@@ -130,6 +130,7 @@ from .engine import (
     calculate_savings,
     charge_before_pv_decision,
     charge_cost,
+    charging_location_breakdown,
     consumption_by_temp_bucket,
     equivalent_full_cycles,
     estimate_battery_capacity_kwh,
@@ -2326,6 +2327,34 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         result = home_session_solar_and_cost(sessions)
         self._home_session_stats_cache = (self._home_capacity_version, result)
         return result
+
+    def charging_location_stats(self) -> dict:
+        """"So verteilt sich deine Ladung" nach Ladeort (Heim vs. Fremd) --
+        siehe engine.charging_location_breakdown(). Fasst nur bereits an
+        anderer Stelle berechnete Aggregate zusammen (keine eigene Preis-/
+        PV-Logik): Heim-kWh/-Kosten mit derselben Prioritaet wie
+        _ev_cost_total_since_setup() (evcc-Realkosten, sonst home_kwh *
+        home_price), Fremd-kWh/-Kosten aus den bestaetigten Historien-
+        Summen, gefahrene km aus _km_driven(), Heim-Solaranteil aus
+        home_session_stats(). Absichtlich UNGECACHT: die Eingaben (u.a.
+        _home_kwh_since_setup(), _km_driven()) aendern sich bei praktisch
+        jedem Coordinator-Update (jedes SoC-/Odo-Sample) -- ein
+        Versionszaehler wie bei den Fahrtenbuch-/Ladungs-Caches wuerde hier
+        nichts einsparen, die Berechnung selbst ist trivial billig."""
+        home_kwh = self._home_kwh_since_setup()
+        home_cost = self._home_cost_since_setup()
+        if home_cost is None and home_kwh is not None:
+            home_price = self._home_price()
+            if home_price is not None:
+                home_cost = round(home_kwh * home_price, 2)
+        totals = self.data.get("totals", {})
+        extern_kwh = totals.get("kwh", 0.0)
+        extern_cost = totals.get("kosten", 0.0)
+        km_driven = self._km_driven()
+        home_solar_pct = self.home_session_stats().get("solar_pct")
+        return charging_location_breakdown(
+            home_kwh, home_cost, extern_kwh, extern_cost, km_driven, home_solar_pct,
+        )
 
     def _evcc_vehicle_key(self) -> Optional[str]:
         """Fahrzeugname in evcc: aus Konfiguration oder via Auto-Erkennung

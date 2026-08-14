@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.54.0] - 2026-08-14
+
+### Added
+
+- **"So verteilt sich deine Ladung" — charging location breakdown**: new `sensor.<vehicle>_ladeort_aufschlusselung` (state: home's share of total kWh) with the full split as attributes — kWh, cost, share (%), and price/kWh for home and external charging separately, home's solar share (evcc-sourced, see 0.53.0), and a vehicle-wide EUR/100km figure. No new pricing/PV/tariff logic — this purely consolidates numbers `home_kwh`/`home_cost`/the confirmed external-charge totals already compute elsewhere. Shown on the Analyse tab. **Limits, on purpose**: solar share only covers home charging evcc actually controlled (external charging never has a solar share); EUR/100km is deliberately vehicle-wide, never per location — you drive on a mix of both, so kilometers can't be attributed to one charging source; home cost is only as accurate as evcc's own data (or the configured home price as a fallback).
+
 ## [0.53.0] - 2026-08-14
 
 ### Added

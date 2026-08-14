@@ -317,6 +317,9 @@
       "equivalent_full_cycles": {
         "name": "Equivalent Full Cycles"
       },
+      "charging_location_breakdown": {
+        "name": "Charging Location Breakdown"
+      },
       "co2_savings": {
         "name": "CO2 Savings vs. ICE Vehicle"
       },

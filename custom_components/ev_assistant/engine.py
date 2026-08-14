@@ -984,3 +984,68 @@ def home_session_solar_and_cost(sessions: list) -> dict:
             result["preis_je_kwh"] = round(kosten_gesamt / priced_kwh_sum, 4)
 
     return result
+
+
+def charging_location_breakdown(
+    home_kwh: Optional[float],
+    home_cost: Optional[float],
+    extern_kwh: Optional[float],
+    extern_cost: Optional[float],
+    km_driven: Optional[float],
+    home_solar_pct: Optional[float] = None,
+) -> dict:
+    """"So verteilt sich deine Ladung" -- Heim vs. Fremd, aus bereits an
+    anderer Stelle berechneten Aggregaten (siehe coordinator.py::
+    charging_location_stats()): kein eigenes Preis-/PV-/Tarif-Wissen hier,
+    nur Zusammenfuehren. Rueckgabe je Ladeort ("heim"/"fremd", nur wenn
+    ueberhaupt etwas bekannt ist):
+      - "kwh"/"kosten": die uebergebenen Werte, gerundet (2 Nachkommastellen).
+      - "kwh_anteil_pct"/"kosten_anteil_pct": Anteil an der jeweiligen
+        Gesamtsumme (nur ueber die tatsaechlich bekannten Werte gebildet,
+        siehe unten) -- NUR wenn dieser Ladeort selbst > 0 ist. Ein Ladeort
+        mit exakt 0 kWh/Kosten bekommt bewusst KEINEN Anteil (kein "0%"),
+        da das nichts Neues gegenueber dem anderen Ladeort aussagt.
+      - "preis_je_kwh": Kosten/kWh dieses Ladeorts, nur wenn beide bekannt
+        UND kWh > 0.
+      - "solar_pct" (nur "heim"): unveraendert uebernommen (siehe
+        home_session_solar_and_cost()).
+    Zusaetzlich top-level "eur_je_100km": Gesamtkosten (Heim+Fremd, nur
+    die bekannten Anteile summiert -- analog calculate_savings(), das
+    fehlende Heimladen-Daten genauso behandelt) durch gefahrene km * 100.
+    WICHTIG: es gibt KEIN €/100km je Ladeort -- man faehrt mit gemischtem
+    Strom, Kilometer lassen sich nicht ursaechlich einem Ladeort zuordnen,
+    nur die Gesamtstrecke gegen die Gesamtkosten ist eine sinnvolle Zahl.
+
+    Fehlende Werte (None) werden konsequent ausgelassen, nie als 0
+    gewertet -- ein Ladeort ganz ohne Daten fehlt komplett im Ergebnis,
+    ein leeres/None-Eingabe-Set liefert ein leeres dict."""
+    result: dict = {}
+
+    kwh_by_loc = {"heim": home_kwh, "fremd": extern_kwh}
+    cost_by_loc = {"heim": home_cost, "fremd": extern_cost}
+    total_kwh = sum(v for v in kwh_by_loc.values() if v is not None)
+    total_cost = sum(v for v in cost_by_loc.values() if v is not None)
+
+    for key, kwh in kwh_by_loc.items():
+        cost = cost_by_loc[key]
+        loc: dict = {}
+        if kwh is not None:
+            loc["kwh"] = round(kwh, 2)
+        if cost is not None:
+            loc["kosten"] = round(cost, 2)
+        if kwh is not None and kwh > 0:
+            if total_kwh > 0:
+                loc["kwh_anteil_pct"] = round(kwh / total_kwh * 100.0, 1)
+            if cost is not None:
+                loc["preis_je_kwh"] = round(cost / kwh, 4)
+        if cost is not None and cost > 0 and total_cost > 0:
+            loc["kosten_anteil_pct"] = round(cost / total_cost * 100.0, 1)
+        if key == "heim" and home_solar_pct is not None:
+            loc["solar_pct"] = round(home_solar_pct, 1)
+        if loc:
+            result[key] = loc
+
+    if km_driven is not None and km_driven > 0 and (home_cost is not None or extern_cost is not None):
+        result["eur_je_100km"] = round(total_cost / km_driven * 100.0, 2)
+
+    return result

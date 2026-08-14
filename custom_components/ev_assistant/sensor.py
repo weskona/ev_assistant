@@ -62,6 +62,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         RangeEstimateSensor(coordinator, entry),
         BatteryCapacitySensor(coordinator, entry),
         EquivalentFullCyclesSensor(coordinator, entry),
+        ChargingLocationSensor(coordinator, entry),
         Co2SavingsSensor(coordinator, entry),
         HomeVsExternalPriceSensor(coordinator, entry),
         CostDaySensor(coordinator, entry),
@@ -884,6 +885,34 @@ class EquivalentFullCyclesSensor(EvAssistantEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator.equivalent_full_cycles()
+
+
+class ChargingLocationSensor(EvAssistantEntity, SensorEntity):
+    """"So verteilt sich deine Ladung" -- Heim-Anteil an der kWh-Gesamt-
+    Ladeenergie (Heim + Fremd) als Hauptwert, volle Aufschluesselung als
+    Attribute (siehe coordinator.py::charging_location_stats()/engine.
+    charging_location_breakdown()): kWh/Kosten/Anteile je Ladeort,
+    Heim-Solaranteil, sowie ein fahrzeugweites eur_je_100km -- bewusst
+    NICHT je Ladeort, da sich gefahrene km keinem Ladeort zuordnen lassen.
+    unknown ohne jede bekannte Lademenge (weder Heim noch Fremd)."""
+
+    _attr_translation_key = "charging_location_breakdown"
+    _attr_native_unit_of_measurement = "%"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:chart-donut"
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "charging_location_breakdown")
+
+    @property
+    def native_value(self):
+        stats = self.coordinator.charging_location_stats()
+        return stats.get("heim", {}).get("kwh_anteil_pct")
+
+    @property
+    def extra_state_attributes(self):
+        return self.coordinator.charging_location_stats()
 
 
 class Co2SavingsSensor(EvAssistantEntity, SensorEntity):
