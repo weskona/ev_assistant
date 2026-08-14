@@ -540,7 +540,13 @@ class HomeKwhSensor(EvAssistantEntity, SensorEntity):
     """Zuhause geladene kWh seit Einrichtung (Delta des Wallbox-
     Energiezaehlers) -- Grundlage fuer den Kostenvergleich gegenueber
     einem Verbrenner. unknown ohne konfigurierte Wallbox-Energiemessung
-    (Schritt 3 des Config Flow)."""
+    (Schritt 3 des Config Flow).
+
+    Attribute (falls evccs Session-Entities konfiguriert UND verfuegbar
+    sind, siehe coordinator.py::home_session_stats()): kWh-gewichteter
+    Solaranteil sowie Kostensumme/Preis je kWh aus evccs eigenen Heim-
+    Ladesessions. Gilt NUR fuer Heimladungen, die evcc selbst gesteuert
+    hat -- Fremdladen liefert diese Felder nicht."""
 
     _attr_translation_key = "home_kwh"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
@@ -553,6 +559,18 @@ class HomeKwhSensor(EvAssistantEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator._home_kwh()
+
+    @property
+    def extra_state_attributes(self):
+        stats = self.coordinator.home_session_stats()
+        attrs = {}
+        if "solar_pct" in stats:
+            attrs["evcc_solaranteil_pct"] = stats["solar_pct"]
+        if "kosten_gesamt" in stats:
+            attrs["evcc_kosten_gesamt"] = stats["kosten_gesamt"]
+        if "preis_je_kwh" in stats:
+            attrs["evcc_preis_je_kwh"] = stats["preis_je_kwh"]
+        return attrs
 
 
 class HomeCostSensor(EvAssistantEntity, SensorEntity):

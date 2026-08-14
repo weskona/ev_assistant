@@ -19,6 +19,7 @@ from engine import (
     equivalent_full_cycles,
     estimate_battery_capacity_kwh,
     home_capacity_sample,
+    home_session_solar_and_cost,
     is_plausible_trip_consumption,
     merge_pending,
     pop_pending,
@@ -972,3 +973,52 @@ def test_equivalent_full_cycles_negativer_heimladungs_gesamtwert_wird_geklemmt()
     fahrten = [{"delta_soc": -10.0}]
     history = []
     assert equivalent_full_cycles(fahrten, history, home_charge_pct_total=-5.0) == 0.05
+
+
+# ----- home_session_solar_and_cost -------------------------------------------
+
+def test_home_session_solar_and_cost_kwh_gewichteter_solaranteil():
+    sessions = [
+        {"kwh": 2.0, "solar_pct": 100.0},   # klein, viel Solar
+        {"kwh": 20.0, "solar_pct": 0.0},    # gross, kein Solar
+    ]
+    # (2*100 + 20*0) / 22 = 9.09...
+    result = home_session_solar_and_cost(sessions)
+    assert result["solar_pct"] == 9.1
+    assert "kosten_gesamt" not in result
+    assert "preis_je_kwh" not in result
+
+
+def test_home_session_solar_and_cost_kosten_werden_summiert_nicht_gewichtet():
+    sessions = [
+        {"kwh": 10.0, "kosten": 2.0},
+        {"kwh": 5.0, "kosten": 1.0},
+    ]
+    result = home_session_solar_and_cost(sessions)
+    assert result["kosten_gesamt"] == 3.0
+    assert result["preis_je_kwh"] == round(3.0 / 15.0, 4)
+    assert "solar_pct" not in result
+
+
+def test_home_session_solar_and_cost_fehlende_felder_werden_ausgelassen_nicht_null():
+    sessions = [
+        {"kwh": 10.0},                                # weder solar_pct noch kosten
+        {"kwh": 5.0, "solar_pct": 50.0},               # nur solar_pct
+        {"kwh": 8.0, "kosten": 4.0},                   # nur kosten
+    ]
+    result = home_session_solar_and_cost(sessions)
+    assert result["solar_pct"] == 50.0
+    assert result["kosten_gesamt"] == 4.0
+    assert result["preis_je_kwh"] == round(4.0 / 8.0, 4)
+
+
+def test_home_session_solar_and_cost_ignoriert_sessions_ohne_oder_mit_null_kwh():
+    sessions = [
+        {"kwh": None, "solar_pct": 80.0, "kosten": 1.0},
+        {"kwh": 0.0, "solar_pct": 80.0, "kosten": 1.0},
+    ]
+    assert home_session_solar_and_cost(sessions) == {}
+
+
+def test_home_session_solar_and_cost_leere_liste_liefert_leeres_dict():
+    assert home_session_solar_and_cost([]) == {}

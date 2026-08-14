@@ -26,6 +26,9 @@ from .const import (
     CONF_CO2_PER_KWH,
     CONF_DROP_ENDS,
     CONF_EFFICIENCY,
+    CONF_EVCC_SESSION_ENERGY,
+    CONF_EVCC_SESSION_PRICE,
+    CONF_EVCC_SESSION_SOLAR_PCT,
     CONF_EVCC_STAT_AVG_PRICE,
     CONF_EVCC_STAT_TOTAL_KWH,
     CONF_EVCC_VEHICLE_NAME,
@@ -131,6 +134,7 @@ from .engine import (
     equivalent_full_cycles,
     estimate_battery_capacity_kwh,
     home_capacity_sample,
+    home_session_solar_and_cost,
     is_plausible_trip_consumption,
     merge_pending,
     pop_pending,
@@ -193,6 +197,7 @@ def _empty_data() -> dict:
         "measured_efficiency": None,
         "home_capacity_samples": [],
         "home_charge_pct_total": 0.0,
+        "home_sessions": [],
         "odo": None,
         "odo_unit": None,
         "odo_start": None,
@@ -327,6 +332,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Cache fuer equivalent_full_cycles() -- haengt an BEIDEN Versionen
         # (Fahrtenbuch UND Fremdladungs-Historie tragen beide dazu bei).
         self._cycles_cache: Optional[tuple[tuple[int, int, int], float]] = None
+        # Cache fuer home_session_stats() -- haengt am selben Zaehler wie
+        # battery_capacity_kwh(), da beide am Session-Ende-Hook in
+        # _set_home() aktualisiert werden.
+        self._home_session_stats_cache: Optional[tuple[int, dict]] = None
         # Analog _fahrten_version, aber fuer "history" (Fremdladungen) --
         # bislang gab es dort noch keinen darauf angewiesenen Cache.
         self._history_version = 0
@@ -768,6 +777,48 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self._capacity_anchor_wallbox_kwh = None
             if cap_sample is not None:
                 self.hass.async_create_task(self._record_home_capacity_sample(cap_sample))
+            # evcc-Session-Kennzahlen (Solaranteil, Gesamtkosten) fuer
+            # home_session_stats()/engine.home_session_solar_and_cost().
+            # CONF_EVCC_SESSION_ENERGY ist evccs eigener Session-kWh-Wert --
+            # unabhaengig von CONF_WALLBOX_ENERGY_ENTITY verfuegbar, dient
+            # hier als Gewichtungsbasis. Ohne ihn kein Record (keine
+            # Gewichtungsbasis, siehe engine-Docstring). solar_pct/kosten
+            # je einzeln optional -- fehlt die Entity oder ist der Wert
+            # ungueltig, wird das Feld einfach weggelassen.
+            # WICHTIG: evccs "sessionPrice" (CONF_EVCC_SESSION_PRICE) ist
+            # die GESAMTKOSTEN der Session in Waehrung, KEIN Preis/kWh --
+            # verifiziert im evcc_intg-Quellcode: Tag.SESSIONPRICE hat
+            # native_unit_of_measurement "@@@" (Waehrung), das getrennte
+            # Tag.SESSIONPRICEPERKWH hat "@@@/kWh". Deshalb bei der
+            # Aggregation nur aufsummieren, nicht mit kWh multiplizieren.
+            session_kwh = self._read_evcc_session_value(CONF_EVCC_SESSION_ENERGY)
+            if session_kwh is not None and session_kwh > 0:
+                session_rec: dict = {"ts": time.time(), "kwh": round(session_kwh, 2)}
+                solar_pct = self._read_evcc_session_value(CONF_EVCC_SESSION_SOLAR_PCT)
+                if solar_pct is not None:
+                    session_rec["solar_pct"] = round(solar_pct, 1)
+                kosten = self._read_evcc_session_value(CONF_EVCC_SESSION_PRICE)
+                if kosten is not None:
+                    session_rec["kosten"] = round(kosten, 2)
+                self.hass.async_create_task(self._record_home_session(session_rec))
+
+    def _read_evcc_session_value(self, conf_key: str) -> Optional[float]:
+        """Einzelnen evcc-Session-Wert lesen (CONF_EVCC_SESSION_ENERGY/
+        _SOLAR_PCT/_PRICE) -- exakt das Muster von _home_price() fuer
+        CONF_EVCC_STAT_AVG_PRICE: Entity ueber self._opt() aufloesen, State
+        lesen, _INVALID abfangen. None ohne konfigurierte Entity oder ohne
+        gueltigen Wert (kein Fehler -- das Feld wird dann in _set_home()
+        einfach weggelassen)."""
+        entity_id = self._opt(conf_key)
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in _INVALID:
+            return None
+        try:
+            return float(state.state)
+        except (ValueError, TypeError):
+            return None
 
     @callback
     def _set_power(self, raw) -> None:
@@ -1395,6 +1446,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         entstehen und coordinator.equivalent_full_cycles() ohnehin ueber
         alle Aenderungen an Heim-Ladedaten neu rechnen soll."""
         self.data["home_charge_pct_total"] = self.data.get("home_charge_pct_total", 0.0) + delta_soc
+        self._home_capacity_version += 1
+        self._save_soon()
+        self.async_set_updated_data(self.data)
+
+    async def _record_home_session(self, rec: dict) -> None:
+        """Neuer Heim-Ladesessions-Record (evcc-Kennzahlen: kwh, optional
+        solar_pct/kosten) fuer home_session_stats()/engine.home_session_
+        solar_and_cost() -- siehe _set_home(). Neueste zuerst, analog
+        "history"/"fahrten"; bewusst UNGEDECKELT (wie "history"), da hier
+        -- anders als bei den rollierenden Kapazitaets-/Effizienz-
+        Stichproben -- der Lebenszeit-Solaranteil/die Lebenszeit-Kosten
+        interessieren, nicht nur ein rollierender Trend."""
+        sessions = list(self.data.get("home_sessions") or [])
+        sessions.insert(0, rec)
+        self.data["home_sessions"] = sessions
         self._home_capacity_version += 1
         self._save_soon()
         self.async_set_updated_data(self.data)
@@ -2242,6 +2308,23 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         samples += self.data.get("home_capacity_samples") or []
         result = estimate_battery_capacity_kwh(samples, BATTERY_CAPACITY_MAX_SAMPLES, BATTERY_CAPACITY_MIN_SAMPLES)
         self._battery_capacity_cache = (cache_key, result)
+        return result
+
+    def home_session_stats(self) -> dict:
+        """kWh-gewichteter Solaranteil + Kostensumme/Preis aus evcc-Heim-
+        Ladesessions (siehe engine.home_session_solar_and_cost(), Feld
+        "home_sessions" in _set_home()) -- leeres dict ohne jede Session
+        mit den noetigen Daten. Ergebnis wird pro _home_capacity_version
+        zwischengespeichert (derselbe Zaehler wie battery_capacity_kwh(),
+        da beide am selben Session-Ende-Hook in _set_home() haengen)."""
+        if (
+            self._home_session_stats_cache is not None
+            and self._home_session_stats_cache[0] == self._home_capacity_version
+        ):
+            return self._home_session_stats_cache[1]
+        sessions = self.data.get("home_sessions") or []
+        result = home_session_solar_and_cost(sessions)
+        self._home_session_stats_cache = (self._home_capacity_version, result)
         return result
 
     def _evcc_vehicle_key(self) -> Optional[str]:

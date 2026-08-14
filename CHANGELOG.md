@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.53.0] - 2026-08-14
+
+### Added
+
+- **evcc-sourced solar share and cost for home charging**: `home_kwh` now carries `evcc_solaranteil_pct` (kWh-weighted solar share), `evcc_kosten_gesamt` (summed session cost), and `evcc_preis_je_kwh` (derived from the two) as attributes, sourced from evcc's own per-session `session_energy`/`session_solar_percentage`/`session_price` entities (configured in step 2, if evcc exposes them for your setup). No pricing/tariff/PV logic of our own — we only read what evcc already computed. **Only covers home charging that evcc actually controlled**: external charges never populate these fields, and a session without a matching evcc entity (or one evcc doesn't expose for your setup) simply doesn't contribute — no zeros, no guessing. Session cost is evcc's `sessionPrice` (verified against evcc_intg's own source: a separate `sessionPricePerKWh` field exists for the per-kWh price, so this one is treated as a session total and summed, not multiplied by kWh).
+
 ## [0.52.0] - 2026-08-14
 
 ### Added

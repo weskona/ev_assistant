@@ -930,3 +930,57 @@ def equivalent_full_cycles(fahrten: list, history: list, home_charge_pct_total: 
     )
     charge_pct += max(0.0, home_charge_pct_total)
     return round((discharge_pct + charge_pct) / 200.0, 2)
+
+
+def home_session_solar_and_cost(sessions: list) -> dict:
+    """Wertet evcc-eigene Heim-Ladesessions aus (siehe coordinator.py::
+    _set_home(), Feld "home_sessions" -- je Eintrag {"kwh", "solar_pct"?,
+    "kosten"?}, "solar_pct"/"kosten" fehlen, wenn die jeweilige evcc-
+    Session-Entity beim Session-Ende nicht konfiguriert/verfuegbar war).
+
+    - "solar_pct": kWh-gewichteter Solaranteil (%) ueber alle Sessions mit
+      bekanntem solar_pct -- eine 2-kWh-Session mit 100% Solar soll den
+      Schnitt nicht genauso stark ziehen wie eine 20-kWh-Session mit 0%.
+    - "kosten_gesamt": reine Summe aus "kosten" -- das ist bereits der
+      evcc-Gesamtpreis der jeweiligen Session (siehe _set_home()-Kommentar:
+      evccs "sessionPrice" ist Waehrung, nicht Waehrung/kWh), daher KEINE
+      Multiplikation mit kWh, nur Aufsummieren.
+    - "preis_je_kwh": aus kosten_gesamt / kwh-Summe der bepreisten Sessions
+      abgeleitet (nicht direkt aus evcc) -- praktischer Vergleichswert,
+      aber nur so genau wie das Sample.
+
+    Fehlende Werte werden ausgelassen, nicht als 0 gewertet -- eine
+    Session ohne solar_pct/kosten darf den jeweils anderen Schnitt nicht
+    verzerren. Ein Schluessel fehlt in der Rueckgabe ganz, wenn keine
+    einzige Session dafuer Daten hat (bzw. die kWh-Summe 0 waere)."""
+    result: dict = {}
+
+    solar_kwh_sum = 0.0
+    solar_weighted_sum = 0.0
+    for s in sessions:
+        solar_pct = s.get("solar_pct")
+        kwh = s.get("kwh")
+        if solar_pct is None or kwh is None or kwh <= 0:
+            continue
+        solar_kwh_sum += kwh
+        solar_weighted_sum += solar_pct * kwh
+    if solar_kwh_sum > 0:
+        result["solar_pct"] = round(solar_weighted_sum / solar_kwh_sum, 1)
+
+    kosten_gesamt = 0.0
+    priced_kwh_sum = 0.0
+    has_kosten = False
+    for s in sessions:
+        kosten = s.get("kosten")
+        kwh = s.get("kwh")
+        if kosten is None or kwh is None or kwh <= 0:
+            continue
+        has_kosten = True
+        kosten_gesamt += kosten
+        priced_kwh_sum += kwh
+    if has_kosten:
+        result["kosten_gesamt"] = round(kosten_gesamt, 2)
+        if priced_kwh_sum > 0:
+            result["preis_je_kwh"] = round(kosten_gesamt / priced_kwh_sum, 4)
+
+    return result
