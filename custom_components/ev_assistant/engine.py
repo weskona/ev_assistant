@@ -748,6 +748,27 @@ def rolling_consumption_kwh_per_100km(
     return round(kwh_sum / km_sum * 100.0, 2)
 
 
+def rolling_km_per_day(fahrten: list, now_ts: float, window_days: float) -> Optional[float]:
+    """Rollierendes Fahrtempo (km/Tag) nur aus Fahrtenbuch-Eintraegen der
+    letzten `window_days` Tage -- analog rolling_consumption_kwh_per_100km(),
+    fuer eine Leasing-Hochrechnung (siehe leasing_status()), die sich
+    schneller an zuletzt geaendertes Fahrverhalten anpasst als die lineare
+    Basis seit Vertragsbeginn. None ohne jede Fahrt im Fenster (der
+    Aufrufer verzichtet dann auf die rollierende Hochrechnung und zeigt
+    nur die lineare)."""
+    cutoff = now_ts - window_days * 86400
+    km_sum = 0.0
+    for t in fahrten:
+        ts = t.get("start_ts")
+        km = t.get("km")
+        if ts is None or km is None or ts < cutoff:
+            continue
+        km_sum += km
+    if km_sum <= 0:
+        return None
+    return round(km_sum / window_days, 2)
+
+
 def calculate_range_km(
     soc_pct: Optional[float], usable_kwh: float, consumption_kwh_per_100km: Optional[float],
 ) -> Optional[float]:
@@ -1049,3 +1070,147 @@ def charging_location_breakdown(
         result["eur_je_100km"] = round(total_cost / km_driven * 100.0, 2)
 
     return result
+
+
+def _leasing_projection(
+    gefahrene_vertrags_km: float,
+    tempo_km_pro_tag: Optional[float],
+    verbleibende_tage: int,
+    inkl_gesamt_km: float,
+    preis_mehr_km: Optional[float],
+    preis_minder_km: Optional[float],
+) -> Optional[dict]:
+    """Eine einzelne Hochrechnung (linear ODER rollierend, siehe
+    leasing_status()) aufs Vertragsende: bei unveraendertem `tempo_km_pro_tag`
+    bis zum Vertragsende weitergefahren, ausgehend vom heutigen Stand. None
+    ohne Tempo (z.B. linear an Tag 0 des Vertrags, oder kein rollierendes
+    Tempo uebergeben)."""
+    if tempo_km_pro_tag is None:
+        return None
+    erwartete_end_km = round(gefahrene_vertrags_km + tempo_km_pro_tag * verbleibende_tage, 1)
+    mehr_bzw_minder_km = round(erwartete_end_km - inkl_gesamt_km, 1)
+    projektion = {
+        "tempo_km_pro_tag": round(tempo_km_pro_tag, 2),
+        "erwartete_end_km": erwartete_end_km,
+        "erwartete_mehr_bzw_minder_km": mehr_bzw_minder_km,
+    }
+    if mehr_bzw_minder_km > 0 and preis_mehr_km is not None:
+        projektion["mehrkosten_eur"] = round(mehr_bzw_minder_km * preis_mehr_km, 2)
+    elif mehr_bzw_minder_km < 0 and preis_minder_km is not None:
+        projektion["gutschrift_eur"] = round(-mehr_bzw_minder_km * preis_minder_km, 2)
+    return projektion
+
+
+def leasing_status(
+    aktueller_km: Optional[float],
+    vertrag_start_km: Optional[float],
+    vertrag_start_datum: Optional[str],
+    vertrag_end_datum: Optional[str],
+    inkl_gesamt_km: Optional[float],
+    heute: str,
+    preis_mehr_km: Optional[float] = None,
+    preis_minder_km: Optional[float] = None,
+    rollierendes_tempo_km_pro_tag: Optional[float] = None,
+    knapp_schwelle_pct: float = 90.0,
+    toleranz_pct: float = 2.0,
+) -> dict:
+    """Leasing-Kilometerbudget: wo stehe ich gegenueber der linearen
+    Soll-Linie, und wohin laeuft es hoch- bzw. rollierend gerechnet zum
+    Vertragsende. Datumsfelder als ISO-String (wie CONF_ERSTZULASSUNG),
+    `heute` wird vom Aufrufer uebergeben (Testbarkeit, siehe coordinator.py)
+    statt hier live ermittelt.
+
+    Pflichtfelder: aktueller_km, vertrag_start_km, vertrag_start_datum,
+    vertrag_end_datum, inkl_gesamt_km (plus ein gueltiger Vertragszeitraum,
+    Ende nach Start) -- fehlt eines oder ist ein Datum nicht parsbar, liefert
+    diese Funktion ein leeres dict statt zu raten oder abzustuerzen.
+    preis_mehr_km/preis_minder_km/rollierendes_tempo_km_pro_tag sind
+    einzeln optional: fehlen sie, fehlen nur die davon abhaengigen Felder
+    (Kosten/Gutschrift bzw. die rollierende Hochrechnung), der Rest wird
+    trotzdem berechnet.
+
+    Vor Vertragsbeginn/nach Vertragsende: vergangene_tage/verbleibende_tage
+    werden auf [0, vertrag_tage] geklemmt (Soll-Linie ist dann 0 bzw. voll) --
+    kein Sonderfall noetig, ergibt sich direkt aus der Klemmung.
+
+    "km_vor_ruecklauf" = Ist - Soll (gefahrene_vertrags_km -
+    soll_km_bis_heute): POSITIV = schon mehr gefahren als die lineare
+    Soll-Linie erlaubt (Warnsignal), NEGATIV = im Polster.
+
+    Zwei Hochrechnungen aufs Vertragsende (siehe _leasing_projection()):
+    "linear" (Tempo seit Vertragsstart -- stabile Referenz, an Tag 0 ohne
+    Aussage) und "rollierend" (das vom Aufrufer uebergebene aktuelle
+    Fahrtempo -- reagiert schneller auf zuletzt geaendertes Fahrverhalten,
+    nur vorhanden wenn rollierendes_tempo_km_pro_tag uebergeben wurde).
+
+    "status" (im_budget/knapp/ueber) basiert auf der LINEAREN Hochrechnung
+    gegen `inkl_gesamt_km`, mit `toleranz_pct` als Puffer um 100 % herum
+    (verhindert Statuswechsel durch reines Rundungsrauschen). Ohne lineare
+    Hochrechnung (Tag 0) gilt "im_budget" -- an Tag 0 ist noch nichts
+    gefahren, wovor man warnen koennte.
+
+    "verbleibendes_tagesbudget_km": wie viele km/Tag fuer den Rest der
+    Laufzeit noch drin sind, um exakt auf inkl_gesamt_km zu landen -- nur
+    wenn noch Tage uebrig sind (kann negativ sein, wenn schon jetzt mehr
+    verbraucht ist als insgesamt zusteht)."""
+    if (
+        aktueller_km is None or vertrag_start_km is None
+        or vertrag_start_datum is None or vertrag_end_datum is None
+        or inkl_gesamt_km is None or not inkl_gesamt_km
+    ):
+        return {}
+    try:
+        start_date = date.fromisoformat(vertrag_start_datum)
+        end_date = date.fromisoformat(vertrag_end_datum)
+        heute_date = date.fromisoformat(heute)
+    except (TypeError, ValueError):
+        return {}
+
+    vertrag_tage = (end_date - start_date).days
+    if vertrag_tage <= 0:
+        return {}
+
+    vergangene_tage = max(0, min((heute_date - start_date).days, vertrag_tage))
+    verbleibende_tage = vertrag_tage - vergangene_tage
+
+    gefahrene_vertrags_km = round(aktueller_km - vertrag_start_km, 1)
+    soll_km_bis_heute = round(inkl_gesamt_km * (vergangene_tage / vertrag_tage), 1)
+    km_vor_ruecklauf = round(gefahrene_vertrags_km - soll_km_bis_heute, 1)
+
+    linear_tempo = gefahrene_vertrags_km / vergangene_tage if vergangene_tage > 0 else None
+    linear = _leasing_projection(
+        gefahrene_vertrags_km, linear_tempo, verbleibende_tage,
+        inkl_gesamt_km, preis_mehr_km, preis_minder_km,
+    )
+    rollierend = _leasing_projection(
+        gefahrene_vertrags_km, rollierendes_tempo_km_pro_tag, verbleibende_tage,
+        inkl_gesamt_km, preis_mehr_km, preis_minder_km,
+    )
+
+    if linear is None:
+        status = "im_budget"
+    else:
+        ratio_pct = linear["erwartete_end_km"] / inkl_gesamt_km * 100.0
+        if ratio_pct > 100.0 + toleranz_pct:
+            status = "ueber"
+        elif ratio_pct >= knapp_schwelle_pct:
+            status = "knapp"
+        else:
+            status = "im_budget"
+
+    result = {
+        "gefahrene_vertrags_km": gefahrene_vertrags_km,
+        "vertrag_tage": vertrag_tage,
+        "vergangene_tage": vergangene_tage,
+        "verbleibende_tage": verbleibende_tage,
+        "soll_km_bis_heute": soll_km_bis_heute,
+        "km_vor_ruecklauf": km_vor_ruecklauf,
+        "status": status,
+        "linear": linear,
+        "rollierend": rollierend,
+    }
+    if verbleibende_tage > 0:
+        result["verbleibendes_tagesbudget_km"] = round(
+            (inkl_gesamt_km - gefahrene_vertrags_km) / verbleibende_tage, 1
+        )
+    return {k: v for k, v in result.items() if v is not None}

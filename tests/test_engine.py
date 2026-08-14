@@ -22,9 +22,11 @@ from engine import (
     home_capacity_sample,
     home_session_solar_and_cost,
     is_plausible_trip_consumption,
+    leasing_status,
     merge_pending,
     pop_pending,
     rolling_consumption_kwh_per_100km,
+    rolling_km_per_day,
     temperature_bucket,
     weekday_usage_profile,
 )
@@ -755,6 +757,35 @@ def test_rolling_consumption_leere_liste_liefert_none():
     assert rolling_consumption_kwh_per_100km([], now_ts=1_000_000.0, window_days=30, min_km=50.0) is None
 
 
+# ----- rolling_km_per_day: rollierendes Fahrtempo fuer leasing_status() -----
+
+def test_rolling_km_per_day_durchgerechnetes_beispiel():
+    now = 30 * 86400.0
+    fahrten = [
+        {"start_ts": now - 5 * 86400, "km": 100.0},
+        {"start_ts": now - 10 * 86400, "km": 50.0},
+    ]
+    assert rolling_km_per_day(fahrten, now_ts=now, window_days=30) == round(150.0 / 30, 2)
+
+
+def test_rolling_km_per_day_fahrten_ausserhalb_des_fensters_zaehlen_nicht():
+    now = 30 * 86400.0
+    fahrten = [
+        {"start_ts": now - 5 * 86400, "km": 100.0},
+        {"start_ts": now - 40 * 86400, "km": 1000.0},  # ausserhalb des 30-Tage-Fensters
+    ]
+    assert rolling_km_per_day(fahrten, now_ts=now, window_days=30) == round(100.0 / 30, 2)
+
+
+def test_rolling_km_per_day_ohne_fahrten_im_fenster_liefert_none():
+    assert rolling_km_per_day([], now_ts=1_000_000.0, window_days=30) is None
+
+
+def test_rolling_km_per_day_ignoriert_fehlende_felder():
+    fahrten = [{"start_ts": None, "km": 100.0}, {"start_ts": 1000.0, "km": None}]
+    assert rolling_km_per_day(fahrten, now_ts=1_000_000.0, window_days=30) is None
+
+
 # ----- calculate_range_km: Restreichweite aus SoC und Realverbrauch --------
 
 def test_calculate_range_km_durchgerechnetes_beispiel():
@@ -1127,3 +1158,162 @@ def test_charging_location_breakdown_leere_eingaben_liefert_partielles_dict():
         home_kwh=None, home_cost=None, extern_kwh=15.0, extern_cost=None, km_driven=None,
     )
     assert result == {"fremd": {"kwh": 15.0, "kwh_anteil_pct": 100.0}}
+
+
+# ----- leasing_status ---------------------------------------------------------
+# Gemeinsame Vertragsbasis fuer die meisten Tests: 2026-01-01 bis 2027-01-01
+# (365 Tage), heute = 2026-04-11 (100 vergangene, 265 verbleibende Tage).
+
+_L_START = "2026-01-01"
+_L_END = "2027-01-01"  # 365 Tage Vertragslaufzeit
+_L_HEUTE = "2026-04-11"  # Tag 100
+
+
+def test_leasing_status_im_budget():
+    result = leasing_status(
+        aktueller_km=14000.0, vertrag_start_km=10000.0,
+        vertrag_start_datum=_L_START, vertrag_end_datum=_L_END,
+        inkl_gesamt_km=20000.0, heute=_L_HEUTE,
+        preis_minder_km=0.05,
+    )
+    assert result["gefahrene_vertrags_km"] == 4000.0
+    assert result["vertrag_tage"] == 365
+    assert result["vergangene_tage"] == 100
+    assert result["verbleibende_tage"] == 265
+    assert result["soll_km_bis_heute"] == 5479.5
+    assert result["km_vor_ruecklauf"] == -1479.5
+    assert result["status"] == "im_budget"
+    assert result["linear"]["tempo_km_pro_tag"] == 40.0
+    assert result["linear"]["erwartete_end_km"] == 14600.0
+    assert result["linear"]["erwartete_mehr_bzw_minder_km"] == -5400.0
+    assert result["linear"]["gutschrift_eur"] == 270.0  # 5400 * 0.05
+    assert "mehrkosten_eur" not in result["linear"]
+    assert result["verbleibendes_tagesbudget_km"] == 60.4
+    assert "rollierend" not in result
+
+
+def test_leasing_status_knapp():
+    result = leasing_status(
+        aktueller_km=15000.0, vertrag_start_km=10000.0,
+        vertrag_start_datum=_L_START, vertrag_end_datum=_L_END,
+        inkl_gesamt_km=20000.0, heute=_L_HEUTE,
+    )
+    assert result["linear"]["erwartete_end_km"] == 18250.0  # 91.25 % von 20000
+    assert result["status"] == "knapp"
+
+
+def test_leasing_status_ueber():
+    result = leasing_status(
+        aktueller_km=17000.0, vertrag_start_km=10000.0,
+        vertrag_start_datum=_L_START, vertrag_end_datum=_L_END,
+        inkl_gesamt_km=20000.0, heute=_L_HEUTE,
+        preis_mehr_km=0.20,
+    )
+    assert result["linear"]["erwartete_end_km"] == 25550.0  # 127.75 % von 20000
+    assert result["status"] == "ueber"
+    assert result["linear"]["erwartete_mehr_bzw_minder_km"] == 5550.0
+    assert result["linear"]["mehrkosten_eur"] == 1110.0  # 5550 * 0.20
+    assert "gutschrift_eur" not in result["linear"]
+
+
+def test_leasing_status_exakt_auf_soll():
+    # inkl_gesamt_km so gewaehlt, dass die Soll-Linie an Tag 100 exakt 10000
+    # ergibt (36500 / 365 Tage = 100 km/Tag, keine Rundungsreste).
+    result = leasing_status(
+        aktueller_km=20000.0, vertrag_start_km=10000.0,
+        vertrag_start_datum=_L_START, vertrag_end_datum=_L_END,
+        inkl_gesamt_km=36500.0, heute=_L_HEUTE,
+    )
+    assert result["gefahrene_vertrags_km"] == 10000.0
+    assert result["soll_km_bis_heute"] == 10000.0
+    assert result["km_vor_ruecklauf"] == 0.0
+
+
+def test_leasing_status_linear_vs_rollierend_divergierend():
+    result = leasing_status(
+        aktueller_km=15000.0, vertrag_start_km=10000.0,
+        vertrag_start_datum=_L_START, vertrag_end_datum=_L_END,
+        inkl_gesamt_km=36500.0, heute=_L_HEUTE,
+        rollierendes_tempo_km_pro_tag=150.0,
+    )
+    # linear (50 km/Tag seit Vertragsstart) liegt klar im Budget...
+    assert result["linear"]["erwartete_end_km"] == 18250.0
+    assert result["linear"]["erwartete_mehr_bzw_minder_km"] < 0
+    # ...waehrend das zuletzt gefahrene (rollierende) Tempo klar drueber landet.
+    assert result["rollierend"]["tempo_km_pro_tag"] == 150.0
+    assert result["rollierend"]["erwartete_end_km"] == 44750.0
+    assert result["rollierend"]["erwartete_mehr_bzw_minder_km"] > 0
+    # status haengt NUR an der linearen Hochrechnung (siehe Docstring).
+    assert result["status"] == "im_budget"
+
+
+def test_leasing_status_minderkilometer_ohne_preis_keine_gutschrift():
+    result = leasing_status(
+        aktueller_km=14000.0, vertrag_start_km=10000.0,
+        vertrag_start_datum=_L_START, vertrag_end_datum=_L_END,
+        inkl_gesamt_km=20000.0, heute=_L_HEUTE,
+    )
+    assert result["linear"]["erwartete_mehr_bzw_minder_km"] < 0
+    assert "gutschrift_eur" not in result["linear"]
+    assert "mehrkosten_eur" not in result["linear"]
+
+
+def test_leasing_status_vertrag_noch_nicht_gestartet():
+    result = leasing_status(
+        aktueller_km=10000.0, vertrag_start_km=10000.0,
+        vertrag_start_datum=_L_START, vertrag_end_datum=_L_END,
+        inkl_gesamt_km=20000.0, heute="2025-12-01",
+    )
+    assert result["vergangene_tage"] == 0
+    assert result["verbleibende_tage"] == 365
+    assert result["soll_km_bis_heute"] == 0.0
+    assert result["gefahrene_vertrags_km"] == 0.0
+    assert result["km_vor_ruecklauf"] == 0.0
+    assert "linear" not in result
+    assert result["status"] == "im_budget"
+
+
+def test_leasing_status_vertrag_schon_beendet():
+    result = leasing_status(
+        aktueller_km=25000.0, vertrag_start_km=10000.0,
+        vertrag_start_datum=_L_START, vertrag_end_datum=_L_END,
+        inkl_gesamt_km=20000.0, heute="2027-06-01",
+    )
+    assert result["vergangene_tage"] == 365
+    assert result["verbleibende_tage"] == 0
+    assert result["soll_km_bis_heute"] == 20000.0
+    assert "verbleibendes_tagesbudget_km" not in result
+    # Hochrechnung an Tag "vertrag_tage" mit 0 Resttagen == der Ist-Stand.
+    assert result["linear"]["erwartete_end_km"] == 15000.0
+
+
+def test_leasing_status_verbleibende_tage_null_am_stichtag():
+    result = leasing_status(
+        aktueller_km=18000.0, vertrag_start_km=10000.0,
+        vertrag_start_datum=_L_START, vertrag_end_datum=_L_END,
+        inkl_gesamt_km=20000.0, heute=_L_END,
+    )
+    assert result["verbleibende_tage"] == 0
+    assert "verbleibendes_tagesbudget_km" not in result
+
+
+@pytest.mark.parametrize("kwargs", [
+    dict(aktueller_km=None, vertrag_start_km=10000.0, vertrag_start_datum=_L_START,
+         vertrag_end_datum=_L_END, inkl_gesamt_km=20000.0, heute=_L_HEUTE),
+    dict(aktueller_km=14000.0, vertrag_start_km=None, vertrag_start_datum=_L_START,
+         vertrag_end_datum=_L_END, inkl_gesamt_km=20000.0, heute=_L_HEUTE),
+    dict(aktueller_km=14000.0, vertrag_start_km=10000.0, vertrag_start_datum=None,
+         vertrag_end_datum=_L_END, inkl_gesamt_km=20000.0, heute=_L_HEUTE),
+    dict(aktueller_km=14000.0, vertrag_start_km=10000.0, vertrag_start_datum=_L_START,
+         vertrag_end_datum=None, inkl_gesamt_km=20000.0, heute=_L_HEUTE),
+    dict(aktueller_km=14000.0, vertrag_start_km=10000.0, vertrag_start_datum=_L_START,
+         vertrag_end_datum=_L_END, inkl_gesamt_km=None, heute=_L_HEUTE),
+    dict(aktueller_km=14000.0, vertrag_start_km=10000.0, vertrag_start_datum=_L_START,
+         vertrag_end_datum=_L_END, inkl_gesamt_km=0.0, heute=_L_HEUTE),
+    dict(aktueller_km=14000.0, vertrag_start_km=10000.0, vertrag_start_datum="nicht-iso",
+         vertrag_end_datum=_L_END, inkl_gesamt_km=20000.0, heute=_L_HEUTE),
+    dict(aktueller_km=14000.0, vertrag_start_km=10000.0, vertrag_start_datum=_L_END,
+         vertrag_end_datum=_L_START, inkl_gesamt_km=20000.0, heute=_L_HEUTE),
+])
+def test_leasing_status_fehlende_oder_ungueltige_pflichtfelder_liefert_leeres_dict(kwargs):
+    assert leasing_status(**kwargs) == {}

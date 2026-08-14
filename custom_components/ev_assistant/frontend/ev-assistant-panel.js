@@ -232,6 +232,7 @@ class EVAssistantPanel extends HTMLElement {
       ["fahrzeuge",  "mdi:car-electric",           "Fahrzeuge"],
       ["profil",     "mdi:calendar-week",          "Nutzungsprofil"],
       ["analyse",    "mdi:chart-line",             "Analyse"],
+      ["leasing",    "mdi:file-document-outline",  "Leasing"],
     ];
     this._tabs = {};
     for (const [id, icon, label] of TAB_DEFS) {
@@ -259,6 +260,7 @@ class EVAssistantPanel extends HTMLElement {
     else if (view === "fahrzeuge") this._main.appendChild(this._buildVehicle());
     else if (view === "profil") this._main.appendChild(this._buildProfil());
     else if (view === "analyse") this._main.appendChild(this._buildAnalyse());
+    else if (view === "leasing") this._main.appendChild(this._buildLeasing());
     this._update();
   }
 
@@ -1218,6 +1220,147 @@ class EVAssistantPanel extends HTMLElement {
     }).join("");
   }
 
+  // --- Tab: Leasing --------------------------------------------------------
+
+  _buildLeasing() {
+    const wrap = document.createElement("div");
+    wrap.className = "tab-wrap";
+    wrap.innerHTML = `
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:file-document-outline"></ha-icon></span><h2>Leasing-Kilometerbudget</h2>
+        </div>
+        <div class="profil-empty" id="leasing-empty">
+          Noch nicht eingerichtet — hinterlege Vertrags-Kilometerstand, Enddatum und Gesamt-km in den Optionen,
+          um hier eine Soll-Ist-Prognose zu sehen.
+        </div>
+        <div class="hidden" id="leasing-content">
+          <div class="kpi-row">
+            <div class="kpi"><div class="kv" id="leasing-km-vor-ruecklauf">—</div><div class="kl">km vor Rücklauf</div></div>
+            <div class="kpi"><div class="kv" id="leasing-status">—</div><div class="kl">Status</div></div>
+            <div class="kpi"><div class="kv" id="leasing-tagesbudget">—</div><div class="kl">km/Tag verbleibendes Budget</div></div>
+          </div>
+          <div class="veh-soc-bar-wrap" id="leasing-bar-wrap" style="width:100%;margin-top:6px">
+            <div class="veh-soc-bar-fill" id="leasing-bar-fill"></div>
+          </div>
+          <div class="divider"></div>
+          <div class="km-grid">
+            <div class="km-col">
+              <div class="sub-head">Linear (seit Vertragsbeginn)</div>
+              <div class="km-item"><span class="km-label">Tempo</span><span class="km-val" id="leasing-lin-tempo">—</span><span class="km-unit">km/Tag</span></div>
+              <div class="km-item"><span class="km-label">Erwartet Endstand</span><span class="km-val" id="leasing-lin-end">—</span><span class="km-unit">km</span></div>
+              <div class="km-item"><span class="km-label">Mehr/Minder-km</span><span class="km-val" id="leasing-lin-diff">—</span><span class="km-unit">km</span></div>
+              <div class="km-item hidden" id="leasing-lin-eur-row"><span class="km-label" id="leasing-lin-eur-label">Kosten</span><span class="km-val" id="leasing-lin-eur">—</span><span class="km-unit">EUR</span></div>
+            </div>
+            <div class="km-col">
+              <div class="sub-head">Rollierend (aktuelles Tempo)</div>
+              <div class="km-item"><span class="km-label">Tempo</span><span class="km-val" id="leasing-roll-tempo">—</span><span class="km-unit">km/Tag</span></div>
+              <div class="km-item"><span class="km-label">Erwartet Endstand</span><span class="km-val" id="leasing-roll-end">—</span><span class="km-unit">km</span></div>
+              <div class="km-item"><span class="km-label">Mehr/Minder-km</span><span class="km-val" id="leasing-roll-diff">—</span><span class="km-unit">km</span></div>
+              <div class="km-item hidden" id="leasing-roll-eur-row"><span class="km-label" id="leasing-roll-eur-label">Kosten</span><span class="km-val" id="leasing-roll-eur">—</span><span class="km-unit">EUR</span></div>
+            </div>
+          </div>
+          <div class="profil-empty">
+            Beide Projektionen sind Schätzungen: linear rechnet den Gesamtschnitt seit Vertragsbeginn hoch,
+            rollierend die letzten 30 Fahrtage — reagiert schneller auf verändertes Fahrverhalten. Eine
+            Gutschrift für Minderkilometer erscheint nur, wenn dafür ein Preis hinterlegt ist (viele Verträge
+            erstatten das nicht).
+          </div>
+        </div>
+      </div>`;
+
+    const q = (s) => wrap.querySelector(s);
+    this._r = {
+      leasingEmpty:         q("#leasing-empty"),
+      leasingContent:       q("#leasing-content"),
+      leasingKmVorRuecklauf: q("#leasing-km-vor-ruecklauf"),
+      leasingStatus:        q("#leasing-status"),
+      leasingTagesbudget:   q("#leasing-tagesbudget"),
+      leasingBarFill:       q("#leasing-bar-fill"),
+      leasingLinTempo:      q("#leasing-lin-tempo"),
+      leasingLinEnd:        q("#leasing-lin-end"),
+      leasingLinDiff:       q("#leasing-lin-diff"),
+      leasingLinEurRow:     q("#leasing-lin-eur-row"),
+      leasingLinEurLabel:   q("#leasing-lin-eur-label"),
+      leasingLinEur:        q("#leasing-lin-eur"),
+      leasingRollTempo:     q("#leasing-roll-tempo"),
+      leasingRollEnd:       q("#leasing-roll-end"),
+      leasingRollDiff:      q("#leasing-roll-diff"),
+      leasingRollEurRow:    q("#leasing-roll-eur-row"),
+      leasingRollEurLabel:  q("#leasing-roll-eur-label"),
+      leasingRollEur:       q("#leasing-roll-eur"),
+    };
+    return wrap;
+  }
+
+  _updateLeasing() {
+    const r = this._r;
+    if (!r.leasingContent) return;
+
+    const eid = this._eid("leasing_km_vor_ruecklauf");
+    const state = eid ? this._hass.states[eid] : null;
+    const attrs = (state && state.attributes) || {};
+    const configured = !!(state && state.state !== "unavailable" && state.state !== "unknown");
+    r.leasingEmpty.classList.toggle("hidden", configured);
+    r.leasingContent.classList.toggle("hidden", !configured);
+    if (!configured) return;
+
+    const STATUS_LABELS = { im_budget: "Im Budget", knapp: "Knapp", ueber: "Über Budget" };
+    const STATUS_COLORS = { im_budget: "#4ade80", knapp: "#f97316", ueber: "#ef4444" };
+    const status = attrs.status || null;
+
+    const km = parseFloat(state.state);
+    r.leasingKmVorRuecklauf.textContent = isNaN(km) ? "—" : `${km > 0 ? "+" : ""}${this._fmtNum(km, 1)}`;
+    r.leasingStatus.textContent = STATUS_LABELS[status] || "—";
+    r.leasingStatus.style.color = STATUS_COLORS[status] || "";
+
+    const tagesbudget = attrs.verbleibendes_tagesbudget_km;
+    r.leasingTagesbudget.textContent = typeof tagesbudget === "number" ? this._fmtNum(tagesbudget, 1) : "—";
+
+    const gefahren = attrs.gefahrene_vertrags_km;
+    const soll = attrs.soll_km_bis_heute;
+    let pct = 50;
+    if (typeof gefahren === "number" && typeof soll === "number" && soll > 0) {
+      pct = this._clamp((gefahren / soll) * 100, 0, 100);
+    }
+    r.leasingBarFill.style.width = `${pct}%`;
+    r.leasingBarFill.style.background = STATUS_COLORS[status] || "var(--accent)";
+
+    const fillProjection = (proj, tempoEl, endEl, diffEl, eurRowEl, eurLabelEl, eurEl) => {
+      if (!proj) {
+        tempoEl.textContent = "—";
+        endEl.textContent = "—";
+        diffEl.textContent = "—";
+        eurRowEl.classList.add("hidden");
+        return;
+      }
+      tempoEl.textContent = this._fmtNum(proj.tempo_km_pro_tag, 1);
+      endEl.textContent = this._fmtNum(proj.erwartete_end_km, 0);
+      const diff = proj.erwartete_mehr_bzw_minder_km;
+      diffEl.textContent = typeof diff === "number" ? `${diff > 0 ? "+" : ""}${this._fmtNum(diff, 0)}` : "—";
+      if (typeof proj.mehrkosten_eur === "number") {
+        eurRowEl.classList.remove("hidden");
+        eurLabelEl.textContent = "Mehrkosten";
+        eurEl.textContent = this._fmtNum(proj.mehrkosten_eur, 2);
+      } else if (typeof proj.gutschrift_eur === "number") {
+        eurRowEl.classList.remove("hidden");
+        eurLabelEl.textContent = "Gutschrift";
+        eurEl.textContent = this._fmtNum(proj.gutschrift_eur, 2);
+      } else {
+        eurRowEl.classList.add("hidden");
+      }
+    };
+
+    fillProjection(
+      attrs.linear, r.leasingLinTempo, r.leasingLinEnd, r.leasingLinDiff,
+      r.leasingLinEurRow, r.leasingLinEurLabel, r.leasingLinEur,
+    );
+    fillProjection(
+      attrs.rollierend, r.leasingRollTempo, r.leasingRollEnd, r.leasingRollDiff,
+      r.leasingRollEurRow, r.leasingRollEurLabel, r.leasingRollEur,
+    );
+  }
+
   // --- Update loop ------------------------------------------------------------
 
   _update() {
@@ -1226,6 +1369,7 @@ class EVAssistantPanel extends HTMLElement {
     else if (this._view === "fahrzeuge") this._updateVehicle();
     else if (this._view === "profil") this._updateProfil();
     else if (this._view === "analyse") this._updateAnalyse();
+    else if (this._view === "leasing") this._updateLeasing();
   }
 
   _updateOverview() {

@@ -32,16 +32,18 @@ NOTIFY_EVENT_FREMDLADUNG = "fremdladung"
 NOTIFY_EVENT_SOC_SCHWELLE = "soc_schwelle"
 NOTIFY_EVENT_FAHRT = "fahrt"
 NOTIFY_EVENT_TANKERKOENIG = "tankerkoenig"
+NOTIFY_EVENT_LEASING = "leasing"
 NOTIFY_EVENTS = [
     NOTIFY_EVENT_FREMDLADUNG, NOTIFY_EVENT_SOC_SCHWELLE,
-    NOTIFY_EVENT_FAHRT, NOTIFY_EVENT_TANKERKOENIG,
+    NOTIFY_EVENT_FAHRT, NOTIFY_EVENT_TANKERKOENIG, NOTIFY_EVENT_LEASING,
 ]
 # Verhaelt sich wie vor Einfuehrung der Auswahl: nur Fremdladung loeste einen
 # Push aus. Tupel statt Liste: DEFAULT_NOTIFY_EVENTS wird an vielen Stellen
 # (mehrere Config Entries, jedes Mal derselbe Objektverweis) als Fallback-
 # Wert zurueckgegeben -- ein Tupel schliesst aus, dass eine versehentliche
 # In-Place-Mutation (z.B. .append()) diesen Fallback fuer alle Entries
-# gleichzeitig verfaelscht.
+# gleichzeitig verfaelscht. NOTIFY_EVENT_LEASING bewusst NICHT enthalten --
+# jeder, der Leasing einrichtet, soll die Benachrichtigung aktiv dazuwaehlen.
 DEFAULT_NOTIFY_EVENTS = (NOTIFY_EVENT_FREMDLADUNG,)
 
 # SoC-Schwellenwerte (%) fuer eine Benachrichtigung waehrend eines laufenden
@@ -122,6 +124,24 @@ TEMP_BUCKET_BOUNDARIES = (0.0, 10.0, 20.0)
 # Wie viele Fahrten mit bekannter Start-Temperatur mindestens in einem Band
 # liegen muessen, bevor dessen Durchschnitt als verlaesslich gilt.
 TEMP_BUCKET_MIN_SAMPLES = 3
+
+# Leasing-Kilometerbudget (alle optional -- Leasing gilt als eingerichtet,
+# sobald CONF_LEASING_INKL_KM und CONF_LEASING_END_DATUM beide gesetzt sind,
+# siehe coordinator.py::leasing_stats()/engine.leasing_status()). Kein
+# einzelnes Feld bekommt einen DEFAULT_-Wert: ein Vertrags-Kilometerstand,
+# -datum oder -preis laesst sich nicht sinnvoll raten, anders als z.B.
+# DEFAULT_TRIP_MIN_KM (eine Erkennungsschwelle mit vernuenftigem
+# Universalwert). Datumsfelder als ISO-String (wie CONF_ERSTZULASSUNG).
+CONF_LEASING_START_KM = "leasing_start_km"
+CONF_LEASING_START_DATUM = "leasing_start_datum"
+CONF_LEASING_END_DATUM = "leasing_end_datum"
+CONF_LEASING_INKL_KM = "leasing_inkl_km"
+CONF_LEASING_PREIS_MEHR_KM = "leasing_preis_mehr_km"
+CONF_LEASING_PREIS_MINDER_KM = "leasing_preis_minder_km"
+# Interne Schwellwerte fuer engine.leasing_status() -- keine Config-Flow-
+# Felder, analog TEMP_BUCKET_MIN_SAMPLES/BATTERY_CAPACITY_MIN_SOC_DELTA.
+LEASING_KNAPP_SCHWELLE_PCT = 90.0
+LEASING_TOLERANZ_PCT = 2.0
 
 # Kostenvergleich gegenueber einem Verbrenner (alle optional -- ohne sie
 # bleiben die Ersparnis-Sensoren unbekannt statt einen Fehler zu werfen).

@@ -2,6 +2,16 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.55.0] - 2026-08-15
+
+### Added
+
+- **Leasing mileage budget tracker**: new optional setup step ("Leasing-Kilometerbudget") lets you enter your contract's starting odometer reading, start/end date, included total mileage, and (optionally) a per-km price for overage and/or credit for underage. Purely additive — leave it empty and nothing changes: no new sensor state, no panel content. Once configured, a new `sensor.<vehicle>_kilometerbudget_vor_rucklauf` reports how far you are ahead of or behind the straight-line plan (`km_vor_ruecklauf`), with the full breakdown as attributes: km driven under the contract (against the contract's own starting odometer — deliberately **not** the same "km driven" figure used elsewhere, which only counts since this integration was set up), the target-to-date, two independent end-of-contract projections (linear from the contract start, and rolling from your last 30 driving days), the projected over/under-mileage and €-estimate for each, remaining daily budget, and a status (`im_budget` / `knapp` / `ueber`).
+- **New "Leasing" panel tab**: Soll/Ist bar plus both projections side by side. Shows a plain "set this up in options" hint instead of empty cards until the feature is configured; missing values (e.g. no rolling pace yet, no price configured) are hidden rather than shown as 0 or "n/a".
+- **Optional push notification** (`leasing`, not enabled by default — opt in via the notify-events step) when the linear projection first crosses into "knapp" or "ueber", with hysteresis so a projection hovering near the line doesn't re-notify on every update; a contract identity change (different start-km/end-date) resets the notification state.
+
+**Limits, on purpose**: both projections are estimates, not guarantees — linear smooths over your whole contract to date, rolling reacts faster to a recent change in driving habits but overreacts to short blips; the status/notification threshold is based on the linear projection only. An under-mileage credit only ever shows up if you've entered a price for it — many leasing contracts simply don't refund unused kilometers, and the tracker doesn't assume one where you haven't said so. Everything is km-based against the same odometer entity as the rest of the integration; if your odometer reports in miles, the existing mi→km conversion applies, but the contract fields themselves are entered in your odometer's unit.
+
 ## [0.54.0] - 2026-08-14
 
 ### Added

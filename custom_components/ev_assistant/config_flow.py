@@ -41,6 +41,12 @@ from .const import (
     CONF_HOME_PRICE_ENTITY,
     CONF_HOME_PRICE_KWH,
     CONF_IDLE_TIMEOUT,
+    CONF_LEASING_END_DATUM,
+    CONF_LEASING_INKL_KM,
+    CONF_LEASING_PREIS_MEHR_KM,
+    CONF_LEASING_PREIS_MINDER_KM,
+    CONF_LEASING_START_DATUM,
+    CONF_LEASING_START_KM,
     CONF_MOTOR_DEBOUNCE,
     CONF_MOTOR_ENTITY,
     CONF_NOISE,
@@ -340,6 +346,23 @@ def build_trip_schema(cur: dict) -> vol.Schema:
     })
 
 
+def build_leasing_schema(cur: dict) -> vol.Schema:
+    """Schritt 6b: Leasing-Kilometerbudget -- alle Felder optional. Ohne
+    leasing_inkl_km/leasing_end_datum gilt Leasing als deaktiviert (siehe
+    coordinator.py::leasing_stats()), dann bleibt der Schritt einfach leer."""
+    def sv(key):
+        return {"suggested_value": cur.get(key)}
+
+    return vol.Schema({
+        vol.Optional(CONF_LEASING_START_KM, description=sv(CONF_LEASING_START_KM)): vol.Coerce(float),
+        vol.Optional(CONF_LEASING_START_DATUM, description=sv(CONF_LEASING_START_DATUM)): selector.DateSelector(),
+        vol.Optional(CONF_LEASING_END_DATUM, description=sv(CONF_LEASING_END_DATUM)): selector.DateSelector(),
+        vol.Optional(CONF_LEASING_INKL_KM, description=sv(CONF_LEASING_INKL_KM)): vol.Coerce(float),
+        vol.Optional(CONF_LEASING_PREIS_MEHR_KM, description=sv(CONF_LEASING_PREIS_MEHR_KM)): vol.Coerce(float),
+        vol.Optional(CONF_LEASING_PREIS_MINDER_KM, description=sv(CONF_LEASING_PREIS_MINDER_KM)): vol.Coerce(float),
+    })
+
+
 def build_comparison_schema(cur: dict) -> vol.Schema:
     """Schritt 7: Kostenvergleich Verbrenner.
 
@@ -380,11 +403,11 @@ def _noise_ok(data: dict) -> bool:
 
 
 def _all_step_schema_keys() -> set[str]:
-    """Alle Config-Keys, die eines der 7 Options-Flow-Formulare abdeckt."""
+    """Alle Config-Keys, die eines der 8 Options-Flow-Formulare abdeckt."""
     schemas = (
         build_vehicle_schema({}), build_evcc_schema({}), build_power_schema({}),
         build_output_schema({}), build_detection_schema({}), build_trip_schema({}),
-        build_comparison_schema({}),
+        build_leasing_schema({}), build_comparison_schema({}),
     )
     return {str(key) for schema in schemas for key in schema.schema}
 
@@ -480,11 +503,21 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_fahrtenbuch(self, user_input=None) -> FlowResult:
         if user_input is not None:
             self._data = {**self._data, **_clean(user_input)}
-            return await self.async_step_vergleich()
+            return await self.async_step_leasing()
 
         cur = user_input if user_input is not None else self._data
         return self.async_show_form(
             step_id="fahrtenbuch", data_schema=build_trip_schema(cur)
+        )
+
+    async def async_step_leasing(self, user_input=None) -> FlowResult:
+        if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            return await self.async_step_vergleich()
+
+        cur = user_input if user_input is not None else self._data
+        return self.async_show_form(
+            step_id="leasing", data_schema=build_leasing_schema(cur)
         )
 
     async def async_step_vergleich(self, user_input=None) -> FlowResult:
@@ -580,10 +613,19 @@ class EvAssistantOptionsFlow(OptionsFlow):
     async def async_step_fahrtenbuch(self, user_input=None) -> FlowResult:
         if user_input is not None:
             self._data = {**self._data, **_clean(user_input)}
-            return await self.async_step_vergleich()
+            return await self.async_step_leasing()
 
         return self.async_show_form(
             step_id="fahrtenbuch", data_schema=build_trip_schema(self._current())
+        )
+
+    async def async_step_leasing(self, user_input=None) -> FlowResult:
+        if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            return await self.async_step_vergleich()
+
+        return self.async_show_form(
+            step_id="leasing", data_schema=build_leasing_schema(self._current())
         )
 
     async def async_step_vergleich(self, user_input=None) -> FlowResult:

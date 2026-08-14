@@ -46,7 +46,7 @@ A comprehensive **EV monitoring integration for Home Assistant**. EV Assistant c
 
 **Settings → Devices & Services → Add Integration → "EV Assistant"**
 
-Setup runs as a 7-step flow (the same flow is used when editing via **Configure**):
+Setup runs as an 8-step flow (the same flow is used when editing via **Configure**):
 
 | Step | What it configures |
 |------|--------------------|
@@ -56,7 +56,8 @@ Setup runs as a 7-step flow (the same flow is used when editing via **Configure*
 | 4 — Notifications | Push target devices (`notify.*` entities, multi-select) and which events trigger a push: external charge detected, SoC threshold reached, trip detected, Tankerkönig unavailable. SoC thresholds (50/60/70/80/90/100%) fire once per charging session — home or external — as the battery crosses them. A persistent HA notification for external-charge/trip/Tankerkönig events always fires regardless of this step. |
 | 5 — Detection | Fine-tune the detection state machine: `start_delta` (min SoC rise to trigger), `noise` (jitter tolerance, must be < `start_delta`), `idle_timeout_s` (session-end timeout), `drop_ends` (SoC drop that ends a session immediately). Defaults work for most vehicles. Optional: `plug_entity` (a plug/connectivity `binary_sensor`) and `plug_debounce_s` — when set, a confirmed "plugged in" overrides `idle_timeout_s` entirely (no more false session splits on coarsely-reported SoC), a confirmed "unplugged" (held for `plug_debounce_s`, guarding against brief flaky readings) ends the session immediately, and a SoC rise while confirmed unplugged no longer starts a session at all (avoids misreading a regenerative-braking uptick while driving as an external charge). |
 | 6 — Trip Log | Optional: `trip_min_km` (minimum trip distance), `trip_idle_timeout_s` (standstill-to-trip-end timeout), `gps_entity` (person, device_tracker, or sensor entity for location suggestions). Also optional: `motor_entity` (a motor/driving `binary_sensor`, e.g. ignition/"Ready") and `motor_debounce_s` — a second signal for vehicles whose odometer updates too coarsely/infrequently to derive trip start/end from it directly. A confirmed "driving" starts/continues a trip even without a fresh odometer reading; `trip_idle_timeout_s` still tolerates brief stops (e.g. stop-start at a light). Distance always comes from the odometer regardless. A further optional toggle, `trip_auto_confirm`, adds a detected trip to the trip log immediately instead of waiting for manual start/end-location confirmation — location comes from `gps_entity` if configured, otherwise stays empty (editable later via `edit_trip`). One more optional field, `usage_profile_buffer_pct` (default 20), sets the safety margin added on top of the historical weekday average for the Usage Profile tab's "needed tomorrow" figure. A further optional field, `pv_forecast_entity`, points at any sensor entity providing tomorrow's solar-yield forecast (e.g. from Solcast or Forecast.Solar, in kWh or Wh) — with it, the charge recommendation lets tomorrow's expected PV generation cover a shortfall the current battery charge alone wouldn't; without it, the recommendation only compares the current battery charge to tomorrow's typical need. One more optional field, `outside_temp_entity` (a plain temperature sensor or a `weather.*` entity), groups trip consumption into four temperature bands (<0°C, 0–10°C, 10–20°C, >20°C) — once a band has at least 3 trips, `range_estimate` uses that band's average instead of the flat rolling figure, for a more realistic estimate in cold weather. |
-| 7 — Cost Comparison | Optional: combustion reference consumption (L/100 km), fuel price, home electricity price. Fuel price priority: Tankerkönig auto-detection (pick a fuel type, cheapest open station wins) > live entity > fixed value. Home electricity price: live entity (kWh-weighted average) > fixed value. Also optional: `co2_per_kwh_g` (grid CO2 intensity, g/kWh, default 380 — a rough German-grid-average estimate, adjust for your own supplier/tariff) for the CO2 comparison sensor. |
+| 7 — Leasing | Optional, and only active once **both** `leasing_inkl_km` and `leasing_end_datum` are set: contract starting odometer reading (`leasing_start_km`), contract start/end date, total included mileage, and an optional per-km price for overage (`leasing_preis_mehr_km`) and/or credit for underage (`leasing_preis_minder_km`). Leave it empty and the feature stays fully inactive — no sensor state, no panel content. See [Leasing mileage budget](#leasing-mileage-budget) below. |
+| 8 — Cost Comparison | Optional: combustion reference consumption (L/100 km), fuel price, home electricity price. Fuel price priority: Tankerkönig auto-detection (pick a fuel type, cheapest open station wins) > live entity > fixed value. Home electricity price: live entity (kWh-weighted average) > fixed value. Also optional: `co2_per_kwh_g` (grid CO2 intensity, g/kWh, default 380 — a rough German-grid-average estimate, adjust for your own supplier/tariff) for the CO2 comparison sensor. |
 
 ---
 
@@ -132,6 +133,14 @@ All odometer sensors are `entity_category: diagnostic`. The period and LTS senso
 | `cost_day` / `cost_week` / `cost_month` / `cost_year` | Cost (Today/Week/Month/Year) | Combined home + external charging cost within the current calendar period, same rollover pattern as the driven-km period sensors below. `unknown` before the period's baseline is established (right after setup); clamped to 0 rather than going negative if the total dips below the period baseline (e.g. the home-cost estimate's weighted-average price ticking down as a cheaper session is folded in). |
 | `erstzulassung` | First Registration | First-registration date from step 1, exposed as a `date`-typed sensor. Diagnostic. |
 
+### Leasing Mileage Budget
+
+Purely additive — configure step 7 (`leasing_inkl_km` and `leasing_end_datum` both set) to activate; otherwise this sensor stays `unknown` and the Leasing panel tab shows a setup hint instead of any content.
+
+| Key | Name | Description |
+|-----|------|-------------|
+| `leasing_km_vor_ruecklauf` | Kilometerbudget vor Rücklauf | How far ahead of (positive) or behind (negative) the straight-line contract plan you are, in km, against the contract's own starting odometer reading (`leasing_start_km`) — deliberately **not** the same "km driven" figure used by the sensors above, which only counts since this integration was set up. Attributes: `gefahrene_vertrags_km`, `vertrag_tage`/`vergangene_tage`/`verbleibende_tage`, `soll_km_bis_heute` (target-to-date), `status` (`im_budget` / `knapp` / `ueber`, based on the linear projection with a small tolerance), `verbleibendes_tagesbudget_km` (only while contract days remain). Two independent end-of-contract projections, each present only when computable: `linear` (straight-line from the contract start — the stable reference) and `rollierend` (from your last 30 driving days — reacts faster to a recent change in habits), both with `tempo_km_pro_tag`, `erwartete_end_km`, `erwartete_mehr_bzw_minder_km`, and — only if the matching price is configured — `mehrkosten_eur` (overage) or `gutschrift_eur` (underage credit, only ever shown if `leasing_preis_minder_km` is set; most contracts don't refund unused km). |
+
 ### Usage Profile
 
 See the "Usage Profile tab" section above for the underlying idea.
@@ -176,6 +185,10 @@ Longer-term signals that don't belong on the day-to-day vehicle card: the measur
 **Bar charts**: charging overview, cost overview, and solar share — switchable between week / month / year view with prev/next navigation. Hover over any bar to see its value in a tooltip (replacing the per-bar labels that overlapped in monthly view). Mobile-responsive: on screens ≤ 600 px the three charts stack vertically.
 
 **Number formatting**: all values in the panel respect the HA locale setting (`Settings → Profile → Number format`) — no manual configuration needed.
+
+### Leasing tab
+
+Only shows content once the Leasing step is configured (see `leasing_km_vor_ruecklauf` above) — otherwise a plain "set this up in options" hint instead of empty cards. A Soll/Ist bar (green/orange/red by status) plus the linear and rolling projections side by side (pace, expected end-odometer, projected over/under-km, and — only if configured — the €-estimate), and the remaining daily budget. Missing values (e.g. no rolling pace yet, no price configured for a credit) are hidden rather than shown as 0 or "n/a".
 
 ---
 

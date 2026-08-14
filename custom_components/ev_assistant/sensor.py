@@ -63,6 +63,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         BatteryCapacitySensor(coordinator, entry),
         EquivalentFullCyclesSensor(coordinator, entry),
         ChargingLocationSensor(coordinator, entry),
+        LeasingKmVorRuecklaufSensor(coordinator, entry),
         Co2SavingsSensor(coordinator, entry),
         HomeVsExternalPriceSensor(coordinator, entry),
         CostDaySensor(coordinator, entry),
@@ -913,6 +914,34 @@ class ChargingLocationSensor(EvAssistantEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         return self.coordinator.charging_location_stats()
+
+
+class LeasingKmVorRuecklaufSensor(EvAssistantEntity, SensorEntity):
+    """Leasing-Kilometerbudget: Ist- minus Soll-km seit Vertragsbeginn als
+    Hauptwert (siehe coordinator.py::leasing_stats()/engine.py::
+    leasing_status()) -- positiv heisst mehr gefahren als der lineare
+    Vertrags-Plan bis heute vorsieht (Richtung Nachzahlung), negativ
+    weniger. Volle Details (beide Projektionen linear/rollierend,
+    verbleibendes Tagesbudget, Euro-Schaetzung, Status) als Attribute.
+    unknown, solange Leasing nicht eingerichtet ist (inkl_km/end_datum
+    fehlen, siehe build_leasing_schema()) -- absichtlich KEIN Rauschen ohne
+    Konfiguration."""
+
+    _attr_translation_key = "leasing_km_vor_ruecklauf"
+    _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:file-document-outline"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "leasing_km_vor_ruecklauf")
+
+    @property
+    def native_value(self):
+        return self.coordinator.leasing_stats().get("km_vor_ruecklauf")
+
+    @property
+    def extra_state_attributes(self):
+        return self.coordinator.leasing_stats()
 
 
 class Co2SavingsSensor(EvAssistantEntity, SensorEntity):

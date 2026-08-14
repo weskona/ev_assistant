@@ -38,6 +38,12 @@ from .const import (
     CONF_HOME_PRICE_KWH,
     CONF_HOME_TEMPLATE,
     CONF_IDLE_TIMEOUT,
+    CONF_LEASING_END_DATUM,
+    CONF_LEASING_INKL_KM,
+    CONF_LEASING_PREIS_MEHR_KM,
+    CONF_LEASING_PREIS_MINDER_KM,
+    CONF_LEASING_START_DATUM,
+    CONF_LEASING_START_KM,
     CONF_MOTOR_DEBOUNCE,
     CONF_MOTOR_ENTITY,
     CONF_NOISE,
@@ -101,10 +107,13 @@ from .const import (
     EVENT_TRIP_IMPORTED,
     EVENT_TRIP_LOGGED,
     EVENT_TRIP_PENDING,
+    LEASING_KNAPP_SCHWELLE_PCT,
+    LEASING_TOLERANZ_PCT,
     MILES_TO_KM,
     MIN_USAGE_PROFILE_DAYS,
     NOTIFY_EVENT_FAHRT,
     NOTIFY_EVENT_FREMDLADUNG,
+    NOTIFY_EVENT_LEASING,
     NOTIFY_EVENT_SOC_SCHWELLE,
     NOTIFY_EVENT_TANKERKOENIG,
     NOTIFY_TAG,
@@ -137,9 +146,11 @@ from .engine import (
     home_capacity_sample,
     home_session_solar_and_cost,
     is_plausible_trip_consumption,
+    leasing_status,
     merge_pending,
     pop_pending,
     rolling_consumption_kwh_per_100km,
+    rolling_km_per_day,
     temperature_bucket,
     weekday_usage_profile,
 )
@@ -187,6 +198,16 @@ _ROLLING_CONSUMPTION_WINDOW_DAYS = 30
 # Stadtfahrt direkt nach einer laengeren Standzeit den Verbrauch verzerren.
 _ROLLING_CONSUMPTION_MIN_KM = 50.0
 
+# Rolling-Fenster fuer das aktuelle Fahrtempo (siehe engine.py::
+# rolling_km_per_day()), das leasing_stats() als "rollierende" Projektion
+# neben die lineare Projektion seit Vertragsbeginn stellt -- kurz genug, um
+# eine juengere Verhaltensaenderung (z.B. neuer Arbeitsweg) schneller
+# abzubilden als der lineare Vertrags-Schnitt es koennte.
+_LEASING_ROLLING_WINDOW_DAYS = 30
+# Rangfolge fuer die Hysterese in _check_leasing_thresholds() -- je hoeher,
+# desto schlechter der Status.
+_LEASING_STATUS_RANK = {"im_budget": 0, "knapp": 1, "ueber": 2}
+
 
 def _empty_data() -> dict:
     return {
@@ -213,6 +234,8 @@ def _empty_data() -> dict:
         "detector_state": None,
         "soc_thresholds_notified": [],
         "soc_thresholds_was_charging": False,
+        "leasing_notified_identity": None,
+        "leasing_notified_rank": 0,
         "plug_debounce_state": None,
         "motor_debounce_state": None,
         "verbrenner_price_last": None,
@@ -931,6 +954,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["odo"] = value
         self.data["odo_unit"] = unit
         self._update_odo_periods(value_km)
+        self._check_leasing_thresholds()
         self.async_set_updated_data(self.data)
         self._save_soon()
         self.hass.async_create_task(self._run_trip_detection())
@@ -2355,6 +2379,96 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return charging_location_breakdown(
             home_kwh, home_cost, extern_kwh, extern_cost, km_driven, home_solar_pct,
         )
+
+    def leasing_stats(self) -> dict:
+        """Leasing-Kilometerbudget (siehe engine.py::leasing_status()).
+        Verwendet den ABSOLUTEN Kilometerstand (self.data["odo"], mit
+        derselben odo_unit-Umrechnung wie _km_driven()) gegen den
+        konfigurierten Vertrags-Start-km -- bewusst NICHT _km_driven()
+        selbst, das nur seit der ev_assistant-Einrichtung zaehlt und damit
+        fuer einen laufenden Leasingvertrag die falsche Referenz waere.
+        Leeres dict, solange inkl_km/end_datum nicht konfiguriert sind
+        (siehe build_leasing_schema()) -- macht das Feature komplett
+        inaktiv, bis es eingerichtet ist (keine Sensoren mit Rauschen).
+        Fehlen weitere Pflichtfelder (Start-km/-datum), liefert bereits
+        engine.leasing_status() selbst ein leeres dict."""
+        inkl_km = self._opt(CONF_LEASING_INKL_KM)
+        end_datum = self._opt(CONF_LEASING_END_DATUM)
+        if not inkl_km or not end_datum:
+            return {}
+        odo = self.data.get("odo")
+        if odo is None:
+            return {}
+        odo_km = odo * MILES_TO_KM if self.data.get("odo_unit") == "mi" else odo
+        fahrten = self.data.get("fahrten") or []
+        rollierendes_tempo = rolling_km_per_day(fahrten, time.time(), _LEASING_ROLLING_WINDOW_DAYS)
+        return leasing_status(
+            aktueller_km=odo_km,
+            vertrag_start_km=self._opt(CONF_LEASING_START_KM),
+            vertrag_start_datum=self._opt(CONF_LEASING_START_DATUM),
+            vertrag_end_datum=end_datum,
+            inkl_gesamt_km=inkl_km,
+            heute=dt_util.now().date().isoformat(),
+            preis_mehr_km=self._opt(CONF_LEASING_PREIS_MEHR_KM),
+            preis_minder_km=self._opt(CONF_LEASING_PREIS_MINDER_KM),
+            rollierendes_tempo_km_pro_tag=rollierendes_tempo,
+            knapp_schwelle_pct=LEASING_KNAPP_SCHWELLE_PCT,
+            toleranz_pct=LEASING_TOLERANZ_PCT,
+        )
+
+    def _check_leasing_thresholds(self) -> None:
+        """Benachrichtigung, wenn die (lineare) Leasing-Projektion erstmals
+        "knapp" oder "ueber" erreicht -- Hysterese analog
+        _check_soc_thresholds(): der bereits gemeldete Status wird
+        persistiert (ueberlebt einen HA-Neustart) und erst erneut gemeldet,
+        wenn eine SCHLECHTERE Stufe erreicht wird -- sonst wuerde eine
+        Projektion, die knapp um die Schwelle pendelt, bei jeder Messung neu
+        benachrichtigen. Der gespeicherte Zustand wird zurueckgesetzt,
+        sobald sich die Vertrags-Identitaet (Start-km + End-Datum) aendert
+        -- ein neuer/verlaengerter Vertrag verdient wieder eigene
+        Benachrichtigungen ab "im_budget"."""
+        stats = self.leasing_stats()
+        status = stats.get("status")
+        if status is None:
+            return
+        identity = [self._opt(CONF_LEASING_START_KM), self._opt(CONF_LEASING_END_DATUM)]
+        if self.data.get("leasing_notified_identity") != identity:
+            self.data["leasing_notified_identity"] = identity
+            self.data["leasing_notified_rank"] = 0
+        worst_rank = self.data.get("leasing_notified_rank", 0)
+        rank = _LEASING_STATUS_RANK.get(status, 0)
+        if rank <= worst_rank:
+            return
+        self.data["leasing_notified_rank"] = rank
+        if rank > 0:
+            self.hass.async_create_task(self._notify_leasing(status, stats))
+
+    async def _notify_leasing(self, status: str, stats: dict) -> None:
+        """Push + persistent_notification, wenn die Leasing-Projektion
+        "knapp" oder "ueber" erreicht -- siehe _check_leasing_thresholds()."""
+        en = self._en()
+        if status == "ueber":
+            title = "Leasing mileage budget exceeded" if en else "Leasing-Kilometerbudget ueberschritten"
+        else:
+            title = "Leasing mileage budget tight" if en else "Leasing-Kilometerbudget knapp"
+        km_vor_ruecklauf = stats.get("km_vor_ruecklauf")
+        if km_vor_ruecklauf is not None:
+            message = (
+                f"Linear projection is currently {km_vor_ruecklauf:+.0f} km vs. plan."
+                if en else
+                f"Die lineare Projektion liegt aktuell {km_vor_ruecklauf:+.0f} km gegenueber dem Soll."
+            )
+        else:
+            message = "Check the leasing tab for details." if en else "Details siehe Leasing-Tab."
+        await self._push(NOTIFY_EVENT_LEASING, title, message)
+        try:
+            await self.hass.services.async_call(
+                "persistent_notification", "create",
+                {"notification_id": f"{self._notify_tag}_leasing", "title": title, "message": message},
+                blocking=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def _evcc_vehicle_key(self) -> Optional[str]:
         """Fahrzeugname in evcc: aus Konfiguration oder via Auto-Erkennung
