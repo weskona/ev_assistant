@@ -1152,7 +1152,16 @@ def leasing_status(
     "verbleibendes_tagesbudget_km": wie viele km/Tag fuer den Rest der
     Laufzeit noch drin sind, um exakt auf inkl_gesamt_km zu landen -- nur
     wenn noch Tage uebrig sind (kann negativ sein, wenn schon jetzt mehr
-    verbraucht ist als insgesamt zusteht)."""
+    verbraucht ist als insgesamt zusteht).
+
+    Die Vertrags-Eingaben (vertrag_start_km/-_datum, vertrag_end_datum,
+    inkl_gesamt_km, sowie preis_mehr_km/preis_minder_km falls gesetzt) werden
+    unveraendert ins Ergebnis gespiegelt -- macht das Ergebnis-Dict fuer die
+    Anzeige (Panel) selbsterklaerend, ohne dass der Aufrufer die Rohwerte
+    separat mitfuehren muss. "resterlaubte_km"
+    (inkl_gesamt_km - gefahrene_vertrags_km) ist die insgesamt noch erlaubte
+    Reststrecke bis Vertragsende, unabhaengig von den verbleibenden Tagen
+    (kann wie verbleibendes_tagesbudget_km negativ sein)."""
     if (
         aktueller_km is None or vertrag_start_km is None
         or vertrag_start_datum is None or vertrag_end_datum is None
@@ -1198,8 +1207,17 @@ def leasing_status(
         else:
             status = "im_budget"
 
+    resterlaubte_km = round(inkl_gesamt_km - gefahrene_vertrags_km, 1)
+
     result = {
+        "vertrag_start_km": vertrag_start_km,
+        "vertrag_start_datum": vertrag_start_datum,
+        "vertrag_end_datum": vertrag_end_datum,
+        "vertrag_inkl_km": inkl_gesamt_km,
+        "preis_mehr_km": preis_mehr_km,
+        "preis_minder_km": preis_minder_km,
         "gefahrene_vertrags_km": gefahrene_vertrags_km,
+        "resterlaubte_km": resterlaubte_km,
         "vertrag_tage": vertrag_tage,
         "vergangene_tage": vergangene_tage,
         "verbleibende_tage": verbleibende_tage,

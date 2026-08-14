@@ -1236,27 +1236,49 @@ class EVAssistantPanel extends HTMLElement {
         </div>
         <div class="hidden" id="leasing-content">
           <div class="kpi-row">
-            <div class="kpi"><div class="kv" id="leasing-km-vor-ruecklauf">—</div><div class="kl">km vor Rücklauf</div></div>
+            <div class="kpi"><div class="kv" id="leasing-km-vor-ruecklauf">—</div><div class="kl">km vor Rücklauf (Ist − Soll)</div></div>
             <div class="kpi"><div class="kv" id="leasing-status">—</div><div class="kl">Status</div></div>
-            <div class="kpi"><div class="kv" id="leasing-tagesbudget">—</div><div class="kl">km/Tag verbleibendes Budget</div></div>
+            <div class="kpi"><div class="kv" id="leasing-resttage">—</div><div class="kl">Tage bis Vertragsende</div></div>
+            <div class="kpi"><div class="kv" id="leasing-tagesbudget">—</div><div class="kl">km/Tag Restbudget</div></div>
           </div>
-          <div class="veh-soc-bar-wrap" id="leasing-bar-wrap" style="width:100%;margin-top:6px">
+          <div class="sub-head" style="margin-top:6px" id="leasing-bar-caption">Kilometerstand — 0 von 0 km</div>
+          <div class="veh-soc-bar-wrap" id="leasing-bar-wrap" style="width:100%;position:relative">
             <div class="veh-soc-bar-fill" id="leasing-bar-fill"></div>
+            <div id="leasing-bar-marker" style="position:absolute;top:0;bottom:0;width:2px;background:rgba(255,255,255,0.7)"></div>
+          </div>
+          <div class="profil-empty" style="padding:4px 0 0;font-size:0.72rem">Graue Linie = Soll-Stand heute (linearer Vertrags-Plan).</div>
+          <div class="km-grid" style="margin-top:8px">
+            <div class="km-col">
+              <div class="sub-head">Vertrag</div>
+              <div class="km-item"><span class="km-label">Beginn</span><span class="km-val" id="leasing-start-datum">—</span><span class="km-unit"></span></div>
+              <div class="km-item"><span class="km-label">Ende</span><span class="km-val" id="leasing-end-datum">—</span><span class="km-unit"></span></div>
+              <div class="km-item"><span class="km-label">Laufzeit</span><span class="km-val" id="leasing-laufzeit">—</span><span class="km-unit"></span></div>
+              <div class="km-item"><span class="km-label">Kilometerstand bei Beginn</span><span class="km-val" id="leasing-start-km">—</span><span class="km-unit">km</span></div>
+              <div class="km-item"><span class="km-label">Inklusive</span><span class="km-val" id="leasing-inkl-km">—</span><span class="km-unit">km</span></div>
+            </div>
+            <div class="km-col">
+              <div class="sub-head">Kilometer</div>
+              <div class="km-item"><span class="km-label">Seit Beginn gefahren</span><span class="km-val" id="leasing-gefahren">—</span><span class="km-unit">km</span></div>
+              <div class="km-item"><span class="km-label">Soll bis heute</span><span class="km-val" id="leasing-soll">—</span><span class="km-unit">km</span></div>
+              <div class="km-item"><span class="km-label">Noch erlaubt bis Ende</span><span class="km-val" id="leasing-resterlaubt">—</span><span class="km-unit">km</span></div>
+              <div class="km-item hidden" id="leasing-preis-mehr-row"><span class="km-label">Preis Mehr-km</span><span class="km-val" id="leasing-preis-mehr">—</span><span class="km-unit">EUR/km</span></div>
+              <div class="km-item hidden" id="leasing-preis-minder-row"><span class="km-label">Preis Minder-km</span><span class="km-val" id="leasing-preis-minder">—</span><span class="km-unit">EUR/km</span></div>
+            </div>
           </div>
           <div class="divider"></div>
           <div class="km-grid">
             <div class="km-col">
-              <div class="sub-head">Linear (seit Vertragsbeginn)</div>
-              <div class="km-item"><span class="km-label">Tempo</span><span class="km-val" id="leasing-lin-tempo">—</span><span class="km-unit">km/Tag</span></div>
-              <div class="km-item"><span class="km-label">Erwartet Endstand</span><span class="km-val" id="leasing-lin-end">—</span><span class="km-unit">km</span></div>
-              <div class="km-item"><span class="km-label">Mehr/Minder-km</span><span class="km-val" id="leasing-lin-diff">—</span><span class="km-unit">km</span></div>
+              <div class="sub-head">Linear — Ø seit Vertragsbeginn</div>
+              <div class="km-item"><span class="km-label">Ø km/Tag</span><span class="km-val" id="leasing-lin-tempo">—</span><span class="km-unit">km/Tag</span></div>
+              <div class="km-item"><span class="km-label">Erwarteter Endstand</span><span class="km-val" id="leasing-lin-end">—</span><span class="km-unit">km</span></div>
+              <div class="km-item"><span class="km-label">Erwartete Mehr/Minder-km</span><span class="km-val" id="leasing-lin-diff">—</span><span class="km-unit">km</span></div>
               <div class="km-item hidden" id="leasing-lin-eur-row"><span class="km-label" id="leasing-lin-eur-label">Kosten</span><span class="km-val" id="leasing-lin-eur">—</span><span class="km-unit">EUR</span></div>
             </div>
             <div class="km-col">
-              <div class="sub-head">Rollierend (aktuelles Tempo)</div>
-              <div class="km-item"><span class="km-label">Tempo</span><span class="km-val" id="leasing-roll-tempo">—</span><span class="km-unit">km/Tag</span></div>
-              <div class="km-item"><span class="km-label">Erwartet Endstand</span><span class="km-val" id="leasing-roll-end">—</span><span class="km-unit">km</span></div>
-              <div class="km-item"><span class="km-label">Mehr/Minder-km</span><span class="km-val" id="leasing-roll-diff">—</span><span class="km-unit">km</span></div>
+              <div class="sub-head">Rollierend — Ø letzte 30 Fahrtage</div>
+              <div class="km-item"><span class="km-label">Ø km/Tag</span><span class="km-val" id="leasing-roll-tempo">—</span><span class="km-unit">km/Tag</span></div>
+              <div class="km-item"><span class="km-label">Erwarteter Endstand</span><span class="km-val" id="leasing-roll-end">—</span><span class="km-unit">km</span></div>
+              <div class="km-item"><span class="km-label">Erwartete Mehr/Minder-km</span><span class="km-val" id="leasing-roll-diff">—</span><span class="km-unit">km</span></div>
               <div class="km-item hidden" id="leasing-roll-eur-row"><span class="km-label" id="leasing-roll-eur-label">Kosten</span><span class="km-val" id="leasing-roll-eur">—</span><span class="km-unit">EUR</span></div>
             </div>
           </div>
@@ -1275,8 +1297,23 @@ class EVAssistantPanel extends HTMLElement {
       leasingContent:       q("#leasing-content"),
       leasingKmVorRuecklauf: q("#leasing-km-vor-ruecklauf"),
       leasingStatus:        q("#leasing-status"),
+      leasingResttage:      q("#leasing-resttage"),
       leasingTagesbudget:   q("#leasing-tagesbudget"),
+      leasingBarCaption:    q("#leasing-bar-caption"),
       leasingBarFill:       q("#leasing-bar-fill"),
+      leasingBarMarker:     q("#leasing-bar-marker"),
+      leasingStartDatum:    q("#leasing-start-datum"),
+      leasingEndDatum:      q("#leasing-end-datum"),
+      leasingLaufzeit:      q("#leasing-laufzeit"),
+      leasingStartKm:       q("#leasing-start-km"),
+      leasingInklKm:        q("#leasing-inkl-km"),
+      leasingGefahren:      q("#leasing-gefahren"),
+      leasingSoll:          q("#leasing-soll"),
+      leasingResterlaubt:   q("#leasing-resterlaubt"),
+      leasingPreisMehrRow:  q("#leasing-preis-mehr-row"),
+      leasingPreisMehr:     q("#leasing-preis-mehr"),
+      leasingPreisMinderRow: q("#leasing-preis-minder-row"),
+      leasingPreisMinder:   q("#leasing-preis-minder"),
       leasingLinTempo:      q("#leasing-lin-tempo"),
       leasingLinEnd:        q("#leasing-lin-end"),
       leasingLinDiff:       q("#leasing-lin-diff"),
@@ -1314,17 +1351,55 @@ class EVAssistantPanel extends HTMLElement {
     r.leasingStatus.textContent = STATUS_LABELS[status] || "—";
     r.leasingStatus.style.color = STATUS_COLORS[status] || "";
 
+    const resttage = attrs.verbleibende_tage;
+    r.leasingResttage.textContent = typeof resttage === "number" ? this._fmtNum(resttage, 0) : "—";
     const tagesbudget = attrs.verbleibendes_tagesbudget_km;
     r.leasingTagesbudget.textContent = typeof tagesbudget === "number" ? this._fmtNum(tagesbudget, 1) : "—";
 
+    const fmtDate = (iso) => {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      return isNaN(d.getTime()) ? iso : d.toLocaleDateString("de-DE");
+    };
+    r.leasingStartDatum.textContent = fmtDate(attrs.vertrag_start_datum);
+    r.leasingEndDatum.textContent = fmtDate(attrs.vertrag_end_datum);
+    const vergangeneTage = attrs.vergangene_tage;
+    const vertragTage = attrs.vertrag_tage;
+    r.leasingLaufzeit.textContent = (typeof vergangeneTage === "number" && typeof vertragTage === "number")
+      ? `Tag ${this._fmtNum(vergangeneTage, 0)} von ${this._fmtNum(vertragTage, 0)}`
+      : "—";
+    r.leasingStartKm.textContent = typeof attrs.vertrag_start_km === "number" ? this._fmtNum(attrs.vertrag_start_km, 0) : "—";
+    r.leasingInklKm.textContent = typeof attrs.vertrag_inkl_km === "number" ? this._fmtNum(attrs.vertrag_inkl_km, 0) : "—";
+
     const gefahren = attrs.gefahrene_vertrags_km;
     const soll = attrs.soll_km_bis_heute;
-    let pct = 50;
-    if (typeof gefahren === "number" && typeof soll === "number" && soll > 0) {
-      pct = this._clamp((gefahren / soll) * 100, 0, 100);
-    }
-    r.leasingBarFill.style.width = `${pct}%`;
+    r.leasingGefahren.textContent = typeof gefahren === "number" ? this._fmtNum(gefahren, 1) : "—";
+    r.leasingSoll.textContent = typeof soll === "number" ? this._fmtNum(soll, 1) : "—";
+    const resterlaubt = attrs.resterlaubte_km;
+    r.leasingResterlaubt.textContent = typeof resterlaubt === "number" ? this._fmtNum(resterlaubt, 1) : "—";
+
+    const hasPreisMehr = typeof attrs.preis_mehr_km === "number";
+    r.leasingPreisMehrRow.classList.toggle("hidden", !hasPreisMehr);
+    if (hasPreisMehr) r.leasingPreisMehr.textContent = this._fmtNum(attrs.preis_mehr_km, 2);
+    const hasPreisMinder = typeof attrs.preis_minder_km === "number";
+    r.leasingPreisMinderRow.classList.toggle("hidden", !hasPreisMinder);
+    if (hasPreisMinder) r.leasingPreisMinder.textContent = this._fmtNum(attrs.preis_minder_km, 2);
+
+    const inklKm = attrs.vertrag_inkl_km;
+    const hasInklKm = typeof inklKm === "number" && inklKm > 0;
+    const fillPct = hasInklKm && typeof gefahren === "number" ? this._clamp((gefahren / inklKm) * 100, 0, 100) : 0;
+    const markerPct = hasInklKm && typeof soll === "number" ? this._clamp((soll / inklKm) * 100, 0, 100) : null;
+    r.leasingBarFill.style.width = `${fillPct}%`;
     r.leasingBarFill.style.background = STATUS_COLORS[status] || "var(--accent)";
+    r.leasingBarMarker.style.display = markerPct === null ? "none" : "block";
+    if (markerPct !== null) r.leasingBarMarker.style.left = `${markerPct}%`;
+    if (hasInklKm && typeof gefahren === "number") {
+      const usedPct = this._fmtNum((gefahren / inklKm) * 100, 1);
+      r.leasingBarCaption.textContent =
+        `Kilometerstand — ${this._fmtNum(gefahren, 0)} von ${this._fmtNum(inklKm, 0)} km (${usedPct} %)`;
+    } else {
+      r.leasingBarCaption.textContent = "Kilometerstand";
+    }
 
     const fillProjection = (proj, tempoEl, endEl, diffEl, eurRowEl, eurLabelEl, eurEl) => {
       if (!proj) {

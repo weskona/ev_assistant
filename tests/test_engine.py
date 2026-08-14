@@ -1192,6 +1192,32 @@ def test_leasing_status_im_budget():
     assert "rollierend" not in result
 
 
+def test_leasing_status_spiegelt_vertragseingaben_fuer_die_anzeige():
+    result = leasing_status(
+        aktueller_km=14000.0, vertrag_start_km=10000.0,
+        vertrag_start_datum=_L_START, vertrag_end_datum=_L_END,
+        inkl_gesamt_km=20000.0, heute=_L_HEUTE,
+        preis_mehr_km=0.30, preis_minder_km=0.05,
+    )
+    assert result["vertrag_start_km"] == 10000.0
+    assert result["vertrag_start_datum"] == _L_START
+    assert result["vertrag_end_datum"] == _L_END
+    assert result["vertrag_inkl_km"] == 20000.0
+    assert result["preis_mehr_km"] == 0.30
+    assert result["preis_minder_km"] == 0.05
+    assert result["resterlaubte_km"] == 16000.0  # 20000 - 4000 gefahrene km
+
+
+def test_leasing_status_ohne_preise_keine_preis_felder():
+    result = leasing_status(
+        aktueller_km=14000.0, vertrag_start_km=10000.0,
+        vertrag_start_datum=_L_START, vertrag_end_datum=_L_END,
+        inkl_gesamt_km=20000.0, heute=_L_HEUTE,
+    )
+    assert "preis_mehr_km" not in result
+    assert "preis_minder_km" not in result
+
+
 def test_leasing_status_knapp():
     result = leasing_status(
         aktueller_km=15000.0, vertrag_start_km=10000.0,

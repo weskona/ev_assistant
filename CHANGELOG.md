@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.56.0] - 2026-08-15
+
+### Changed
+
+- **Leasing tab: more context, clearer labels**. Live testing of 0.55.0's leasing tracker showed the tab wasn't self-explanatory enough on its own, so it now also shows: the contract's start/end date and how many days have elapsed vs. remain, the odometer reading at contract start, the total included mileage, kilometers driven since contract start, the target-to-date, kilometers still allowed until contract end, and — if configured — the per-km overage price and/or underage credit price. The ambiguous "Tempo" label is now "Ø km/Tag", and the two projection columns are labeled "Linear — Ø seit Vertragsbeginn" / "Rollierend — Ø letzte 30 Fahrtage" instead of the previous shorthand. The progress bar now shows the actual odometer progress against the total included mileage (e.g. "235 von 700 km, 33.6 %") with a marker for where the linear plan says you should be today, instead of an abstract pace percentage.
+- `sensor.<vehicle>_kilometerbudget_vor_rucklauf` now also exposes the raw contract inputs as attributes (`vertrag_start_km`, `vertrag_start_datum`, `vertrag_end_datum`, `vertrag_inkl_km`, `preis_mehr_km`/`preis_minder_km` if set) and a new `resterlaubte_km` (kilometers still allowed until contract end, independent of remaining days) — so the panel (and anything else reading the sensor) doesn't need to look up the config separately.
+
 ## [0.55.0] - 2026-08-15
 
 ### Added
