@@ -156,13 +156,13 @@ See the "Usage Profile tab" section above for the underlying idea.
 
 ## Panel / Dashboard
 
-EV Assistant registers a **sidebar panel** automatically — no extra setup beyond the integration itself.
+EV Assistant registers a **sidebar panel** automatically — no extra setup beyond the integration itself. If you have more than one vehicle (i.e. more than one EV Assistant integration instance), a vehicle switcher appears in its own row above the tab bar; every tab shows the currently selected vehicle's data. With only one vehicle configured, the switcher is hidden entirely.
 
 ### Overview tab
 
 Live energy-flow diagram showing current PV, grid, home, battery, and wallbox power. Displays the active charging session (mode, SOC, session energy, solar share, tariff) and any pending charges or trips waiting for confirmation. The SOC bar ("Fahrzeug-Akku") reads from the `soc_entity` configured in step 1, falling back to the evcc vehicle SOC if no `soc_entity` is set.
 
-### Vehicles tab
+### Vehicle tab
 
 Per-vehicle dashboard in a three-column layout:
 

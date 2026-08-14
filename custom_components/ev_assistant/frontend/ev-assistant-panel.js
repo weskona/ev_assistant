@@ -36,7 +36,6 @@ class EVAssistantPanel extends HTMLElement {
     this._homeVehicleFilterInitialized = false;
     this._vehicleIdx = 0;
     this._vtBtns = [];
-    this._vehicleContent = null;
     this._chartPeriod = "woche";
     this._chartNavOffset = 0;
   }
@@ -203,6 +202,13 @@ class EVAssistantPanel extends HTMLElement {
     this.shadowRoot.appendChild(this._buildStyles());
     const app = document.createElement("div");
     app.className = "app";
+    // Fahrzeugauswahl VOR der Tab-Leiste: erst das Fahrzeug waehlen, dann
+    // dessen Tabs -- eigene Zeile statt Teil der App-Bar, sonst konkurriert
+    // der Umschalter mit der Tab-Leiste um den Platz und schiebt hintere
+    // Tabs aus dem sichtbaren (scrollbaren, aber nicht offensichtlichen)
+    // Bereich.
+    const vehicleBar = this._buildVehicleBar();
+    if (vehicleBar) app.appendChild(vehicleBar);
     app.appendChild(this._buildAppbar());
     const main = document.createElement("div");
     main.className = "main";
@@ -229,7 +235,7 @@ class EVAssistantPanel extends HTMLElement {
     tabBar.className = "tabs";
     const TAB_DEFS = [
       ["uebersicht", "mdi:view-dashboard-outline", "Übersicht"],
-      ["fahrzeuge",  "mdi:car-electric",           "Fahrzeuge"],
+      ["fahrzeuge",  "mdi:car-electric",           "Fahrzeug"],
       ["profil",     "mdi:calendar-week",          "Nutzungsprofil"],
       ["analyse",    "mdi:chart-line",             "Analyse"],
       ["leasing",    "mdi:file-document-outline",  "Leasing"],
@@ -246,6 +252,29 @@ class EVAssistantPanel extends HTMLElement {
     bar.appendChild(brand);
     bar.appendChild(tabBar);
     return bar;
+  }
+
+  // Eigene Zeile unter der App-Bar, nur wenn mehr als ein Fahrzeug konfiguriert
+  // ist -- wirkt global auf ALLE Tabs (siehe _switchVehicle()).
+  _buildVehicleBar() {
+    const vehicles = this._config.vehicles;
+    this._vtBtns = [];
+    if (!vehicles || vehicles.length < 2) return null;
+
+    const row = document.createElement("div");
+    row.className = "vt-bar";
+    const pills = document.createElement("div");
+    pills.className = "vt-pills";
+    vehicles.forEach((v, idx) => {
+      const btn = document.createElement("button");
+      btn.className = "vt-pill" + (idx === this._vehicleIdx ? " active" : "");
+      btn.textContent = v.name || v.title;
+      btn.addEventListener("click", () => this._switchVehicle(idx));
+      this._vtBtns.push(btn);
+      pills.appendChild(btn);
+    });
+    row.appendChild(pills);
+    return row;
   }
 
   _switchView(view) {
@@ -583,6 +612,11 @@ class EVAssistantPanel extends HTMLElement {
 
   // --- Tab: Fahrzeuge ---------------------------------------------------------
 
+  // Umschalter sitzt global in der App-Bar (siehe _buildAppbar()) -- wirkt
+  // auf ALLE Tabs, nicht nur "Fahrzeuge", da _vehicleConf()/_eid() ueberall
+  // von derselben _vehicleIdx abhaengen. Deshalb wird hier der komplette
+  // aktuelle Tab neu aufgebaut (nicht nur die Fahrzeugkarte), sonst wuerden
+  // z.B. Analyse/Leasing beim Fahrzeugwechsel stehenbleiben.
   _switchVehicle(idx) {
     if (idx === this._vehicleIdx) return;
     this._vehicleIdx = idx;
@@ -598,41 +632,20 @@ class EVAssistantPanel extends HTMLElement {
     this._histChargeSig = null;
     this._histTripSig = null;
     this._formState = {};
-    if (this._vehicleContent) {
-      this._vehicleContent.innerHTML = "";
-      this._fillVehicleContent(this._vehicleContent);
-      this._vehicleContent.classList.remove("vh-fade");
-      void this._vehicleContent.offsetWidth;
-      this._vehicleContent.classList.add("vh-fade");
+    this._switchView(this._view);
+    if (this._main) {
+      this._main.classList.remove("vh-fade");
+      void this._main.offsetWidth;
+      this._main.classList.add("vh-fade");
     }
-    this._updateVehicle();
   }
 
   _buildVehicle() {
     const wrap = document.createElement("div");
     wrap.className = "tab-wrap";
 
-    const vehicles = this._config.vehicles;
-    if (vehicles && vehicles.length > 1) {
-      const pills = document.createElement("div");
-      pills.className = "vt-pills";
-      this._vtBtns = [];
-      vehicles.forEach((v, idx) => {
-        const btn = document.createElement("button");
-        btn.className = "vt-pill" + (idx === this._vehicleIdx ? " active" : "");
-        btn.textContent = v.name || v.title;
-        btn.addEventListener("click", () => this._switchVehicle(idx));
-        this._vtBtns.push(btn);
-        pills.appendChild(btn);
-      });
-      wrap.appendChild(pills);
-    } else {
-      this._vtBtns = [];
-    }
-
     const content = document.createElement("div");
     content.id = "vh-content";
-    this._vehicleContent = content;
     wrap.appendChild(content);
     this._fillVehicleContent(content);
     return wrap;
@@ -2696,6 +2709,12 @@ class EVAssistantPanel extends HTMLElement {
       }
       .tab:hover { color: var(--ink); }
       .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+      .vt-bar {
+        display: flex; align-items: center; padding: 10px 30px;
+        border-bottom: 1px solid var(--line); flex-shrink: 0;
+        overflow-x: auto; scrollbar-width: none;
+      }
+      .vt-bar::-webkit-scrollbar { display: none; }
 
       /* Main scroll area */
       .main { flex: 1; overflow-y: auto; padding: 24px 28px 40px; overscroll-behavior: contain; }
@@ -3187,6 +3206,7 @@ class EVAssistantPanel extends HTMLElement {
         .appbar { padding: 0 14px; gap: 12px; }
         .brand .btext { display: none; }
         .tab { padding: 0 12px; }
+        .vt-bar { padding: 8px 14px; }
         .main { padding: 16px 14px 30px; }
         .kv { font-size: 1.3rem; }
         .kpi-row { gap: 10px 18px; }
@@ -3201,6 +3221,7 @@ class EVAssistantPanel extends HTMLElement {
         .appbar { padding: 0 14px; gap: 12px; }
         .brand .btext { display: none; }
         .tab { padding: 0 12px; }
+        .vt-bar { padding: 8px 14px; }
         .main { padding: 16px 14px 30px; }
         .kv { font-size: 1.3rem; }
         .kpi-row { gap: 10px 18px; }

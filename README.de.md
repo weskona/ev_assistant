@@ -156,13 +156,13 @@ Siehe „Nutzungsprofil-Tab" oben für die zugrundeliegende Idee.
 
 ## Panel / Dashboard
 
-EV Assistant registriert automatisch ein **Seitenleisten-Panel** — keine zusätzliche Einrichtung über die Integration selbst hinaus erforderlich.
+EV Assistant registriert automatisch ein **Seitenleisten-Panel** — keine zusätzliche Einrichtung über die Integration selbst hinaus erforderlich. Sind mehrere Fahrzeuge (d.h. mehrere EV-Assistant-Integrationsinstanzen) angelegt, erscheint eine Fahrzeugauswahl in einer eigenen Zeile über der Tab-Leiste; jeder Tab zeigt dann die Daten des aktuell gewählten Fahrzeugs. Bei nur einem Fahrzeug bleibt die Auswahl komplett ausgeblendet.
 
 ### Tab „Übersicht"
 
 Live-Energieflussdiagramm mit aktueller PV-, Netz-, Haus-, Speicher- und Wallbox-Leistung. Zeigt die aktive Ladesitzung (Modus, SOC, Sitzungsenergie, Solaranteil, Tarif) sowie ausstehende Fremdladungen oder Fahrten, die auf Bestätigung warten. Der SOC-Balken („Fahrzeug-Akku") liest die in Schritt 1 konfigurierte `soc_entity`; Fallback auf den evcc-Fahrzeug-SOC, wenn keine `soc_entity` gesetzt ist.
 
-### Tab „Fahrzeuge"
+### Tab „Fahrzeug"
 
 Fahrzeugspezifisches Dashboard in einem Drei-Spalten-Layout:
 

@@ -2,6 +2,16 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.57.0] - 2026-08-15
+
+### Changed
+
+- **Global vehicle switcher for multi-vehicle setups**. If you have more than one vehicle configured, the picker to switch between them used to live only inside the "Fahrzeug" tab, even though it silently affected every other tab (Übersicht, Nutzungsprofil, Analyse, Leasing) too — there was just no visible way to change vehicles from those tabs. It's now its own row above the tab bar, always visible, and switching vehicles now fully rebuilds whichever tab you're currently looking at instead of only the "Fahrzeug" tab. Renamed that tab from "Fahrzeuge" to "Fahrzeug" (singular) to match — it shows one vehicle's details, the switcher (not the tab) is what handles multiple. With only one vehicle configured, nothing changes: no switcher row, no extra space, panel looks exactly as before.
+
+### Fixed
+
+- **Config flow could fail on a brand-new vehicle at the notifications step.** `DEFAULT_NOTIFY_EVENTS`/`DEFAULT_SOC_THRESHOLDS` were tuples (intentionally, to avoid a shared mutable default across config entries), but the multi-select fields backing them require a list, and reject a tuple outright — surfaced while testing the vehicle switcher above with a freshly added second vehicle. In practice this never affected the real setup wizard in a browser (the form always submits an explicit list, even for pre-checked defaults), only a fully scripted/automated flow submission — but it's now fixed regardless.
+
 ## [0.56.0] - 2026-08-15
 
 ### Changed

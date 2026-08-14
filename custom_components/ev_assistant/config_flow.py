@@ -294,10 +294,14 @@ def build_output_schema(cur: dict) -> vol.Schema:
     return vol.Schema({
         vol.Optional(CONF_NOTIFY_ENTITIES, description=sv(CONF_NOTIFY_ENTITIES)): _NOTIFY_ENTITIES,
         vol.Optional(
-            CONF_NOTIFY_EVENTS, default=cur.get(CONF_NOTIFY_EVENTS, DEFAULT_NOTIFY_EVENTS)
+            # list(...): DEFAULT_NOTIFY_EVENTS ist bewusst ein Tupel (siehe const.py,
+            # verhindert geteilte In-Place-Mutation), SelectSelector(multiple=True)
+            # verlangt aber zwingend eine list -- ohne die Konvertierung bricht ein
+            # neuer Eintrag, sobald dieses Feld unveraendert (ohne user_input) bleibt.
+            CONF_NOTIFY_EVENTS, default=list(cur.get(CONF_NOTIFY_EVENTS, DEFAULT_NOTIFY_EVENTS))
         ): _NOTIFY_EVENTS,
         vol.Optional(
-            CONF_SOC_THRESHOLDS, default=cur.get(CONF_SOC_THRESHOLDS, DEFAULT_SOC_THRESHOLDS)
+            CONF_SOC_THRESHOLDS, default=list(cur.get(CONF_SOC_THRESHOLDS, DEFAULT_SOC_THRESHOLDS))
         ): _SOC_THRESHOLDS,
     })
 
