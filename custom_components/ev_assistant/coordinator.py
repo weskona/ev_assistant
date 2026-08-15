@@ -1554,14 +1554,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 ]
                 message = f"{len(pending_list)} offene Fremdladungen:\n" + "\n".join(lines) + "\nkWh und Preis eintragen."
 
-        await self._push(
-            NOTIFY_EVENT_FREMDLADUNG, title, message,
-            data={
-                "tag": self._notify_tag,
-                "persistent": True,
-                "actions": [{"action": "URI", "title": "Enter" if en else "Eintragen", "uri": "/lovelace"}],
-            },
-        )
+        await self._push(NOTIFY_EVENT_FREMDLADUNG, title, message)
         try:
             await self.hass.services.async_call(
                 "persistent_notification", "create",
@@ -1571,22 +1564,22 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         except Exception:  # noqa: BLE001
             pass
 
-    async def _push(
-        self, event_key: str, title: str, message: str, data: Optional[dict] = None,
-    ) -> None:
+    async def _push(self, event_key: str, title: str, message: str) -> None:
         """Sendet eine Push-Benachrichtigung an die konfigurierten Notify-
         Entitaeten (moderne, entity-basierte Notify-Plattform), aber nur
         wenn event_key zu den in Schritt 4 ausgewaehlten Ereignissen gehoert
         (siehe const.py::NOTIFY_EVENTS) -- die persistent_notification im
         HA-Bereich "Benachrichtigungen" erscheint davon unabhaengig immer
-        und wird von den Aufrufern separat erzeugt."""
+        und wird von den Aufrufern separat erzeugt. KEIN data-Feld (Tag/
+        Actions/persistent): notify.send_message akzeptiert bei dieser
+        HA-Version nur message/title -- ein data-Feld liess den GESAMTEN
+        Aufruf mit 400 Bad Request abbrechen, bevor ueberhaupt etwas
+        verschickt wurde (weder Push noch Mail), siehe CHANGELOG."""
         events = self._opt(CONF_NOTIFY_EVENTS, DEFAULT_NOTIFY_EVENTS)
         entities = self._opt(CONF_NOTIFY_ENTITIES)
         if event_key not in events or not entities:
             return
         payload = {"entity_id": entities, "title": title, "message": message}
-        if data:
-            payload["data"] = data
         try:
             await self.hass.services.async_call("notify", "send_message", payload, blocking=False)
         except Exception as err:  # noqa: BLE001
@@ -1658,14 +1651,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 title = f"{len(pending_list)} Fahrten erkannt"
                 message = f"{len(pending_list)} offene Fahrten:\n" + "\n".join(lines) + "\nStart-/Zielort eintragen."
 
-        await self._push(
-            NOTIFY_EVENT_FAHRT, title, message,
-            data={
-                "tag": f"{self._notify_tag}_trip",
-                "persistent": True,
-                "actions": [{"action": "URI", "title": "Enter" if en else "Eintragen", "uri": "/lovelace"}],
-            },
-        )
+        await self._push(NOTIFY_EVENT_FAHRT, title, message)
         try:
             await self.hass.services.async_call(
                 "persistent_notification", "create",

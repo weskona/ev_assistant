@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.57.1] - 2026-08-15
+
+### Fixed
+
+- **Push/email notifications for external-charge and trip detection weren't arriving at all** — neither the mobile push nor the email. `notify.send_message`'s current schema only accepts `message`/`title`; the extra `data` payload these two notification types sent (an actionable "Enter" button, a tag, `persistent: true`) is no longer accepted at all, and made the *entire* service call fail with a 400 before it reached any target. SoC-threshold and leasing-budget notifications were unaffected since they never sent `data`. The action button and tag-based replacement/grouping for these two notification types are gone as a result — the persistent in-HA notification (Settings → Notifications) still carries the same information and is unaffected.
+
 ## [0.57.0] - 2026-08-15
 
 ### Changed
