@@ -2169,7 +2169,8 @@ class EVAssistantPanel extends HTMLElement {
           <div class="hist-figures-left">
             ${tSocStr ? `<span class="hist-soc">${tSocStr}</span>` : ""}
             <span class="hist-kwh">${this._fmtNum(h.km, 1)}<small>km</small></span>
-            ${(h.verbrauch_kwh != null) ? `<span class="hist-power" title="${h.verbrauch_unsicher ? "Aus SoC-Delta geschätzt, unplausibel (evtl. Sensor-Aussetzer) – bitte prüfen" : ""}">${h.verbrauch_unsicher ? "⚠️ " : ""}${this._fmtNum(h.verbrauch_kwh, 1)}<small>kWh</small></span>` : ""}
+            ${(h.verbrauch_kwh != null) ? `<span class="hist-power" title="${h.verbrauch_unsicher ? "Aus SoC-Delta geschätzt, unplausibel (evtl. Sensor-Aussetzer) – bitte prüfen" : "Verbrauch dieser Fahrt gesamt"}">${h.verbrauch_unsicher ? "⚠️ " : ""}${this._fmtNum(h.verbrauch_kwh, 1)}<small>kWh</small></span>` : ""}
+            ${(h.verbrauch_kwh != null && h.km) ? `<span class="hist-power" title="Verbrauch dieser Fahrt je 100 km">${this._fmtNum(h.verbrauch_kwh / h.km * 100, 1)}<small>kWh/100km</small></span>` : ""}
             ${(tSpeed && tSpeed > 0 && tSpeed < 300) ? `<span class="hist-power">Ø ${this._fmtNum(tSpeed, 0)}<small>km/h</small></span>` : ""}
           </div>
         </div>

@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.58.0] - 2026-08-15
+
+### Changed
+
+- **Trip history now shows kWh/100km alongside the absolute kWh figure**. Each trip in the trip log only showed its total consumption for that trip (e.g. "4.0 kWh" for a 25 km trip) with nothing indicating it wasn't a per-100km rate — easy to misread as one. Now both numbers are shown side by side (here: "4.0 kWh" and "16.0 kWh/100km").
+
 ## [0.57.1] - 2026-08-15
 
 ### Fixed

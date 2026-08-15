@@ -170,7 +170,7 @@ Fahrzeugspezifisches Dashboard in einem Drei-Spalten-Layout:
 |--------|--------|
 | **Heimladen** | Heimlade-Gesamtwerte (kWh, EUR, Sitzungsanzahl, Ø Solaranteil), letzte Sitzungs-KPIs, vollständige evcc-Sitzungshistorie. Jeder Eintrag zeigt SOC Start→Ende, kWh, Ø Ladeleistung, EUR/kWh, Kosten, Solaranteil, Dauer und einen SOC-Balken. |
 | **Fremdladung** | Fremdladungs-Gesamtwerte, letzte Sitzungs-KPIs, editierbare Historie. Jeder Eintrag zeigt kWh, Ø Ladeleistung, Kosten und einen SOC-Balken; Einträge mit `start_fee` zeigen diese zusätzlich als eigene Zeile neben dem Preis. |
-| **Fahrtenbuch** | Fahrt-Gesamtwerte, letzte Fahrt-KPIs (km, Route), editierbare Fahrthistorie. |
+| **Fahrtenbuch** | Fahrt-Gesamtwerte, letzte Fahrt-KPIs (km, Route), editierbare Fahrthistorie. Jeder Eintrag mit bekanntem Verbrauch zeigt sowohl die Gesamt-kWh der Fahrt als auch die kWh/100km-Rate nebeneinander, damit die absolute Zahl nicht als Rate missverstanden wird. |
 
 ### Nutzungsprofil-Tab
 

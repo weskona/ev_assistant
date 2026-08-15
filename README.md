@@ -170,7 +170,7 @@ Per-vehicle dashboard in a three-column layout:
 |--------|---------|
 | **Home Charging** | Home charging totals (kWh, EUR, session count, avg. solar share), last session KPIs, full evcc session history. Each entry shows SOC start→end, kWh, Ø charge power, EUR/kWh, cost, solar share, duration, and a SOC bar. |
 | **External Charging** | External charge totals, last session KPIs, editable history. Each entry shows kWh, Ø charge power, cost, and a SOC bar; entries with a `start_fee` also show it as a separate line next to the price. |
-| **Trip Log** | Trip totals, last trip KPIs (km, route), editable trip history. |
+| **Trip Log** | Trip totals, last trip KPIs (km, route), editable trip history. Each entry with a known consumption shows both the trip's total kWh and its kWh/100km rate side by side, to avoid misreading the absolute figure as a rate. |
 
 ### Usage Profile tab
 
