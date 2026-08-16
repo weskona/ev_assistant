@@ -3,7 +3,7 @@
     "step": {
       "fahrzeug": {
         "title": "EV Assistant - Fahrzeug",
-        "description": "Schritt 1/8: Fahrzeug-Eckdaten. Nutzbare Akku-Kapazität: der Wert, der tatsächlich zum Fahren/Laden zur Verfügung steht — NICHT die oft größere Brutto-/Werksangabe (z.B. 58 kWh brutto, aber nur 52 kWh nutzbar). Dieser Wert bestimmt direkt, wie viele kWh ein Prozentpunkt SoC-Anstieg entspricht — falsch eingetragen, sind alle Energie-Schätzungen falsch.",
+        "description": "Schritt 1/9: Fahrzeug-Eckdaten. Nutzbare Akku-Kapazität: der Wert, der tatsächlich zum Fahren/Laden zur Verfügung steht — NICHT die oft größere Brutto-/Werksangabe (z.B. 58 kWh brutto, aber nur 52 kWh nutzbar). Dieser Wert bestimmt direkt, wie viele kWh ein Prozentpunkt SoC-Anstieg entspricht — falsch eingetragen, sind alle Energie-Schätzungen falsch.",
         "data": {
           "vehicle_hersteller": "Hersteller",
           "vehicle_modell": "Modell",
@@ -14,9 +14,16 @@
           "charge_efficiency": "Ladewirkungsgrad (AC->Batterie, Startwert)"
         }
       },
+      "modus": {
+        "title": "EV Assistant - Lademodus",
+        "description": "Schritt 2/9: Wie ladest du dein Fahrzeug? Bestimmt NUR, welche der folgenden Schritte und welche Panel-Tabs/Karten angezeigt werden — an der Berechnung selbst ändert sich nichts (ein reiner Fremdlader ist rechnerisch einfach der Fall, in dem die Heim-Werte 0 sind). „Nur auswärts\" blendet den evcc-/Wallbox-Schritt sowie die Heimlade-Karten im Panel aus; „Nur zuhause\" und „Gemischt\" laufen wie gehabt weiter. Über Konfigurieren jederzeit wieder änderbar, ohne dass bereits erfasste Daten verloren gehen.",
+        "data": {
+          "lade_modus": "Lademodus"
+        }
+      },
       "evcc": {
         "title": "EV Assistant - evcc & Wallbox",
-        "description": "Schritt 2/8: Wallbox- und Standort-Entitäten (Ladeleistung, PV, Netz, Tarife, Statistiken) werden automatisch aus der evcc-Integration übernommen. Hier nur noch: Fahrzeugname in evcc (filtert die Heimladen-Historie) und die Leistungsentität deiner Wallbox. Die Wallbox-Leistungsentität dient NUR der Ja/Nein-Erkennung \"lädt gerade zuhause\" (kein Energie-Messwert, liefert naturgemäß nur zuhause Werte) — ohne sie wird jede SoC-Zunahme fälschlich als Fremdladen erkannt. Für die Energie-Messung bei einer Fremdladung unterwegs siehe Schritt 3 (Fahrzeug-Ladeleistung, aus der Fahrzeug-Telemetrie).",
+        "description": "Schritt 3/9: Wallbox- und Standort-Entitäten (Ladeleistung, PV, Netz, Tarife, Statistiken) werden automatisch aus der evcc-Integration übernommen. Hier nur noch: Fahrzeugname in evcc (filtert die Heimladen-Historie) und die Leistungsentität deiner Wallbox. Die Wallbox-Leistungsentität dient NUR der Ja/Nein-Erkennung \"lädt gerade zuhause\" (kein Energie-Messwert, liefert naturgemäß nur zuhause Werte) — ohne sie wird jede SoC-Zunahme fälschlich als Fremdladen erkannt. Für die Energie-Messung bei einer Fremdladung unterwegs siehe Schritt 4 (Fahrzeug-Ladeleistung, aus der Fahrzeug-Telemetrie).",
         "data": {
           "evcc_vehicle_name": "Fahrzeugname in evcc",
           "home_entity": "Wallbox Ladeleistung"
@@ -27,7 +34,7 @@
       },
       "ladeleistung": {
         "title": "EV Assistant - Ladeleistung",
-        "description": "Schritt 3/8: optionale Ladeleistungs- und Wallbox-Energiemessung. Die Fahrzeug-Ladeleistung verbessert die Energie-Schätzung auch bei Fremdladungen unterwegs — im Unterschied zur Wallbox-Leistungsentität aus Schritt 2 kommt sie aus der Fahrzeug-Telemetrie und liefert daher auch abseits der eigenen Wallbox Werte. Der Wallbox-Energiezähler ist ein kumulativer kWh-Zähler und wird nur bei Heimladen ausgewertet: er kalibriert daraus den echten Ladewirkungsgrad (ersetzt danach den Startwert aus Schritt 1, z.B. für die SoC-Schätzung bei Fremdladungen) und gewichtet bei variablen Tarifen den Heimstrompreis für Schritt 8 nach tatsächlich geladener Menge.",
+        "description": "Schritt 4/9: optionale Ladeleistungs- und Wallbox-Energiemessung. Die Fahrzeug-Ladeleistung verbessert die Energie-Schätzung auch bei Fremdladungen unterwegs — im Unterschied zur Wallbox-Leistungsentität aus Schritt 3 kommt sie aus der Fahrzeug-Telemetrie und liefert daher auch abseits der eigenen Wallbox Werte. Der Wallbox-Energiezähler ist ein kumulativer kWh-Zähler und wird nur bei Heimladen ausgewertet: er kalibriert daraus den echten Ladewirkungsgrad (ersetzt danach den Startwert aus Schritt 1, z.B. für die SoC-Schätzung bei Fremdladungen) und gewichtet bei variablen Tarifen den Heimstrompreis für Schritt 9 nach tatsächlich geladener Menge.",
         "data": {
           "power_entity": "Fahrzeug-Ladeleistung (Watt/kW)",
           "power_is_ac": "Ladeleistung ist AC-seitig (Ladepunkt) statt DC-seitig (Batterie)",
@@ -40,7 +47,7 @@
       },
       "ausgabe": {
         "title": "EV Assistant - Benachrichtigungen",
-        "description": "Schritt 4/8: Push-Zielgeräte und wofür benachrichtigt wird. Eine Benachrichtigung im HA-Bereich \"Benachrichtigungen\" erscheint bei Fremdladung, Fahrt und Tankerkönig-Ausfall IMMER automatisch, unabhängig von der Auswahl unten — die ausgewählten Notify-Zielgeräte erhalten zusätzlich einen Push (z.B. aufs Handy), aber nur für die hier ausgewählten Ereignisse. SoC-Schwellenwerte lösen ausschließlich einen Push aus und gelten für jeden laufenden Ladevorgang, egal ob zuhause oder unterwegs.",
+        "description": "Schritt 5/9: Push-Zielgeräte und wofür benachrichtigt wird. Eine Benachrichtigung im HA-Bereich \"Benachrichtigungen\" erscheint bei Fremdladung, Fahrt und Tankerkönig-Ausfall IMMER automatisch, unabhängig von der Auswahl unten — die ausgewählten Notify-Zielgeräte erhalten zusätzlich einen Push (z.B. aufs Handy), aber nur für die hier ausgewählten Ereignisse. SoC-Schwellenwerte lösen ausschließlich einen Push aus und gelten für jeden laufenden Ladevorgang, egal ob zuhause oder unterwegs.",
         "data": {
           "notify_entities": "Notify-Zielgeräte (Push)",
           "notify_events": "Ereignisse, die einen Push auslösen",
@@ -54,7 +61,7 @@
       },
       "erkennung": {
         "title": "EV Assistant - Erkennung",
-        "description": "Schritt 5/8: Feinjustierung der Fremdlade-Erkennung. Standardwerte passen für die meisten Fälle. Ablauf: Ladung startet wenn SoC um die Start-Schwelle steigt; endet bei SoC-Abfall unter den Höchststand oder nach dem Timeout. SoC-Rauschen muss IMMER kleiner sein als die Start-Schwelle. Optional: ein Stecker-Sensor erkennt Ladeende/-fortsetzung direkt statt über den Timeout — bestätigt „eingesteckt“ verhindert ein Splitten bei grob gemeldetem SoC, bestätigt „ausgesteckt“ beendet sofort. Zur Absicherung gegen kurze Fehlmeldungen der Quelle muss ein Wechsel die Debounce-Zeit lang anhalten.",
+        "description": "Schritt 6/9: Feinjustierung der Fremdlade-Erkennung. Standardwerte passen für die meisten Fälle. Ablauf: Ladung startet wenn SoC um die Start-Schwelle steigt; endet bei SoC-Abfall unter den Höchststand oder nach dem Timeout. SoC-Rauschen muss IMMER kleiner sein als die Start-Schwelle. Optional: ein Stecker-Sensor erkennt Ladeende/-fortsetzung direkt statt über den Timeout — bestätigt „eingesteckt“ verhindert ein Splitten bei grob gemeldetem SoC, bestätigt „ausgesteckt“ beendet sofort. Zur Absicherung gegen kurze Fehlmeldungen der Quelle muss ein Wechsel die Debounce-Zeit lang anhalten.",
         "data": {
           "start_delta": "Start-Schwelle (%, ab wie viel SoC-Anstieg eine Ladung gilt)",
           "noise": "SoC-Rauschen (%, Toleranz — muss kleiner sein als die Start-Schwelle!)",
@@ -66,7 +73,7 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Fahrtenbuch",
-        "description": "Schritt 6/8: Feinjustierung der automatischen Fahrten-Erkennung, die denselben Kilometerstand-Sensor aus Schritt 1 nutzt. Standardwerte passen für die meisten Fälle. Optional: ein Motor-/Fahr-Sensor (z.B. Zündung/„Ready\") ergänzt die Erkennung um ein zweites Signal für Fahrzeuge, deren Kilometerstand zu grob/selten aktualisiert wird, um Fahrtbeginn/-ende direkt daraus abzuleiten — die Strecke stammt trotzdem immer aus dem Kilometerstand. Eine optionale Außentemperatur-Entität (Wetter-Integration oder Sensor) gruppiert den Verbrauch nach Temperaturband und macht die geschätzte Reichweite bei genug Fahrten winterfest.",
+        "description": "Schritt 7/9: Feinjustierung der automatischen Fahrten-Erkennung, die denselben Kilometerstand-Sensor aus Schritt 1 nutzt. Standardwerte passen für die meisten Fälle. Optional: ein Motor-/Fahr-Sensor (z.B. Zündung/„Ready\") ergänzt die Erkennung um ein zweites Signal für Fahrzeuge, deren Kilometerstand zu grob/selten aktualisiert wird, um Fahrtbeginn/-ende direkt daraus abzuleiten — die Strecke stammt trotzdem immer aus dem Kilometerstand. Eine optionale Außentemperatur-Entität (Wetter-Integration oder Sensor) gruppiert den Verbrauch nach Temperaturband und macht die geschätzte Reichweite bei genug Fahrten winterfest.",
         "data": {
           "trip_min_km": "Mindest-Strecke (km)",
           "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s)",
@@ -81,7 +88,7 @@
       },
       "leasing": {
         "title": "EV Assistant - Leasing-Kilometerbudget",
-        "description": "Schritt 7/8: Optionales Leasing-Kilometerbudget, alle Felder optional. Nutzt denselben Kilometerstand-Sensor aus Schritt 1 — kein zusätzlicher Sensor nötig. Aktiv wird das Feature erst, sobald sowohl das Vertragsende als auch die inkludierten Gesamt-km eingetragen sind; ohne die beiden bleibt der ganze Bereich (Sensoren, Panel-Tab) inaktiv. Minderkilometer werden nur ausgewiesen, wenn ein Erstattungspreis eingetragen ist — viele Verträge erstatten sie gar nicht oder nur gedeckelt.",
+        "description": "Schritt 8/9: Optionales Leasing-Kilometerbudget, alle Felder optional. Nutzt denselben Kilometerstand-Sensor aus Schritt 1 — kein zusätzlicher Sensor nötig. Aktiv wird das Feature erst, sobald sowohl das Vertragsende als auch die inkludierten Gesamt-km eingetragen sind; ohne die beiden bleibt der ganze Bereich (Sensoren, Panel-Tab) inaktiv. Minderkilometer werden nur ausgewiesen, wenn ein Erstattungspreis eingetragen ist — viele Verträge erstatten sie gar nicht oder nur gedeckelt.",
         "data": {
           "leasing_start_km": "Kilometerstand bei Vertragsbeginn",
           "leasing_start_datum": "Vertragsbeginn",
@@ -93,7 +100,7 @@
       },
       "vergleich": {
         "title": "EV Assistant - Kostenvergleich",
-        "description": "Schritt 8/8: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional. Heimladen-Kosten setzen einen Wallbox-Energiezähler aus Schritt 3 voraus. Kraftstoffpreis-Priorität: Tankerkönig-Kraftstoffsorte (automatisch, günstigste offene Tankstelle) > Entität > fester Wert — nur eine Quelle konfigurieren.",
+        "description": "Schritt 9/9: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional. Heimladen-Kosten setzen einen Wallbox-Energiezähler aus Schritt 4 voraus. Kraftstoffpreis-Priorität: Tankerkönig-Kraftstoffsorte (automatisch, günstigste offene Tankstelle) > Entität > fester Wert — nur eine Quelle konfigurieren.",
         "data": {
           "home_price_kwh": "Preis pro kWh (Heimladen)",
           "home_price_entity": "Heimstrompreis-Entität (überschreibt den festen Preis)",
@@ -117,7 +124,7 @@
     "step": {
       "fahrzeug": {
         "title": "EV Assistant - Fahrzeug",
-        "description": "Schritt 1/8: Fahrzeug-Eckdaten.",
+        "description": "Schritt 1/9: Fahrzeug-Eckdaten.",
         "data": {
           "vehicle_hersteller": "Hersteller",
           "vehicle_modell": "Modell",
@@ -128,9 +135,16 @@
           "charge_efficiency": "Ladewirkungsgrad (AC->Batterie, Startwert)"
         }
       },
+      "modus": {
+        "title": "EV Assistant - Lademodus",
+        "description": "Schritt 2/9: Lademodus — bestimmt nur Sichtbarkeit (Panel-Tabs/Karten, welche weiteren Schritte erscheinen), keine Rechenlogik. Jederzeit änderbar, ohne dass bereits erfasste Daten verloren gehen.",
+        "data": {
+          "lade_modus": "Lademodus"
+        }
+      },
       "evcc": {
         "title": "EV Assistant - evcc & Wallbox",
-        "description": "Schritt 2/8: Wallbox- und Standort-Entitäten werden automatisch aus der evcc-Integration übernommen.",
+        "description": "Schritt 3/9: Wallbox- und Standort-Entitäten werden automatisch aus der evcc-Integration übernommen.",
         "data": {
           "evcc_vehicle_name": "Fahrzeugname in evcc",
           "home_entity": "Wallbox Ladeleistung"
@@ -141,7 +155,7 @@
       },
       "ladeleistung": {
         "title": "EV Assistant - Ladeleistung",
-        "description": "Schritt 3/8: optionale Fahrzeug-Ladeleistung (aus der Fahrzeug-Telemetrie, liefert auch unterwegs Werte) und Wallbox-Energiezähler (kalibriert den Ladewirkungsgrad und den Heimladen-Preis für Schritt 8).",
+        "description": "Schritt 4/9: optionale Fahrzeug-Ladeleistung (aus der Fahrzeug-Telemetrie, liefert auch unterwegs Werte) und Wallbox-Energiezähler (kalibriert den Ladewirkungsgrad und den Heimladen-Preis für Schritt 9).",
         "data": {
           "power_entity": "Fahrzeug-Ladeleistung (Watt/kW)",
           "power_is_ac": "Ladeleistung ist AC-seitig (Ladepunkt) statt DC-seitig (Batterie)",
@@ -154,7 +168,7 @@
       },
       "ausgabe": {
         "title": "EV Assistant - Benachrichtigungen",
-        "description": "Schritt 4/8: Push-Zielgeräte, Ereignisse und SoC-Schwellenwerte für Benachrichtigungen.",
+        "description": "Schritt 5/9: Push-Zielgeräte, Ereignisse und SoC-Schwellenwerte für Benachrichtigungen.",
         "data": {
           "notify_entities": "Notify-Zielgeräte (Push)",
           "notify_events": "Ereignisse, die einen Push auslösen",
@@ -168,7 +182,7 @@
       },
       "erkennung": {
         "title": "EV Assistant - Erkennung",
-        "description": "Schritt 5/8: Feinjustierung der Fremdlade-Erkennung. Optional: ein Stecker-Sensor erkennt Ladeende/-fortsetzung direkt statt über den Timeout (siehe Debounce).",
+        "description": "Schritt 6/9: Feinjustierung der Fremdlade-Erkennung. Optional: ein Stecker-Sensor erkennt Ladeende/-fortsetzung direkt statt über den Timeout (siehe Debounce).",
         "data": {
           "start_delta": "Start-Schwelle (%, ab wie viel SoC-Anstieg eine Ladung gilt)",
           "noise": "SoC-Rauschen (%, Toleranz — muss kleiner sein als die Start-Schwelle!)",
@@ -180,7 +194,7 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Fahrtenbuch",
-        "description": "Schritt 6/8: Feinjustierung der automatischen Fahrten-Erkennung. Optional: ein Motor-/Fahr-Sensor ergänzt die Erkennung um ein zweites Signal (siehe Debounce). Eine Außentemperatur-Entität gruppiert den Verbrauch nach Temperaturband für eine winterfeste Reichweitenschätzung.",
+        "description": "Schritt 7/9: Feinjustierung der automatischen Fahrten-Erkennung. Optional: ein Motor-/Fahr-Sensor ergänzt die Erkennung um ein zweites Signal (siehe Debounce). Eine Außentemperatur-Entität gruppiert den Verbrauch nach Temperaturband für eine winterfeste Reichweitenschätzung.",
         "data": {
           "trip_min_km": "Mindest-Strecke (km)",
           "trip_idle_timeout_s": "Standzeit bis Fahrt-Ende (s)",
@@ -195,7 +209,7 @@
       },
       "leasing": {
         "title": "EV Assistant - Leasing-Kilometerbudget",
-        "description": "Schritt 7/8: Optionales Leasing-Kilometerbudget. Aktiv erst mit Vertragsende UND inkludierten Gesamt-km. Minderkilometer nur mit eingetragenem Erstattungspreis.",
+        "description": "Schritt 8/9: Optionales Leasing-Kilometerbudget. Aktiv erst mit Vertragsende UND inkludierten Gesamt-km. Minderkilometer nur mit eingetragenem Erstattungspreis.",
         "data": {
           "leasing_start_km": "Kilometerstand bei Vertragsbeginn",
           "leasing_start_datum": "Vertragsbeginn",
@@ -207,7 +221,7 @@
       },
       "vergleich": {
         "title": "EV Assistant - Kostenvergleich",
-        "description": "Schritt 8/8: Optionaler Kostenvergleich gegenüber einem Verbrenner. Kraftstoffpreis-Priorität: Tankerkönig-Kraftstoffsorte > Entität > fester Wert.",
+        "description": "Schritt 9/9: Optionaler Kostenvergleich gegenüber einem Verbrenner. Kraftstoffpreis-Priorität: Tankerkönig-Kraftstoffsorte > Entität > fester Wert.",
         "data": {
           "home_price_kwh": "Preis pro kWh (Heimladen)",
           "home_price_entity": "Heimstrompreis-Entität (überschreibt den festen Preis)",
@@ -232,6 +246,13 @@
         "fahrt": "Fahrt erkannt",
         "tankerkoenig": "Tankerkönig nicht verfügbar",
         "leasing": "Leasing-Kilometerbudget kritisch"
+      }
+    },
+    "lade_modus": {
+      "options": {
+        "nur_zuhause": "Nur zuhause",
+        "gemischt": "Gemischt (zuhause + auswärts)",
+        "nur_auswaerts": "Nur auswärts"
       }
     }
   },

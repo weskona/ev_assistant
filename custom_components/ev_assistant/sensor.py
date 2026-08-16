@@ -182,6 +182,13 @@ class TotalCostSensor(EvAssistantEntity, SensorEntity):
 
 
 class CountSensor(EvAssistantEntity, SensorEntity):
+    """Fremdladung-Anzahl -- traegt zusaetzlich "lade_modus" als Attribut
+    (siehe coordinator.py::lade_modus()), damit das Panel den Modus lesen
+    kann, ohne einen neuen Netzwerkweg/Sensor dafuer zu brauchen (dieselbe
+    Entitaet wird ohnehin schon fuer die Fahrzeuge-Tab-KPI aufgeloest).
+    Bewusst hier statt an einer neuen dedizierten Entitaet, um keine
+    zusaetzliche Sensor-Entitaet nur fuer ein Sichtbarkeits-Flag anzulegen."""
+
     _attr_translation_key = "count"
     # Siehe Kommentar bei TotalKwhSensor -- totals["count"] kann durch
     # delete_charge() sinken.
@@ -194,6 +201,10 @@ class CountSensor(EvAssistantEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator.data.get("totals", {}).get("count", 0)
+
+    @property
+    def extra_state_attributes(self):
+        return {"lade_modus": self.coordinator.lade_modus()}
 
 
 class LastPriceSensor(EvAssistantEntity, SensorEntity):

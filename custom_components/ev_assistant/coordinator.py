@@ -38,6 +38,7 @@ from .const import (
     CONF_HOME_PRICE_KWH,
     CONF_HOME_TEMPLATE,
     CONF_IDLE_TIMEOUT,
+    CONF_LADE_MODUS,
     CONF_LEASING_END_DATUM,
     CONF_LEASING_INKL_KM,
     CONF_LEASING_PREIS_MEHR_KM,
@@ -124,6 +125,7 @@ from .const import (
     TRIP_CONSUMPTION_CHECK_MIN_KM,
     TRIP_CONSUMPTION_MAX_KWH_100KM,
     TRIP_CONSUMPTION_MIN_KWH_100KM,
+    resolve_lade_modus,
 )
 from .engine import (
     ChargeDetector,
@@ -379,6 +381,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     def _opt(self, key, default=None):
         return self.entry.options.get(key, self.entry.data.get(key, default))
+
+    def lade_modus(self) -> str:
+        """Aktueller Lade-Modus (siehe const.py::resolve_lade_modus()) --
+        steuert nur Panel-/Config-Flow-Sichtbarkeit, keine Rechenlogik.
+        Bestandsinstallationen ohne gespeicherten CONF_LADE_MODUS erhalten
+        hier defensiv "gemischt" -- identisch zum bisherigen Verhalten."""
+        return resolve_lade_modus(self._opt(CONF_LADE_MODUS))
 
     async def async_setup(self) -> None:
         stored = await self._store.async_load()

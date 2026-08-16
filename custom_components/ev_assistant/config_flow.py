@@ -41,6 +41,7 @@ from .const import (
     CONF_HOME_PRICE_ENTITY,
     CONF_HOME_PRICE_KWH,
     CONF_IDLE_TIMEOUT,
+    CONF_LADE_MODUS,
     CONF_LEASING_END_DATUM,
     CONF_LEASING_INKL_KM,
     CONF_LEASING_PREIS_MEHR_KM,
@@ -78,6 +79,7 @@ from .const import (
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY,
     DEFAULT_IDLE_TIMEOUT,
+    DEFAULT_LADE_MODUS,
     DEFAULT_MOTOR_DEBOUNCE,
     DEFAULT_NOISE,
     DEFAULT_NOTIFY_EVENTS,
@@ -92,6 +94,9 @@ from .const import (
     DEFAULT_USAGE_PROFILE_BUFFER_PCT,
     DOMAIN,
     EVCC_CONF_KEYS,
+    LADE_MODUS_GEMISCHT,
+    LADE_MODUS_NUR_AUSWAERTS,
+    LADE_MODUS_NUR_ZUHAUSE,
     NOTIFY_EVENTS,
     SOC_THRESHOLD_OPTIONS,
 )
@@ -149,6 +154,13 @@ _TANKERKOENIG_FUEL_TYPE = selector.SelectSelector(
 
 _EVCC_VEHICLE_NAME = selector.TextSelector(
     selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
+)
+_LADE_MODUS = selector.SelectSelector(
+    selector.SelectSelectorConfig(
+        options=[LADE_MODUS_NUR_ZUHAUSE, LADE_MODUS_GEMISCHT, LADE_MODUS_NUR_AUSWAERTS],
+        translation_key="lade_modus",
+        mode=selector.SelectSelectorMode.LIST,
+    )
 )
 _NOTIFY_ENTITIES = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="notify", multiple=True)
@@ -257,6 +269,18 @@ def build_vehicle_schema(cur: dict) -> vol.Schema:
         vol.Required(CONF_SOC_ENTITY, description=sv(CONF_SOC_ENTITY)): _SOC_ENTITY,
         vol.Required(CONF_USABLE_KWH, default=cur.get(CONF_USABLE_KWH, DEFAULT_USABLE_KWH)): vol.Coerce(float),
         vol.Optional(CONF_EFFICIENCY, default=cur.get(CONF_EFFICIENCY, DEFAULT_EFFICIENCY)): vol.Coerce(float),
+    })
+
+
+def build_modus_schema(cur: dict) -> vol.Schema:
+    """Schritt 2: Lade-Modus -- steuert NUR Sichtbarkeit (Panel-Tabs/Karten,
+    welche der folgenden Schritte erscheinen), keine Rechenlogik (siehe
+    const.py::resolve_lade_modus()). Jederzeit in der OptionsFlow aenderbar,
+    additiv: siehe async_step_modus()/_carry_forward() dort."""
+    return vol.Schema({
+        vol.Required(
+            CONF_LADE_MODUS, default=cur.get(CONF_LADE_MODUS, DEFAULT_LADE_MODUS)
+        ): _LADE_MODUS,
     })
 
 
@@ -407,25 +431,47 @@ def _noise_ok(data: dict) -> bool:
 
 
 def _all_step_schema_keys() -> set[str]:
-    """Alle Config-Keys, die eines der 8 Options-Flow-Formulare abdeckt."""
+    """Alle Config-Keys, die eines der 9 Options-Flow-Formulare abdeckt."""
     schemas = (
-        build_vehicle_schema({}), build_evcc_schema({}), build_power_schema({}),
-        build_output_schema({}), build_detection_schema({}), build_trip_schema({}),
-        build_leasing_schema({}), build_comparison_schema({}),
+        build_vehicle_schema({}), build_modus_schema({}), build_evcc_schema({}),
+        build_power_schema({}), build_output_schema({}), build_detection_schema({}),
+        build_trip_schema({}), build_leasing_schema({}), build_comparison_schema({}),
     )
     return {str(key) for schema in schemas for key in schema.schema}
 
 
+def _carry_forward(current: dict, data: dict, schema: vol.Schema) -> dict:
+    """Werte fuer alle Felder von `schema` aus `current` in `data`
+    uebernehmen, falls dort noch nicht gesetzt -- fuer Schritte, die der
+    Lade-Modus bedingt ueberspringt (siehe async_step_modus() in beiden
+    Flows). Ohne das wuerden deren bereits konfigurierte Werte beim
+    Speichern als "nicht mehr angegeben" geloescht (siehe
+    _all_step_schema_keys()/"preserved"-Logik in async_step_vergleich()),
+    obwohl der Nutzer sie nur voruebergehend nicht mehr sieht, nicht
+    zuruecksetzen wollte."""
+    result = dict(data)
+    for key in schema.schema:
+        k = str(key)
+        if k not in result and k in current:
+            result[k] = current[k]
+    return result
+
+
 class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Mehrschrittige Ersteinrichtung (7 Schritte).
+    """Mehrschrittige Ersteinrichtung (9 Schritte, davon 2 fuer
+    LADE_MODUS_NUR_AUSWAERTS uebersprungen -- siehe async_step_modus()).
 
     1 fahrzeug:    Eckdaten, ODO, SoC-Entitaet, Akkugroesse.
-    2 evcc:        Fahrzeugname in evcc + Wallbox-Leistungsentitaet.
-    3 ladeleistung: Fahrzeug-Ladeleistung + Wallbox-Energiezaehler.
-    4 ausgabe:     Push-Benachrichtigung.
-    5 erkennung:   ChargeDetector-Schwellwerte.
-    6 fahrtenbuch: TripDetector + GPS.
-    7 vergleich:   Kostenvergleich; legt Eintrag an (inkl. evcc-Discovery).
+    2 modus:       Lade-Modus (steuert nur Sichtbarkeit, siehe const.py).
+    3 evcc:        Fahrzeugname in evcc + Wallbox-Leistungsentitaet.
+                   -- UEBERSPRUNGEN bei "nur_auswaerts".
+    4 ladeleistung: Fahrzeug-Ladeleistung + Wallbox-Energiezaehler.
+                   -- UEBERSPRUNGEN bei "nur_auswaerts".
+    5 ausgabe:     Push-Benachrichtigung.
+    6 erkennung:   ChargeDetector-Schwellwerte.
+    7 fahrtenbuch: TripDetector + GPS.
+    8 leasing:     Optionales Leasing-Kilometerbudget.
+    9 vergleich:   Kostenvergleich; legt Eintrag an (inkl. evcc-Discovery).
     """
 
     VERSION = 1
@@ -452,11 +498,23 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(cleaned[CONF_SOC_ENTITY])
                 self._abort_if_unique_id_configured()
                 self._data = {**self._data, **cleaned}
-                return await self.async_step_evcc()
+                return await self.async_step_modus()
 
         cur = user_input if user_input is not None else self._data
         return self.async_show_form(
             step_id="fahrzeug", data_schema=build_vehicle_schema(cur), errors=errors
+        )
+
+    async def async_step_modus(self, user_input=None) -> FlowResult:
+        if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            if self._data.get(CONF_LADE_MODUS) == LADE_MODUS_NUR_AUSWAERTS:
+                return await self.async_step_ausgabe()
+            return await self.async_step_evcc()
+
+        cur = user_input if user_input is not None else self._data
+        return self.async_show_form(
+            step_id="modus", data_schema=build_modus_schema(cur)
         )
 
     async def async_step_evcc(self, user_input=None) -> FlowResult:
@@ -547,7 +605,10 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class EvAssistantOptionsFlow(OptionsFlow):
-    """Spiegelt dieselbe 7-Schritt-Kette wie die Ersteinrichtung."""
+    """Spiegelt dieselbe 9-Schritt-Kette wie die Ersteinrichtung (siehe
+    EvAssistantConfigFlow-Docstring). Der Lade-Modus ist HIER jederzeit
+    aenderbar (nicht nur bei der Ersteinrichtung) -- ein Wechsel ist rein
+    additiv/nicht destruktiv: siehe async_step_modus()/_carry_forward()."""
 
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._entry = config_entry
@@ -567,10 +628,29 @@ class EvAssistantOptionsFlow(OptionsFlow):
                 errors["base"] = "vehicle_name_required"
             else:
                 self._data = {**self._data, **cleaned}
-                return await self.async_step_evcc()
+                return await self.async_step_modus()
 
         return self.async_show_form(
             step_id="fahrzeug", data_schema=build_vehicle_schema(self._current()), errors=errors
+        )
+
+    async def async_step_modus(self, user_input=None) -> FlowResult:
+        if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            if self._data.get(CONF_LADE_MODUS) == LADE_MODUS_NUR_AUSWAERTS:
+                # evcc-/Ladeleistungs-Schritte werden jetzt uebersprungen --
+                # ihre bereits konfigurierten Werte trotzdem unveraendert
+                # uebernehmen (siehe _carry_forward()), sonst wuerden sie
+                # beim Speichern als "nicht mehr angegeben" geloescht statt
+                # nur nicht mehr angezeigt/genutzt zu werden.
+                current = self._current()
+                self._data = _carry_forward(current, self._data, build_evcc_schema({}))
+                self._data = _carry_forward(current, self._data, build_power_schema({}))
+                return await self.async_step_ausgabe()
+            return await self.async_step_evcc()
+
+        return self.async_show_form(
+            step_id="modus", data_schema=build_modus_schema(self._current())
         )
 
     async def async_step_evcc(self, user_input=None) -> FlowResult:

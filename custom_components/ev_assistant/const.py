@@ -76,6 +76,34 @@ CONF_VEHICLE_MODELL = "vehicle_modell"
 CONF_ERSTZULASSUNG = "erstzulassung"
 CONF_ODO_ENTITY = "odo_entity"
 
+# Lade-Modus: steuert NUR Sichtbarkeit (Panel-Tabs/Karten, welche Config-Flow-
+# Schritte erscheinen) -- NICHT die Rechenlogik in engine.py. Ein reiner
+# Fremdlader ist rechnerisch einfach der Fall, in dem die Heim-Aggregate 0
+# sind (siehe coordinator.py::lade_modus()). "gemischt" ist Default UND der
+# Wert, der fuer Bestandsinstallationen ohne gespeicherten CONF_LADE_MODUS
+# ueberall gilt (siehe resolve_lade_modus() unten) -- fuer die aendert sich
+# dadurch nichts.
+CONF_LADE_MODUS = "lade_modus"
+LADE_MODUS_NUR_ZUHAUSE = "nur_zuhause"
+LADE_MODUS_GEMISCHT = "gemischt"
+LADE_MODUS_NUR_AUSWAERTS = "nur_auswaerts"
+LADE_MODUS_OPTIONS = (LADE_MODUS_NUR_ZUHAUSE, LADE_MODUS_GEMISCHT, LADE_MODUS_NUR_AUSWAERTS)
+DEFAULT_LADE_MODUS = LADE_MODUS_GEMISCHT
+
+
+def resolve_lade_modus(value) -> str:
+    """Liefert einen gueltigen Lade-Modus fuer `value` (Rohwert aus
+    entry.options/-.data). Fehlt er (Bestandsinstallationen vor Einfuehrung
+    dieses Feldes) oder ist er kein bekannter Modus, gilt defensiv
+    LADE_MODUS_GEMISCHT -- identisch zum bisherigen (impliziten) Verhalten,
+    also keine Aenderung fuer Bestandsnutzer. Bewusst eine reine Funktion
+    ohne HA-Import (wie der Rest von const.py), damit sie ohne HomeAssistant-
+    Installation per pytest testbar ist -- anders als coordinator.py/
+    config_flow.py, die HA-Importe ziehen. Zentral hier statt an jeder
+    Lesestelle einzeln dupliziert, damit nur eine Stelle den Default kennen
+    muss (siehe coordinator.py::lade_modus())."""
+    return value if value in LADE_MODUS_OPTIONS else DEFAULT_LADE_MODUS
+
 # Fahrtenbuch: Feinjustierung der Fahrten-Erkennung (engine.py::TripDetector),
 # basiert auf derselben Kilometerstand-Entitaet (CONF_ODO_ENTITY oben).
 CONF_TRIP_MIN_KM = "trip_min_km"

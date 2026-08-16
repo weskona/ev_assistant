@@ -3,7 +3,7 @@
     "step": {
       "fahrzeug": {
         "title": "EV Assistant - Vehicle",
-        "description": "Step 1/8: Vehicle details. Usable battery capacity: the value actually available for driving/charging — NOT the larger gross/factory spec (e.g. 58 kWh gross, but only 52 kWh usable). This value directly determines how many kWh one SoC percentage point equals — if entered incorrectly, all energy estimates will be wrong.",
+        "description": "Step 1/9: Vehicle details. Usable battery capacity: the value actually available for driving/charging — NOT the larger gross/factory spec (e.g. 58 kWh gross, but only 52 kWh usable). This value directly determines how many kWh one SoC percentage point equals — if entered incorrectly, all energy estimates will be wrong.",
         "data": {
           "vehicle_hersteller": "Manufacturer",
           "vehicle_modell": "Model",
@@ -14,9 +14,16 @@
           "charge_efficiency": "Charging efficiency (AC→battery, initial value)"
         }
       },
+      "modus": {
+        "title": "EV Assistant - Charging Mode",
+        "description": "Step 2/9: How do you charge your vehicle? Only determines which of the following steps and which panel tabs/cards are shown — the calculations themselves don't change (a pure external charger is simply the case where the home values are 0). \"Away only\" hides the evcc/wallbox step and the home-charging cards in the panel; \"Home only\" and \"Mixed\" continue exactly as before. Changeable again at any time via Configure, without losing any already-recorded data.",
+        "data": {
+          "lade_modus": "Charging mode"
+        }
+      },
       "evcc": {
         "title": "EV Assistant - evcc & Wallbox",
-        "description": "Step 2/8: Wallbox and site entities (charge power, PV, grid, tariffs, statistics) are automatically imported from the evcc integration. Only needed here: the vehicle name in evcc (filters home-charging history) and the power entity of your wallbox. The wallbox power entity is used ONLY for yes/no detection of 'currently charging at home' (not an energy value, and it naturally only reports anything while at home) — without it, every SoC increase will be incorrectly classified as external charging. For energy measurement during external charging, see step 3 (vehicle charge power, from vehicle telemetry).",
+        "description": "Step 3/9: Wallbox and site entities (charge power, PV, grid, tariffs, statistics) are automatically imported from the evcc integration. Only needed here: the vehicle name in evcc (filters home-charging history) and the power entity of your wallbox. The wallbox power entity is used ONLY for yes/no detection of 'currently charging at home' (not an energy value, and it naturally only reports anything while at home) — without it, every SoC increase will be incorrectly classified as external charging. For energy measurement during external charging, see step 4 (vehicle charge power, from vehicle telemetry).",
         "data": {
           "evcc_vehicle_name": "Vehicle name in evcc",
           "home_entity": "Wallbox charge power"
@@ -27,7 +34,7 @@
       },
       "ladeleistung": {
         "title": "EV Assistant - Charge Power",
-        "description": "Step 3/8: optional vehicle charge power and wallbox energy measurement. The vehicle charge power improves energy estimates for external charging sessions — unlike the wallbox power entity from step 2, it comes from vehicle telemetry and therefore also reports values away from your own wallbox. The wallbox energy meter is a cumulative kWh counter and is only evaluated during home charging: it calibrates the real charging efficiency from it (which then replaces the initial value from step 1, e.g. for SoC-based estimates during external charging) and, with variable tariffs, weights the home electricity price for step 8 by the amount actually charged.",
+        "description": "Step 4/9: optional vehicle charge power and wallbox energy measurement. The vehicle charge power improves energy estimates for external charging sessions — unlike the wallbox power entity from step 3, it comes from vehicle telemetry and therefore also reports values away from your own wallbox. The wallbox energy meter is a cumulative kWh counter and is only evaluated during home charging: it calibrates the real charging efficiency from it (which then replaces the initial value from step 1, e.g. for SoC-based estimates during external charging) and, with variable tariffs, weights the home electricity price for step 9 by the amount actually charged.",
         "data": {
           "power_entity": "Vehicle charge power (W/kW)",
           "power_is_ac": "Charge power is AC-side (charge point) not DC-side (battery)",
@@ -40,7 +47,7 @@
       },
       "ausgabe": {
         "title": "EV Assistant - Notifications",
-        "description": "Step 4/8: push target devices and what triggers a notification. A notification in the HA 'Notifications' area ALWAYS appears automatically for external charging, trips, and Tankerkönig outages, regardless of the selection below — the selected notify target devices additionally receive a push (e.g. to your phone), but only for the events selected here. SoC thresholds only trigger a push and apply to any charging session in progress, whether at home or away.",
+        "description": "Step 5/9: push target devices and what triggers a notification. A notification in the HA 'Notifications' area ALWAYS appears automatically for external charging, trips, and Tankerkönig outages, regardless of the selection below — the selected notify target devices additionally receive a push (e.g. to your phone), but only for the events selected here. SoC thresholds only trigger a push and apply to any charging session in progress, whether at home or away.",
         "data": {
           "notify_entities": "Notify target devices (push)",
           "notify_events": "Events that trigger a push",
@@ -54,7 +61,7 @@
       },
       "erkennung": {
         "title": "EV Assistant - Detection",
-        "description": "Step 5/8: fine-tuning of external charging detection. Default values work for most cases. Flow: charging starts when SoC rises by the start threshold; ends on SoC drop below the peak or after timeout. SoC noise must ALWAYS be smaller than the start threshold. Optional: a plug sensor detects charge end/continuation directly instead of via the timeout — a confirmed “plugged in” prevents a split when SoC is reported coarsely, a confirmed “unplugged” ends immediately. To guard against brief false readings from the source, a change must hold for the debounce time.",
+        "description": "Step 6/9: fine-tuning of external charging detection. Default values work for most cases. Flow: charging starts when SoC rises by the start threshold; ends on SoC drop below the peak or after timeout. SoC noise must ALWAYS be smaller than the start threshold. Optional: a plug sensor detects charge end/continuation directly instead of via the timeout — a confirmed “plugged in” prevents a split when SoC is reported coarsely, a confirmed “unplugged” ends immediately. To guard against brief false readings from the source, a change must hold for the debounce time.",
         "data": {
           "start_delta": "Start threshold (%, minimum SoC rise to count as charging)",
           "noise": "SoC noise (%, tolerance — must be smaller than the start threshold!)",
@@ -66,7 +73,7 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Trip Log",
-        "description": "Step 6/8: fine-tuning of automatic trip detection, which uses the same odometer sensor from step 1. Default values work for most cases. Optional: a motor/driving sensor (e.g. ignition/\"Ready\") adds a second signal for vehicles whose odometer updates too coarsely/infrequently to derive trip start/end from it directly — distance is still always taken from the odometer. An optional outside temperature entity (weather integration or sensor) groups consumption by temperature band, making the estimated range winter-proof once enough trips are logged.",
+        "description": "Step 7/9: fine-tuning of automatic trip detection, which uses the same odometer sensor from step 1. Default values work for most cases. Optional: a motor/driving sensor (e.g. ignition/\"Ready\") adds a second signal for vehicles whose odometer updates too coarsely/infrequently to derive trip start/end from it directly — distance is still always taken from the odometer. An optional outside temperature entity (weather integration or sensor) groups consumption by temperature band, making the estimated range winter-proof once enough trips are logged.",
         "data": {
           "trip_min_km": "Minimum distance (km)",
           "trip_idle_timeout_s": "Idle time until trip end (s)",
@@ -81,7 +88,7 @@
       },
       "leasing": {
         "title": "EV Assistant - Leasing Mileage Budget",
-        "description": "Step 7/8: optional leasing mileage budget, all fields optional. Uses the same odometer sensor from step 1 — no extra sensor needed. Becomes active once both the contract end date and the total included km are set; without both, the whole feature (sensors, panel tab) stays inactive. Under-mileage credit is only shown if a refund price is entered — many contracts don't refund it at all, or only up to a cap.",
+        "description": "Step 8/9: optional leasing mileage budget, all fields optional. Uses the same odometer sensor from step 1 — no extra sensor needed. Becomes active once both the contract end date and the total included km are set; without both, the whole feature (sensors, panel tab) stays inactive. Under-mileage credit is only shown if a refund price is entered — many contracts don't refund it at all, or only up to a cap.",
         "data": {
           "leasing_start_km": "Odometer reading at contract start",
           "leasing_start_datum": "Contract start",
@@ -93,7 +100,7 @@
       },
       "vergleich": {
         "title": "EV Assistant - Cost Comparison",
-        "description": "Step 8/8: Optional cost comparison against a combustion vehicle. All fields optional. Home-charging costs require a wallbox energy meter from step 3. Fuel price priority: Tankerkönig fuel type (automatic, cheapest open station) > entity > fixed value — configure only one source.",
+        "description": "Step 9/9: Optional cost comparison against a combustion vehicle. All fields optional. Home-charging costs require a wallbox energy meter from step 4. Fuel price priority: Tankerkönig fuel type (automatic, cheapest open station) > entity > fixed value — configure only one source.",
         "data": {
           "home_price_kwh": "Price per kWh (home charging)",
           "home_price_entity": "Home electricity price entity (overrides fixed price)",
@@ -117,7 +124,7 @@
     "step": {
       "fahrzeug": {
         "title": "EV Assistant - Vehicle",
-        "description": "Step 1/8: Vehicle details.",
+        "description": "Step 1/9: Vehicle details.",
         "data": {
           "vehicle_hersteller": "Manufacturer",
           "vehicle_modell": "Model",
@@ -128,9 +135,16 @@
           "charge_efficiency": "Charging efficiency (AC→battery, initial value)"
         }
       },
+      "modus": {
+        "title": "EV Assistant - Charging Mode",
+        "description": "Step 2/9: Charging mode — only controls visibility (panel tabs/cards, which further steps appear), not calculation logic. Changeable at any time, without losing any already-recorded data.",
+        "data": {
+          "lade_modus": "Charging mode"
+        }
+      },
       "evcc": {
         "title": "EV Assistant - evcc & Wallbox",
-        "description": "Step 2/8: Wallbox and site entities are automatically imported from the evcc integration.",
+        "description": "Step 3/9: Wallbox and site entities are automatically imported from the evcc integration.",
         "data": {
           "evcc_vehicle_name": "Vehicle name in evcc",
           "home_entity": "Wallbox charge power"
@@ -141,7 +155,7 @@
       },
       "ladeleistung": {
         "title": "EV Assistant - Charge Power",
-        "description": "Step 3/8: optional vehicle charge power (from vehicle telemetry — also reports data away from home) and wallbox energy meter (calibrates charging efficiency and the home-charging price for step 8).",
+        "description": "Step 4/9: optional vehicle charge power (from vehicle telemetry — also reports data away from home) and wallbox energy meter (calibrates charging efficiency and the home-charging price for step 9).",
         "data": {
           "power_entity": "Vehicle charge power (W/kW)",
           "power_is_ac": "Charge power is AC-side (charge point) not DC-side (battery)",
@@ -154,7 +168,7 @@
       },
       "ausgabe": {
         "title": "EV Assistant - Notifications",
-        "description": "Step 4/8: push target devices, events, and SoC thresholds for notifications.",
+        "description": "Step 5/9: push target devices, events, and SoC thresholds for notifications.",
         "data": {
           "notify_entities": "Notify target devices (push)",
           "notify_events": "Events that trigger a push",
@@ -168,7 +182,7 @@
       },
       "erkennung": {
         "title": "EV Assistant - Detection",
-        "description": "Step 5/8: fine-tuning of external charging detection. Optional: a plug sensor detects charge end/continuation directly instead of via the timeout (see debounce).",
+        "description": "Step 6/9: fine-tuning of external charging detection. Optional: a plug sensor detects charge end/continuation directly instead of via the timeout (see debounce).",
         "data": {
           "start_delta": "Start threshold (%, minimum SoC rise to count as charging)",
           "noise": "SoC noise (%, tolerance — must be smaller than the start threshold!)",
@@ -180,7 +194,7 @@
       },
       "fahrtenbuch": {
         "title": "EV Assistant - Trip Log",
-        "description": "Step 6/8: fine-tuning of automatic trip detection. Optional: a motor/driving sensor adds a second signal (see debounce). An outside temperature entity groups consumption by temperature band for a winter-proof range estimate.",
+        "description": "Step 7/9: fine-tuning of automatic trip detection. Optional: a motor/driving sensor adds a second signal (see debounce). An outside temperature entity groups consumption by temperature band for a winter-proof range estimate.",
         "data": {
           "trip_min_km": "Minimum distance (km)",
           "trip_idle_timeout_s": "Idle time until trip end (s)",
@@ -195,7 +209,7 @@
       },
       "leasing": {
         "title": "EV Assistant - Leasing Mileage Budget",
-        "description": "Step 7/8: optional leasing mileage budget. Becomes active once contract end AND total included km are set. Under-mileage credit only with a refund price entered.",
+        "description": "Step 8/9: optional leasing mileage budget. Becomes active once contract end AND total included km are set. Under-mileage credit only with a refund price entered.",
         "data": {
           "leasing_start_km": "Odometer reading at contract start",
           "leasing_start_datum": "Contract start",
@@ -207,7 +221,7 @@
       },
       "vergleich": {
         "title": "EV Assistant - Cost Comparison",
-        "description": "Step 8/8: Optional cost comparison against a combustion vehicle. Fuel price priority: Tankerkönig fuel type > entity > fixed value.",
+        "description": "Step 9/9: Optional cost comparison against a combustion vehicle. Fuel price priority: Tankerkönig fuel type > entity > fixed value.",
         "data": {
           "home_price_kwh": "Price per kWh (home charging)",
           "home_price_entity": "Home electricity price entity (overrides fixed price)",
@@ -232,6 +246,13 @@
         "fahrt": "Trip detected",
         "tankerkoenig": "Tankerkönig unavailable",
         "leasing": "Leasing mileage budget critical"
+      }
+    },
+    "lade_modus": {
+      "options": {
+        "nur_zuhause": "Home only",
+        "gemischt": "Mixed (home + away)",
+        "nur_auswaerts": "Away only"
       }
     }
   },

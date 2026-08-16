@@ -83,6 +83,18 @@ class EVAssistantPanel extends HTMLElement {
   _eid(key)  { return (this._vehicleConf().entities || {})[key]; }
   _title()   { return this._config.title || "EV Assistant"; }
 
+  // Lade-Modus (siehe const.py::resolve_lade_modus()) -- als Attribut am
+  // "count"-Sensor mitgeliefert (coordinator.py::lade_modus(), sensor.py::
+  // CountSensor.extra_state_attributes), kein eigener Netzwerkweg/Sensor
+  // dafuer noetig. Steuert NUR Sichtbarkeit, siehe _buildOverview()/
+  // _updateOverview() -- bewusst als eigene Methode, damit weitere Tabs
+  // spaeter denselben Modus ohne Zusatzaufwand abfragen koennen.
+  _ladeModus() {
+    const eid = this._eid("count");
+    const s = eid && this._hass ? this._hass.states[eid] : null;
+    return (s && s.attributes && s.attributes.lade_modus) || "gemischt";
+  }
+
   _state(key) {
     const eid = this._eid(key);
     if (!eid || !this._hass) return null;
@@ -309,6 +321,16 @@ class EVAssistantPanel extends HTMLElement {
 
   _buildOverview() {
     const div = (cls) => { const d = document.createElement("div"); d.className = cls; return d; };
+    // Reiner Fremdlader (siehe _ladeModus()): Heim-/PV-/evcc-Karten
+    // (Flow-Diagramm, Session/Stats/Tarif/Heimladen) waeren hier bedeutungslos
+    // (evcc typischerweise gar nicht konfiguriert) -- bewusst gar nicht erst
+    // aufgebaut statt leer angezeigt (siehe Aufgabenstellung). "gemischt"/
+    // "nur_zuhause" bleiben exakt wie bisher.
+    if (this._ladeModus() === "nur_auswaerts") {
+      const stack = div("res-stack");
+      stack.append(this._buildExpenseOverviewCard(), this._buildIceComparisonCard());
+      return stack;
+    }
     const chartGrid = div("charts-2x2");
     chartGrid.append(
       this._buildSessionCard(),
@@ -321,6 +343,81 @@ class EVAssistantPanel extends HTMLElement {
     const stack = div("res-stack");
     stack.append(this._buildStatusCard(), lower);
     return stack;
+  }
+
+  // --- Uebersicht (nur_auswaerts): Ausgaben/kWh, EUR/100km, Verbrenner-Vergleich ---
+
+  _buildExpenseOverviewCard() {
+    const { card } = this._card("Ausgaben & Verbrauch", "mdi:cash-multiple");
+    const kpis = document.createElement("div");
+    kpis.className = "kpi-row";
+    kpis.innerHTML = `
+      <div class="kpi"><div class="kv" id="ov-total-kwh">—</div><div class="kl">kWh gesamt</div></div>
+      <div class="kpi"><div class="kv" id="ov-total-cost">—</div><div class="kl">EUR gesamt</div></div>
+      <div class="kpi"><div class="kv" id="ov-count">—</div><div class="kl">Ladungen</div></div>
+      <div class="kpi"><div class="kv" id="ov-eur-100km">—</div><div class="kl">EUR/100km</div></div>
+    `;
+    card.appendChild(kpis);
+    const divider = document.createElement("div");
+    divider.className = "divider";
+    card.appendChild(divider);
+    const grid = document.createElement("div");
+    grid.className = "km-grid km-grid-1col";
+    grid.innerHTML = `
+      <div class="km-col">
+        <div class="sub-head">Ausgaben über Zeit</div>
+        <div class="km-item"><span class="km-label">Heute</span><span class="km-val" id="ov-cost-day">—</span><span class="km-unit">EUR</span></div>
+        <div class="km-item"><span class="km-label">Woche</span><span class="km-val" id="ov-cost-week">—</span><span class="km-unit">EUR</span></div>
+        <div class="km-item"><span class="km-label">Monat</span><span class="km-val" id="ov-cost-month">—</span><span class="km-unit">EUR</span></div>
+        <div class="km-item"><span class="km-label">Jahr</span><span class="km-val" id="ov-cost-year">—</span><span class="km-unit">EUR</span></div>
+      </div>
+    `;
+    card.appendChild(grid);
+    this._r.ovTotalKwh  = kpis.querySelector("#ov-total-kwh");
+    this._r.ovTotalCost = kpis.querySelector("#ov-total-cost");
+    this._r.ovCount     = kpis.querySelector("#ov-count");
+    this._r.ovEur100km  = kpis.querySelector("#ov-eur-100km");
+    this._r.ovCostDay   = grid.querySelector("#ov-cost-day");
+    this._r.ovCostWeek  = grid.querySelector("#ov-cost-week");
+    this._r.ovCostMonth = grid.querySelector("#ov-cost-month");
+    this._r.ovCostYear  = grid.querySelector("#ov-cost-year");
+    return card;
+  }
+
+  _buildIceComparisonCard() {
+    const { card } = this._card("Vergleich zum Verbrenner", "mdi:gas-station-off");
+    const kpis = document.createElement("div");
+    kpis.className = "kpi-row";
+    kpis.innerHTML = `
+      <div class="kpi"><div class="kv" id="ov-savings">—</div><div class="kl">EUR gespart</div></div>
+      <div class="kpi"><div class="kv" id="ov-co2-savings">—</div><div class="kl">kg CO2 gespart</div></div>
+    `;
+    card.appendChild(kpis);
+    const divider = document.createElement("div");
+    divider.className = "divider";
+    card.appendChild(divider);
+    const grid = document.createElement("div");
+    grid.className = "km-grid";
+    grid.innerHTML = `
+      <div class="km-col">
+        <div class="sub-head">EV</div>
+        <div class="km-item"><span class="km-label">Kosten gesamt</span><span class="km-val" id="ov-ev-cost">—</span><span class="km-unit">EUR</span></div>
+        <div class="km-item"><span class="km-label">Kosten/100km</span><span class="km-val" id="ov-ev-per100">—</span><span class="km-unit">EUR</span></div>
+      </div>
+      <div class="km-col">
+        <div class="sub-head">Verbrenner (geschätzt)</div>
+        <div class="km-item"><span class="km-label">Kosten gesamt</span><span class="km-val" id="ov-verb-cost">—</span><span class="km-unit">EUR</span></div>
+        <div class="km-item"><span class="km-label">Kosten/100km</span><span class="km-val" id="ov-verb-per100">—</span><span class="km-unit">EUR</span></div>
+      </div>
+    `;
+    card.appendChild(grid);
+    this._r.ovSavings    = kpis.querySelector("#ov-savings");
+    this._r.ovCo2Savings = kpis.querySelector("#ov-co2-savings");
+    this._r.ovEvCost     = grid.querySelector("#ov-ev-cost");
+    this._r.ovEvPer100   = grid.querySelector("#ov-ev-per100");
+    this._r.ovVerbCost   = grid.querySelector("#ov-verb-cost");
+    this._r.ovVerbPer100 = grid.querySelector("#ov-verb-per100");
+    return card;
   }
 
   // --- Status card (omnibattery SOC card analog) ------------------------------
@@ -1461,10 +1558,14 @@ class EVAssistantPanel extends HTMLElement {
   }
 
   _updateOverview() {
+    if (this._ladeModus() === "nur_auswaerts") {
+      this._updateOverviewAuswaerts();
+      return;
+    }
     const r = this._r;
     if (!r.stKw) return;
 
-    // evcc values via configured entity IDs (set in config flow, step 8/8)
+    // evcc values via configured entity IDs (set in config flow, step 9/9)
     const ev = (key) => { const eid = this._eid(key); return eid ? this._raw(eid) : null; };
     const power    = parseFloat(ev("evcc_charge_power")      ?? NaN);
     const phases   = ev("evcc_phases_active");
@@ -1594,6 +1695,40 @@ class EVAssistantPanel extends HTMLElement {
       !isNaN(homeKwh)  ? this._clamp(homeKwh  / 10000 * 100, 0, 100) : 0);
     this._setBar(r.homehcV,   r.homehcBar,   !isNaN(homeCost) ? this._fmtNum(homeCost, 2)  + u("EUR") : "—",
       !isNaN(homeCost) ? this._clamp(homeCost / 3000 * 100, 0, 100) : 0);
+  }
+
+  // Uebersicht fuer "nur_auswaerts" -- dieselben Sensoren/Formeln, die die
+  // Fahrzeuge-Tab-Verbrenner-Vergleichssektion ohnehin schon nutzt (siehe
+  // _updateVehicle()), kein neuer Netzwerkweg/keine neue Backend-Logik.
+  _updateOverviewAuswaerts() {
+    const r = this._r;
+    if (!r.ovTotalKwh) return;
+    r.ovTotalKwh.textContent  = this._num("total_kwh", 1);
+    r.ovTotalCost.textContent = this._num("total_cost", 2);
+    r.ovCount.textContent     = this._num("count", 0);
+    r.ovCostDay.textContent   = this._num("cost_day", 2);
+    r.ovCostWeek.textContent  = this._num("cost_week", 2);
+    r.ovCostMonth.textContent = this._num("cost_month", 2);
+    r.ovCostYear.textContent  = this._num("cost_year", 2);
+
+    const savEid = this._eid("savings");
+    const savState = savEid && this._hass ? this._hass.states[savEid] : null;
+    const attr = savState ? (savState.attributes || {}) : {};
+    const ersparnis  = parseFloat(savState ? savState.state : NaN);
+    const evCost     = parseFloat(attr.kosten_ev_gesamt);
+    const verbCost   = parseFloat(attr.kosten_verbrenner_geschaetzt);
+    const gefahrenKm = parseFloat(attr.gefahrene_km);
+    const fmt2 = (v) => isNaN(v) ? "—" : this._fmtNum(v, 2);
+    const per100 = (cost) => (!isNaN(cost) && !isNaN(gefahrenKm) && gefahrenKm > 0)
+      ? this._fmtNum(cost / gefahrenKm * 100, 2) : "—";
+
+    r.ovEur100km.textContent  = per100(evCost);
+    r.ovSavings.textContent   = fmt2(ersparnis);
+    r.ovCo2Savings.textContent = this._num("co2_savings", 1);
+    r.ovEvCost.textContent    = fmt2(evCost);
+    r.ovEvPer100.textContent  = per100(evCost);
+    r.ovVerbCost.textContent  = fmt2(verbCost);
+    r.ovVerbPer100.textContent = per100(verbCost);
   }
 
   // pvKw: PV production (always ≥ 0)
