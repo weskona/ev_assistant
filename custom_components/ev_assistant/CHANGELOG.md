@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.63.0] - 2026-08-16
+
+### Added
+
+- **AC/DC breakdown for external charging**: the "Ladeort-Aufschlüsselung" (charging location) analysis now splits external charges into AC and DC, alongside the existing home/external split. There's no direct AC/DC signal anywhere in the data, so it's derived from the average power per charge (kWh ÷ duration) against a 22 kW threshold — realistic 3-phase AC charging can't exceed that. Charges missing kWh or duration (e.g. a fully manual entry without an end time) are excluded rather than guessed. Shown on the Analyse tab's Ladeort-Aufschlüsselung card, and available via the `ac_dc` attribute on `charging_location_breakdown`.
+- **Two new sensors**, `ac_charging_kwh` and `dc_charging_kwh`: the AC/DC-classified kWh of external charging as first-class sensor states (`state_class: total`), with cost/count/price/share as attributes — for direct dashboard/automation use without needing an attribute template.
+
 ## [0.62.0] - 2026-08-16
 
 ### Fixed

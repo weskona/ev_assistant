@@ -18,6 +18,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    AC_MAX_KW,
     BATTERY_CAPACITY_HOME_MAX_STORED,
     BATTERY_CAPACITY_MAX_SAMPLES,
     BATTERY_CAPACITY_MIN_SAMPLES,
@@ -135,6 +136,7 @@ from .engine import (
     SignalDebouncer,
     TripDetector,
     TripSample,
+    ac_dc_breakdown,
     average_efficiency,
     battery_capacity_samples,
     calculate_co2_savings,
@@ -2386,11 +2388,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         _ev_cost_total_since_setup() (evcc-Realkosten, sonst home_kwh *
         home_price), Fremd-kWh/-Kosten aus den bestaetigten Historien-
         Summen, gefahrene km aus _km_driven(), Heim-Solaranteil aus
-        home_session_stats(). Absichtlich UNGECACHT: die Eingaben (u.a.
-        _home_kwh_since_setup(), _km_driven()) aendern sich bei praktisch
-        jedem Coordinator-Update (jedes SoC-/Odo-Sample) -- ein
-        Versionszaehler wie bei den Fahrtenbuch-/Ladungs-Caches wuerde hier
-        nichts einsparen, die Berechnung selbst ist trivial billig."""
+        home_session_stats(). Zusaetzlich unter "ac_dc" die AC/DC-
+        Aufschluesselung der Fremdladungen (siehe engine.ac_dc_breakdown())
+        -- eigene Funktion statt Teil von charging_location_breakdown(),
+        da diese bewusst nur bereits berechnete Aggregate zusammenfuehrt,
+        waehrend die AC/DC-Einordnung selbst aus den rohen Historien-
+        Eintraegen (kWh/Ladedauer je Ladung) ableitet. Absichtlich
+        UNGECACHT: die Eingaben (u.a. _home_kwh_since_setup(), _km_driven())
+        aendern sich bei praktisch jedem Coordinator-Update (jedes SoC-/
+        Odo-Sample) -- ein Versionszaehler wie bei den Fahrtenbuch-/
+        Ladungs-Caches wuerde hier nichts einsparen, die Berechnung selbst
+        ist trivial billig."""
         home_kwh = self._home_kwh_since_setup()
         home_cost = self._home_cost_since_setup()
         if home_cost is None and home_kwh is not None:
@@ -2402,9 +2410,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         extern_cost = totals.get("kosten", 0.0)
         km_driven = self._km_driven()
         home_solar_pct = self.home_session_stats().get("solar_pct")
-        return charging_location_breakdown(
+        result = charging_location_breakdown(
             home_kwh, home_cost, extern_kwh, extern_cost, km_driven, home_solar_pct,
         )
+        ac_dc = ac_dc_breakdown(self.data.get("history") or [], AC_MAX_KW)
+        if ac_dc:
+            result["ac_dc"] = ac_dc
+        return result
 
     def leasing_stats(self) -> dict:
         """Leasing-Kilometerbudget (siehe engine.py::leasing_status()).

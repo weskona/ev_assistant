@@ -1268,6 +1268,26 @@ class EVAssistantPanel extends HTMLElement {
           Solaranteil nur für Heimladungen, die evcc gesteuert hat. EUR/100km ist fahrzeugweit über die
           Gesamtstrecke — km lassen sich keinem einzelnen Ladeort zuordnen.
         </div>
+        <div class="divider hidden" id="analyse-acdc-divider"></div>
+        <div class="sub-head hidden" id="analyse-acdc-head">Fremdladung nach AC/DC</div>
+        <div class="km-grid hidden" id="analyse-acdc-grid">
+          <div class="km-col hidden" id="analyse-acdc-ac-col">
+            <div class="sub-head">AC</div>
+            <div class="km-item"><span class="km-label">kWh</span><span class="km-val" id="analyse-acdc-ac-kwh">—</span><span class="km-unit">kWh</span></div>
+            <div class="km-item"><span class="km-label">Kosten</span><span class="km-val" id="analyse-acdc-ac-cost">—</span><span class="km-unit">EUR</span></div>
+            <div class="km-item"><span class="km-label">Anteil</span><span class="km-val" id="analyse-acdc-ac-pct">—</span><span class="km-unit">%</span></div>
+            <div class="km-item"><span class="km-label">Ø Preis</span><span class="km-val" id="analyse-acdc-ac-price">—</span><span class="km-unit">EUR/kWh</span></div>
+            <div class="km-item"><span class="km-label">Ladungen</span><span class="km-val" id="analyse-acdc-ac-count">—</span><span class="km-unit"></span></div>
+          </div>
+          <div class="km-col hidden" id="analyse-acdc-dc-col">
+            <div class="sub-head">DC</div>
+            <div class="km-item"><span class="km-label">kWh</span><span class="km-val" id="analyse-acdc-dc-kwh">—</span><span class="km-unit">kWh</span></div>
+            <div class="km-item"><span class="km-label">Kosten</span><span class="km-val" id="analyse-acdc-dc-cost">—</span><span class="km-unit">EUR</span></div>
+            <div class="km-item"><span class="km-label">Anteil</span><span class="km-val" id="analyse-acdc-dc-pct">—</span><span class="km-unit">%</span></div>
+            <div class="km-item"><span class="km-label">Ø Preis</span><span class="km-val" id="analyse-acdc-dc-price">—</span><span class="km-unit">EUR/kWh</span></div>
+            <div class="km-item"><span class="km-label">Ladungen</span><span class="km-val" id="analyse-acdc-dc-count">—</span><span class="km-unit"></span></div>
+          </div>
+        </div>
       </div>`;
 
     const q = (s) => wrap.querySelector(s);
@@ -1288,6 +1308,21 @@ class EVAssistantPanel extends HTMLElement {
       analyseLocExtPct:    q("#analyse-loc-ext-pct"),
       analyseLocExtPrice:  q("#analyse-loc-ext-price"),
       analyseLocEur100:    q("#analyse-loc-eur100"),
+      analyseAcdcDivider: q("#analyse-acdc-divider"),
+      analyseAcdcHead:    q("#analyse-acdc-head"),
+      analyseAcdcGrid:    q("#analyse-acdc-grid"),
+      analyseAcdcAcCol:   q("#analyse-acdc-ac-col"),
+      analyseAcdcAcKwh:   q("#analyse-acdc-ac-kwh"),
+      analyseAcdcAcCost:  q("#analyse-acdc-ac-cost"),
+      analyseAcdcAcPct:   q("#analyse-acdc-ac-pct"),
+      analyseAcdcAcPrice: q("#analyse-acdc-ac-price"),
+      analyseAcdcAcCount: q("#analyse-acdc-ac-count"),
+      analyseAcdcDcCol:   q("#analyse-acdc-dc-col"),
+      analyseAcdcDcKwh:   q("#analyse-acdc-dc-kwh"),
+      analyseAcdcDcCost:  q("#analyse-acdc-dc-cost"),
+      analyseAcdcDcPct:   q("#analyse-acdc-dc-pct"),
+      analyseAcdcDcPrice: q("#analyse-acdc-dc-price"),
+      analyseAcdcDcCount: q("#analyse-acdc-dc-count"),
     };
     return wrap;
   }
@@ -1385,6 +1420,28 @@ class EVAssistantPanel extends HTMLElement {
     r.analyseLocExtPct.textContent = fmt(fremd.kwh_anteil_pct, 1);
     r.analyseLocExtPrice.textContent = fmt(fremd.preis_je_kwh, 3);
     r.analyseLocEur100.textContent = fmt(locAttrs.eur_je_100km, 2);
+
+    const acDc = locAttrs.ac_dc || {};
+    const hasAcDc = !!(acDc.ac || acDc.dc);
+    r.analyseAcdcDivider.classList.toggle("hidden", !hasAcDc);
+    r.analyseAcdcHead.classList.toggle("hidden", !hasAcDc);
+    r.analyseAcdcGrid.classList.toggle("hidden", !hasAcDc);
+    r.analyseAcdcAcCol.classList.toggle("hidden", !acDc.ac);
+    if (acDc.ac) {
+      r.analyseAcdcAcKwh.textContent = fmt(acDc.ac.kwh, 1);
+      r.analyseAcdcAcCost.textContent = fmt(acDc.ac.kosten, 2);
+      r.analyseAcdcAcPct.textContent = fmt(acDc.ac.kwh_anteil_pct, 1);
+      r.analyseAcdcAcPrice.textContent = fmt(acDc.ac.preis_je_kwh, 3);
+      r.analyseAcdcAcCount.textContent = fmt(acDc.ac.anzahl, 0);
+    }
+    r.analyseAcdcDcCol.classList.toggle("hidden", !acDc.dc);
+    if (acDc.dc) {
+      r.analyseAcdcDcKwh.textContent = fmt(acDc.dc.kwh, 1);
+      r.analyseAcdcDcCost.textContent = fmt(acDc.dc.kosten, 2);
+      r.analyseAcdcDcPct.textContent = fmt(acDc.dc.kwh_anteil_pct, 1);
+      r.analyseAcdcDcPrice.textContent = fmt(acDc.dc.preis_je_kwh, 3);
+      r.analyseAcdcDcCount.textContent = fmt(acDc.dc.anzahl, 0);
+    }
 
     const rangeEid = this._eid("range_estimate");
     const rangeState = rangeEid ? this._hass.states[rangeEid] : null;

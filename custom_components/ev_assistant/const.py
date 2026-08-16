@@ -259,6 +259,15 @@ TRIP_CONSUMPTION_MIN_KWH_100KM = 8.0
 TRIP_CONSUMPTION_MAX_KWH_100KM = 40.0
 TRIP_CONSUMPTION_CHECK_MIN_KM = 5.0
 
+# AC/DC-Einordnung von Fremdladungen (siehe engine.ac_dc_breakdown()): es
+# gibt kein direktes AC/DC-Signal im Fahrtenbuch, daher abgeleitet aus der
+# Durchschnittsleistung je Ladung (kWh / Ladedauer). 3-phasiges AC-Laden
+# erreicht realistisch nicht mehr als diesen Wert -- darueber gilt eine
+# Ladung als DC (Schnellladen). Bewusst kein Config-Flow-Feld, analog
+# TRIP_CONSUMPTION_MIN_KWH_100KM: grobe interne Heuristik. Nur fuer
+# Fremdladungen -- Heimladen ist baulich praktisch immer AC.
+AC_MAX_KW = 22.0
+
 # Geschaetzte Akkukapazitaet aus Fremdladungen (siehe engine.battery_capacity_
 # samples/estimate_battery_capacity_kwh) -- ebenfalls interne Heuristik, kein
 # Config-Flow-Feld.

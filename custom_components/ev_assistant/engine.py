@@ -1096,6 +1096,55 @@ def charging_location_breakdown(
     return result
 
 
+def ac_dc_breakdown(history: list, ac_max_kw: float = 22.0) -> dict:
+    """Fremdladungen nach AC/DC aufschluesseln -- es gibt kein direktes
+    AC/DC-Signal im Fahrtenbuch, daher abgeleitet aus der Durchschnitts-
+    leistung je Ladung (kWh / Ladedauer): ueber `ac_max_kw` gilt eine
+    Ladung als DC (Schnellladen), 3-phasiges AC-Laden erreicht das
+    realistisch nicht (siehe const.py::AC_MAX_KW). Eintraege ohne bekannte
+    kWh UND Ladedauer (z.B. rein manuell ohne Endzeit erfasst, siehe
+    coordinator.py::async_log_charge()) lassen sich nicht einordnen und
+    werden ausgelassen, nicht geraten. NUR Fremdladungen -- Heimladen ist
+    baulich praktisch immer AC, eine Einordnung dafuer waere sinnlos.
+
+    Rueckgabe je Kategorie ("ac"/"dc", nur wenn mindestens eine Ladung
+    einzuordnen war): "kwh"/"kosten" (Summe, gerundet), "anzahl" (Anzahl
+    Ladungen), "kwh_anteil_pct"/"kosten_anteil_pct" (Anteil an der Summe
+    ueber beide Kategorien, nur wenn die jeweilige Summe > 0 ist),
+    "preis_je_kwh" (nur wenn kwh > 0). Leere/fehlende Historie liefert ein
+    leeres dict."""
+    buckets: dict = {}
+    for rec in history or []:
+        kwh = rec.get("kwh")
+        dauer_min = rec.get("dauer_min")
+        if kwh is None or not dauer_min:
+            continue
+        avg_kw = kwh / (dauer_min / 60.0)
+        key = "dc" if avg_kw > ac_max_kw else "ac"
+        bucket = buckets.setdefault(key, {"kwh": 0.0, "kosten": 0.0, "anzahl": 0})
+        bucket["kwh"] += kwh
+        bucket["kosten"] += rec.get("kosten") or 0.0
+        bucket["anzahl"] += 1
+
+    total_kwh = sum(b["kwh"] for b in buckets.values())
+    total_cost = sum(b["kosten"] for b in buckets.values())
+    result: dict = {}
+    for key, bucket in buckets.items():
+        entry = {
+            "kwh": round(bucket["kwh"], 2),
+            "kosten": round(bucket["kosten"], 2),
+            "anzahl": bucket["anzahl"],
+        }
+        if total_kwh > 0:
+            entry["kwh_anteil_pct"] = round(bucket["kwh"] / total_kwh * 100.0, 1)
+        if bucket["kwh"] > 0:
+            entry["preis_je_kwh"] = round(bucket["kosten"] / bucket["kwh"], 4)
+        if total_cost > 0:
+            entry["kosten_anteil_pct"] = round(bucket["kosten"] / total_cost * 100.0, 1)
+        result[key] = entry
+    return result
+
+
 def _leasing_projection(
     gefahrene_vertrags_km: float,
     tempo_km_pro_tag: Optional[float],

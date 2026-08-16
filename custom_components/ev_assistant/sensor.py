@@ -63,6 +63,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         BatteryCapacitySensor(coordinator, entry),
         EquivalentFullCyclesSensor(coordinator, entry),
         ChargingLocationSensor(coordinator, entry),
+        AcChargingKwhSensor(coordinator, entry),
+        DcChargingKwhSensor(coordinator, entry),
         LeasingKmVorRuecklaufSensor(coordinator, entry),
         Co2SavingsSensor(coordinator, entry),
         HomeVsExternalPriceSensor(coordinator, entry),
@@ -925,6 +927,61 @@ class ChargingLocationSensor(EvAssistantEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         return self.coordinator.charging_location_stats()
+
+
+class AcChargingKwhSensor(EvAssistantEntity, SensorEntity):
+    """AC-Anteil der Fremdladung in kWh -- siehe engine.ac_dc_breakdown()/
+    coordinator.py::charging_location_stats(). AC/DC gibt es nur fuer
+    Fremdladungen (Heimladen ist baulich praktisch immer AC, siehe
+    const.py::AC_MAX_KW), daher kein Pendant fuer Heim. unknown ohne
+    mindestens eine einordenbare Fremdladung (kWh UND Ladedauer bekannt).
+
+    Kosten/Anzahl/Preis/Anteil bewusst nur als Attribute statt eigene
+    Sensoren (anders als bei den Fremdladung-Totals TotalKwhSensor/
+    TotalCostSensor/CountSensor/LastPriceSensor): dort sind es die
+    zentralen, oft in Automationen genutzten Werte -- AC/DC ist eine
+    Detail-Aufschluesselung, fuer die eine Attribut-Vorlage reicht."""
+
+    _attr_translation_key = "ac_charging_kwh"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    # Siehe Kommentar bei TotalKwhSensor -- kann durch edit_charge()/
+    # delete_charge() sinken.
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_icon = "mdi:current-ac"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "ac_charging_kwh")
+
+    @property
+    def native_value(self):
+        return self.coordinator.charging_location_stats().get("ac_dc", {}).get("ac", {}).get("kwh")
+
+    @property
+    def extra_state_attributes(self):
+        ac = self.coordinator.charging_location_stats().get("ac_dc", {}).get("ac")
+        return dict(ac) if ac else {}
+
+
+class DcChargingKwhSensor(EvAssistantEntity, SensorEntity):
+    """DC-Anteil der Fremdladung in kWh (Schnellladen) -- siehe
+    AcChargingKwhSensor, spiegelbildlich."""
+
+    _attr_translation_key = "dc_charging_kwh"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_icon = "mdi:current-dc"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "dc_charging_kwh")
+
+    @property
+    def native_value(self):
+        return self.coordinator.charging_location_stats().get("ac_dc", {}).get("dc", {}).get("kwh")
+
+    @property
+    def extra_state_attributes(self):
+        dc = self.coordinator.charging_location_stats().get("ac_dc", {}).get("dc")
+        return dict(dc) if dc else {}
 
 
 class LeasingKmVorRuecklaufSensor(EvAssistantEntity, SensorEntity):

@@ -8,6 +8,7 @@ from engine import (
     SignalDebouncer,
     TripDetector,
     TripSample,
+    ac_dc_breakdown,
     average_efficiency,
     battery_capacity_samples,
     calculate_co2_savings,
@@ -1202,6 +1203,52 @@ def test_charging_location_breakdown_leere_eingaben_liefert_partielles_dict():
         home_kwh=None, home_cost=None, extern_kwh=15.0, extern_cost=None, km_driven=None,
     )
     assert result == {"fremd": {"kwh": 15.0, "kwh_anteil_pct": 100.0}}
+
+
+# ----- ac_dc_breakdown: Fremdladungen nach AC/DC (aus Durchschnittsleistung) --
+
+def test_ac_dc_breakdown_klassifiziert_nach_durchschnittsleistung():
+    history = [
+        # 10 kWh in 60 min = 10 kW -- AC.
+        {"kwh": 10.0, "kosten": 5.0, "dauer_min": 60.0},
+        # 30 kWh in 20 min = 90 kW -- DC.
+        {"kwh": 30.0, "kosten": 15.0, "dauer_min": 20.0},
+    ]
+    result = ac_dc_breakdown(history)
+    assert result["ac"]["kwh"] == 10.0
+    assert result["ac"]["anzahl"] == 1
+    assert result["dc"]["kwh"] == 30.0
+    assert result["dc"]["anzahl"] == 1
+    assert result["ac"]["kwh_anteil_pct"] == 25.0
+    assert result["dc"]["kwh_anteil_pct"] == 75.0
+    assert result["ac"]["preis_je_kwh"] == 0.5
+    assert result["dc"]["preis_je_kwh"] == 0.5
+
+
+def test_ac_dc_breakdown_grenzfall_genau_auf_schwelle_bleibt_ac():
+    # Exakt ac_max_kw gilt noch als AC (siehe Docstring: "ueber ac_max_kw"
+    # ist DC, nicht "ab").
+    history = [{"kwh": 22.0, "kosten": 10.0, "dauer_min": 60.0}]
+    result = ac_dc_breakdown(history, ac_max_kw=22.0)
+    assert "ac" in result
+    assert "dc" not in result
+
+
+def test_ac_dc_breakdown_ignoriert_eintraege_ohne_ladedauer():
+    # Rein manuell ohne Endzeit erfasst (siehe async_log_charge()) -- kann
+    # nicht eingeordnet werden, wird ausgelassen statt geraten.
+    history = [
+        {"kwh": 10.0, "kosten": 5.0},
+        {"kwh": 30.0, "kosten": 15.0, "dauer_min": 20.0},
+    ]
+    result = ac_dc_breakdown(history)
+    assert result["dc"]["anzahl"] == 1
+    assert sum(b["anzahl"] for b in result.values()) == 1
+
+
+def test_ac_dc_breakdown_leere_historie_liefert_leeres_dict():
+    assert ac_dc_breakdown([]) == {}
+    assert ac_dc_breakdown(None) == {}
 
 
 # ----- leasing_status ---------------------------------------------------------

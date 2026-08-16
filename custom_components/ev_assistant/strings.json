@@ -366,6 +366,12 @@
       "charging_location_breakdown": {
         "name": "Ladeort-Aufschlüsselung"
       },
+      "ac_charging_kwh": {
+        "name": "Fremdladung AC"
+      },
+      "dc_charging_kwh": {
+        "name": "Fremdladung DC"
+      },
       "leasing_km_vor_ruecklauf": {
         "name": "Kilometerbudget vor Rücklauf"
       },

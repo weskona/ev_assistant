@@ -366,6 +366,12 @@
       "charging_location_breakdown": {
         "name": "Charging Location Breakdown"
       },
+      "ac_charging_kwh": {
+        "name": "External Charging AC"
+      },
+      "dc_charging_kwh": {
+        "name": "External Charging DC"
+      },
       "leasing_km_vor_ruecklauf": {
         "name": "Mileage budget vs. plan"
       },
