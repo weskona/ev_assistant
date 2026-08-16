@@ -939,6 +939,20 @@ class EVAssistantPanel extends HTMLElement {
             <div class="hist-section">
               <div class="hist-section-head">
                 <span>Historie</span>
+                <button class="btn btn-ghost ext-manual-toggle"><ha-icon icon="mdi:plus" style="--mdc-icon-size:14px;vertical-align:-2px"></ha-icon> Manuell erfassen</button>
+              </div>
+              <div class="hist-edit-form hidden" id="ext-manual-form">
+                <label>Start<input type="datetime-local" class="em-start-ts"></label>
+                <label>Ende (optional)<input type="datetime-local" class="em-end-ts"></label>
+                <label>kWh<input type="text" inputmode="decimal" class="em-kwh" placeholder="0,0"></label>
+                <label>EUR/kWh<input type="text" inputmode="decimal" class="em-price" placeholder="0,000"></label>
+                <label>SoC Start % (optional)<input type="text" inputmode="decimal" class="em-soc-start" placeholder="0"></label>
+                <label>SoC Ende % (optional)<input type="text" inputmode="decimal" class="em-soc-end" placeholder="0"></label>
+                <label>Startgebühr € (optional)<input type="text" inputmode="decimal" class="em-fee" placeholder="0,00"></label>
+                <label>Blockiergebühr € (optional)<input type="text" inputmode="decimal" class="em-block-fee" placeholder="0,00"></label>
+                <label>Zeitgebühr € (optional)<input type="text" inputmode="decimal" class="em-time-fee" placeholder="0,00"></label>
+                <button class="btn btn-primary em-save" disabled>Speichern</button>
+                <button class="btn btn-ghost em-cancel">Abbrechen</button>
               </div>
               <div class="hist-list" id="hist-charge-list"></div>
             </div>
@@ -1037,7 +1051,9 @@ class EVAssistantPanel extends HTMLElement {
       chartNavLabel:  q("#chart-nav-label"),
       chartNavPrev:   q("#chart-nav-prev"),
       chartNavNext:   q("#chart-nav-next"),
+      extManualForm:  q("#ext-manual-form"),
     };
+    this._wireExtManualForm(container);
     container.querySelectorAll(".chart-pills .pill").forEach((btn) => {
       btn.addEventListener("click", () => {
         this._chartPeriod = btn.dataset.period;
@@ -1067,6 +1083,75 @@ class EVAssistantPanel extends HTMLElement {
     this._histChargeSig = null;
     this._histTripSig = null;
     this._histHomeSig = null;
+  }
+
+  // Fremdladung komplett manuell erfassen (ohne vorherige automatische
+  // Erkennung) -- log_charge unterstuetzt das schon immer (siehe
+  // services.yaml: "Ohne offene Ladung wird ein Einzeleintrag angelegt"),
+  // bisher gab es im Panel nur kein Formular dafuer.
+  _wireExtManualForm(container) {
+    const toggle = container.querySelector(".ext-manual-toggle");
+    const form = this._r.extManualForm;
+    if (!toggle || !form) return;
+    const kwhInput      = form.querySelector(".em-kwh");
+    const priceInput    = form.querySelector(".em-price");
+    const socStartInput = form.querySelector(".em-soc-start");
+    const socEndInput   = form.querySelector(".em-soc-end");
+    const feeInput      = form.querySelector(".em-fee");
+    const blockFeeInput = form.querySelector(".em-block-fee");
+    const timeFeeInput  = form.querySelector(".em-time-fee");
+    const startTsInput  = form.querySelector(".em-start-ts");
+    const endTsInput    = form.querySelector(".em-end-ts");
+    const saveBtn   = form.querySelector(".em-save");
+    const cancelBtn = form.querySelector(".em-cancel");
+
+    const updateValidity = () => {
+      const kwh = parseFloat(kwhInput.value.replace(",", "."));
+      const price = parseFloat(priceInput.value.replace(",", "."));
+      saveBtn.disabled = isNaN(kwh) || isNaN(price);
+    };
+    kwhInput.addEventListener("input", updateValidity);
+    priceInput.addEventListener("input", updateValidity);
+
+    toggle.addEventListener("click", () => {
+      const opening = form.classList.contains("hidden");
+      form.classList.toggle("hidden");
+      if (opening) {
+        startTsInput.value = this._toDatetimeLocal(Math.floor(Date.now() / 1000));
+        endTsInput.value = "";
+        kwhInput.value = "";
+        priceInput.value = "";
+        socStartInput.value = "";
+        socEndInput.value = "";
+        feeInput.value = "";
+        blockFeeInput.value = "";
+        timeFeeInput.value = "";
+        updateValidity();
+      }
+    });
+    cancelBtn.addEventListener("click", () => form.classList.add("hidden"));
+    saveBtn.addEventListener("click", () => {
+      const kwh = parseFloat(kwhInput.value.replace(",", "."));
+      const price = parseFloat(priceInput.value.replace(",", "."));
+      if (isNaN(kwh) || isNaN(price)) return;
+      const socStart = parseFloat(socStartInput.value.replace(",", "."));
+      const socEnd = parseFloat(socEndInput.value.replace(",", "."));
+      const fee = parseFloat(feeInput.value.replace(",", "."));
+      const blockFee = parseFloat(blockFeeInput.value.replace(",", "."));
+      const timeFee = parseFloat(timeFeeInput.value.replace(",", "."));
+      const startTs = this._fromDatetimeLocal(startTsInput.value);
+      const endTs = this._fromDatetimeLocal(endTsInput.value);
+      const payload = { kwh, price_kwh: price };
+      if (startTs != null) payload.start_ts = startTs;
+      if (endTs != null) payload.end_ts = endTs;
+      if (!isNaN(socStart)) payload.soc_start = socStart;
+      if (!isNaN(socEnd)) payload.soc_end = socEnd;
+      if (!isNaN(fee)) payload.start_fee = fee;
+      if (!isNaN(blockFee)) payload.block_fee = blockFee;
+      if (!isNaN(timeFee)) payload.time_fee = timeFee;
+      this._call("log_charge", payload);
+      form.classList.add("hidden");
+    });
   }
 
   // --- Nutzungsprofil-Tab -------------------------------------------------

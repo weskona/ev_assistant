@@ -5,7 +5,8 @@ log_charge:
     (geladene kWh und Preis pro kWh vom Ladepunkt-Beleg) und schreibt sie in
     die Historie. Sind mehrere Fremdladungen gleichzeitig offen, waehlt
     start_ts die gemeinte aus (ohne Angabe: die aelteste). Ohne offene
-    Ladung wird ein Einzeleintrag angelegt.
+    Ladung wird ein komplett manueller Einzeleintrag angelegt -- dafuer
+    ergeben start_ts und end_ts zusammen die Ladedauer.
   fields:
     config_entry_id:
       name: Fahrzeug
@@ -48,6 +49,46 @@ log_charge:
       example: 1751884800
       selector:
         number:
+          mode: box
+    end_ts:
+      name: Endzeit (Unix)
+      description: >
+        Optional, nur wirksam bei einem komplett manuellen Einzeleintrag
+        (keine passende offene Ladung gefunden). Ergibt zusammen mit
+        start_ts die Ladedauer. Bei einer bestaetigten erkannten Ladung
+        stammt die Dauer weiterhin aus deren eigener Messung.
+      required: false
+      example: 1751888400
+      selector:
+        number:
+          mode: box
+    soc_start:
+      name: SoC bei Ladebeginn (%)
+      description: >
+        Optional, nur wirksam bei einem komplett manuellen Einzeleintrag.
+        Zusammen mit soc_end ergibt sich delta_soc. Bei einer bestaetigten
+        erkannten Ladung stammen die SoC-Werte weiterhin aus deren eigener
+        Messung.
+      required: false
+      example: 42
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.1
+          unit_of_measurement: "%"
+          mode: box
+    soc_end:
+      name: SoC bei Ladeende (%)
+      description: Optional, siehe soc_start.
+      required: false
+      example: 80
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.1
+          unit_of_measurement: "%"
           mode: box
     start_fee:
       name: Startgebühr

@@ -2,6 +2,21 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.61.0] - 2026-08-16
+
+### Added
+
+- **Manually log an external charge from scratch**: `log_charge` already supported creating a standalone entry without a detected pending charge, but the panel had no form for it. There's now a "Manuell erfassen" button in the External Charging card's history section, opening a form for start/end time, kWh, price, SoC start/end, and the optional start/blocking/time fees — useful for a forgotten charge, or for anyone whose setup doesn't reliably auto-detect external charging in the first place (e.g. no SoC entity delta pattern to key off of).
+- `log_charge` gained `end_ts` and `soc_start`/`soc_end` parameters for this case: `end_ts` combines with `start_ts` into the session duration, `soc_start`/`soc_end` combine into `delta_soc` — both computed the same way `edit_charge` already did for corrections. Only effective for a genuinely standalone entry; a confirmed detected charge keeps using its own measured duration and SoC values, same as before.
+
+## [0.60.0] - 2026-08-16
+
+### Added
+
+- **Charging mode**: a new setup step (step 2, right after vehicle details) lets you tell EV Assistant how you actually charge — **Home only**, **Mixed** (the default), or **Away only**. It's purely a visibility switch, not a calculation change: engine.py doesn't know or care about it, a pure external charger is simply the case where the home-charging numbers are 0. In **Away only** mode, the evcc/wallbox and charge-power setup steps are skipped, and the Overview panel tab shows only what's actually relevant to a pure external charger (spending over time, total kWh/cost, EUR/100 km, combustion-vehicle cost/CO2 comparison) instead of the home/PV/evcc flow diagram and cards, which would otherwise sit there empty or show a trivial "100% external" split.
+- **Existing installations are unaffected**: there's no stored value for this on installations from before this version, and everywhere that reads it treats a missing value as **Mixed** — identical to how the integration already behaved. No migration, no version bump on the config entry; it's a plain default-on-read, the same pattern already used for every other optional setting in this integration.
+- **Switching modes never deletes data.** Changing to "Away only" only stops showing/using the home-related steps and cards — any evcc/wallbox values you'd already entered stay exactly as they were in storage. Switching back to "Mixed" or "Home only" brings those steps back pre-filled with whatever was there before you switched away. Verified by hand: set up evcc/wallbox values, switch to "Away only" and back through the options flow, confirm the values survived untouched.
+
 ## [0.59.0] - 2026-08-16
 
 ### Added

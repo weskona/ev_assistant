@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.61.0] - 2026-08-16
+
+### Added
+
+- **Manually log an external charge from scratch**: `log_charge` already supported creating a standalone entry without a detected pending charge, but the panel had no form for it. There's now a "Manuell erfassen" button in the External Charging card's history section, opening a form for start/end time, kWh, price, SoC start/end, and the optional start/blocking/time fees — useful for a forgotten charge, or for anyone whose setup doesn't reliably auto-detect external charging in the first place (e.g. no SoC entity delta pattern to key off of).
+- `log_charge` gained `end_ts` and `soc_start`/`soc_end` parameters for this case: `end_ts` combines with `start_ts` into the session duration, `soc_start`/`soc_end` combine into `delta_soc` — both computed the same way `edit_charge` already did for corrections. Only effective for a genuinely standalone entry; a confirmed detected charge keeps using its own measured duration and SoC values, same as before.
+
 ## [0.60.0] - 2026-08-16
 
 ### Added

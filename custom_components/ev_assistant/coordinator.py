@@ -2025,6 +2025,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     async def async_log_charge(
         self, kwh: float, price: float, start_ts: Optional[float] = None,
         start_fee: float = 0.0, block_fee: float = 0.0, time_fee: float = 0.0,
+        end_ts: Optional[float] = None,
+        soc_start: Optional[float] = None, soc_end: Optional[float] = None,
     ) -> None:
         """Bestaetigt eine offene Fremdladung. Bei mehreren gleichzeitig
         offenen waehlt `start_ts` die gemeinte aus; ohne Angabe wird die
@@ -2032,7 +2034,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         optionale pauschale Gebuehren mancher Ladenetze/Ladepunkte,
         zusaetzlich zum kWh-Preis -- getrennte Felder, da mehrere auf
         demselben Beleg gleichzeitig auftauchen koennen (siehe
-        engine.charge_cost())."""
+        engine.charge_cost()). `end_ts`/`soc_start`/`soc_end` sind nur
+        wirksam, wenn KEINE passende offene Ladung gefunden wird (komplett
+        manueller Einzeleintrag ohne vorherige automatische Erkennung, siehe
+        Panel-Formular): `end_ts` ergibt zusammen mit start_ts die Ladedauer
+        (dauer_min), `soc_start`/`soc_end` ergeben delta_soc -- beides
+        analog async_edit_charge(). Bei einer erkannten offenen Ladung
+        stammen Dauer und SoC-Werte weiterhin aus deren eigener Messung
+        (pend["duration_min"]/["soc_start"]/["soc_end"])."""
         kwh = round(float(kwh), 2)
         price = round(float(price), 4)
         start_fee = round(float(start_fee), 2)
@@ -2056,6 +2065,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             })
         elif start_ts is not None:
             rec["start_ts"] = start_ts
+            if end_ts is not None:
+                rec["dauer_min"] = round((end_ts - start_ts) / 60.0, 1)
+            if soc_start is not None:
+                rec["soc_start"] = round(float(soc_start), 1)
+            if soc_end is not None:
+                rec["soc_end"] = round(float(soc_end), 1)
+            if soc_start is not None and soc_end is not None:
+                rec["delta_soc"] = round(rec["soc_end"] - rec["soc_start"], 1)
         self.data["pending"] = pending_list
 
         self.data.setdefault("history", []).insert(0, rec)

@@ -173,6 +173,9 @@ LOG_SCHEMA = vol.Schema({
     vol.Required("kwh"): vol.Coerce(float),
     vol.Required("price_kwh"): vol.Coerce(float),
     vol.Optional("start_ts"): vol.Coerce(float),
+    vol.Optional("end_ts"): vol.Coerce(float),
+    vol.Optional("soc_start"): vol.Coerce(float),
+    vol.Optional("soc_end"): vol.Coerce(float),
     vol.Optional("start_fee", default=0.0): vol.Coerce(float),
     vol.Optional("block_fee", default=0.0): vol.Coerce(float),
     vol.Optional("time_fee", default=0.0): vol.Coerce(float),
@@ -300,7 +303,8 @@ def _register_services(hass: HomeAssistant) -> None:
             await coordinator.async_log_charge(
                 call.data["kwh"], call.data["price_kwh"], call.data.get("start_ts"),
                 call.data.get("start_fee", 0.0), call.data.get("block_fee", 0.0),
-                call.data.get("time_fee", 0.0),
+                call.data.get("time_fee", 0.0), call.data.get("end_ts"),
+                call.data.get("soc_start"), call.data.get("soc_end"),
             )
 
     async def _handle_discard(call: ServiceCall) -> None:
