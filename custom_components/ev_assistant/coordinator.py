@@ -2014,20 +2014,26 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 writer.writerow([t["datum"], t["start_ort"], t["end_ort"], odo_start, odo_end, t["km"]])
 
     async def async_log_charge(
-        self, kwh: float, price: float, start_ts: Optional[float] = None, start_fee: float = 0.0
+        self, kwh: float, price: float, start_ts: Optional[float] = None,
+        start_fee: float = 0.0, block_fee: float = 0.0, time_fee: float = 0.0,
     ) -> None:
         """Bestaetigt eine offene Fremdladung. Bei mehreren gleichzeitig
         offenen waehlt `start_ts` die gemeinte aus; ohne Angabe wird die
-        aelteste bestaetigt (FIFO). `start_fee` ist eine optionale pauschale
-        Start-/Blockiergebuehr manche Ladenetze/Ladepunkte, zusaetzlich zum
-        kWh-Preis (siehe engine.charge_cost())."""
+        aelteste bestaetigt (FIFO). `start_fee`/`block_fee`/`time_fee` sind
+        optionale pauschale Gebuehren mancher Ladenetze/Ladepunkte,
+        zusaetzlich zum kWh-Preis -- getrennte Felder, da mehrere auf
+        demselben Beleg gleichzeitig auftauchen koennen (siehe
+        engine.charge_cost())."""
         kwh = round(float(kwh), 2)
         price = round(float(price), 4)
         start_fee = round(float(start_fee), 2)
+        block_fee = round(float(block_fee), 2)
+        time_fee = round(float(time_fee), 2)
         rec = {
             "config_entry_id": self.entry.entry_id,
             "kwh": kwh, "preis_kwh": price, "startgebuehr": start_fee,
-            "kosten": charge_cost(kwh, price, start_fee),
+            "blockiergebuehr": block_fee, "zeitgebuehr": time_fee,
+            "kosten": charge_cost(kwh, price, start_fee, block_fee, time_fee),
             "erfasst_ts": int(time.time()),
         }
         pending_list = list(self.data.get("pending") or [])
@@ -2064,6 +2070,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         kwh: Optional[float] = None,
         price: Optional[float] = None,
         start_fee: Optional[float] = None,
+        block_fee: Optional[float] = None,
+        time_fee: Optional[float] = None,
         start_ts: Optional[float] = None,
         end_ts: Optional[float] = None,
         soc_start: Optional[float] = None,
@@ -2071,15 +2079,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     ) -> bool:
         """Korrigiert einen bereits bestaetigten Historien-Eintrag -- alle
         Felder optional, nur mitgegebene Werte werden geaendert (analog
-        async_edit_trip()). kwh/price/start_fee: fehlende Werte bleiben
-        unveraendert, kosten wird aus den effektiven (neuen oder bisherigen)
-        Werten neu berechnet (engine.charge_cost()). end_ts wird nicht
-        direkt gespeichert, sondern zusammen mit dem effektiven start_ts zu
-        dauer_min umgerechnet (dieselbe Ableitung wie beim Bestaetigen).
-        soc_start/soc_end: delta_soc wird neu berechnet. Passt die
-        laufenden Summen (kwh/kosten) um die Differenz an statt sie aus der
-        Historie neu zu berechnen. Gibt False zurueck, wenn kein Eintrag mit
-        erfasst_ts gefunden wurde."""
+        async_edit_trip()). kwh/price/start_fee/block_fee/time_fee:
+        fehlende Werte bleiben unveraendert, kosten wird aus den effektiven
+        (neuen oder bisherigen) Werten neu berechnet (engine.charge_cost()).
+        end_ts wird nicht direkt gespeichert, sondern zusammen mit dem
+        effektiven start_ts zu dauer_min umgerechnet (dieselbe Ableitung
+        wie beim Bestaetigen). soc_start/soc_end: delta_soc wird neu
+        berechnet. Passt die laufenden Summen (kwh/kosten) um die Differenz
+        an statt sie aus der Historie neu zu berechnen. Gibt False zurueck,
+        wenn kein Eintrag mit erfasst_ts gefunden wurde."""
         history = self.data.get("history") or []
         for rec in history:
             if rec.get("erfasst_ts") == erfasst_ts:
@@ -2088,13 +2096,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 kwh = round(float(kwh), 2) if kwh is not None else rec["kwh"]
                 price = round(float(price), 4) if price is not None else rec["preis_kwh"]
                 fee = round(float(start_fee), 2) if start_fee is not None else rec.get("startgebuehr", 0.0)
-                kosten = charge_cost(kwh, price, fee)
+                bfee = round(float(block_fee), 2) if block_fee is not None else rec.get("blockiergebuehr", 0.0)
+                tfee = round(float(time_fee), 2) if time_fee is not None else rec.get("zeitgebuehr", 0.0)
+                kosten = charge_cost(kwh, price, fee, bfee, tfee)
                 totals = self.data["totals"]
                 totals["kwh"] = round(totals.get("kwh", 0.0) - old_kwh + kwh, 2)
                 totals["kosten"] = round(totals.get("kosten", 0.0) - old_kosten + kosten, 2)
                 rec["kwh"] = kwh
                 rec["preis_kwh"] = price
                 rec["startgebuehr"] = fee
+                rec["blockiergebuehr"] = bfee
+                rec["zeitgebuehr"] = tfee
                 rec["kosten"] = kosten
                 if start_ts is not None:
                     rec["start_ts"] = start_ts

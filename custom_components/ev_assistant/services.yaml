@@ -50,13 +50,45 @@ log_charge:
         number:
           mode: box
     start_fee:
-      name: Start-/Blockiergebühr
+      name: Startgebühr
       description: >
-        Optional. Pauschale Gebühr manche Ladenetze/Ladepunkte zusätzlich
-        zum kWh-Preis (z.B. eine Startgebühr oder Blockiergebühr vom
-        Beleg), unabhängig von der geladenen Menge. Ohne Angabe: 0.
+        Optional. Pauschale Startgebühr manche Ladenetze/Ladepunkte
+        zusätzlich zum kWh-Preis (vom Beleg), unabhängig von der geladenen
+        Menge. Ohne Angabe: 0.
       required: false
       example: 1.0
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.01
+          unit_of_measurement: EUR
+          mode: box
+    block_fee:
+      name: Blockiergebühr
+      description: >
+        Optional. Pauschale Blockiergebühr (z.B. für zu langes
+        Stehenlassen nach Ladeende), zusätzlich zum kWh-Preis und einer
+        eventuellen Startgebühr -- manche Belege weisen beide getrennt
+        aus. Ohne Angabe: 0.
+      required: false
+      example: 5.0
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.01
+          unit_of_measurement: EUR
+          mode: box
+    time_fee:
+      name: Zeitgebühr
+      description: >
+        Optional. Pauschale Zeitgebühr, wenn nach Ladedauer statt/
+        zusätzlich zu kWh abgerechnet wird (manche Schnelllade-Netze),
+        zusätzlich zum kWh-Preis und eventueller Start-/Blockiergebühr.
+        Ohne Angabe: 0.
+      required: false
+      example: 3.0
       selector:
         number:
           min: 0
@@ -96,9 +128,9 @@ edit_charge:
     Korrigiert einen bereits bestätigten Historien-Eintrag nachträglich
     (z.B. Tippfehler beim Erfassen bemerkt). Alle Felder außer
     config_entry_id/erfasst_ts sind optional -- nur mitgegebene Werte
-    werden geändert. Ändern sich kwh/price_kwh/start_fee, wird kosten aus
-    den effektiven (neuen oder bisherigen) Werten neu berechnet und die
-    Gesamtsummen (kWh/Kosten) um die Differenz angepasst. Ändern sich
+    werden geändert. Ändern sich kwh/price_kwh/start_fee/block_fee/time_fee,
+    wird kosten aus den effektiven (neuen oder bisherigen) Werten neu
+    berechnet und die Gesamtsummen (kWh/Kosten) um die Differenz angepasst. Ändern sich
     soc_start/soc_end, wird delta_soc automatisch neu berechnet. Der zu
     korrigierende Eintrag wird über erfasst_ts identifiziert (Wert aus
     dessen erfasst_ts-Attribut in der Historie).
@@ -143,12 +175,40 @@ edit_charge:
           unit_of_measurement: EUR/kWh
           mode: box
     start_fee:
-      name: Start-/Blockiergebühr
+      name: Startgebühr
       description: >
-        Optional. Korrigierte pauschale Start-/Blockiergebühr. Ohne Angabe
-        bleibt die zuvor erfasste Gebühr des Eintrags unveraendert.
+        Optional. Korrigierte pauschale Startgebühr. Ohne Angabe bleibt
+        die zuvor erfasste Gebühr des Eintrags unveraendert.
       required: false
       example: 1.0
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.01
+          unit_of_measurement: EUR
+          mode: box
+    block_fee:
+      name: Blockiergebühr
+      description: >
+        Optional. Korrigierte pauschale Blockiergebühr. Ohne Angabe bleibt
+        die zuvor erfasste Gebühr des Eintrags unveraendert.
+      required: false
+      example: 5.0
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.01
+          unit_of_measurement: EUR
+          mode: box
+    time_fee:
+      name: Zeitgebühr
+      description: >
+        Optional. Korrigierte pauschale Zeitgebühr. Ohne Angabe bleibt die
+        zuvor erfasste Gebühr des Eintrags unveraendert.
+      required: false
+      example: 3.0
       selector:
         number:
           min: 0

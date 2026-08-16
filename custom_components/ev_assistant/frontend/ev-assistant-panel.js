@@ -1859,7 +1859,9 @@ class EVAssistantPanel extends HTMLElement {
     items.forEach((p) => {
       const key = p.start_ts;
       const fs = (this._formState.charge ||= {});
-      const st = (fs[key] ||= { kwh: p.energy_kwh != null ? Number(p.energy_kwh).toFixed(2) : "", price: "", fee: "" });
+      const st = (fs[key] ||= {
+        kwh: p.energy_kwh != null ? Number(p.energy_kwh).toFixed(2) : "", price: "", fee: "", blockFee: "", timeFee: "",
+      });
 
       const soc = (p.soc_start != null && p.soc_end != null)
         ? `${Math.round(p.soc_start)}% → ${Math.round(p.soc_end)}%` : "";
@@ -1885,6 +1887,8 @@ class EVAssistantPanel extends HTMLElement {
           <label>kWh (Beleg)<input type="text" inputmode="decimal" class="pf-kwh" value="${st.kwh}"></label>
           <label>EUR/kWh (Beleg)<input type="text" inputmode="decimal" class="pf-price" value="${st.price}" placeholder="0,000"></label>
           <label>Startgebühr € (optional)<input type="text" inputmode="decimal" class="pf-fee" value="${st.fee}" placeholder="0,00"></label>
+          <label>Blockiergebühr € (optional)<input type="text" inputmode="decimal" class="pf-block-fee" value="${st.blockFee}" placeholder="0,00"></label>
+          <label>Zeitgebühr € (optional)<input type="text" inputmode="decimal" class="pf-time-fee" value="${st.timeFee}" placeholder="0,00"></label>
         </div>
         <div class="pend-actions">
           <button class="btn btn-ghost pf-discard">Verwerfen</button>
@@ -1894,6 +1898,8 @@ class EVAssistantPanel extends HTMLElement {
       const kwhInput = row.querySelector(".pf-kwh");
       const priceInput = row.querySelector(".pf-price");
       const feeInput = row.querySelector(".pf-fee");
+      const blockFeeInput = row.querySelector(".pf-block-fee");
+      const timeFeeInput = row.querySelector(".pf-time-fee");
       const confirmBtn = row.querySelector(".pf-confirm");
       const updateValidity = () => {
         const valid = !isNaN(parseFloat(st.kwh)) && !isNaN(parseFloat(st.price));
@@ -1905,11 +1911,19 @@ class EVAssistantPanel extends HTMLElement {
       kwhInput.addEventListener("input", (e) => { st.kwh = e.target.value.replace(",", "."); updateValidity(); });
       priceInput.addEventListener("input", (e) => { st.price = e.target.value.replace(",", "."); updateValidity(); });
       feeInput.addEventListener("input", (e) => { st.fee = e.target.value.replace(",", "."); });
+      blockFeeInput.addEventListener("input", (e) => { st.blockFee = e.target.value.replace(",", "."); });
+      timeFeeInput.addEventListener("input", (e) => { st.timeFee = e.target.value.replace(",", "."); });
       confirmBtn.addEventListener("click", () => {
         const kwh = parseFloat(st.kwh), price = parseFloat(st.price);
         if (isNaN(kwh) || isNaN(price)) return;
         const fee = parseFloat(st.fee);
-        this._call("log_charge", { kwh, price_kwh: price, start_ts: key, start_fee: isNaN(fee) ? 0 : fee });
+        const blockFee = parseFloat(st.blockFee);
+        const timeFee = parseFloat(st.timeFee);
+        this._call("log_charge", {
+          kwh, price_kwh: price, start_ts: key,
+          start_fee: isNaN(fee) ? 0 : fee, block_fee: isNaN(blockFee) ? 0 : blockFee,
+          time_fee: isNaN(timeFee) ? 0 : timeFee,
+        });
         delete fs[key];
       });
       row.querySelector(".pf-discard").addEventListener("click", () => {
@@ -2042,6 +2056,8 @@ class EVAssistantPanel extends HTMLElement {
             ${(() => { const p = h.dauer_min >= 5 ? h.kwh / (h.dauer_min / 60) : null; return (p >= 1 && p <= 350) ? `<span class="hist-power">Ø ${this._fmtNum(p, 1)}<small>kW</small></span>` : ""; })()}
             <span class="hist-price">${this._fmtNum(h.preis_kwh, 3)} €/kWh</span>
             ${h.startgebuehr ? `<span class="hist-fee">+ ${this._fmtNum(h.startgebuehr, 2)} € Startgebühr</span>` : ""}
+            ${h.blockiergebuehr ? `<span class="hist-fee">+ ${this._fmtNum(h.blockiergebuehr, 2)} € Blockiergebühr</span>` : ""}
+            ${h.zeitgebuehr ? `<span class="hist-fee">+ ${this._fmtNum(h.zeitgebuehr, 2)} € Zeitgebühr</span>` : ""}
           </div>
           <span class="hist-cost">${this._fmtNum(h.kosten, 2)} €</span>
         </div>
@@ -2050,6 +2066,8 @@ class EVAssistantPanel extends HTMLElement {
           <label>kWh<input type="text" inputmode="decimal" class="hf-kwh" value="${h.kwh}"></label>
           <label>EUR/kWh<input type="text" inputmode="decimal" class="hf-price" value="${h.preis_kwh}"></label>
           <label>Startgebühr €<input type="text" inputmode="decimal" class="hf-fee" value="${h.startgebuehr || 0}"></label>
+          <label>Blockiergebühr €<input type="text" inputmode="decimal" class="hf-block-fee" value="${h.blockiergebuehr || 0}"></label>
+          <label>Zeitgebühr €<input type="text" inputmode="decimal" class="hf-time-fee" value="${h.zeitgebuehr || 0}"></label>
           <label>Start<input type="datetime-local" class="hf-start-ts" value="${this._toDatetimeLocal(h.start_ts)}"></label>
           <label>Ende<input type="datetime-local" class="hf-end-ts" value="${this._toDatetimeLocal(endTs)}"></label>
           <label>SoC Start (%)<input type="text" inputmode="decimal" class="hf-soc-start" value="${h.soc_start ?? ""}"></label>
@@ -2080,6 +2098,8 @@ class EVAssistantPanel extends HTMLElement {
         const kwh = num(".hf-kwh"); if (kwh != null) payload.kwh = kwh;
         const price = num(".hf-price"); if (price != null) payload.price_kwh = price;
         const fee = num(".hf-fee"); if (fee != null) payload.start_fee = fee;
+        const blockFee = num(".hf-block-fee"); if (blockFee != null) payload.block_fee = blockFee;
+        const timeFee = num(".hf-time-fee"); if (timeFee != null) payload.time_fee = timeFee;
         const startTsVal = this._fromDatetimeLocal(row.querySelector(".hf-start-ts").value);
         if (startTsVal != null) payload.start_ts = startTsVal;
         const endTsVal = this._fromDatetimeLocal(row.querySelector(".hf-end-ts").value);

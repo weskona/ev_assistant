@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.59.0] - 2026-08-16
+
+### Added
+
+- **Blocking fee and time fee for external charging**: alongside the existing start fee, `log_charge`/`edit_charge` now accept an optional `block_fee` (e.g. for overstaying after charging finished) and `time_fee` (for networks that bill by charging duration instead of/alongside kWh) — kept as three separate fields since a single receipt can list several of them at once. Each shows as its own line in the trip/charge history next to the price, and all three add into the total cost the same way the start fee already did.
+
 ## [0.58.0] - 2026-08-15
 
 ### Changed

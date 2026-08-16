@@ -707,6 +707,22 @@ def test_charge_cost_rundet_auf_zwei_nachkommastellen():
     assert charge_cost(kwh=10.333, price_kwh=0.333, start_fee=0.001) == 3.44
 
 
+def test_charge_cost_mit_blockiergebuehr():
+    assert charge_cost(kwh=20.0, price_kwh=0.5, block_fee=5.0) == 15.0
+
+
+def test_charge_cost_mit_start_und_blockiergebuehr():
+    assert charge_cost(kwh=20.0, price_kwh=0.5, start_fee=1.5, block_fee=5.0) == 16.5
+
+
+def test_charge_cost_mit_zeitgebuehr():
+    assert charge_cost(kwh=20.0, price_kwh=0.5, time_fee=3.0) == 13.0
+
+
+def test_charge_cost_mit_allen_drei_gebuehren():
+    assert charge_cost(kwh=20.0, price_kwh=0.5, start_fee=1.5, block_fee=5.0, time_fee=3.0) == 19.5
+
+
 # ----- rolling_consumption_kwh_per_100km: Realverbrauch der letzten X Tage -
 
 def _fahrt(start_ts, km, verbrauch_kwh=None):

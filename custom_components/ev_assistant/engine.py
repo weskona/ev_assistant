@@ -686,11 +686,18 @@ def weekday_usage_profile(
     return {wd: round(totals[wd] / counts[wd], 2) for wd in range(7)}
 
 
-def charge_cost(kwh: float, price_kwh: float, start_fee: float = 0.0) -> float:
-    """Gesamtkosten einer Fremdladung: kWh x Preis/kWh plus optionale
-    pauschale Start-/Blockiergebuehr (manche Ladenetze/Ladepunkte berechnen
-    diese zusaetzlich zum kWh-Preis, unabhaengig von der geladenen Menge)."""
-    return round(kwh * price_kwh + start_fee, 2)
+def charge_cost(
+    kwh: float, price_kwh: float, start_fee: float = 0.0, block_fee: float = 0.0, time_fee: float = 0.0,
+) -> float:
+    """Gesamtkosten einer Fremdladung: kWh x Preis/kWh plus bis zu drei
+    optionale pauschale Zusatzgebuehren -- getrennte Felder, da manche
+    Ladenetze/Ladepunkte auf demselben Beleg mehrere gleichzeitig
+    berechnen: Startgebuehr (fester Betrag je Ladevorgang), Blockiergebuehr
+    (fuer zu langes Stehenlassen nach Ladeende) und Zeitgebuehr (nach
+    Ladedauer statt/zusaetzlich zu kWh abgerechnet, z.B. bei manchen
+    Schnelllade-Netzen). Alle drei sind unabhaengig von der geladenen
+    Menge."""
+    return round(kwh * price_kwh + start_fee + block_fee + time_fee, 2)
 
 
 def charge_before_pv_decision(

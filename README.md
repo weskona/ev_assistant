@@ -72,7 +72,7 @@ The HA device is named `{Manufacturer} {Model}` (e.g. "VW ID.4"), so entity name
 | `pending` | External Charge Detection Open | Binary sensor — **on** while ≥ 1 charge awaits confirmation. Attributes: `anzahl_offen` (count), `offene_ladungen` (list). |
 | `pending_estimate` | External Charge Pending | Estimated kWh of the oldest pending charge. `unknown` when nothing is pending. |
 | `last_kwh` | External Charge kWh (last) | kWh from the receipt for the most recently confirmed charge. |
-| `last_cost` | External Charge Cost (last) | Cost of the most recently confirmed charge (kWh × price, plus any `start_fee`). |
+| `last_cost` | External Charge Cost (last) | Cost of the most recently confirmed charge (kWh × price, plus any `start_fee`/`block_fee`/`time_fee`). |
 | `last_price` | External Charge Price (last) | Price per kWh entered for the most recent charge. |
 | `last_duration` | External Charge Duration (last) | Duration of the detected session in minutes. |
 | `last_charge_power` | External Charge Avg Power (last) | Average charge power (kW) of the most recently confirmed charge, from kWh ÷ duration. Sessions < 5 min or with implausible power (< 1 kW or > 350 kW) return `unknown`. |
@@ -169,7 +169,7 @@ Per-vehicle dashboard in a three-column layout:
 | Column | Content |
 |--------|---------|
 | **Home Charging** | Home charging totals (kWh, EUR, session count, avg. solar share), last session KPIs, full evcc session history. Each entry shows SOC start→end, kWh, Ø charge power, EUR/kWh, cost, solar share, duration, and a SOC bar. |
-| **External Charging** | External charge totals, last session KPIs, editable history. Each entry shows kWh, Ø charge power, cost, and a SOC bar; entries with a `start_fee` also show it as a separate line next to the price. |
+| **External Charging** | External charge totals, last session KPIs, editable history. Each entry shows kWh, Ø charge power, cost, and a SOC bar; a `start_fee`, `block_fee`, and/or `time_fee` each show as their own separate line next to the price — some receipts list several at once (e.g. a flat start fee plus a blocking fee for overstaying after charging finished, or a time-based fee some fast-charging networks bill instead of/alongside kWh). |
 | **Trip Log** | Trip totals, last trip KPIs (km, route), editable trip history. Each entry with a known consumption shows both the trip's total kWh and its kWh/100km rate side by side, to avoid misreading the absolute figure as a rate. |
 
 ### Usage Profile tab
@@ -198,9 +198,9 @@ All services require `config_entry_id` to target a specific vehicle when multipl
 
 | Service | Parameters | Description |
 |---------|-----------|-------------|
-| `log_charge` | `config_entry_id`, `kwh`, `price_kwh`, `start_ts`*, `start_fee`* | Confirm a pending external charge with receipt values. `start_ts` selects which pending charge (oldest if omitted). `start_fee` is an optional flat fee some networks/chargers add on top of the kWh price (e.g. a start or blocking fee), default 0. |
+| `log_charge` | `config_entry_id`, `kwh`, `price_kwh`, `start_ts`*, `start_fee`*, `block_fee`*, `time_fee`* | Confirm a pending external charge with receipt values. `start_ts` selects which pending charge (oldest if omitted). `start_fee`/`block_fee`/`time_fee` are optional flat fees some networks/chargers add on top of the kWh price (a start fee, a blocking fee for overstaying, and a time-based fee for charging duration) — kept as separate fields since a receipt can list several at once, default 0 each. |
 | `discard_pending` | `config_entry_id`, `start_ts`* | Discard a pending external charge (false positive). |
-| `edit_charge` | `config_entry_id`, `erfasst_ts`, `kwh`*, `price_kwh`*, `start_fee`*, `start_ts`*, `end_ts`*, `soc_start`*, `soc_end`* | Correct any field of an already-confirmed history entry, same "only given fields change" model as `edit_trip`. Running totals adjust by the difference when kWh/price/fee change; `soc_start`/`soc_end` changes recompute the SoC delta; `end_ts` is converted to a duration together with the (new or existing) `start_ts`. |
+| `edit_charge` | `config_entry_id`, `erfasst_ts`, `kwh`*, `price_kwh`*, `start_fee`*, `block_fee`*, `time_fee`*, `start_ts`*, `end_ts`*, `soc_start`*, `soc_end`* | Correct any field of an already-confirmed history entry, same "only given fields change" model as `edit_trip`. Running totals adjust by the difference when kWh/price/fees change; `soc_start`/`soc_end` changes recompute the SoC delta; `end_ts` is converted to a duration together with the (new or existing) `start_ts`. |
 | `delete_charge` | `config_entry_id`, `erfasst_ts` | Remove a confirmed history entry. **Not reversible.** |
 | `simulate_event` | `config_entry_id`, `soc_start`, `soc_end`, `energy_source`* | Fire a test external-charge event without a car. |
 | `log_trip` | `config_entry_id`, `start_ort`, `end_ort`, `start_ts`* | Confirm a pending trip with a start/end location. |
