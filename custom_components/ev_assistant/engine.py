@@ -88,6 +88,7 @@ class ChargeDetector:
         noise: float = 0.5,
         idle_timeout_s: float = 600.0,
         drop_ends: float = 1.0,
+        regen_implausible_delta_pct: float = 15.0,
     ):
         self.usable_kwh = usable_kwh
         self.charge_efficiency = charge_efficiency
@@ -96,6 +97,12 @@ class ChargeDetector:
         self.noise = noise
         self.idle_timeout_s = idle_timeout_s
         self.drop_ends = drop_ends
+        # Ab dieser SoC-Sprunghoehe gilt ein Anstieg bei bestaetigt
+        # ausgestecktem Fahrzeug NICHT mehr als plausible Rekuperation,
+        # sondern als waehrend einer Erkennungsluecke verpasste Fremdladung
+        # (siehe _update_idle()) -- Default identisch zu const.py::
+        # IMPLAUSIBLE_REGEN_DELTA_PCT.
+        self.regen_implausible_delta_pct = regen_implausible_delta_pct
 
         self._active = False
         self._anchor_soc: Optional[float] = None
@@ -172,15 +179,25 @@ class ChargeDetector:
             self._anchor_ts = s.ts
             return None
         if s.soc - self._anchor_soc >= self.start_delta:
-            if s.plugged_in is False:
-                # Bestaetigt AUSGESTECKT (siehe SignalDebouncer) -- ein SoC-
-                # Anstieg kann dann keine Fremdladung sein, sondern ist z.B.
-                # Rekuperation (Bremsenergie-Rueckgewinnung) waehrend der
-                # Fahrt. Anker trotzdem auf den neuen (hoeheren) Wert
-                # nachfuehren, sonst wuerde derselbe Anstieg bei der naechsten
-                # Messung erneut ausgewertet. Kein Steckersensor konfiguriert
+            delta = s.soc - self._anchor_soc
+            if s.plugged_in is False and delta < self.regen_implausible_delta_pct:
+                # Bestaetigt AUSGESTECKT (siehe SignalDebouncer) UND ein fuer
+                # Rekuperation (Bremsenergie-Rueckgewinnung waehrend der
+                # Fahrt) plausibler, kleiner Anstieg -- keine Fremdladung.
+                # Anker trotzdem auf den neuen (hoeheren) Wert nachfuehren,
+                # sonst wuerde derselbe Anstieg bei der naechsten Messung
+                # erneut ausgewertet. Kein Steckersensor konfiguriert
                 # (plugged_in bleibt immer None): unveraendertes Verhalten,
                 # ein SoC-Anstieg startet weiterhin eine Erkennung.
+                #
+                # Ein SEHR GROSSER Anstieg trotz "ausgesteckt"
+                # (>= regen_implausible_delta_pct) ist dagegen mit
+                # ueberwiegender Wahrscheinlichkeit keine Rekuperation,
+                # sondern eine waehrend einer Erkennungsluecke (z.B.
+                # Telemetrie-Ausfall der Quell-Integration ueber mehrere
+                # Tage) verpasste Fremdladung -- die unten trotzdem als
+                # Ladungs-Start gewertet wird, statt still verworfen zu
+                # werden.
                 self._anchor_soc = s.soc
                 self._anchor_ts = s.ts
                 return None

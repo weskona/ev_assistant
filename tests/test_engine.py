@@ -162,6 +162,34 @@ def test_soc_anstieg_bei_eingesteckt_startet_ladung_normal():
     assert (ev.soc_start, ev.soc_end) == (70, 73)
 
 
+def test_unplausibel_grosser_sprung_bei_ausgesteckt_startet_trotzdem_ladung():
+    # Ein SoC-Sprung >= regen_implausible_delta_pct ist trotz bestaetigt
+    # ausgestecktem Fahrzeug KEINE plausible Rekuperation mehr, sondern eine
+    # waehrend einer Erkennungsluecke (z.B. mehrtaegiger Telemetrie-Ausfall)
+    # verpasste Fremdladung -- muss trotzdem eine Erkennung starten.
+    det = ChargeDetector(start_delta=3.0, idle_timeout_s=60, regen_implausible_delta_pct=15.0)
+    run(det, stream([59, 98], start_ts=0, step=30, plug=False))
+    ev = run(det, stream([98], start_ts=200, plug=False))[0]
+    assert (ev.soc_start, ev.soc_end) == (59, 98)
+
+
+def test_sprung_knapp_unter_der_schwelle_bleibt_regen():
+    # Grenzfall: knapp UNTER der Schwelle bleibt es beim bisherigen
+    # Rekuperations-Verhalten (keine Ladung).
+    det = ChargeDetector(start_delta=3.0, regen_implausible_delta_pct=15.0)
+    samples = stream([70, 84.9], start_ts=0, step=30, plug=False)
+    assert run(det, samples) == []
+
+
+def test_sprung_genau_auf_der_schwelle_startet_ladung():
+    # Grenzfall: genau die Schwelle selbst zaehlt schon als unplausibel
+    # (">=", siehe _update_idle()).
+    det = ChargeDetector(start_delta=3.0, idle_timeout_s=60, regen_implausible_delta_pct=15.0)
+    run(det, stream([70, 85], start_ts=0, step=30, plug=False))
+    ev = run(det, stream([85], start_ts=200, plug=False))[0]
+    assert (ev.soc_start, ev.soc_end) == (70, 85)
+
+
 def test_active_property_zeigt_idle_zu_ladung_uebergang():
     """Der Coordinator nutzt .active, um eine laufende Fremdladung von
     Heimladen zu unterscheiden (siehe coordinator.py::

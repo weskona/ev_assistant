@@ -108,6 +108,7 @@ from .const import (
     EVENT_TRIP_IMPORTED,
     EVENT_TRIP_LOGGED,
     EVENT_TRIP_PENDING,
+    IMPLAUSIBLE_REGEN_DELTA_PCT,
     LEASING_KNAPP_SCHWELLE_PCT,
     LEASING_TOLERANZ_PCT,
     MILES_TO_KM,
@@ -449,6 +450,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             noise=float(self._opt(CONF_NOISE, DEFAULT_NOISE)),
             idle_timeout_s=float(self._opt(CONF_IDLE_TIMEOUT, DEFAULT_IDLE_TIMEOUT)),
             drop_ends=float(self._opt(CONF_DROP_ENDS, DEFAULT_DROP_ENDS)),
+            regen_implausible_delta_pct=IMPLAUSIBLE_REGEN_DELTA_PCT,
         )
         # Stellt eine ggf. laufende (noch nicht abgeschlossene) Fremdladung
         # ueber einen HA-Neustart hinweg wieder her -- ohne das wuerde jeder

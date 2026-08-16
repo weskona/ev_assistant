@@ -69,6 +69,16 @@ CONF_DROP_ENDS = "drop_ends"
 # gemeldetem SoC faelschlich splittet (siehe engine.py::SignalDebouncer).
 CONF_PLUG_ENTITY = "plug_entity"
 CONF_PLUG_DEBOUNCE = "plug_debounce_s"
+# Rekuperation (Bremsenergie-Rueckgewinnung waehrend der Fahrt) kann den SoC
+# realistisch nur um wenige Prozentpunkte anheben. Ein SoC-Sprung ab dieser
+# Groesse bei "bestaetigt ausgestecktem" Fahrzeug (siehe CONF_PLUG_ENTITY)
+# ist mit ueberwiegender Wahrscheinlichkeit KEINE Rekuperation, sondern eine
+# waehrend einer Erkennungsluecke (z.B. Telemetrie-Ausfall der Quell-
+# Integration) VERPASSTE Fremdladung -- wird deshalb trotzdem als
+# Ladungs-Start gewertet statt stillschweigend verworfen (siehe
+# engine.py::ChargeDetector._update_idle()). Interne Heuristik, kein
+# Config-Flow-Feld, analog TRIP_CONSUMPTION_MIN_KWH_100KM weiter unten.
+IMPLAUSIBLE_REGEN_DELTA_PCT = 15.0
 
 # Fahrzeug-Eckdaten
 CONF_VEHICLE_HERSTELLER = "vehicle_hersteller"

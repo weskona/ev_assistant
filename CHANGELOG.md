@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.62.0] - 2026-08-16
+
+### Fixed
+
+- **A large SoC jump while "confirmed unplugged" is no longer silently discarded as regenerative braking.** Found live: a vehicle's telemetry (SoC + plug sensor) went unavailable for ~4 days; when it reconnected, the SoC had jumped 39 points in one sample and the plug sensor happened to read "unplugged" at that instant (the car had been charged and unplugged again in the meantime) — the detector treated the whole thing as regen and never flagged a charge. Regenerative braking realistically can't move SoC more than a few points in one gap, so a jump of 15 points or more while confirmed unplugged is now treated as a charge that was missed during a detection gap and starts a session anyway, instead of just moving the anchor and discarding it. Smaller jumps (genuine regen) are unaffected — this only changes behavior at a threshold no legitimate regen event should ever reach.
+- This doesn't recover charges already missed before this update (the detector's internal state has already moved on) — those can be added retroactively via the new manual-entry form (see 0.61.0) if you still know the values.
+
 ## [0.61.0] - 2026-08-16
 
 ### Added
