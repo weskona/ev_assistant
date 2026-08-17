@@ -943,7 +943,7 @@ class EVAssistantPanel extends HTMLElement {
               </div>
               <div class="hist-edit-form hidden" id="ext-manual-form">
                 <label>Start<input type="datetime-local" class="em-start-ts"></label>
-                <label>Ende (optional)<input type="datetime-local" class="em-end-ts"></label>
+                <label>Ladeende (optional, nicht Abstecken)<input type="datetime-local" class="em-end-ts"></label>
                 <label>kWh<input type="text" inputmode="decimal" class="em-kwh" placeholder="0,0"></label>
                 <label>EUR/kWh<input type="text" inputmode="decimal" class="em-price" placeholder="0,000"></label>
                 <label>SoC Start % (optional)<input type="text" inputmode="decimal" class="em-soc-start" placeholder="0"></label>
@@ -1269,7 +1269,7 @@ class EVAssistantPanel extends HTMLElement {
           Gesamtstrecke — km lassen sich keinem einzelnen Ladeort zuordnen.
         </div>
         <div class="divider hidden" id="analyse-acdc-divider"></div>
-        <div class="sub-head hidden" id="analyse-acdc-head">Fremdladung nach AC/DC</div>
+        <div class="sub-head hidden" id="analyse-acdc-head" title="Geschätzt aus Ø-Ladeleistung (kWh/Ladedauer), keine direkte AC/DC-Messung.">Fremdladung nach AC/DC ⓘ</div>
         <div class="km-grid hidden" id="analyse-acdc-grid">
           <div class="km-col hidden" id="analyse-acdc-ac-col">
             <div class="sub-head">AC</div>
@@ -1287,6 +1287,10 @@ class EVAssistantPanel extends HTMLElement {
             <div class="km-item"><span class="km-label">Ø Preis</span><span class="km-val" id="analyse-acdc-dc-price">—</span><span class="km-unit">EUR/kWh</span></div>
             <div class="km-item"><span class="km-label">Ladungen</span><span class="km-val" id="analyse-acdc-dc-count">—</span><span class="km-unit"></span></div>
           </div>
+        </div>
+        <div class="profil-empty hidden" id="analyse-acdc-note" style="padding:4px 0 0;font-size:0.72rem">
+          Geschätzt aus der Durchschnittsleistung je Ladung (kWh ÷ Ladedauer) gegen eine 22-kW-Schwelle — keine
+          direkte AC/DC-Messung. Grenzfälle möglich, insbesondere bei abgeregelten Schnellladungen.
         </div>
       </div>`;
 
@@ -1323,6 +1327,7 @@ class EVAssistantPanel extends HTMLElement {
       analyseAcdcDcPct:   q("#analyse-acdc-dc-pct"),
       analyseAcdcDcPrice: q("#analyse-acdc-dc-price"),
       analyseAcdcDcCount: q("#analyse-acdc-dc-count"),
+      analyseAcdcNote:    q("#analyse-acdc-note"),
     };
     return wrap;
   }
@@ -1426,6 +1431,7 @@ class EVAssistantPanel extends HTMLElement {
     r.analyseAcdcDivider.classList.toggle("hidden", !hasAcDc);
     r.analyseAcdcHead.classList.toggle("hidden", !hasAcDc);
     r.analyseAcdcGrid.classList.toggle("hidden", !hasAcDc);
+    r.analyseAcdcNote.classList.toggle("hidden", !hasAcDc);
     r.analyseAcdcAcCol.classList.toggle("hidden", !acDc.ac);
     if (acDc.ac) {
       r.analyseAcdcAcKwh.textContent = fmt(acDc.ac.kwh, 1);
@@ -2346,7 +2352,7 @@ class EVAssistantPanel extends HTMLElement {
           <label>Blockiergebühr €<input type="text" inputmode="decimal" class="hf-block-fee" value="${h.blockiergebuehr || 0}"></label>
           <label>Zeitgebühr €<input type="text" inputmode="decimal" class="hf-time-fee" value="${h.zeitgebuehr || 0}"></label>
           <label>Start<input type="datetime-local" class="hf-start-ts" value="${this._toDatetimeLocal(h.start_ts)}"></label>
-          <label>Ende<input type="datetime-local" class="hf-end-ts" value="${this._toDatetimeLocal(endTs)}"></label>
+          <label>Ladeende (nicht Abstecken)<input type="datetime-local" class="hf-end-ts" value="${this._toDatetimeLocal(endTs)}"></label>
           <label>SoC Start (%)<input type="text" inputmode="decimal" class="hf-soc-start" value="${h.soc_start ?? ""}"></label>
           <label>SoC Ende (%)<input type="text" inputmode="decimal" class="hf-soc-end" value="${h.soc_end ?? ""}"></label>
           <button class="btn btn-primary hf-save">Speichern</button>

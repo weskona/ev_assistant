@@ -2,6 +2,14 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.63.1] - 2026-08-17
+
+### Changed
+
+- **AC/DC-Fremdladungserkennung: Diagnose der Datengrundlage, Grenzen jetzt dokumentiert statt implizit.** Geprüft, woraus `dauer_min` in jedem Fall abgeleitet wird: bei automatisch erkannten Ladungen ist es bereits die reine Ladefenster-Dauer (der Detektor beendet die Messung beim letzten bestätigten SoC-/Leistungsanstieg, nicht erst bei der späteren Finalisierung — Standzeit danach zählt nicht mit). Bei manuell erfasstem oder nachträglich korrigiertem Ladeende dagegen kommt die Dauer aus einem frei eingegebenen Zeitpunkt im Panel, der bisher nur "Ende" hieß — trägt man dort die Absteckzeit statt des tatsächlichen Ladeendes ein, fällt die daraus berechnete Durchschnittsleistung zu niedrig aus und eine echte DC-Ladung kann fälschlich als AC erscheinen. Es gibt für diesen Fall keine genauere gespeicherte Größe, also wird nichts geraten — stattdessen ist die Grenze jetzt im Docstring von `ac_dc_breakdown()` benannt und die Klassifizierung ausdrücklich als Schätzung dokumentiert. Der 22-kW-Schwellwert bleibt unverändert, da die Verzerrung nur in eine Richtung wirkt (DC→AC, nie umgekehrt) und aus der Dateneingabe kommt, nicht aus der Position der Schwelle.
+- Die beiden betroffenen Formularfelder heißen jetzt **"Ladeende (nicht Abstecken)"** statt schlicht "Ende" (manuelle Erfassung und Korrektur einer Fremdladung), um diese Verwechslung an der Quelle zu vermeiden.
+- Die "Fremdladung nach AC/DC"-Sektion der Ladeort-Aufschlüsselung im Analyse-Tab weist jetzt selbst darauf hin, dass es sich um eine aus der Durchschnittsleistung abgeleitete Schätzung handelt, keine direkte AC/DC-Messung.
+
 ## [0.63.0] - 2026-08-16
 
 ### Added

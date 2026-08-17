@@ -1107,6 +1107,32 @@ def ac_dc_breakdown(history: list, ac_max_kw: float = 22.0) -> dict:
     werden ausgelassen, nicht geraten. NUR Fremdladungen -- Heimladen ist
     baulich praktisch immer AC, eine Einordnung dafuer waere sinnlos.
 
+    Das ist eine bewusst konservative SCHAETZUNG, keine Messung -- zwei
+    bekannte Grenzen:
+    - Durchschnittsleistung ist nicht Spitzenleistung: eine kurze DC-Ladung
+      mit Ladekurven-Abregelung (z.B. nahe 100% SoC) kann im Schnitt unter
+      `ac_max_kw` fallen und faelschlich als AC erscheinen. Grenzfaelle
+      bleiben moeglich, unabhaengig von der Datenqualitaet.
+    - `dauer_min` ist nur bei automatisch erkannten Ladungen garantiert die
+      reine Ladefenster-Dauer (ChargeDetector._finalize() setzt end_ts auf
+      den letzten bestaetigten Anstieg, NICHT auf den spaeteren
+      Finalisierungs-Zeitpunkt -- Standzeit danach zaehlt nicht mit). Bei
+      manuell erfassten/korrigierten Ladungen (coordinator.py::
+      async_log_charge()/async_edit_charge() mit `end_ts`) kommt die Dauer
+      dagegen direkt aus einem frei eingegebenen "Ende"-Zeitpunkt im Panel
+      -- traegt jemand dort die Absteckzeit statt des tatsaechlichen
+      Ladeendes ein, faellt die Durchschnittsleistung zu niedrig aus und
+      eine echte DC-Ladung kann faelschlich als AC eingeordnet werden. Es
+      gibt fuer diesen Fall keine genauere gespeicherte Groesse (kein
+      Leistungsfenster, kein zweiter Zeitstempel) -- bewusst nicht geraten,
+      stattdessen hier dokumentiert; die Klassifizierung ist entsprechend
+      als Schaetzung zu verstehen, nicht als exakte Wahrheit (siehe auch
+      die Kennzeichnung dazu im Panel).
+    - Beide Grenzen wirken nur in eine Richtung (DC faelschlich als AC,
+      nie umgekehrt) -- eine andere Schwelle wuerde daran nichts aendern,
+      da die Verzerrung aus der Dateneingabe kommt, nicht aus der Position
+      der Schwelle.
+
     Rueckgabe je Kategorie ("ac"/"dc", nur wenn mindestens eine Ladung
     einzuordnen war): "kwh"/"kosten" (Summe, gerundet), "anzahl" (Anzahl
     Ladungen), "kwh_anteil_pct"/"kosten_anteil_pct" (Anteil an der Summe
