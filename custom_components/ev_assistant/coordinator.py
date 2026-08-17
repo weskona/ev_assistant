@@ -109,9 +109,11 @@ from .const import (
     EVENT_TRIP_IMPORTED,
     EVENT_TRIP_LOGGED,
     EVENT_TRIP_PENDING,
+    IMPLAUSIBLE_POWER_RATIO,
     IMPLAUSIBLE_REGEN_DELTA_PCT,
     LEASING_KNAPP_SCHWELLE_PCT,
     LEASING_TOLERANZ_PCT,
+    MAX_POWER_GAP_S,
     MILES_TO_KM,
     MIN_USAGE_PROFILE_DAYS,
     NOTIFY_EVENT_FAHRT,
@@ -453,6 +455,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             idle_timeout_s=float(self._opt(CONF_IDLE_TIMEOUT, DEFAULT_IDLE_TIMEOUT)),
             drop_ends=float(self._opt(CONF_DROP_ENDS, DEFAULT_DROP_ENDS)),
             regen_implausible_delta_pct=IMPLAUSIBLE_REGEN_DELTA_PCT,
+            implausible_power_ratio=IMPLAUSIBLE_POWER_RATIO,
+            max_power_gap_s=MAX_POWER_GAP_S,
         )
         # Stellt eine ggf. laufende (noch nicht abgeschlossene) Fremdladung
         # ueber einen HA-Neustart hinweg wieder her -- ohne das wuerde jeder

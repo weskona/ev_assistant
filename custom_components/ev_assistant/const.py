@@ -79,6 +79,29 @@ CONF_PLUG_DEBOUNCE = "plug_debounce_s"
 # engine.py::ChargeDetector._update_idle()). Interne Heuristik, kein
 # Config-Flow-Feld, analog TRIP_CONSUMPTION_MIN_KWH_100KM weiter unten.
 IMPLAUSIBLE_REGEN_DELTA_PCT = 15.0
+# Bei grober/lueckenhafter Leistungsmeldung (z.B. Stellantis-App: seltene,
+# unregelmaessige Leistungs- UND SoC-Updates) integriert _integrate_power()
+# ueber weite Luecken hinweg linear zwischen zwei zufaellig niedrigen
+# Messpunkten -- das kann die tatsaechliche Ladeleistung um ein Vielfaches
+# unterschaetzen (siehe engine.py::ChargeDetector._energy()), waehrend ein
+# grosses SoC-Delta die Ladung plausibel belegt. Ab dieser Rate (Leistungs-
+# Schaetzung / SoC-Schaetzung, beide in Batterie-kWh) gilt die Leistung als
+# unplausibel niedrig und die SoC-Schaetzung wird stattdessen verwendet.
+# 0.6 laesst der Leistungsmessung grosszuegig bis zu 40% Abweichung nach
+# unten (z.B. durch eine ungenaue usable_kwh-Annahme), bevor sie verworfen
+# wird -- der reale Feldfall (2.45 statt ~26 kWh, Verhaeltnis ca. 0.09)
+# liegt weit darunter. Faellt NIE ein, wenn Leistung >= SoC-Schaetzung (der
+# Fall "SoC grob, Leistung zuverlaessig" bleibt unveraendert). Interne
+# Heuristik, kein Config-Flow-Feld, analog IMPLAUSIBLE_REGEN_DELTA_PCT.
+IMPLAUSIBLE_POWER_RATIO = 0.6
+# Deckel fuer die Trapez-Integration in _integrate_power(): eine Luecke
+# zwischen zwei Leistungssamples, die laenger als dieser Wert ist, wird
+# NICHT linear ueberbrueckt (Beitrag = 0 statt Trapezflaeche) -- eine derart
+# lange Luecke ist keine verlaessliche Grundlage fuer eine Leistungsannahme
+# ueber den gesamten Zeitraum. Grosszuegig gewaehlt (1h), um normal-grobe,
+# aber noch brauchbare Meldefrequenzen (z.B. alle 15-20 Min.) nicht zu
+# treffen -- wirkt nur bei echten Ausfaellen/sehr seltenen Updates.
+MAX_POWER_GAP_S = 3600.0
 
 # Fahrzeug-Eckdaten
 CONF_VEHICLE_HERSTELLER = "vehicle_hersteller"

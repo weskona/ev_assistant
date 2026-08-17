@@ -2,6 +2,15 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.64.0] - 2026-08-17
+
+### Fixed
+
+- **Grob unterschätzte Ladeleistung überstimmte nicht mehr ein klares SoC-Delta.** Feldfall: eine erkannte Fremdladung von 42% auf 100% SoC (58 Prozentpunkte, plausibel ~26 kWh) wurde nur mit 2,45 kWh geschätzt — Faktor 10 zu niedrig. Ursache: `ChargeDetector._energy()` bevorzugte bedingungslos die aus der gemeldeten Ladeleistung integrierte Energie, sobald überhaupt ein positiver Wert vorlag, unabhängig davon, wie groß und plausibel das SoC-Delta war. Bei grober/lückenhafter Telemetrie (z.B. die Stellantis-App meldet Leistung und SoC nur selten und unregelmäßig) integriert `_integrate_power()` linear zwischen zwei zufällig verfügbaren Messpunkten — liegen beide zufällig niedrig (etwa kurz vor Ladebeginn und nach dem Auslaufen der Ladekurve), wird die dazwischenliegende, tatsächlich hohe Ladephase komplett unterschlagen.
+- Es wird jetzt immer auch die SoC-basierte Schätzung berechnet, sobald ein SoC-Delta vorliegt, und mit der (auf Batterie-kWh normalisierten) Leistungsschätzung verglichen. Unterschreitet die Leistung 60% der SoC-Schätzung (`IMPLAUSIBLE_POWER_RATIO`, neuer interner Tunable in `const.py`), gilt sie als unplausibel niedrig und die SoC-Schätzung wird stattdessen verwendet — sichtbar gemacht über den neuen `energy_source`-Wert `"soc_power_implausible"` (Diagnostics/Historie zeigen damit, warum nicht die Leistung genutzt wurde). Liegt die Leistung bei oder über der SoC-Schätzung, bleibt das bisherige Verhalten exakt erhalten — auch wenn das SoC grob und die Leistung die zuverlässigere, höhere Quelle ist, wird nichts überschrieben.
+- Zusätzlich überbrückt `_integrate_power()` Lücken zwischen zwei Leistungswerten von mehr als einer Stunde (`MAX_POWER_GAP_S`) nicht mehr linear, sondern verwirft den Beitrag dieses Zeitraums — eine so lange Lücke ist keine verlässliche Grundlage für eine Leistungsannahme über den ganzen Zeitraum. Wirkt nur bei echten Ausfällen/sehr seltenen Meldungen, normale Meldefrequenzen (z.B. alle 15–20 Min.) sind davon nicht betroffen.
+- **Verbleibende Grenze**: beide Schätzer sind selbst mit diesem Abgleich fehlerbehaftet — die SoC-Schätzung hängt von der konfigurierten nutzbaren Kapazität ab (Nameplate, nicht die tatsächliche, alterungsabhängige Kapazität), die Leistungsschätzung bleibt bei dauerhaft lückenhafter Telemetrie unterhalb der 60%-Schwelle ungenau erkennbar, aber nicht korrigierbar (es gibt keine dritte, unabhängige Quelle). Der Abgleich verhindert nur, dass eine *klar* zu niedrige Leistung eine plausible SoC-Schätzung überstimmt — er ersetzt keine der beiden Schätzungen durch eine genauere.
+
 ## [0.63.1] - 2026-08-17
 
 ### Changed

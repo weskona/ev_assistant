@@ -89,6 +89,8 @@ class ChargeDetector:
         idle_timeout_s: float = 600.0,
         drop_ends: float = 1.0,
         regen_implausible_delta_pct: float = 15.0,
+        implausible_power_ratio: float = 0.6,
+        max_power_gap_s: float = 3600.0,
     ):
         self.usable_kwh = usable_kwh
         self.charge_efficiency = charge_efficiency
@@ -103,6 +105,14 @@ class ChargeDetector:
         # (siehe _update_idle()) -- Default identisch zu const.py::
         # IMPLAUSIBLE_REGEN_DELTA_PCT.
         self.regen_implausible_delta_pct = regen_implausible_delta_pct
+        # Ab welcher Unterschreitung (Leistungs- vs. SoC-Schaetzung, beide in
+        # Batterie-kWh) die Leistungsschaetzung als unplausibel niedrig gilt
+        # und durch die SoC-Schaetzung ersetzt wird (siehe _energy()) --
+        # Default identisch zu const.py::IMPLAUSIBLE_POWER_RATIO.
+        self.implausible_power_ratio = implausible_power_ratio
+        # Deckel fuer die Trapez-Integration in _integrate_power() -- Default
+        # identisch zu const.py::MAX_POWER_GAP_S.
+        self.max_power_gap_s = max_power_gap_s
 
         self._active = False
         self._anchor_soc: Optional[float] = None
@@ -217,7 +227,14 @@ class ChargeDetector:
             return
         if self._last_power is not None and self._last_power_ts is not None:
             dt_h = (s.ts - self._last_power_ts) / 3600.0
-            if dt_h > 0:
+            # Eine Luecke ueber max_power_gap_s (z.B. seltene/ausgefallene
+            # Meldungen) wird NICHT linear ueberbrueckt -- zwei zufaellig
+            # niedrige Messpunkte an den Raendern einer langen Luecke wuerden
+            # sonst eine tatsaechlich viel hoehere Ladeleistung dazwischen
+            # unterschlagen (siehe _energy()/const.py::MAX_POWER_GAP_S).
+            # last_power/_ts trotzdem aktualisieren, damit der naechste
+            # Schritt wieder normal integrieren kann.
+            if 0 < dt_h <= self.max_power_gap_s / 3600.0:
                 self._e_power_kwh += 0.5 * (self._last_power + s.power_kw) * dt_h
                 self._have_power = True
         self._last_power = s.power_kw
@@ -250,12 +267,35 @@ class ChargeDetector:
         return None
 
     def _energy(self, delta_soc: float):
+        """Waehlt zwischen Leistungs- und SoC-Schaetzung. Die Leistungs-
+        Integration (_integrate_power()) kann bei grober/lueckenhafter
+        Telemetrie (z.B. Stellantis-App) die tatsaechliche Ladeleistung um
+        ein Vielfaches unterschaetzen, obwohl ein grosses SoC-Delta die
+        Ladung plausibel belegt -- ein Feldfall zeigte 2.45 statt ~26 kWh
+        bei 42%->100% SoC. Daher wird bei vorhandenem SoC-Delta IMMER auch
+        die SoC-Schaetzung berechnet und mit der (auf Batterie-kWh
+        normalisierten) Leistungsschaetzung verglichen: unterschreitet die
+        Leistung `implausible_power_ratio * SoC-Schaetzung`, gilt sie als
+        unplausibel niedrig und die SoC-Schaetzung wird stattdessen
+        verwendet (energy_source "soc_power_implausible", damit Diagnostics/
+        Historie sichtbar machen, warum nicht die Leistung genutzt wurde).
+        Liegt die Leistung >= SoC-Schaetzung (auch nur knapp), bleibt das
+        bisherige Verhalten (Leistung gewinnt) UNVERAENDERT -- der Fall "SoC
+        grob, Leistung zuverlaessig und hoeher" darf nicht ueberschrieben
+        werden. Ohne SoC-Delta (delta_soc <= 0) unveraendert wie bisher."""
         if self._have_power and self._e_power_kwh > 0:
             if self.power_is_ac:
                 e_ac = self._e_power_kwh
-                return e_ac, e_ac * self.charge_efficiency, "power_ac"
-            e_batt = self._e_power_kwh
-            return e_batt / self.charge_efficiency, e_batt, "power_dc"
+                e_batt_power = e_ac * self.charge_efficiency
+            else:
+                e_batt_power = self._e_power_kwh
+            if delta_soc > 0:
+                e_batt_soc = delta_soc / 100.0 * self.usable_kwh
+                if e_batt_power < self.implausible_power_ratio * e_batt_soc:
+                    return e_batt_soc / self.charge_efficiency, e_batt_soc, "soc_power_implausible"
+            if self.power_is_ac:
+                return e_ac, e_batt_power, "power_ac"
+            return e_batt_power / self.charge_efficiency, e_batt_power, "power_dc"
         e_batt = delta_soc / 100.0 * self.usable_kwh
         return e_batt / self.charge_efficiency, e_batt, "soc"
 

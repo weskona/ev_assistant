@@ -77,6 +77,76 @@ def test_leistungs_integration_dc():
     assert ev.energy_kwh == pytest.approx(ev.energy_batt_kwh / 0.90, abs=0.01)
 
 
+# ----- _energy(): Plausibilitaets-Abgleich Leistung vs. SoC-Delta ----------
+
+def test_leistung_stark_unterschaetzt_faellt_auf_soc_zurueck():
+    # Feldfall: SoC 42 -> 100 (58 Prozentpunkte), aber nur zwei niedrige,
+    # weit auseinanderliegende Leistungswerte (grobe/lueckenhafte Telemetrie
+    # z.B. Stellantis-App) -- die integrierte Leistung waere nur ein
+    # Bruchteil dessen, was das SoC-Delta plausibel macht (real: 2.45 statt
+    # ~26 kWh). engine.ChargeDetector._energy() muss auf die SoC-Schaetzung
+    # zurueckfallen statt der klar zu niedrigen Leistung zu vertrauen.
+    usable_kwh = 45.0
+    n = 59  # SoC 42 -> 100 in 1-Prozentpunkt-Schritten
+    samples = []
+    for i in range(n):
+        power = 2.0 if i == 5 else (1.0 if i == 30 else None)
+        samples.append(ChargeSample(ts=i * 60, soc=42 + i, home_charging=False, power_kw=power))
+    samples.append(ChargeSample(ts=n * 60, soc=100, home_charging=True, power_kw=None))
+    det = ChargeDetector(usable_kwh=usable_kwh, charge_efficiency=0.88, power_is_ac=True, idle_timeout_s=9999)
+    ev = run(det, samples)[0]
+    assert ev.delta_soc == 58
+    assert ev.energy_source == "soc_power_implausible"
+    expected_batt = 58 / 100 * usable_kwh
+    assert ev.energy_batt_kwh == pytest.approx(expected_batt, abs=0.01)
+    assert ev.energy_kwh == pytest.approx(expected_batt / 0.88, abs=0.01)
+
+
+def test_leistung_und_soc_konsistent_bleibt_unveraendert():
+    # Gegenprobe: Leistung und SoC-Delta passen zusammen -- der neue
+    # Plausibilitaets-Abgleich darf hier NICHT eingreifen, die
+    # Leistungsschaetzung gewinnt weiterhin wie vor dem Fix.
+    n = 13
+    socs = [30 + i * 1.6 for i in range(n)]
+    samples = [ChargeSample(ts=i * 300, soc=socs[i], home_charging=False, power_kw=11.0) for i in range(n)]
+    samples += stream([socs[-1]] * 3, start_ts=n * 300, step=300, power=0.0)
+    det = ChargeDetector(usable_kwh=45, charge_efficiency=0.88, power_is_ac=True, idle_timeout_s=600)
+    ev = run(det, samples)[0]
+    assert ev.energy_source == "power_ac"
+    assert ev.energy_batt_kwh == pytest.approx(8.47, abs=0.05)
+
+
+def test_leistung_hoeher_als_soc_schaetzung_bleibt_leistung():
+    # SoC-Meldung ist grob (nur 3 Prozentpunkte erkannter Anstieg), aber die
+    # Leistung wird zuverlaessig gemeldet und ergibt einen HOEHEREN,
+    # plausibleren Wert -- dieser Fall ("SoC grob, Leistung zuverlaessig")
+    # darf NICHT durch die SoC-Schaetzung ueberschrieben werden.
+    n = 13
+    socs = [42, 42, 42, 42, 43, 43.5, 44, 44.5, 45, 45, 45.5, 45.5, 45.5]
+    samples = [ChargeSample(ts=i * 300, soc=socs[i], home_charging=False, power_kw=11.0) for i in range(n)]
+    samples += stream([socs[-1]] * 3, start_ts=n * 300, step=300, power=11.0)
+    det = ChargeDetector(usable_kwh=45, charge_efficiency=0.88, power_is_ac=True, idle_timeout_s=600, start_delta=3.0)
+    ev = run(det, samples)[0]
+    assert ev.energy_source == "power_ac"
+    assert ev.energy_batt_kwh > ev.delta_soc / 100 * 45
+
+
+def test_energy_ohne_soc_delta_bleibt_unveraendert():
+    # delta_soc <= 0 ist bei _finalize() ueber die Zustandsmaschine nicht
+    # erreichbar (eine Session aktiviert erst ab einem Anstieg >=
+    # start_delta, delta_soc ist am Ende also immer >= start_delta) --
+    # daher hier direkt gegen _energy() getestet, um den Plausibilitaets-
+    # Abgleich bei delta_soc<=0 explizit abzusichern: er muss komplett
+    # uebersprungen werden, die Leistung gewinnt wie vor dem Fix, selbst
+    # wenn sie fuer sich genommen sehr klein ist.
+    det = ChargeDetector(usable_kwh=45, charge_efficiency=0.88, power_is_ac=True)
+    det._e_power_kwh = 0.5
+    det._have_power = True
+    e_ac, e_batt, source = det._energy(0.0)
+    assert source == "power_ac"
+    assert e_ac == pytest.approx(0.5)
+
+
 def test_jitter_kein_fehltrigger():
     det = ChargeDetector(idle_timeout_s=120)
     assert run(det, stream([50, 50, 51, 50, 49, 50, 51, 50, 49])) == []
