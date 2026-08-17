@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.65.0] - 2026-08-17
+
+### Added
+
+- **Neuer Tab "Übersicht (Beta)"**, parallel zum bestehenden Übersicht-Tab (der unverändert der Standard bleibt) — ein alternatives Dashboard-Layout zum Vergleich, bevor es diesen in einem separaten Schritt ablöst. Vollständig aus bereits vorhandenen Sensoren/Attributen zusammengesetzt, keine neue Rechenlogik: Hero-Karte "Kosten diesen Monat", KPI-Kacheln (EUR/100km, Ersparnis ggü. Verbrenner, CO2 gespart), ein Balkendiagramm der Ausgaben über Zeit (Tag/Woche/Monat/Jahr), Kosten-/CO2-Vergleich und die Ladeort-Aufschlüsselung. Modus-adaptiv: im Modus "Nur auswärts" zeigt die Statuskarte die letzte bestätigte Ladung statt eines Live-Wallbox-Status, und statt der Heim/Fremd-Ladeort-Aufschlüsselung erscheint nur die AC/DC-Aufteilung der Fremdladung (als Schätzung gekennzeichnet). Nicht zutreffende Karten/Zeilen werden komplett weggelassen statt leer oder als 0 angezeigt.
+- Zwei bereits bestehende Werte (kWh diesen Monat, Änderung ggü. Vormonat) existieren im Backend nicht als eigene Perioden-Sensoren (nur Kosten- und Kilometerstand-Perioden werden getrackt) und wurden bewusst nicht neu berechnet, um reine Frontend-Logik zu bleiben — Hero und KPI-Reihe zeigen daher nur die tatsächlich vorhandenen Werte.
+
 ## [0.64.0] - 2026-08-17
 
 ### Fixed

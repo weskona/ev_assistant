@@ -173,6 +173,10 @@ Live energy-flow diagram showing current PV, grid, home, battery, and wallbox po
 
 In **Away only** [charging mode](#charging-mode), this tab looks different: instead of the flow diagram and home/evcc cards, it shows spending over time (day/week/month/year), total kWh/cost/count, EUR/100 km, and the combustion-vehicle cost/CO2 comparison — the cards that are actually relevant without any home charging. In **Home only**/**Mixed** mode (the default, and how it's always worked), this tab is unchanged.
 
+### Overview (Beta) tab
+
+An experimental, parallel dashboard layout shown side by side with the classic Overview tab above, for comparison before it eventually replaces it — the classic tab is untouched and remains the default. Built entirely from already-existing sensors/attributes (no new calculations): a hero card for this month's cost, three KPI tiles (EUR/100 km, savings vs. combustion, CO2 saved), a bar chart of spending over time (day/week/month/year), a cost/CO2 comparison card, and a charging-location breakdown. Mode-adaptive like the classic tab: in **Away only** mode the status card shows the last confirmed charge instead of a live wallbox status, and the location breakdown is replaced by an AC/DC split of external charging only (marked as an estimate — see the `charging_location_breakdown` sensor above). Cards/rows for values that don't apply are omitted entirely rather than shown empty or as 0.
+
 ### Vehicle tab
 
 Per-vehicle dashboard in a three-column layout:

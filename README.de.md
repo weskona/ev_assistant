@@ -173,6 +173,10 @@ Live-Energieflussdiagramm mit aktueller PV-, Netz-, Haus-, Speicher- und Wallbox
 
 Im [Lademodus](#lademodus) **Nur auswärts** sieht dieser Tab anders aus: statt Flussdiagramm und Heim-/evcc-Karten zeigt er Ausgaben über Zeit (heute/Woche/Monat/Jahr), Gesamt-kWh/-Kosten/-Anzahl, EUR/100 km und den Verbrenner-Kosten-/CO2-Vergleich — die Karten, die ohne jedes Heimladen tatsächlich relevant sind. Im Modus **Nur zuhause**/**Gemischt** (Standard, und wie es schon immer funktioniert hat) bleibt dieser Tab unverändert.
 
+### Tab „Übersicht (Beta)"
+
+Ein experimentelles, paralleles Dashboard-Layout, das neben dem klassischen Übersicht-Tab oben angezeigt wird, zum Vergleich, bevor es diesen irgendwann ablöst — der klassische Tab bleibt unangetastet und ist weiterhin der Standard. Vollständig aus bereits vorhandenen Sensoren/Attributen aufgebaut (keine neuen Berechnungen): eine Hero-Karte für die Kosten diesen Monat, drei KPI-Kacheln (EUR/100 km, Ersparnis ggü. Verbrenner, CO2 gespart), ein Balkendiagramm der Ausgaben über Zeit (Tag/Woche/Monat/Jahr), eine Kosten-/CO2-Vergleichskarte sowie die Ladeort-Aufschlüsselung. Modus-adaptiv wie der klassische Tab: im Modus **Nur auswärts** zeigt die Statuskarte die letzte bestätigte Ladung statt eines Live-Wallbox-Status, und die Ladeort-Aufschlüsselung wird durch eine reine AC/DC-Aufteilung der Fremdladung ersetzt (als Schätzung gekennzeichnet — siehe Sensor `charging_location_breakdown` oben). Karten/Zeilen für nicht zutreffende Werte werden komplett weggelassen statt leer oder als 0 angezeigt.
+
 ### Tab „Fahrzeug"
 
 Fahrzeugspezifisches Dashboard in einem Drei-Spalten-Layout:
