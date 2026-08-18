@@ -72,6 +72,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         CostWeekSensor(coordinator, entry),
         CostMonthSensor(coordinator, entry),
         CostYearSensor(coordinator, entry),
+        KwhDaySensor(coordinator, entry),
+        KwhWeekSensor(coordinator, entry),
+        KwhMonthSensor(coordinator, entry),
+        KwhYearSensor(coordinator, entry),
         UsageProfileSensor(coordinator, entry),
         UsageProfileTomorrowSensor(coordinator, entry),
         AvailableKwhSensor(coordinator, entry),
@@ -908,7 +912,17 @@ class ChargingLocationSensor(EvAssistantEntity, SensorEntity):
     charging_location_breakdown()): kWh/Kosten/Anteile je Ladeort,
     Heim-Solaranteil, sowie ein fahrzeugweites eur_je_100km -- bewusst
     NICHT je Ladeort, da sich gefahrene km keinem Ladeort zuordnen lassen.
-    unknown ohne jede bekannte Lademenge (weder Heim noch Fremd)."""
+    unknown ohne jede bekannte Lademenge (weder Heim noch Fremd).
+
+    charging_location_stats() ist bewusst ungecacht (siehe dortiger
+    Docstring), wird hier aber trotzdem nur EINMAL pro Coordinator-Update
+    statt einmal je Property (native_value UND extra_state_attributes)
+    ausgewertet: das Ergebnis wird in _handle_coordinator_update() einmal
+    berechnet und in self._stats zwischengelegt, beide Properties lesen nur
+    noch daraus. Kein Versionszaehler-Cache im Coordinator noetig, keine
+    Annahme ueber die Aufrufreihenfolge der beiden Properties -- die
+    Aktualisierung haengt direkt am tatsaechlichen Coordinator-Update-Signal,
+    also exakt so frisch wie vorher, nur ohne den doppelten Aufruf."""
 
     _attr_translation_key = "charging_location_breakdown"
     _attr_native_unit_of_measurement = "%"
@@ -918,15 +932,19 @@ class ChargingLocationSensor(EvAssistantEntity, SensorEntity):
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry, "charging_location_breakdown")
+        self._stats = coordinator.charging_location_stats()
+
+    def _handle_coordinator_update(self) -> None:
+        self._stats = self.coordinator.charging_location_stats()
+        super()._handle_coordinator_update()
 
     @property
     def native_value(self):
-        stats = self.coordinator.charging_location_stats()
-        return stats.get("heim", {}).get("kwh_anteil_pct")
+        return self._stats.get("heim", {}).get("kwh_anteil_pct")
 
     @property
     def extra_state_attributes(self):
-        return self.coordinator.charging_location_stats()
+        return self._stats
 
 
 class AcChargingKwhSensor(EvAssistantEntity, SensorEntity):
@@ -940,7 +958,10 @@ class AcChargingKwhSensor(EvAssistantEntity, SensorEntity):
     Sensoren (anders als bei den Fremdladung-Totals TotalKwhSensor/
     TotalCostSensor/CountSensor/LastPriceSensor): dort sind es die
     zentralen, oft in Automationen genutzten Werte -- AC/DC ist eine
-    Detail-Aufschluesselung, fuer die eine Attribut-Vorlage reicht."""
+    Detail-Aufschluesselung, fuer die eine Attribut-Vorlage reicht.
+
+    Nur einmal pro Coordinator-Update statt einmal je Property ausgewertet
+    -- siehe Kommentar bei ChargingLocationSensor."""
 
     _attr_translation_key = "ac_charging_kwh"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
@@ -951,20 +972,26 @@ class AcChargingKwhSensor(EvAssistantEntity, SensorEntity):
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry, "ac_charging_kwh")
+        self._stats = coordinator.charging_location_stats()
+
+    def _handle_coordinator_update(self) -> None:
+        self._stats = self.coordinator.charging_location_stats()
+        super()._handle_coordinator_update()
 
     @property
     def native_value(self):
-        return self.coordinator.charging_location_stats().get("ac_dc", {}).get("ac", {}).get("kwh")
+        return self._stats.get("ac_dc", {}).get("ac", {}).get("kwh")
 
     @property
     def extra_state_attributes(self):
-        ac = self.coordinator.charging_location_stats().get("ac_dc", {}).get("ac")
+        ac = self._stats.get("ac_dc", {}).get("ac")
         return dict(ac) if ac else {}
 
 
 class DcChargingKwhSensor(EvAssistantEntity, SensorEntity):
     """DC-Anteil der Fremdladung in kWh (Schnellladen) -- siehe
-    AcChargingKwhSensor, spiegelbildlich."""
+    AcChargingKwhSensor, spiegelbildlich (inkl. desselben Caching-Verhaltens
+    pro Coordinator-Update)."""
 
     _attr_translation_key = "dc_charging_kwh"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
@@ -973,14 +1000,19 @@ class DcChargingKwhSensor(EvAssistantEntity, SensorEntity):
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry, "dc_charging_kwh")
+        self._stats = coordinator.charging_location_stats()
+
+    def _handle_coordinator_update(self) -> None:
+        self._stats = self.coordinator.charging_location_stats()
+        super()._handle_coordinator_update()
 
     @property
     def native_value(self):
-        return self.coordinator.charging_location_stats().get("ac_dc", {}).get("dc", {}).get("kwh")
+        return self._stats.get("ac_dc", {}).get("dc", {}).get("kwh")
 
     @property
     def extra_state_attributes(self):
-        dc = self.coordinator.charging_location_stats().get("ac_dc", {}).get("dc")
+        dc = self._stats.get("ac_dc", {}).get("dc")
         return dict(dc) if dc else {}
 
 
@@ -993,7 +1025,11 @@ class LeasingKmVorRuecklaufSensor(EvAssistantEntity, SensorEntity):
     verbleibendes Tagesbudget, Euro-Schaetzung, Status) als Attribute.
     unknown, solange Leasing nicht eingerichtet ist (inkl_km/end_datum
     fehlen, siehe build_leasing_schema()) -- absichtlich KEIN Rauschen ohne
-    Konfiguration."""
+    Konfiguration. leasing_stats() selbst cached bereits pro Coordinator-
+    Update (siehe dortiger Docstring), daher hier -- anders als bei
+    ChargingLocationSensor -- kein zusaetzlicher Cache auf Sensor-Ebene
+    noetig, obwohl native_value/extra_state_attributes es weiterhin je
+    einmal aufrufen."""
 
     _attr_translation_key = "leasing_km_vor_ruecklauf"
     _attr_native_unit_of_measurement = UnitOfLength.KILOMETERS
@@ -1074,7 +1110,10 @@ class _CostPeriodSensor(EvAssistantEntity, SensorEntity):
     neue, guenstigere Ladesession einfliesst, wodurch die Gesamtkosten
     kurzzeitig unter die Perioden-Basislinie fallen koennen, OHNE dass dies
     ein Anzeichen fuer einen echten Fehler (wie beim monoton steigenden
-    Kilometerstand) ist."""
+    Kilometerstand) ist. Attribut "differenz_vorperiode" (siehe coordinator.py::
+    _update_cost_periods()) nur vorhanden, wenn die letzte vollstaendige
+    Periode bekannt ist -- fehlt bei der allerersten Periode nach
+    Einrichtung/Update (kein Fantasiewert)."""
 
     _attr_native_unit_of_measurement = "EUR"
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -1086,13 +1125,23 @@ class _CostPeriodSensor(EvAssistantEntity, SensorEntity):
     def __init__(self, coordinator, entry, unique_suffix):
         super().__init__(coordinator, entry, unique_suffix)
 
+    def _entry(self):
+        return self.coordinator.data.get("cost_periods", {}).get(self._PERIOD)
+
     @property
     def native_value(self):
-        entry = self.coordinator.data.get("cost_periods", {}).get(self._PERIOD)
+        entry = self._entry()
         if not entry:
             return None
         cost = self.coordinator._ev_cost_total_since_setup()
         return max(0.0, round(cost - entry["cost"], 2))
+
+    @property
+    def extra_state_attributes(self):
+        entry = self._entry()
+        if entry and "prev" in entry:
+            return {"differenz_vorperiode": entry["prev"]}
+        return {}
 
 
 class CostDaySensor(_CostPeriodSensor):
@@ -1129,6 +1178,78 @@ class CostYearSensor(_CostPeriodSensor):
 
     def __init__(self, coordinator, entry):
         super().__init__(coordinator, entry, "cost_year")
+
+
+class _KwhPeriodSensor(EvAssistantEntity, SensorEntity):
+    """Basisklasse fuer die kWh-Perioden-Sensoren (Tag/Woche/Monat/Jahr) --
+    exakt analog _CostPeriodSensor, nur EV-Gesamt-kWh (Heim + Fremd seit
+    Einrichtung, siehe coordinator.py::_ev_kwh_total_since_setup()) statt
+    Kosten. Derselbe Grund fuer die 0-Klemmung: totals["kwh"] (Fremdladung)
+    kann durch edit_charge()/delete_charge() sinken."""
+
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:lightning-bolt"
+
+    _PERIOD: str = ""
+
+    def __init__(self, coordinator, entry, unique_suffix):
+        super().__init__(coordinator, entry, unique_suffix)
+
+    def _entry(self):
+        return self.coordinator.data.get("kwh_periods", {}).get(self._PERIOD)
+
+    @property
+    def native_value(self):
+        entry = self._entry()
+        if not entry:
+            return None
+        kwh = self.coordinator._ev_kwh_total_since_setup()
+        return max(0.0, round(kwh - entry["kwh"], 2))
+
+    @property
+    def extra_state_attributes(self):
+        entry = self._entry()
+        if entry and "prev" in entry:
+            return {"differenz_vorperiode": entry["prev"]}
+        return {}
+
+
+class KwhDaySensor(_KwhPeriodSensor):
+    _attr_translation_key = "kwh_day"
+    _attr_icon = "mdi:calendar-today"
+    _PERIOD = "day"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "kwh_day")
+
+
+class KwhWeekSensor(_KwhPeriodSensor):
+    _attr_translation_key = "kwh_week"
+    _attr_icon = "mdi:calendar-week"
+    _PERIOD = "week"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "kwh_week")
+
+
+class KwhMonthSensor(_KwhPeriodSensor):
+    _attr_translation_key = "kwh_month"
+    _attr_icon = "mdi:calendar-month"
+    _PERIOD = "month"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "kwh_month")
+
+
+class KwhYearSensor(_KwhPeriodSensor):
+    _attr_translation_key = "kwh_year"
+    _attr_icon = "mdi:calendar-blank"
+    _PERIOD = "year"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "kwh_year")
 
 
 class UsageProfileSensor(EvAssistantEntity, SensorEntity):

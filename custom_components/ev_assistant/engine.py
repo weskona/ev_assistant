@@ -833,6 +833,46 @@ def rolling_km_per_day(fahrten: list, now_ts: float, window_days: float) -> Opti
     return round(km_sum / window_days, 2)
 
 
+def update_period_baseline(periods: dict, period_keys: dict, value: float, field: str) -> dict:
+    """Aktualisiert Perioden-Baselines (z.B. Tag/Woche/Monat/Jahr) fuer
+    einen monoton beobachteten Gesamtwert (Kosten, kWh, ...) -- reine Logik
+    fuer coordinator.py::_update_cost_periods()/_update_kwh_periods(), die
+    beide nur noch `self.data["cost_periods"/"kwh_periods"]` fortschreiben.
+
+    `periods` ist das bisherige Perioden-dict, keyed nach Periodenname
+    (z.B. "day"/"week"/"month"/"year") auf je ein dict mit "key" (dem
+    Perioden-Schluessel, siehe coordinator.py::_period_keys()) und `field`
+    (dem gespeicherten Wert dieser Periode, Feldname vom Aufrufer gewaehlt
+    -- "cost" bzw. "kwh" -- damit bestehende, bereits gespeicherte Eintraege
+    unter ihrem angestammten Feldnamen lesbar bleiben). `period_keys` sind
+    die AKTUELLEN Schluessel je Periode -- vom Aufrufer uebergeben statt
+    hier live ermittelt, damit diese Funktion ohne echte Uhrzeit testbar
+    ist (analog `heute` bei leasing_status()).
+
+    Bei Periodenrollover (gespeicherter Schluessel weicht vom aktuellen ab,
+    oder die Periode ist komplett neu) wird `value` zur neuen Baseline.
+    Existierte zuvor bereits ein Eintrag fuer diese Periode (= ein ECHTER
+    Rollover, nicht die allererste Baseline ueberhaupt), wird zusaetzlich
+    die soeben abgeschlossene Periode (`value` minus ALTE Baseline) unter
+    "prev" auf dem neuen Eintrag gesichert -- Grundlage fuer "vs.
+    Vormonat"-artige Vergleiche. Beim allerersten Aufruf fuer eine Periode
+    fehlt "prev" bewusst (kein Fantasiewert) -- der Aufrufer blendet die
+    Differenz dann einfach aus.
+
+    Reine Funktion: `periods` selbst bleibt unveraendert, ein NEUES dict
+    wird zurueckgegeben -- der Aufrufer entscheidet ueber Zuweisung/
+    Persistierung (siehe coordinator.py)."""
+    result = dict(periods)
+    for period, key in period_keys.items():
+        entry = result.get(period)
+        if entry is None or entry.get("key") != key:
+            new_entry = {"key": key, field: value}
+            if entry is not None:
+                new_entry["prev"] = round(value - entry[field], 2)
+            result[period] = new_entry
+    return result
+
+
 def calculate_range_km(
     soc_pct: Optional[float], usable_kwh: float, consumption_kwh_per_100km: Optional[float],
 ) -> Optional[float]:

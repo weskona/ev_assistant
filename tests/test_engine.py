@@ -29,6 +29,7 @@ from engine import (
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
     temperature_bucket,
+    update_period_baseline,
     weekday_usage_profile,
 )
 
@@ -899,6 +900,72 @@ def test_rolling_km_per_day_ohne_fahrten_im_fenster_liefert_none():
 def test_rolling_km_per_day_ignoriert_fehlende_felder():
     fahrten = [{"start_ts": None, "km": 100.0}, {"start_ts": 1000.0, "km": None}]
     assert rolling_km_per_day(fahrten, now_ts=1_000_000.0, window_days=30) is None
+
+
+# ----- update_period_baseline: Perioden-Baselines + "prev" bei Rollover ----
+
+def test_update_period_baseline_erster_aufruf_setzt_baseline_ohne_prev():
+    # Frische Installation / erste Periode ueberhaupt -- Baseline wird
+    # gesetzt, aber "prev" fehlt bewusst (kein Fantasiewert).
+    result = update_period_baseline({}, {"month": "2026-08"}, 100.0, "kwh")
+    assert result == {"month": {"key": "2026-08", "kwh": 100.0}}
+    assert "prev" not in result["month"]
+
+
+def test_update_period_baseline_gleicher_schluessel_bleibt_unveraendert():
+    # Kein Rollover (Schluessel unveraendert) -- die Baseline bleibt exakt
+    # wie sie war, "kWh in der Periode" wird vom Aufrufer weiterhin ueber
+    # aktueller Gesamtstand minus dieser Baseline gebildet.
+    periods = {"month": {"key": "2026-08", "kwh": 100.0}}
+    result = update_period_baseline(periods, {"month": "2026-08"}, 142.0, "kwh")
+    assert result == {"month": {"key": "2026-08", "kwh": 100.0}}
+
+
+def test_update_period_baseline_rollover_setzt_neue_baseline_und_prev():
+    # Echter Rollover (Monatswechsel): neue Baseline = aktueller Stand,
+    # "prev" = aktueller Stand minus ALTE Baseline (der Verbrauch der
+    # gerade abgeschlossenen Periode).
+    periods = {"month": {"key": "2026-08", "kwh": 100.0}}
+    result = update_period_baseline(periods, {"month": "2026-09"}, 142.0, "kwh")
+    assert result == {"month": {"key": "2026-09", "kwh": 142.0, "prev": 42.0}}
+
+
+def test_update_period_baseline_mehrere_perioden_unabhaengig():
+    # Tag rollt ueber, Monat nicht -- nur der Tag-Eintrag aendert sich.
+    periods = {
+        "day": {"key": "2026-08-17", "kwh": 90.0},
+        "month": {"key": "2026-08", "kwh": 100.0},
+    }
+    result = update_period_baseline(periods, {"day": "2026-08-18", "month": "2026-08"}, 142.0, "kwh")
+    assert result["day"] == {"key": "2026-08-18", "kwh": 142.0, "prev": 52.0}
+    assert result["month"] == {"key": "2026-08", "kwh": 100.0}
+
+
+def test_update_period_baseline_zwei_rollover_hintereinander_nutzen_jeweils_aktuelle_baseline():
+    # Zweiter Rollover muss gegen die Baseline des ERSTEN Rollovers rechnen,
+    # nicht gegen die urspruengliche -- sonst waere "prev" nach mehreren
+    # Rollovers falsch.
+    periods = {"day": {"key": "2026-08-16", "kwh": 50.0}}
+    after_first = update_period_baseline(periods, {"day": "2026-08-17"}, 90.0, "kwh")
+    assert after_first["day"] == {"key": "2026-08-17", "kwh": 90.0, "prev": 40.0}
+    after_second = update_period_baseline(after_first, {"day": "2026-08-18"}, 142.0, "kwh")
+    assert after_second["day"] == {"key": "2026-08-18", "kwh": 142.0, "prev": 52.0}
+
+
+def test_update_period_baseline_feldname_ist_parametrisierbar():
+    # cost_periods nutzt "cost", kwh_periods nutzt "kwh" -- derselbe
+    # Mechanismus, unterschiedlicher, vom Aufrufer bestimmter Feldname.
+    periods = {"month": {"key": "2026-08", "cost": 20.0}}
+    result = update_period_baseline(periods, {"month": "2026-09"}, 35.0, "cost")
+    assert result == {"month": {"key": "2026-09", "cost": 35.0, "prev": 15.0}}
+
+
+def test_update_period_baseline_ist_eine_reine_funktion():
+    # Das uebergebene dict wird nicht mutiert -- der Aufrufer entscheidet
+    # ueber Zuweisung/Persistierung des Rueckgabewerts.
+    periods = {"month": {"key": "2026-08", "kwh": 100.0}}
+    update_period_baseline(periods, {"month": "2026-09"}, 142.0, "kwh")
+    assert periods == {"month": {"key": "2026-08", "kwh": 100.0}}
 
 
 # ----- calculate_range_km: Restreichweite aus SoC und Realverbrauch --------

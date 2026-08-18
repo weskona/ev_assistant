@@ -159,6 +159,7 @@ from .engine import (
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
     temperature_bucket,
+    update_period_baseline,
     weekday_usage_profile,
 )
 
@@ -275,6 +276,7 @@ def _empty_data() -> dict:
         "trip_start_temp": None,
         "odo_periods": {},
         "cost_periods": {},
+        "kwh_periods": {},
         "odo_lts": {},
     }
 
@@ -375,6 +377,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # da diese unabhaengig von Fremdladungen dazukommen.
         self._home_capacity_version = 0
         self._battery_capacity_cache: Optional[tuple[tuple[int, int], Optional[float]]] = None
+        # Cache fuer leasing_stats() -- Schluessel zusaetzlich zu
+        # _fahrten_version auch ueber den Kilometerstand (aktueller km ist
+        # selbst Teil der Berechnung, nicht nur das Fahrtenbuch) und das
+        # heutige Datum (die lineare/rollierende Projektion wandert taeglich
+        # weiter, auch ohne neue Fahrt) verkettet. Vertrags-Identitaet
+        # (Start-km + End-Datum, siehe _check_leasing_thresholds()) ebenfalls
+        # im Schluessel -- ein Reconfigure loest ohnehin einen kompletten
+        # Coordinator-Reload aus (siehe __init__.py::_async_reload()), das
+        # ist also nur zusaetzliche Absicherung, keine Notwendigkeit.
+        self._leasing_cache: Optional[tuple[tuple, dict]] = None
         # Start-Anker (SoC + Wallbox-kWh) einer laufenden Heim-Ladesession,
         # analog EfficiencyCalibrator._anchor_*, aber unabhaengig davon
         # gefuehrt: die Kapazitaets-Schwelle (BATTERY_CAPACITY_MIN_SOC_DELTA)
@@ -421,10 +433,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._build_detector()
         self._build_trip_detector()
         await self._setup_sources()
-        # Seedet die Kosten-Perioden-Baselines sofort statt erst beim
-        # naechsten taeglichen Rollover (siehe _daily_cost_period_rollover())
-        # -- sonst waeren "Kosten heute/Woche/..." bis Mitternacht unknown.
+        # Seedet die Kosten-/kWh-Perioden-Baselines sofort statt erst beim
+        # naechsten taeglichen Rollover (siehe _daily_cost_period_rollover()/
+        # _daily_kwh_period_rollover()) -- sonst waeren "Kosten/kWh
+        # heute/Woche/..." bis Mitternacht unknown.
         self._update_cost_periods()
+        self._update_kwh_periods()
         # Periodischer Re-Check zusaetzlich zu den SoC-/Kilometerstand-
         # getriebenen Updates: idle_timeout_s wird nur ausgewertet, wenn
         # _run_detection()/_run_trip_detection() laufen, was normalerweise
@@ -1005,21 +1019,34 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     def _update_cost_periods(self) -> None:
         """Perioden-Baselines (Tag/Woche/Monat/Jahr) fuer die EV-
         Gesamtkosten (Heim + Fremd seit Einrichtung, siehe
-        _ev_cost_total_since_setup()) aktualisieren -- analog
-        _update_odo_periods(). Bei Periodenrollover wird der aktuelle
-        Kostenstand als neuer Startwert gesetzt."""
+        _ev_cost_total_since_setup()) aktualisieren -- reine Logik in
+        engine.update_period_baseline() (inkl. "prev" bei echtem Rollover,
+        Grundlage fuer "vs. Vormonat" o.ae., siehe CostMonthSensor), hier
+        nur die HA-Verdrahtung (aktueller Kostenstand rein, Ergebnis
+        zurueck in self.data)."""
         cost = self._ev_cost_total_since_setup()
-        periods = self.data.setdefault("cost_periods", {})
-        for period, key in self._period_keys().items():
-            entry = periods.get(period)
-            if entry is None or entry.get("key") != key:
-                periods[period] = {"key": key, "cost": cost}
+        self.data["cost_periods"] = update_period_baseline(
+            self.data.get("cost_periods") or {}, self._period_keys(), cost, "cost",
+        )
+
+    def _update_kwh_periods(self) -> None:
+        """Perioden-Baselines (Tag/Woche/Monat/Jahr) fuer die EV-Gesamt-kWh
+        (Heim + Fremd seit Einrichtung, siehe _ev_kwh_total_since_setup())
+        -- exakt analog _update_cost_periods(), nur fuer kWh statt Kosten.
+        Eigenes Feld ("kwh_periods"), da kWh und Kosten unabhaengig
+        voneinander variieren koennen (z.B. unterschiedliche Preise je
+        Ladeort/Zeitpunkt)."""
+        kwh = self._ev_kwh_total_since_setup()
+        self.data["kwh_periods"] = update_period_baseline(
+            self.data.get("kwh_periods") or {}, self._period_keys(), kwh, "kwh",
+        )
 
     @callback
     def _daily_lts_refresh(self, now) -> None:
         self.hass.async_create_task(self.async_refresh_lts_data())
         self.hass.async_create_task(self._daily_odo_period_rollover())
         self.hass.async_create_task(self._daily_cost_period_rollover())
+        self.hass.async_create_task(self._daily_kwh_period_rollover())
 
     async def _daily_odo_period_rollover(self) -> None:
         """Rollt die Tag/Woche/Monat/Jahr-Baselines (siehe
@@ -1042,6 +1069,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Fremdladen-Kosten aendern sich nicht zuverlaessig ueber ein
         einzelnes Ereignis, das den Rollover sonst anstossen wuerde)."""
         self._update_cost_periods()
+        self.async_set_updated_data(self.data)
+        self._save_soon()
+
+    async def _daily_kwh_period_rollover(self) -> None:
+        """Rollt die Tag/Woche/Monat/Jahr-kWh-Baselines (siehe
+        _update_kwh_periods()) taeglich -- analog
+        _daily_cost_period_rollover(), aus demselben Grund."""
+        self._update_kwh_periods()
         self.async_set_updated_data(self.data)
         self._save_soon()
 
@@ -2397,12 +2432,23 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         -- eigene Funktion statt Teil von charging_location_breakdown(),
         da diese bewusst nur bereits berechnete Aggregate zusammenfuehrt,
         waehrend die AC/DC-Einordnung selbst aus den rohen Historien-
-        Eintraegen (kWh/Ladedauer je Ladung) ableitet. Absichtlich
-        UNGECACHT: die Eingaben (u.a. _home_kwh_since_setup(), _km_driven())
-        aendern sich bei praktisch jedem Coordinator-Update (jedes SoC-/
-        Odo-Sample) -- ein Versionszaehler wie bei den Fahrtenbuch-/
-        Ladungs-Caches wuerde hier nichts einsparen, die Berechnung selbst
-        ist trivial billig."""
+        Eintraegen (kWh/Ladedauer je Ladung) ableitet.
+
+        Absichtlich UNGECACHT (bewusst gegen einen Versionszaehler-Cache
+        geprueft und verworfen, siehe ChargingLocationSensor/AcChargingKwhSensor/
+        DcChargingKwhSensor fuer die stattdessen gewaehlte Loesung gegen
+        Doppelaufrufe): _home_kwh_since_setup() liest den LIVE-Wallbox-
+        Energiezaehlerstand (_wallbox_energy) und aendert sich damit bei
+        JEDEM Heimlade-Leistungssample waehrend einer laufenden Session --
+        _home_capacity_version erhoeht sich dagegen nur am SESSION-ENDE
+        (siehe _record_home_capacity_sample()/_record_home_charge_pct()/
+        _record_home_session()). Ein Cache-Schluessel aus den vorhandenen
+        Versionszaehlern (auch inkl. Kilometerstand) wuerde Heim-kWh/-Kosten
+        und damit die ganze Ladeort-Aufschluesselung fuer die GESAMTE DAUER
+        einer laufenden Heimladung einfrieren, statt live mitzuziehen --
+        genau der Moment, in dem man am ehesten hinschaut. Kein
+        Versionszaehler deckt diese Aenderung ab, also lieber ungecacht als
+        ein Cache, der genau dann stale ist, wenn es am meisten auffaellt."""
         home_kwh = self._home_kwh_since_setup()
         home_cost = self._home_cost_since_setup()
         if home_cost is None and home_kwh is not None:
@@ -2433,7 +2479,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         (siehe build_leasing_schema()) -- macht das Feature komplett
         inaktiv, bis es eingerichtet ist (keine Sensoren mit Rauschen).
         Fehlen weitere Pflichtfelder (Start-km/-datum), liefert bereits
-        engine.leasing_status() selbst ein leeres dict."""
+        engine.leasing_status() selbst ein leeres dict.
+
+        Ergebnis wird zwischengespeichert (siehe _leasing_cache in
+        __init__) -- ohne das wuerde sowohl LeasingKmVorRuecklaufSensor
+        (native_value + extra_state_attributes) als auch
+        _check_leasing_thresholds() dieselbe Berechnung (inkl.
+        rolling_km_per_day() ueber das gesamte Fahrtenbuch) jeweils einzeln
+        anstossen -- bis zu dreimal pro Update fuer denselben Wert."""
         inkl_km = self._opt(CONF_LEASING_INKL_KM)
         end_datum = self._opt(CONF_LEASING_END_DATUM)
         if not inkl_km or not end_datum:
@@ -2442,21 +2495,28 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if odo is None:
             return {}
         odo_km = odo * MILES_TO_KM if self.data.get("odo_unit") == "mi" else odo
+        start_km = self._opt(CONF_LEASING_START_KM)
+        heute = dt_util.now().date().isoformat()
+        cache_key = (self._fahrten_version, odo_km, heute, start_km, end_datum)
+        if self._leasing_cache is not None and self._leasing_cache[0] == cache_key:
+            return self._leasing_cache[1]
         fahrten = self.data.get("fahrten") or []
         rollierendes_tempo = rolling_km_per_day(fahrten, time.time(), _LEASING_ROLLING_WINDOW_DAYS)
-        return leasing_status(
+        result = leasing_status(
             aktueller_km=odo_km,
-            vertrag_start_km=self._opt(CONF_LEASING_START_KM),
+            vertrag_start_km=start_km,
             vertrag_start_datum=self._opt(CONF_LEASING_START_DATUM),
             vertrag_end_datum=end_datum,
             inkl_gesamt_km=inkl_km,
-            heute=dt_util.now().date().isoformat(),
+            heute=heute,
             preis_mehr_km=self._opt(CONF_LEASING_PREIS_MEHR_KM),
             preis_minder_km=self._opt(CONF_LEASING_PREIS_MINDER_KM),
             rollierendes_tempo_km_pro_tag=rollierendes_tempo,
             knapp_schwelle_pct=LEASING_KNAPP_SCHWELLE_PCT,
             toleranz_pct=LEASING_TOLERANZ_PCT,
         )
+        self._leasing_cache = (cache_key, result)
+        return result
 
     def _check_leasing_thresholds(self) -> None:
         """Benachrichtigung, wenn die (lineare) Leasing-Projektion erstmals

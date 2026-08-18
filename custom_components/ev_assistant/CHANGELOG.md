@@ -2,6 +2,16 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.66.0] - 2026-08-18
+
+### Added
+
+- **kWh period sensors and month-over-month comparison**, completing the Beta Overview hero that previously had to omit both: new `kwh_day`/`kwh_week`/`kwh_month`/`kwh_year` sensors (combined home + external kWh since setup, minus that period's baseline — the same pattern as the existing `cost_day`/`cost_week`/`cost_month`/`cost_year` sensors), plus a new `differenz_vorperiode` attribute on both the cost and kWh period sensors, showing the just-completed period's total once a rollover has happened (e.g. last month's full cost/kWh, visible starting this month). Missing on the very first period after setup or after updating to this version — no guessed value. The Beta Overview tab's hero card now shows "X kWh this month · Δ ±Y EUR vs. last month" underneath the cost figure, each part shown only when actually available. Classic Overview tab is untouched.
+
+### Changed
+
+- **Performance: `charging_location_breakdown`/`ac_charging_kwh`/`dc_charging_kwh`/`leasing_km_vor_ruecklauf` no longer compute their underlying data twice per state read.** Each of these sensors' `native_value` and `extra_state_attributes` called the same coordinator calculation independently — up to 6 calls per update cycle across the three charging-location sensors, 3 for leasing (including the leasing-notification check). No visible value change, same freshness as before: `leasing_stats()` now caches its result per coordinator update (safe — an odometer/date/trip-log/contract-identity cache key covers everything it reads, and any config change already triggers a full coordinator reload); `charging_location_stats()` deliberately stays uncached — verified that home kWh/cost update on every single home-charging power sample, independent of any existing version counter, so a version-keyed cache would freeze the charging-location breakdown for the entire duration of an active home charge. Its three consuming sensors instead compute it once per actual coordinator update via a `_handle_coordinator_update()` hook, cutting redundant calls from 6 to 3 per cycle without any staleness risk.
+
 ## [0.65.0] - 2026-08-17
 
 ### Added

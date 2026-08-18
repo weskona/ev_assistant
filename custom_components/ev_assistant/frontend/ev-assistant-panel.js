@@ -3008,7 +3008,11 @@ class EVAssistantPanel extends HTMLElement {
     val.className = "hero-value";
     val.innerHTML = `<span id="beta-hero-cost">—</span><span class="hero-unit">EUR</span>`;
     card.appendChild(val);
+    const sub = document.createElement("div");
+    sub.className = "hero-sub hidden";
+    card.appendChild(sub);
     this._r.betaHeroCost = val.querySelector("#beta-hero-cost");
+    this._r.betaHeroSub = sub;
     return card;
   }
 
@@ -3178,6 +3182,27 @@ class EVAssistantPanel extends HTMLElement {
     const modus = this._ladeModus();
 
     r.betaHeroCost.textContent = this._num("cost_month", 2);
+
+    // Hero-Untertitel: kWh diesen Monat (kwh_month) und, falls vorhanden,
+    // die Kosten-Aenderung ggue. dem Vormonat (differenz_vorperiode-Attribut
+    // von cost_month, siehe coordinator.py::_update_cost_periods()) --
+    // beides einzeln optional, fehlende Teile werden weggelassen statt als
+    // 0/n.a. gezeigt (siehe _CostPeriodSensor/_KwhPeriodSensor-Docstrings:
+    // "prev" fehlt bewusst bei der allerersten Periode nach Einrichtung).
+    const kwhEid = this._eid("kwh_month");
+    const kwhState = kwhEid ? this._hass.states[kwhEid] : null;
+    const hasKwhMonth = !!kwhState && kwhState.state !== "unavailable" && kwhState.state !== "unknown";
+    const costEid = this._eid("cost_month");
+    const costState = costEid ? this._hass.states[costEid] : null;
+    const deltaCost = costState && costState.attributes ? costState.attributes.differenz_vorperiode : null;
+    const subParts = [];
+    if (hasKwhMonth) subParts.push(`${this._num("kwh_month", 1)} kWh diesen Monat`);
+    if (typeof deltaCost === "number") {
+      const sign = deltaCost >= 0 ? "+" : "";
+      subParts.push(`Δ ${sign}${this._fmtNum(deltaCost, 2)} EUR vs. Vormonat`);
+    }
+    r.betaHeroSub.classList.toggle("hidden", subParts.length === 0);
+    if (subParts.length) r.betaHeroSub.textContent = subParts.join(" · ");
 
     const locEid = this._eid("charging_location_breakdown");
     const locState = locEid ? this._hass.states[locEid] : null;
@@ -3883,6 +3908,7 @@ class EVAssistantPanel extends HTMLElement {
       .hero-card { display: flex; flex-direction: column; justify-content: center; }
       .hero-value { font-size: 2.6rem; font-weight: 800; line-height: 1.1; margin-top: 6px; color: #4ade80; }
       .hero-value .hero-unit { font-size: 1.1rem; font-weight: 600; margin-left: 6px; color: var(--ink-mid); }
+      .hero-sub { font-size: 0.85rem; color: var(--ink-mid); margin-top: 6px; }
       .beta-status-list { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
       .beta-status-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 0.85rem; }
       .beta-status-row .bl { color: var(--ink-mid); }

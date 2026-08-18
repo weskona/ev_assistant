@@ -393,6 +393,18 @@
       "cost_year": {
         "name": "Cost (Year)"
       },
+      "kwh_day": {
+        "name": "kWh (Today)"
+      },
+      "kwh_week": {
+        "name": "kWh (Week)"
+      },
+      "kwh_month": {
+        "name": "kWh (Month)"
+      },
+      "kwh_year": {
+        "name": "kWh (Year)"
+      },
       "usage_profile": {
         "name": "Usage Profile"
       },
