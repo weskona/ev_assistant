@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.66.2] - 2026-08-19
+
+### Added
+
+- **kWh Today/Week/Month/Year on the Vehicle card**: the "Kosten" column now also shows the new `kwh_day`/`kwh_week`/`kwh_month`/`kwh_year` sensors (added in 0.66.0) side by side with the existing cost figures, renamed to "Kosten & kWh". Panel-only change, no backend/logic change.
+
 ## [0.66.1] - 2026-08-18
 
 ### Added

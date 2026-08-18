@@ -819,13 +819,19 @@ class EVAssistantPanel extends HTMLElement {
           </div>
           <div class="vh-bottom-divider"></div>
           <div class="vh-bottom-col">
-            <div class="sub-head">Kosten</div>
-            <div class="km-grid km-grid-1col">
+            <div class="sub-head">Kosten &amp; kWh</div>
+            <div class="km-grid">
               <div class="km-col">
                 <div class="km-item"><span class="km-label">Heute</span><span class="km-val vh-cost-day">—</span><span class="km-unit">EUR</span></div>
                 <div class="km-item"><span class="km-label">Woche</span><span class="km-val vh-cost-week">—</span><span class="km-unit">EUR</span></div>
                 <div class="km-item"><span class="km-label">Monat</span><span class="km-val vh-cost-month">—</span><span class="km-unit">EUR</span></div>
                 <div class="km-item"><span class="km-label">Jahr</span><span class="km-val vh-cost-year">—</span><span class="km-unit">EUR</span></div>
+              </div>
+              <div class="km-col">
+                <div class="km-item"><span class="km-label">Heute</span><span class="km-val vh-kwh-day">—</span><span class="km-unit">kWh</span></div>
+                <div class="km-item"><span class="km-label">Woche</span><span class="km-val vh-kwh-week">—</span><span class="km-unit">kWh</span></div>
+                <div class="km-item"><span class="km-label">Monat</span><span class="km-val vh-kwh-month">—</span><span class="km-unit">kWh</span></div>
+                <div class="km-item"><span class="km-label">Jahr</span><span class="km-val vh-kwh-year">—</span><span class="km-unit">kWh</span></div>
               </div>
             </div>
           </div>
@@ -1031,6 +1037,10 @@ class EVAssistantPanel extends HTMLElement {
       vhCostWeek:     q(".vh-cost-week"),
       vhCostMonth:    q(".vh-cost-month"),
       vhCostYear:     q(".vh-cost-year"),
+      vhKwhDay:       q(".vh-kwh-day"),
+      vhKwhWeek:      q(".vh-kwh-week"),
+      vhKwhMonth:     q(".vh-kwh-month"),
+      vhKwhYear:      q(".vh-kwh-year"),
 
       vhEfficiency:    q(".vh-efficiency"),
       vhSavings:       q(".vh-savings"),
@@ -2038,6 +2048,10 @@ class EVAssistantPanel extends HTMLElement {
     r.vhCostWeek.textContent     = this._num("cost_week", 2);
     r.vhCostMonth.textContent    = this._num("cost_month", 2);
     r.vhCostYear.textContent     = this._num("cost_year", 2);
+    r.vhKwhDay.textContent       = this._num("kwh_day", 1);
+    r.vhKwhWeek.textContent      = this._num("kwh_week", 1);
+    r.vhKwhMonth.textContent     = this._num("kwh_month", 1);
+    r.vhKwhYear.textContent      = this._num("kwh_year", 1);
     r.vhEfficiency.textContent   = this._num("measured_efficiency", 1);
     r.vhSavings.textContent      = this._num("savings", 2);
 
