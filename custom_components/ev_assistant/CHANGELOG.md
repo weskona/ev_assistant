@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.66.1] - 2026-08-18
+
+### Added
+
+- **Icon attribution**: the app icon is based on the "ev-station" glyph from Material Design Icons (Pictogrammers, Apache License 2.0), placed on a custom hexagon tile — was missing any attribution until now. Added `custom_components/ev_assistant/brand/NOTICE` plus a Credits/Danksagung section in both READMEs. Docs only, no code/logic change.
+
 ## [0.66.0] - 2026-08-18
 
 ### Added

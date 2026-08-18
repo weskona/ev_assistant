@@ -279,3 +279,9 @@ python -m pytest tests -q
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Credits
+
+The app icon is based on the "ev-station" glyph from Material Design Icons
+(https://pictogrammers.com/library/mdi/), © Pictogrammers, licensed under
+Apache License 2.0. The glyph was placed on a custom hexagon tile.
