@@ -375,6 +375,9 @@
       "leasing_km_vor_ruecklauf": {
         "name": "Kilometerbudget vor Rücklauf"
       },
+      "ladekarten_kosten": {
+        "name": "Ladekarten-Kosten"
+      },
       "co2_savings": {
         "name": "CO2-Ersparnis ggü. Verbrenner"
       },

@@ -375,6 +375,9 @@
       "leasing_km_vor_ruecklauf": {
         "name": "Mileage budget vs. plan"
       },
+      "ladekarten_kosten": {
+        "name": "Charging Card Costs"
+      },
       "co2_savings": {
         "name": "CO2 Savings vs. ICE Vehicle"
       },

@@ -1118,6 +1118,7 @@ def charging_location_breakdown(
     extern_cost: Optional[float],
     km_driven: Optional[float],
     home_solar_pct: Optional[float] = None,
+    extra_cost: Optional[float] = None,
 ) -> dict:
     """"So verteilt sich deine Ladung" -- Heim vs. Fremd, aus bereits an
     anderer Stelle berechneten Aggregaten (siehe coordinator.py::
@@ -1134,12 +1135,20 @@ def charging_location_breakdown(
         UND kWh > 0.
       - "solar_pct" (nur "heim"): unveraendert uebernommen (siehe
         home_session_solar_and_cost()).
-    Zusaetzlich top-level "eur_je_100km": Gesamtkosten (Heim+Fremd, nur
-    die bekannten Anteile summiert -- analog calculate_savings(), das
+    Zusaetzlich top-level "eur_je_100km": Gesamtkosten (Heim+Fremd+`extra_cost`,
+    nur die bekannten Anteile summiert -- analog calculate_savings(), das
     fehlende Heimladen-Daten genauso behandelt) durch gefahrene km * 100.
     WICHTIG: es gibt KEIN €/100km je Ladeort -- man faehrt mit gemischtem
     Strom, Kilometer lassen sich nicht ursaechlich einem Ladeort zuordnen,
     nur die Gesamtstrecke gegen die Gesamtkosten ist eine sinnvolle Zahl.
+
+    `extra_cost` (z.B. monatliche Ladekarten-Grundgebuehren, siehe
+    coordinator.py::_ladekarten_cost_total()) sind Kosten, die KEINEM
+    Ladeort zuzuordnen sind -- fliessen bewusst NUR in eur_je_100km ein,
+    NIE in die Heim-/Fremd-Anteile oder deren preis_je_kwh: eine reine
+    Subskriptionsgebuehr wuerde sonst den effektiven Energiepreis und die
+    Ladeort-Verteilung verzerren, obwohl sie mit der geladenen Energiemenge
+    nichts zu tun hat.
 
     Fehlende Werte (None) werden konsequent ausgelassen, nie als 0
     gewertet -- ein Ladeort ganz ohne Daten fehlt komplett im Ergebnis,
@@ -1170,10 +1179,70 @@ def charging_location_breakdown(
         if loc:
             result[key] = loc
 
-    if km_driven is not None and km_driven > 0 and (home_cost is not None or extern_cost is not None):
-        result["eur_je_100km"] = round(total_cost / km_driven * 100.0, 2)
+    if km_driven is not None and km_driven > 0 and (home_cost is not None or extern_cost is not None or extra_cost):
+        result["eur_je_100km"] = round((total_cost + (extra_cost or 0.0)) / km_driven * 100.0, 2)
 
     return result
+
+
+def ladekarte_accrued_cost(
+    start_datum: Optional[str],
+    end_datum: Optional[str],
+    monatliche_gebuehr: float,
+    heute: str,
+    avg_days_per_month: float = 365.25 / 12,
+) -> float:
+    """Aufgelaufene Grundgebuehr EINER Ladekarte bis `heute` (ISO-Datum,
+    vom Aufrufer uebergeben statt hier live ermittelt -- Testbarkeit, siehe
+    leasing_status()). Reine Naeherung: eine echte Kartenabrechnung erfolgt
+    in monatlichen Spruengen, nicht stetig -- hier bewusst als laufende
+    Summe behandelt (aktive Tage / durchschnittliche Monatslaenge *
+    monatliche Gebuehr, siehe const.py::LADEKARTE_AVG_DAYS_PER_MONTH),
+    damit sie sich wie jede andere Kostensumme in dieser App
+    kontinuierlich mitzieht statt in Spruengen.
+
+    0.0 vor Vertragsbeginn (start_datum liegt nach `heute`), bei nicht
+    parsbarem start_datum/heute, oder wenn end_datum vor start_datum liegt
+    -- kein Fantasiewert, keine Exception. `end_datum` optional (Karte noch
+    aktiv, laeuft bis `heute` weiter)."""
+    try:
+        start = date.fromisoformat(start_datum)
+        heute_d = date.fromisoformat(heute)
+    except (TypeError, ValueError):
+        return 0.0
+    ende = heute_d
+    if end_datum:
+        try:
+            ende = min(date.fromisoformat(end_datum), heute_d)
+        except (TypeError, ValueError):
+            return 0.0
+    if ende < start:
+        return 0.0
+    tage_aktiv = (ende - start).days + 1
+    return round(monatliche_gebuehr * tage_aktiv / avg_days_per_month, 2)
+
+
+def ladekarten_summary(
+    karten: list, heute: str, avg_days_per_month: float = 365.25 / 12,
+) -> dict:
+    """Aufschluesselung aller Ladekarten (siehe ladekarte_accrued_cost()) --
+    "karten" (jede Eingabekarte plus berechnetem "kosten"-Feld) und
+    "gesamt" (Summe ueber alle). Leeres dict ohne jede Karte -- macht das
+    Feature komplett inaktiv/unsichtbar, solange keine Karte angelegt ist
+    (analog leasing_stats()). Eine Karte mit nicht parsbaren Daten wird mit
+    0 EUR gefuehrt statt die gesamte Berechnung abzubrechen."""
+    if not karten:
+        return {}
+    result_karten = []
+    gesamt = 0.0
+    for karte in karten:
+        kosten = ladekarte_accrued_cost(
+            karte.get("start_datum"), karte.get("end_datum"),
+            karte.get("monatliche_gebuehr", 0.0), heute, avg_days_per_month,
+        )
+        gesamt += kosten
+        result_karten.append({**karte, "kosten": kosten})
+    return {"karten": result_karten, "gesamt": round(gesamt, 2)}
 
 
 def ac_dc_breakdown(history: list, ac_max_kw: float = 22.0) -> dict:

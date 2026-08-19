@@ -2,6 +2,14 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.67.0] - 2026-08-19
+
+### Added
+
+- **Charging card management ("Ladekarten")**: track subscription cards from external-charging providers with a monthly base fee (e.g. an ADAC e-Charge card), independent of individual charges. New "Ladekarten" panel tab (always visible, shows a plain empty-state hint until at least one card exists) to add/edit/delete cards. Three new services: `add_ladekarte`, `edit_ladekarte`, `delete_ladekarte`.
+- The accrued base fee (active days since the card's start date ÷ an average 30.44-day month × the monthly fee — a deliberate approximation, since real billing happens in monthly jumps, not continuously) now automatically flows into the vehicle's overall external-charging cost: savings vs. combustion, EUR/100km, and the cost_day/week/month/year sensors. It deliberately does **not** affect the per-kWh price shown for external charging or the home/external cost split — a subscription fee isn't tied to any specific kWh or charging location, and blending it in would distort both. New sensor `ladekarten_kosten` (unknown without any card configured).
+- `log_charge`/`edit_charge` gained an optional `karte_id` to note which card was used for a given charge — purely informational, shown as a badge in the charge history, has no effect on any cost calculation. Available as a dropdown in both the manual-entry and edit forms once at least one card exists.
+
 ## [0.66.2] - 2026-08-19
 
 ### Added

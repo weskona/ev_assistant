@@ -252,6 +252,7 @@ class EVAssistantPanel extends HTMLElement {
       ["profil",     "mdi:calendar-week",          "Nutzungsprofil"],
       ["analyse",    "mdi:chart-line",             "Analyse"],
       ["leasing",    "mdi:file-document-outline",  "Leasing"],
+      ["ladekarten", "mdi:credit-card-multiple-outline", "Ladekarten"],
     ];
     this._tabs = {};
     for (const [id, icon, label] of TAB_DEFS) {
@@ -304,6 +305,7 @@ class EVAssistantPanel extends HTMLElement {
     else if (view === "profil") this._main.appendChild(this._buildProfil());
     else if (view === "analyse") this._main.appendChild(this._buildAnalyse());
     else if (view === "leasing") this._main.appendChild(this._buildLeasing());
+    else if (view === "ladekarten") this._main.appendChild(this._buildLadekarten());
     this._update();
   }
 
@@ -959,6 +961,7 @@ class EVAssistantPanel extends HTMLElement {
                 <label>Startgebühr € (optional)<input type="text" inputmode="decimal" class="em-fee" placeholder="0,00"></label>
                 <label>Blockiergebühr € (optional)<input type="text" inputmode="decimal" class="em-block-fee" placeholder="0,00"></label>
                 <label>Zeitgebühr € (optional)<input type="text" inputmode="decimal" class="em-time-fee" placeholder="0,00"></label>
+                <label class="em-karte-label hidden">Ladekarte (optional)<select class="em-karte"></select></label>
                 <button class="btn btn-primary em-save" disabled>Speichern</button>
                 <button class="btn btn-ghost em-cancel">Abbrechen</button>
               </div>
@@ -1114,6 +1117,8 @@ class EVAssistantPanel extends HTMLElement {
     const timeFeeInput  = form.querySelector(".em-time-fee");
     const startTsInput  = form.querySelector(".em-start-ts");
     const endTsInput    = form.querySelector(".em-end-ts");
+    const karteLabel    = form.querySelector(".em-karte-label");
+    const karteSelect   = form.querySelector(".em-karte");
     const saveBtn   = form.querySelector(".em-save");
     const cancelBtn = form.querySelector(".em-cancel");
 
@@ -1138,6 +1143,9 @@ class EVAssistantPanel extends HTMLElement {
         feeInput.value = "";
         blockFeeInput.value = "";
         timeFeeInput.value = "";
+        const karten = this._ladekartenList();
+        karteLabel.classList.toggle("hidden", karten.length === 0);
+        karteSelect.innerHTML = this._karteOptionsHtml(null);
         updateValidity();
       }
     });
@@ -1161,6 +1169,9 @@ class EVAssistantPanel extends HTMLElement {
       if (!isNaN(fee)) payload.start_fee = fee;
       if (!isNaN(blockFee)) payload.block_fee = blockFee;
       if (!isNaN(timeFee)) payload.time_fee = timeFee;
+      if (!karteLabel.classList.contains("hidden") && karteSelect.value !== "") {
+        payload.karte_id = parseInt(karteSelect.value, 10);
+      }
       this._call("log_charge", payload);
       form.classList.add("hidden");
     });
@@ -1706,6 +1717,194 @@ class EVAssistantPanel extends HTMLElement {
     );
   }
 
+  // --- Tab: Ladekarten ---------------------------------------------------------
+  //
+  // Reine Kostenposten (monatliche Grundgebuehren, siehe coordinator.py::
+  // ladekarten_stats()) -- unabhaengig von einzelnen Fremdladungen, deren
+  // optionale Zuordnung (siehe _karteOptionsHtml()) rein informativ ist.
+  // Analog zum Leasing-Tab: eigener, immer sichtbarer Tab, aber ohne
+  // Inhalt/Rauschen, solange keine Karte angelegt ist.
+
+  _buildLadekarten() {
+    const wrap = document.createElement("div");
+    wrap.className = "tab-wrap";
+    wrap.innerHTML = `
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:credit-card-multiple-outline"></ha-icon></span><h2>Ladekarten</h2>
+          <button class="btn btn-ghost lk-add-toggle" style="margin-left:auto">
+            <ha-icon icon="mdi:plus" style="--mdc-icon-size:14px;vertical-align:-2px"></ha-icon> Karte anlegen
+          </button>
+        </div>
+        <div class="hist-edit-form hidden" id="lk-add-form">
+          <label>Name<input type="text" class="lk-name" placeholder="z.B. ADAC e-Charge"></label>
+          <label>Monatliche Gebühr €<input type="text" inputmode="decimal" class="lk-gebuehr" placeholder="0,00"></label>
+          <label>Startdatum<input type="date" class="lk-start"></label>
+          <label>Enddatum (optional)<input type="date" class="lk-end"></label>
+          <button class="btn btn-primary lk-save" disabled>Speichern</button>
+          <button class="btn btn-ghost lk-cancel">Abbrechen</button>
+        </div>
+        <div class="profil-empty" id="lk-empty">
+          Noch keine Ladekarte angelegt — z.B. eine Abo-Karte eines Fremdlade-Anbieters mit monatlicher
+          Grundgebühr, unabhängig von einzelnen Ladungen. Die aufgelaufene Gebühr fließt automatisch in die
+          Fremdladung-Gesamtkosten ein (Ersparnis, EUR/100km, Kosten-Perioden), aber nicht in den Preis je kWh.
+        </div>
+        <div class="hidden" id="lk-content">
+          <div class="kpi-row">
+            <div class="kpi"><div class="kv" id="lk-gesamt">—</div><div class="kl">EUR aufgelaufen gesamt</div></div>
+          </div>
+          <div class="divider"></div>
+          <div class="hist-list" id="lk-list"></div>
+        </div>
+      </div>`;
+
+    const q = (s) => wrap.querySelector(s);
+    this._r.lkEmpty = q("#lk-empty");
+    this._r.lkContent = q("#lk-content");
+    this._r.lkGesamt = q("#lk-gesamt");
+    this._r.lkList = q("#lk-list");
+
+    this._wireLadekartenAddForm(wrap);
+    return wrap;
+  }
+
+  _wireLadekartenAddForm(container) {
+    const toggle = container.querySelector(".lk-add-toggle");
+    const form = container.querySelector("#lk-add-form");
+    if (!toggle || !form) return;
+    const nameInput    = form.querySelector(".lk-name");
+    const gebuehrInput = form.querySelector(".lk-gebuehr");
+    const startInput   = form.querySelector(".lk-start");
+    const endInput     = form.querySelector(".lk-end");
+    const saveBtn      = form.querySelector(".lk-save");
+    const cancelBtn    = form.querySelector(".lk-cancel");
+
+    const updateValidity = () => {
+      const gebuehr = parseFloat(gebuehrInput.value.replace(",", "."));
+      saveBtn.disabled = !nameInput.value.trim() || isNaN(gebuehr) || !startInput.value;
+    };
+    nameInput.addEventListener("input", updateValidity);
+    gebuehrInput.addEventListener("input", updateValidity);
+    startInput.addEventListener("input", updateValidity);
+
+    toggle.addEventListener("click", () => {
+      const opening = form.classList.contains("hidden");
+      form.classList.toggle("hidden");
+      if (opening) {
+        nameInput.value = "";
+        gebuehrInput.value = "";
+        startInput.value = new Date().toISOString().slice(0, 10);
+        endInput.value = "";
+        updateValidity();
+      }
+    });
+    cancelBtn.addEventListener("click", () => form.classList.add("hidden"));
+    saveBtn.addEventListener("click", () => {
+      const name = nameInput.value.trim();
+      const gebuehr = parseFloat(gebuehrInput.value.replace(",", "."));
+      if (!name || isNaN(gebuehr) || !startInput.value) return;
+      const payload = { name, monatliche_gebuehr: gebuehr, start_datum: startInput.value };
+      if (endInput.value) payload.end_datum = endInput.value;
+      this._call("add_ladekarte", payload);
+      form.classList.add("hidden");
+    });
+  }
+
+  _updateLadekarten() {
+    const r = this._r;
+    if (!r.lkContent) return;
+    const eid = this._eid("ladekarten_kosten");
+    const state = eid ? this._hass.states[eid] : null;
+    const karten = (state && Array.isArray((state.attributes || {}).karten)) ? state.attributes.karten : [];
+    const hasKarten = karten.length > 0;
+    r.lkEmpty.classList.toggle("hidden", hasKarten);
+    r.lkContent.classList.toggle("hidden", !hasKarten);
+    if (!hasKarten) return;
+    r.lkGesamt.textContent = this._fmtNum(state.attributes.gesamt, 2);
+    this._renderLadekartenList(karten);
+  }
+
+  _renderLadekartenList(karten) {
+    const list = this._r.lkList;
+    if (!list) return;
+    const sig = karten.map((k) => `${k.id}:${k.name}:${k.monatliche_gebuehr}:${k.start_datum}:${k.end_datum}`).join("|");
+    if (sig === this._lkSig && list.dataset.built === "1") return;
+    this._lkSig = sig;
+    list.dataset.built = "1";
+    list.innerHTML = "";
+    const fmtDate = (iso) => {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      return isNaN(d.getTime()) ? iso : d.toLocaleDateString("de-DE");
+    };
+    karten.forEach((k) => {
+      const row = document.createElement("div");
+      row.className = "hist-card";
+      const aktiv = !k.end_datum || k.end_datum >= new Date().toISOString().slice(0, 10);
+      row.innerHTML = `
+        <div class="hist-top">
+          <span class="hist-date">${k.name}${aktiv ? "" : ` <span class="hist-meta">· gekündigt</span>`}</span>
+          <div class="hist-actions">
+            <button class="btn-icon sm lk-edit" title="Bearbeiten"><ha-icon icon="mdi:pencil"></ha-icon></button>
+            <button class="btn-icon sm lk-delete" title="Löschen"><ha-icon icon="mdi:delete"></ha-icon></button>
+          </div>
+        </div>
+        <div class="hist-figures">
+          <div class="hist-figures-left">
+            <span class="hist-price">${this._fmtNum(k.monatliche_gebuehr, 2)} €/Monat</span>
+            <span class="hist-fee">seit ${fmtDate(k.start_datum)}${k.end_datum ? ` bis ${fmtDate(k.end_datum)}` : ""}</span>
+          </div>
+          <span class="hist-cost">${this._fmtNum(k.kosten, 2)} €</span>
+        </div>
+        <div class="hist-edit-form hidden">
+          <label>Name<input type="text" class="lke-name" value="${k.name}"></label>
+          <label>Monatliche Gebühr €<input type="text" inputmode="decimal" class="lke-gebuehr" value="${k.monatliche_gebuehr}"></label>
+          <label>Startdatum<input type="date" class="lke-start" value="${k.start_datum || ""}"></label>
+          <label>Enddatum (optional)<input type="date" class="lke-end" value="${k.end_datum || ""}"></label>
+          <button class="btn btn-primary lke-save">Speichern</button>
+          <button class="btn btn-ghost lke-cancel">Abbrechen</button>
+        </div>
+        <div class="hist-delete-confirm hidden">
+          <span class="hist-delete-text">Diese Ladekarte dauerhaft löschen?</span>
+          <button class="btn btn-danger lkd-confirm">Löschen</button>
+          <button class="btn btn-ghost lkd-cancel">Abbrechen</button>
+        </div>`;
+      const form = row.querySelector(".hist-edit-form");
+      const delConfirm = row.querySelector(".hist-delete-confirm");
+      row.querySelector(".lk-edit").addEventListener("click", () => {
+        delConfirm.classList.add("hidden");
+        form.classList.toggle("hidden");
+      });
+      row.querySelector(".lke-cancel").addEventListener("click", () => form.classList.add("hidden"));
+      row.querySelector(".lke-save").addEventListener("click", () => {
+        const name = row.querySelector(".lke-name").value.trim();
+        const gebuehr = parseFloat(row.querySelector(".lke-gebuehr").value.replace(",", "."));
+        const start = row.querySelector(".lke-start").value;
+        const end = row.querySelector(".lke-end").value;
+        const payload = { karte_id: k.id };
+        if (name) payload.name = name;
+        if (!isNaN(gebuehr)) payload.monatliche_gebuehr = gebuehr;
+        if (start) payload.start_datum = start;
+        // Leerer String loescht ein zuvor gesetztes Enddatum (siehe
+        // coordinator.py::async_edit_ladekarte()) -- end ist hier bewusst
+        // IMMER gesetzt (auch als ""), nicht nur wenn truthy.
+        payload.end_datum = end;
+        this._call("edit_ladekarte", payload);
+        form.classList.add("hidden");
+      });
+      row.querySelector(".lk-delete").addEventListener("click", () => {
+        form.classList.add("hidden");
+        delConfirm.classList.toggle("hidden");
+      });
+      row.querySelector(".lkd-cancel").addEventListener("click", () => delConfirm.classList.add("hidden"));
+      row.querySelector(".lkd-confirm").addEventListener("click", () => {
+        this._call("delete_ladekarte", { karte_id: k.id });
+        delConfirm.classList.add("hidden");
+      });
+      list.appendChild(row);
+    });
+  }
+
   // --- Update loop ------------------------------------------------------------
 
   _update() {
@@ -1716,6 +1915,7 @@ class EVAssistantPanel extends HTMLElement {
     else if (this._view === "profil") this._updateProfil();
     else if (this._view === "analyse") this._updateAnalyse();
     else if (this._view === "leasing") this._updateLeasing();
+    else if (this._view === "ladekarten") this._updateLadekarten();
   }
 
   _updateOverview() {
@@ -2148,6 +2348,34 @@ class EVAssistantPanel extends HTMLElement {
     return rem ? `${h}h ${rem}min` : `${h}h`;
   }
 
+  // --- Ladekarten-Helfer (siehe coordinator.py::ladekarten_stats()) ------------
+  // Genutzt vom neuen "Ladekarten"-Tab UND von den Erfassen-/Bearbeiten-
+  // Formularen der Fremdladung-Historie (Karte optional zuordnen).
+
+  _ladekartenList() {
+    const eid = this._eid("ladekarten_kosten");
+    const s = eid && this._hass ? this._hass.states[eid] : null;
+    return (s && Array.isArray((s.attributes || {}).karten)) ? s.attributes.karten : [];
+  }
+
+  _karteName(karteId) {
+    if (karteId == null) return null;
+    const karte = this._ladekartenList().find((k) => k.id === karteId);
+    return karte ? karte.name : null;
+  }
+
+  // "— keine —" plus eine Option je Karte, die uebergebene selectedId
+  // vorausgewaehlt -- fuer die karte-<select> in beiden Fremdladung-
+  // Formularen (manuell erfassen / bearbeiten).
+  _karteOptionsHtml(selectedId) {
+    const opts = [`<option value="">— keine —</option>`];
+    this._ladekartenList().forEach((k) => {
+      const sel = k.id === selectedId ? " selected" : "";
+      opts.push(`<option value="${k.id}"${sel}>${k.name}</option>`);
+    });
+    return opts.join("");
+  }
+
   _renderPendingCharges(items) {
     const el = this._r.estExtItem;
     if (!el) return;
@@ -2311,7 +2539,13 @@ class EVAssistantPanel extends HTMLElement {
     const full = (s && Array.isArray((s.attributes || {}).historie)) ? s.attributes.historie : [];
     const expanded = this._histChargeExpanded;
     const hist = expanded ? full : full.slice(0, 5);
-    const sig = expanded + "|" + full.map((h) => h.erfasst_ts).join(",");
+    const karten = this._ladekartenList();
+    const hasKarten = karten.length > 0;
+    // Ladekarten-Liste im Signatur-String, damit eine neu angelegte/
+    // gelöschte Karte die (sonst nur an erfasst_ts geknüpfte) Render-
+    // Sperre durchbricht -- sonst würde ein bereits offenes Bearbeiten-
+    // Formular nicht die aktuelle Kartenliste zeigen.
+    const sig = expanded + "|" + full.map((h) => h.erfasst_ts).join(",") + "|" + karten.map((k) => k.id).join(",");
     if (sig === this._histChargeSig && list.dataset.built === "1") return;
     this._histChargeSig = sig;
     list.dataset.built = "1";
@@ -2358,6 +2592,7 @@ class EVAssistantPanel extends HTMLElement {
             ${h.startgebuehr ? `<span class="hist-fee">+ ${this._fmtNum(h.startgebuehr, 2)} € Startgebühr</span>` : ""}
             ${h.blockiergebuehr ? `<span class="hist-fee">+ ${this._fmtNum(h.blockiergebuehr, 2)} € Blockiergebühr</span>` : ""}
             ${h.zeitgebuehr ? `<span class="hist-fee">+ ${this._fmtNum(h.zeitgebuehr, 2)} € Zeitgebühr</span>` : ""}
+            ${this._karteName(h.karte_id) ? `<span class="hist-fee">🎫 ${this._karteName(h.karte_id)}</span>` : ""}
           </div>
           <span class="hist-cost">${this._fmtNum(h.kosten, 2)} €</span>
         </div>
@@ -2372,6 +2607,7 @@ class EVAssistantPanel extends HTMLElement {
           <label>Ladeende (nicht Abstecken)<input type="datetime-local" class="hf-end-ts" value="${this._toDatetimeLocal(endTs)}"></label>
           <label>SoC Start (%)<input type="text" inputmode="decimal" class="hf-soc-start" value="${h.soc_start ?? ""}"></label>
           <label>SoC Ende (%)<input type="text" inputmode="decimal" class="hf-soc-end" value="${h.soc_end ?? ""}"></label>
+          ${hasKarten ? `<label>Ladekarte<select class="hf-karte">${this._karteOptionsHtml(h.karte_id)}</select></label>` : ""}
           <button class="btn btn-primary hf-save">Speichern</button>
           <button class="btn btn-ghost hf-cancel">Abbrechen</button>
         </div>
@@ -2406,6 +2642,10 @@ class EVAssistantPanel extends HTMLElement {
         if (endTsVal != null) payload.end_ts = endTsVal;
         const socStart = num(".hf-soc-start"); if (socStart != null) payload.soc_start = socStart;
         const socEnd = num(".hf-soc-end"); if (socEnd != null) payload.soc_end = socEnd;
+        const karteSelect = row.querySelector(".hf-karte");
+        if (karteSelect) {
+          payload.karte_id = karteSelect.value === "" ? 0 : parseInt(karteSelect.value, 10);
+        }
         this._call("edit_charge", payload);
         form.classList.add("hidden");
       });

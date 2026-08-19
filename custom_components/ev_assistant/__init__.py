@@ -16,11 +16,14 @@ from .const import (
     DOMAIN,
     EVCC_CONF_KEYS,
     PLATFORMS,
+    SERVICE_ADD_LADEKARTE,
     SERVICE_DELETE,
+    SERVICE_DELETE_LADEKARTE,
     SERVICE_DELETE_TRIP,
     SERVICE_DISCARD,
     SERVICE_DISCARD_TRIP,
     SERVICE_EDIT,
+    SERVICE_EDIT_LADEKARTE,
     SERVICE_EDIT_TRIP,
     SERVICE_EXPORT_TRIPS,
     SERVICE_IMPORT_TRIPS,
@@ -179,6 +182,7 @@ LOG_SCHEMA = vol.Schema({
     vol.Optional("start_fee", default=0.0): vol.Coerce(float),
     vol.Optional("block_fee", default=0.0): vol.Coerce(float),
     vol.Optional("time_fee", default=0.0): vol.Coerce(float),
+    vol.Optional("karte_id"): vol.Coerce(int),
 })
 
 DISCARD_SCHEMA = vol.Schema({
@@ -205,6 +209,7 @@ EDIT_SCHEMA = vol.Schema({
     vol.Optional("end_ts"): vol.Coerce(float),
     vol.Optional("soc_start"): vol.Coerce(float),
     vol.Optional("soc_end"): vol.Coerce(float),
+    vol.Optional("karte_id"): vol.Coerce(int),
 })
 
 DELETE_SCHEMA = vol.Schema({
@@ -261,6 +266,30 @@ IMPORT_TRIPS_SCHEMA = vol.Schema({
     vol.Required("trips"): vol.Any([dict], vol.Schema({vol.Required("trips"): [dict]}, extra=vol.ALLOW_EXTRA)),
 })
 
+ADD_LADEKARTE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("name"): str,
+    vol.Required("monatliche_gebuehr"): vol.Coerce(float),
+    vol.Required("start_datum"): str,
+    vol.Optional("end_datum"): str,
+})
+
+EDIT_LADEKARTE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("karte_id"): vol.Coerce(int),
+    vol.Optional("name"): str,
+    vol.Optional("monatliche_gebuehr"): vol.Coerce(float),
+    vol.Optional("start_datum"): str,
+    # Leerer String loescht ein zuvor gesetztes Enddatum, siehe
+    # coordinator.py::async_edit_ladekarte().
+    vol.Optional("end_datum"): str,
+})
+
+DELETE_LADEKARTE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("karte_id"): vol.Coerce(int),
+})
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Backfill fuer Entries von vor Einfuehrung der unique_id (siehe
@@ -305,6 +334,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 call.data.get("start_fee", 0.0), call.data.get("block_fee", 0.0),
                 call.data.get("time_fee", 0.0), call.data.get("end_ts"),
                 call.data.get("soc_start"), call.data.get("soc_end"),
+                call.data.get("karte_id"),
             )
 
     async def _handle_discard(call: ServiceCall) -> None:
@@ -333,6 +363,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 call.data.get("end_ts"),
                 call.data.get("soc_start"),
                 call.data.get("soc_end"),
+                call.data.get("karte_id"),
             )
 
     async def _handle_delete(call: ServiceCall) -> None:
@@ -392,6 +423,30 @@ def _register_services(hass: HomeAssistant) -> None:
                 trips = trips.get("trips", [])
             await coordinator.async_import_fahrtenbuch(trips)
 
+    async def _handle_add_ladekarte(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_add_ladekarte(
+                call.data["name"], call.data["monatliche_gebuehr"],
+                call.data["start_datum"], call.data.get("end_datum"),
+            )
+
+    async def _handle_edit_ladekarte(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_edit_ladekarte(
+                call.data["karte_id"],
+                call.data.get("name"),
+                call.data.get("monatliche_gebuehr"),
+                call.data.get("start_datum"),
+                call.data.get("end_datum"),
+            )
+
+    async def _handle_delete_ladekarte(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_delete_ladekarte(call.data["karte_id"])
+
     hass.services.async_register(DOMAIN, SERVICE_LOG, _handle_log, schema=LOG_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCARD, _handle_discard, schema=DISCARD_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE, _handle_simulate, schema=SIMULATE_SCHEMA)
@@ -403,6 +458,11 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE_TRIP, _handle_simulate_trip, schema=SIMULATE_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_EDIT_TRIP, _handle_edit_trip, schema=EDIT_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DELETE_TRIP, _handle_delete_trip, schema=DELETE_TRIP_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_ADD_LADEKARTE, _handle_add_ladekarte, schema=ADD_LADEKARTE_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_EDIT_LADEKARTE, _handle_edit_ladekarte, schema=EDIT_LADEKARTE_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, SERVICE_DELETE_LADEKARTE, _handle_delete_ladekarte, schema=DELETE_LADEKARTE_SCHEMA
+    )
     hass.services.async_register(DOMAIN, SERVICE_IMPORT_TRIPS, _handle_import_trips, schema=IMPORT_TRIPS_SCHEMA)
 
 
@@ -421,6 +481,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_LOG, SERVICE_DISCARD, SERVICE_SIMULATE, SERVICE_EDIT, SERVICE_DELETE,
                 SERVICE_LOG_TRIP, SERVICE_DISCARD_TRIP, SERVICE_EXPORT_TRIPS, SERVICE_SIMULATE_TRIP,
                 SERVICE_EDIT_TRIP, SERVICE_DELETE_TRIP, SERVICE_IMPORT_TRIPS,
+                SERVICE_ADD_LADEKARTE, SERVICE_EDIT_LADEKARTE, SERVICE_DELETE_LADEKARTE,
             ):
                 hass.services.async_remove(DOMAIN, service)
         else:

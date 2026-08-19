@@ -291,6 +291,15 @@ TRIP_CONSUMPTION_CHECK_MIN_KM = 5.0
 # Fremdladungen -- Heimladen ist baulich praktisch immer AC.
 AC_MAX_KW = 22.0
 
+# Naeherung fuer die Umrechnung "monatliche Grundgebuehr" -> laufende
+# Tagesrate (siehe engine.ladekarte_accrued_cost()): eine echte
+# Kartenabrechnung erfolgt in monatlichen Spruengen, nicht stetig -- hier
+# bewusst als laufende Summe behandelt (Tage aktiv / Ø Monatslaenge *
+# Gebuehr), damit sie sich wie jede andere Kostensumme in dieser App
+# kontinuierlich mitzieht statt in Spruengen. 365.25/12 = Ø Kalendermonat
+# inkl. Schaltjahren. Bewusst kein Config-Flow-Feld, analog AC_MAX_KW.
+LADEKARTE_AVG_DAYS_PER_MONTH = 365.25 / 12
+
 # Geschaetzte Akkukapazitaet aus Fremdladungen (siehe engine.battery_capacity_
 # samples/estimate_battery_capacity_kwh) -- ebenfalls interne Heuristik, kein
 # Config-Flow-Feld.
@@ -364,5 +373,8 @@ SERVICE_SIMULATE_TRIP = "simulate_trip"
 SERVICE_EDIT_TRIP = "edit_trip"
 SERVICE_DELETE_TRIP = "delete_trip"
 SERVICE_IMPORT_TRIPS = "import_fahrtenbuch"
+SERVICE_ADD_LADEKARTE = "add_ladekarte"
+SERVICE_EDIT_LADEKARTE = "edit_ladekarte"
+SERVICE_DELETE_LADEKARTE = "delete_ladekarte"
 
 NOTIFY_TAG = "ev_assistant"

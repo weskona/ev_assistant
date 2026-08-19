@@ -66,6 +66,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         AcChargingKwhSensor(coordinator, entry),
         DcChargingKwhSensor(coordinator, entry),
         LeasingKmVorRuecklaufSensor(coordinator, entry),
+        LadekartenKostenSensor(coordinator, entry),
         Co2SavingsSensor(coordinator, entry),
         HomeVsExternalPriceSensor(coordinator, entry),
         CostDaySensor(coordinator, entry),
@@ -1046,6 +1047,35 @@ class LeasingKmVorRuecklaufSensor(EvAssistantEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         return self.coordinator.leasing_stats()
+
+
+class LadekartenKostenSensor(EvAssistantEntity, SensorEntity):
+    """Aufgelaufene Ladekarten-Grundgebuehren (siehe coordinator.py::
+    ladekarten_stats()/engine.py::ladekarten_summary()) -- Hauptwert ist
+    die Summe ueber alle Karten, volle Aufschluesselung je Karte (Name,
+    monatliche Gebuehr, Start-/Enddatum, aufgelaufene Kosten) als Attribut
+    "karten". Diese Summe fliesst bereits automatisch in die Fremdladung-
+    Gesamtkosten ein (Ersparnis, EUR/100km, Kosten-Perioden, siehe
+    coordinator.py::_ladekarten_cost_total()) -- dieser Sensor macht sie
+    nur zusaetzlich einzeln sichtbar. unknown, solange keine Karte angelegt
+    ist -- absichtlich KEIN Rauschen ohne Konfiguration (analog
+    LeasingKmVorRuecklaufSensor)."""
+
+    _attr_translation_key = "ladekarten_kosten"
+    _attr_native_unit_of_measurement = "EUR"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:credit-card-outline"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "ladekarten_kosten")
+
+    @property
+    def native_value(self):
+        return self.coordinator.ladekarten_stats().get("gesamt")
+
+    @property
+    def extra_state_attributes(self):
+        return self.coordinator.ladekarten_stats()
 
 
 class Co2SavingsSensor(EvAssistantEntity, SensorEntity):

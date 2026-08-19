@@ -23,6 +23,8 @@ from engine import (
     home_capacity_sample,
     home_session_solar_and_cost,
     is_plausible_trip_consumption,
+    ladekarte_accrued_cost,
+    ladekarten_summary,
     leasing_status,
     merge_pending,
     pop_pending,
@@ -1340,6 +1342,100 @@ def test_charging_location_breakdown_leere_eingaben_liefert_partielles_dict():
         home_kwh=None, home_cost=None, extern_kwh=15.0, extern_cost=None, km_driven=None,
     )
     assert result == {"fremd": {"kwh": 15.0, "kwh_anteil_pct": 100.0}}
+
+
+def test_charging_location_breakdown_extra_cost_fliesst_nur_in_eur_je_100km():
+    # extra_cost (z.B. Ladekarten-Grundgebuehr) darf die Ladeort-Anteile/
+    # den Preis je kWh NICHT verzerren -- nur eur_je_100km beruecksichtigt
+    # sie (fahrzeugweit, keinem Ladeort zuzuordnen).
+    ohne_extra = charging_location_breakdown(
+        home_kwh=None, home_cost=None, extern_kwh=20.0, extern_cost=10.0, km_driven=100.0,
+    )
+    mit_extra = charging_location_breakdown(
+        home_kwh=None, home_cost=None, extern_kwh=20.0, extern_cost=10.0, km_driven=100.0,
+        extra_cost=5.0,
+    )
+    assert mit_extra["fremd"] == ohne_extra["fremd"]
+    assert ohne_extra["eur_je_100km"] == 10.0
+    assert mit_extra["eur_je_100km"] == 15.0
+
+
+def test_charging_location_breakdown_nur_extra_cost_liefert_trotzdem_eur_je_100km():
+    # Auch ganz ohne bekannte Heim-/Fremdkosten zaehlt extra_cost allein
+    # schon fuer eur_je_100km.
+    result = charging_location_breakdown(
+        home_kwh=None, home_cost=None, extern_kwh=None, extern_cost=None, km_driven=50.0,
+        extra_cost=10.0,
+    )
+    assert result == {"eur_je_100km": 20.0}
+
+
+# ----- ladekarte_accrued_cost / ladekarten_summary: Ladekarten-Grundgebuehren --
+
+def test_ladekarte_accrued_cost_durchgerechnetes_beispiel():
+    # 30 Tage aktiv (inklusive Start- und Endtag) bei einer Monatslaenge
+    # von genau 30 Tagen -- exakt eine Monatsgebuehr.
+    kosten = ladekarte_accrued_cost(
+        "2026-01-01", None, monatliche_gebuehr=9.90, heute="2026-01-30",
+        avg_days_per_month=30.0,
+    )
+    assert kosten == 9.90
+
+
+def test_ladekarte_accrued_cost_vor_vertragsbeginn_liefert_null():
+    kosten = ladekarte_accrued_cost("2026-02-01", None, 9.90, heute="2026-01-15", avg_days_per_month=30.0)
+    assert kosten == 0.0
+
+
+def test_ladekarte_accrued_cost_gekuendigt_zaehlt_nur_bis_enddatum():
+    # Karte zum 2026-01-15 gekuendigt -- Tage danach (bis "heute") zaehlen
+    # nicht mehr, auch wenn heute viel spaeter liegt.
+    kosten = ladekarte_accrued_cost(
+        "2026-01-01", "2026-01-15", monatliche_gebuehr=30.0, heute="2026-06-01",
+        avg_days_per_month=30.0,
+    )
+    # (15 - 1) Tage + 1 = 15 aktive Tage von 30 Tagen Monatslaenge.
+    assert kosten == 15.0
+
+
+def test_ladekarte_accrued_cost_enddatum_vor_startdatum_liefert_null():
+    kosten = ladekarte_accrued_cost("2026-02-01", "2026-01-01", 9.90, heute="2026-03-01")
+    assert kosten == 0.0
+
+
+def test_ladekarte_accrued_cost_nicht_parsbares_datum_liefert_null_statt_exception():
+    assert ladekarte_accrued_cost(None, None, 9.90, heute="2026-01-01") == 0.0
+    assert ladekarte_accrued_cost("keinDatum", None, 9.90, heute="2026-01-01") == 0.0
+    assert ladekarte_accrued_cost("2026-01-01", "keinDatum", 9.90, heute="2026-01-15") == 0.0
+
+
+def test_ladekarten_summary_leere_liste_liefert_leeres_dict():
+    assert ladekarten_summary([], heute="2026-01-01") == {}
+
+
+def test_ladekarten_summary_mehrere_karten_summieren_sich():
+    karten = [
+        {"id": 1, "name": "Karte A", "monatliche_gebuehr": 30.0, "start_datum": "2026-01-01", "end_datum": None},
+        {"id": 2, "name": "Karte B", "monatliche_gebuehr": 15.0, "start_datum": "2026-01-01", "end_datum": None},
+    ]
+    result = ladekarten_summary(karten, heute="2026-01-30", avg_days_per_month=30.0)
+    assert result["gesamt"] == 45.0
+    assert result["karten"][0]["kosten"] == 30.0
+    assert result["karten"][1]["kosten"] == 15.0
+    # Eingabefelder bleiben erhalten (Panel braucht Name/Gebuehr/Daten
+    # weiterhin, nicht nur die berechneten Kosten).
+    assert result["karten"][0]["name"] == "Karte A"
+
+
+def test_ladekarten_summary_karte_mit_kaputtem_datum_bricht_nicht_alles_ab():
+    karten = [
+        {"id": 1, "name": "Kaputt", "monatliche_gebuehr": 30.0, "start_datum": "nixdaten", "end_datum": None},
+        {"id": 2, "name": "Gut", "monatliche_gebuehr": 15.0, "start_datum": "2026-01-01", "end_datum": None},
+    ]
+    result = ladekarten_summary(karten, heute="2026-01-30", avg_days_per_month=30.0)
+    assert result["karten"][0]["kosten"] == 0.0
+    assert result["karten"][1]["kosten"] == 15.0
+    assert result["gesamt"] == 15.0
 
 
 # ----- ac_dc_breakdown: Fremdladungen nach AC/DC (aus Durchschnittsleistung) --

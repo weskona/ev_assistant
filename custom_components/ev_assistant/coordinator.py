@@ -111,6 +111,7 @@ from .const import (
     EVENT_TRIP_PENDING,
     IMPLAUSIBLE_POWER_RATIO,
     IMPLAUSIBLE_REGEN_DELTA_PCT,
+    LADEKARTE_AVG_DAYS_PER_MONTH,
     LEASING_KNAPP_SCHWELLE_PCT,
     LEASING_TOLERANZ_PCT,
     MAX_POWER_GAP_S,
@@ -153,6 +154,7 @@ from .engine import (
     home_capacity_sample,
     home_session_solar_and_cost,
     is_plausible_trip_consumption,
+    ladekarten_summary,
     leasing_status,
     merge_pending,
     pop_pending,
@@ -278,6 +280,7 @@ def _empty_data() -> dict:
         "cost_periods": {},
         "kwh_periods": {},
         "odo_lts": {},
+        "ladekarten": [],
     }
 
 
@@ -2070,6 +2073,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         start_fee: float = 0.0, block_fee: float = 0.0, time_fee: float = 0.0,
         end_ts: Optional[float] = None,
         soc_start: Optional[float] = None, soc_end: Optional[float] = None,
+        karte_id: Optional[int] = None,
     ) -> None:
         """Bestaetigt eine offene Fremdladung. Bei mehreren gleichzeitig
         offenen waehlt `start_ts` die gemeinte aus; ohne Angabe wird die
@@ -2084,7 +2088,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         (dauer_min), `soc_start`/`soc_end` ergeben delta_soc -- beides
         analog async_edit_charge(). Bei einer erkannten offenen Ladung
         stammen Dauer und SoC-Werte weiterhin aus deren eigener Messung
-        (pend["duration_min"]/["soc_start"]/["soc_end"])."""
+        (pend["duration_min"]/["soc_start"]/["soc_end"]). `karte_id`
+        optional: welche Ladekarte (siehe async_add_ladekarte()) fuer diese
+        Ladung verwendet wurde -- rein informativ, fliesst NICHT in die
+        Kostenberechnung ein (Ladekarten-Grundgebuehren laufen unabhaengig
+        von einzelnen Ladungen, siehe _ladekarten_cost_total()); wird
+        unveraendert gespeichert, auch wenn die Karte spaeter geloescht
+        wird (verwaiste Referenz wird beim Anzeigen einfach ignoriert)."""
         kwh = round(float(kwh), 2)
         price = round(float(price), 4)
         start_fee = round(float(start_fee), 2)
@@ -2097,6 +2107,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "kosten": charge_cost(kwh, price, start_fee, block_fee, time_fee),
             "erfasst_ts": int(time.time()),
         }
+        if karte_id is not None:
+            rec["karte_id"] = karte_id
         pending_list = list(self.data.get("pending") or [])
         pend = pop_pending(pending_list, start_ts)
         if pend:
@@ -2145,6 +2157,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         end_ts: Optional[float] = None,
         soc_start: Optional[float] = None,
         soc_end: Optional[float] = None,
+        karte_id: Optional[int] = None,
     ) -> bool:
         """Korrigiert einen bereits bestaetigten Historien-Eintrag -- alle
         Felder optional, nur mitgegebene Werte werden geaendert (analog
@@ -2154,9 +2167,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         end_ts wird nicht direkt gespeichert, sondern zusammen mit dem
         effektiven start_ts zu dauer_min umgerechnet (dieselbe Ableitung
         wie beim Bestaetigen). soc_start/soc_end: delta_soc wird neu
-        berechnet. Passt die laufenden Summen (kwh/kosten) um die Differenz
-        an statt sie aus der Historie neu zu berechnen. Gibt False zurueck,
-        wenn kein Eintrag mit erfasst_ts gefunden wurde."""
+        berechnet. karte_id: None laesst die Zuordnung unveraendert, 0
+        entfernt eine bestehende Zuordnung (0 ist keine gueltige Karten-ID,
+        siehe async_add_ladekarte()), jeder andere Wert setzt/aendert sie.
+        Passt die laufenden Summen (kwh/kosten) um die Differenz an statt
+        sie aus der Historie neu zu berechnen. Gibt False zurueck, wenn
+        kein Eintrag mit erfasst_ts gefunden wurde."""
         history = self.data.get("history") or []
         for rec in history:
             if rec.get("erfasst_ts") == erfasst_ts:
@@ -2177,6 +2193,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 rec["blockiergebuehr"] = bfee
                 rec["zeitgebuehr"] = tfee
                 rec["kosten"] = kosten
+                if karte_id is not None:
+                    if karte_id == 0:
+                        rec.pop("karte_id", None)
+                    else:
+                        rec["karte_id"] = karte_id
                 if start_ts is not None:
                     rec["start_ts"] = start_ts
                 if end_ts is not None and rec.get("start_ts") is not None:
@@ -2219,6 +2240,80 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 self._history_version += 1
                 await self._save()
                 self.hass.bus.async_fire(EVENT_DELETED, rec)
+                self.async_set_updated_data(self.data)
+                return True
+        return False
+
+    # ----- Ladekarten (monatliche Grundgebuehren, z.B. Ladekarten-Abos) ---
+
+    async def async_add_ladekarte(
+        self, name: str, monatliche_gebuehr: float, start_datum: str,
+        end_datum: Optional[str] = None,
+    ) -> None:
+        """Legt eine neue Ladekarte an -- reiner Kostenposten (siehe
+        engine.ladekarte_accrued_cost()), keine Verknuepfung mit
+        Fremdladungen noetig (die optionale karte_id auf einzelnen
+        Ladungen, siehe async_log_charge(), ist rein informativ). id ist
+        ein simpler Millisekunden-Zeitstempel -- analog erfasst_ts bei
+        Fremdladungen/Fahrten, hier ausreichend, da Karten einzeln von
+        Hand angelegt werden (kein Tight-Loop-Kollisionsrisiko wie beim
+        Bulk-Import von Fahrten)."""
+        karte = {
+            "id": int(time.time() * 1000),
+            "name": name.strip(),
+            "monatliche_gebuehr": round(float(monatliche_gebuehr), 2),
+            "start_datum": start_datum,
+            "end_datum": end_datum,
+        }
+        karten = list(self.data.get("ladekarten") or [])
+        karten.append(karte)
+        self.data["ladekarten"] = karten
+        await self._save()
+        self.async_set_updated_data(self.data)
+
+    async def async_edit_ladekarte(
+        self,
+        karte_id: int,
+        name: Optional[str] = None,
+        monatliche_gebuehr: Optional[float] = None,
+        start_datum: Optional[str] = None,
+        end_datum: Optional[str] = None,
+    ) -> bool:
+        """Korrigiert eine bestehende Ladekarte -- alle Felder optional,
+        nur mitgegebene Werte werden geaendert (analog async_edit_charge()).
+        end_datum: None laesst das Feld unveraendert, ein LEERER String
+        loescht ein zuvor gesetztes Enddatum (z.B. eine gekuendigte Karte
+        reaktivieren) -- unterscheidbar, weil ein Service-Aufruf ohne
+        end_datum-Feld ueberhaupt None liefert, waehrend ein explizit
+        geleertes Formularfeld "" liefert. Gibt False zurueck, wenn keine
+        Karte mit dieser id gefunden wurde."""
+        karten = self.data.get("ladekarten") or []
+        for karte in karten:
+            if karte.get("id") == karte_id:
+                if name is not None:
+                    karte["name"] = name.strip()
+                if monatliche_gebuehr is not None:
+                    karte["monatliche_gebuehr"] = round(float(monatliche_gebuehr), 2)
+                if start_datum is not None:
+                    karte["start_datum"] = start_datum
+                if end_datum is not None:
+                    karte["end_datum"] = end_datum or None
+                await self._save()
+                self.async_set_updated_data(self.data)
+                return True
+        return False
+
+    async def async_delete_ladekarte(self, karte_id: int) -> bool:
+        """Loescht eine Ladekarte vollstaendig. Bereits zugeordnete
+        Fremdladungen (rec["karte_id"], siehe async_log_charge()) behalten
+        ihre Referenz -- eine verwaiste karte_id wird beim Anzeigen einfach
+        ignoriert, nicht rueckwirkend aus der Historie entfernt. Gibt False
+        zurueck, wenn keine Karte mit dieser id gefunden wurde."""
+        karten = self.data.get("ladekarten") or []
+        for i, karte in enumerate(karten):
+            if karte.get("id") == karte_id:
+                karten.pop(i)
+                await self._save()
                 self.async_set_updated_data(self.data)
                 return True
         return False
@@ -2273,17 +2368,42 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return home_kwh + external_kwh
 
     def _ev_cost_total_since_setup(self) -> float:
-        """(Heimladen + Fremdladen) Kosten gesamt seit Einrichtung --
-        dieselbe Kosten-Prioritaet wie calculate_savings() (home_cost, falls
-        vorhanden, sonst home_kwh * home_price), fuer die Perioden-Baselines
-        (siehe _update_cost_periods())."""
+        """(Heimladen + Fremdladen + Ladekarten-Grundgebuehren) Kosten
+        gesamt seit Einrichtung -- dieselbe Kosten-Prioritaet wie
+        calculate_savings() (home_cost, falls vorhanden, sonst home_kwh *
+        home_price), fuer die Perioden-Baselines (siehe
+        _update_cost_periods()). Ladekarten-Grundgebuehren (siehe
+        _ladekarten_cost_total()) zaehlen hier mit, da diese Summe "was
+        kostet mich das Fahrzeug insgesamt" abbilden soll -- anders als
+        totals["kosten"] (reine Ladekosten-Summe, unveraendert, siehe
+        charging_location_stats() fuer die bewusste Trennung)."""
         home_cost = self._home_cost_since_setup()
         if home_cost is None:
             home_kwh = self._home_kwh_since_setup()
             home_price = self._home_price()
             home_cost = round(home_kwh * home_price, 2) if (home_kwh is not None and home_price is not None) else 0.0
         external_cost = self.data.get("totals", {}).get("kosten", 0.0)
-        return home_cost + external_cost
+        return home_cost + external_cost + self._ladekarten_cost_total()
+
+    def _ladekarten_cost_total(self) -> float:
+        """Aufgelaufene Summe aller Ladekarten-Grundgebuehren bis heute
+        (siehe engine.ladekarten_summary()) -- 0.0 ohne jede Karte. Eigene
+        Methode statt Inline-Code, da mehrere Stellen (_ev_cost_total_
+        since_setup(), savings(), charging_location_stats()) sie
+        brauchen."""
+        return self.ladekarten_stats().get("gesamt", 0.0)
+
+    def ladekarten_stats(self) -> dict:
+        """Ladekarten-Uebersicht (siehe engine.ladekarten_summary()) --
+        leeres dict ohne jede angelegte Karte (macht das Feature komplett
+        inaktiv/unsichtbar, analog leasing_stats()). Absichtlich UNGECACHT:
+        die Berechnung ist trivial billig (kurze Liste, reine Datums-
+        arithmetik), anders als z.B. rolling_km_per_day() bei leasing_stats()."""
+        karten = self.data.get("ladekarten") or []
+        if not karten:
+            return {}
+        heute = dt_util.now().date().isoformat()
+        return ladekarten_summary(karten, heute, LADEKARTE_AVG_DAYS_PER_MONTH)
 
     def _vehicle_avg_consumption_kwh_per_100km(self) -> Optional[float]:
         """Durchschnittsverbrauch des Fahrzeugs in kWh/100km ueber die
@@ -2448,7 +2568,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         einer laufenden Heimladung einfrieren, statt live mitzuziehen --
         genau der Moment, in dem man am ehesten hinschaut. Kein
         Versionszaehler deckt diese Aenderung ab, also lieber ungecacht als
-        ein Cache, der genau dann stale ist, wenn es am meisten auffaellt."""
+        ein Cache, der genau dann stale ist, wenn es am meisten auffaellt.
+
+        Zusaetzlich unter "ladekarten" die Ladekarten-Uebersicht (siehe
+        ladekarten_stats()), nur wenn mindestens eine Karte existiert.
+        Ladekarten-Grundgebuehren fliessen als extra_cost in
+        eur_je_100km ein, aber NICHT in "fremd" (siehe
+        engine.charging_location_breakdown()'s extra_cost-Dokumentation)
+        -- eine Subskriptionsgebuehr ist keinem Ladeort zuzuordnen und
+        wuerde sonst fremd.preis_je_kwh verzerren."""
         home_kwh = self._home_kwh_since_setup()
         home_cost = self._home_cost_since_setup()
         if home_cost is None and home_kwh is not None:
@@ -2460,12 +2588,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         extern_cost = totals.get("kosten", 0.0)
         km_driven = self._km_driven()
         home_solar_pct = self.home_session_stats().get("solar_pct")
+        ladekarten = self.ladekarten_stats()
         result = charging_location_breakdown(
             home_kwh, home_cost, extern_kwh, extern_cost, km_driven, home_solar_pct,
+            extra_cost=ladekarten.get("gesamt"),
         )
         ac_dc = ac_dc_breakdown(self.data.get("history") or [], AC_MAX_KW)
         if ac_dc:
             result["ac_dc"] = ac_dc
+        if ladekarten:
+            result["ladekarten"] = ladekarten
         return result
 
     def leasing_stats(self) -> dict:
@@ -2766,7 +2898,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         systematisch mit Preisschwankungen. Heimstrompreis: kWh-gewichtet
         (siehe _home_price_average()) -- Heimladen wird (z.B. per evcc)
         gezielt in Guenstigpreis-Fenster gelegt, eine Zeitgewichtung wuerde
-        den effektiv gezahlten Preis dadurch systematisch ueberschaetzen."""
+        den effektiv gezahlten Preis dadurch systematisch ueberschaetzen.
+        fremdladen_kosten enthaelt zusaetzlich aufgelaufene Ladekarten-
+        Grundgebuehren (siehe _ladekarten_cost_total()) -- die zaehlen zu
+        "was kostet mich das EV insgesamt", auch ohne eine einzige Ladung
+        in diesem Zeitraum."""
         verbrenner_l = self._opt(CONF_VERBRENNER_L_100KM)
         verbrenner_price = self._opt(CONF_VERBRENNER_PRICE_PER_LITER)
         if self._verbrenner_price_live is not None:
@@ -2777,7 +2913,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             km_driven=self._km_driven(),
             home_kwh=self._home_kwh_since_setup(),
             home_price_kwh=self._home_price(),
-            fremdladen_kosten=self.data.get("totals", {}).get("kosten", 0.0),
+            fremdladen_kosten=self.data.get("totals", {}).get("kosten", 0.0) + self._ladekarten_cost_total(),
             verbrenner_l_100km=float(verbrenner_l) if verbrenner_l is not None else None,
             verbrenner_price_per_liter=float(verbrenner_price) if verbrenner_price is not None else None,
             home_cost=self._home_cost_since_setup(),
