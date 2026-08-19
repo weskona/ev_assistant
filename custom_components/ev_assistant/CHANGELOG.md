@@ -2,6 +2,14 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.69.0] - 2026-08-19
+
+### Added
+
+- **Provider tracking for external charges ("Anbieter")**: `log_charge`/`edit_charge` gained an optional `anbieter` field for the charging network/operator name (e.g. "EnBW", "Ionity", "Aral pulse") — free text, not a fixed catalog. The panel's manual-entry form, the pending-charge confirmation card, and the history edit form all suggest previously used names (typing anything else still works), and a set provider shows as a 🏢 badge in the charge history. This is deliberately a *different* thing from a charging card (`karte_id`, added in 0.67.0): a charging card is what you paid with, the provider is where you charged — a charge can have either, both, or neither, tracked completely independently.
+- New `anbieter`/`bekannte_anbieter` attributes on `charging_location_breakdown`: a breakdown by provider (kWh, cost, count, shares, €/kWh), matched case-insensitively so "EnBW"/"enbw" merge into one bucket, with charges missing a provider grouped under "Unbekannt" rather than dropped. As with the home/external split, Ladekarten base fees are **not** split across providers — a subscription fee isn't tied to one charging session. `bekannte_anbieter` is the distinct provider list (most recently used first) that feeds the panel's suggestions.
+- New "Verteilung nach Anbieter" card in the Analyse tab, using the existing horizontal-bar style — shown once at least two provider buckets exist (a single bucket, e.g. everything under "Unbekannt", says nothing) and hidden entirely in **Home only** mode, where no external charging happens.
+
 ## [0.68.0] - 2026-08-19
 
 ### Added

@@ -140,8 +140,10 @@ from .engine import (
     TripDetector,
     TripSample,
     ac_dc_breakdown,
+    anbieter_breakdown,
     average_efficiency,
     battery_capacity_samples,
+    bekannte_anbieter,
     calculate_co2_savings,
     calculate_range_km,
     calculate_savings,
@@ -2074,7 +2076,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         start_fee: float = 0.0, block_fee: float = 0.0, time_fee: float = 0.0,
         end_ts: Optional[float] = None,
         soc_start: Optional[float] = None, soc_end: Optional[float] = None,
-        karte_id: Optional[int] = None,
+        karte_id: Optional[int] = None, anbieter: Optional[str] = None,
     ) -> None:
         """Bestaetigt eine offene Fremdladung. Bei mehreren gleichzeitig
         offenen waehlt `start_ts` die gemeinte aus; ohne Angabe wird die
@@ -2095,7 +2097,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Kostenberechnung ein (Ladekarten-Grundgebuehren laufen unabhaengig
         von einzelnen Ladungen, siehe _ladekarten_cost_total()); wird
         unveraendert gespeichert, auch wenn die Karte spaeter geloescht
-        wird (verwaiste Referenz wird beim Anzeigen einfach ignoriert)."""
+        wird (verwaiste Referenz wird beim Anzeigen einfach ignoriert).
+        `anbieter` optional: WO geladen wurde (Ladenetz-/Betreibername,
+        z.B. "EnBW"/"Ionity") -- eine ganz andere Sache als `karte_id`
+        (WOMIT bezahlt wurde), siehe engine.anbieter_breakdown(). Freitext,
+        kein fester Katalog; nur getrimmt gespeichert, leer/None wird
+        NICHT gespeichert (kein Fantasiewert -- alte Eintraege ohne
+        Anbieter funktionieren unveraendert weiter, siehe dort)."""
         kwh = round(float(kwh), 2)
         price = round(float(price), 4)
         start_fee = round(float(start_fee), 2)
@@ -2110,6 +2118,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         }
         if karte_id is not None:
             rec["karte_id"] = karte_id
+        if anbieter and anbieter.strip():
+            rec["anbieter"] = anbieter.strip()
         pending_list = list(self.data.get("pending") or [])
         pend = pop_pending(pending_list, start_ts)
         if pend:
@@ -2159,6 +2169,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         soc_start: Optional[float] = None,
         soc_end: Optional[float] = None,
         karte_id: Optional[int] = None,
+        anbieter: Optional[str] = None,
     ) -> bool:
         """Korrigiert einen bereits bestaetigten Historien-Eintrag -- alle
         Felder optional, nur mitgegebene Werte werden geaendert (analog
@@ -2171,6 +2182,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         berechnet. karte_id: None laesst die Zuordnung unveraendert, 0
         entfernt eine bestehende Zuordnung (0 ist keine gueltige Karten-ID,
         siehe async_add_ladekarte()), jeder andere Wert setzt/aendert sie.
+        anbieter (WO geladen wurde, siehe engine.anbieter_breakdown() --
+        nicht zu verwechseln mit karte_id): None laesst den Wert
+        unveraendert, ein leerer String "" entfernt einen bestehenden
+        Anbieter, jeder andere Wert setzt/aendert ihn (getrimmt).
         Passt die laufenden Summen (kwh/kosten) um die Differenz an statt
         sie aus der Historie neu zu berechnen. Gibt False zurueck, wenn
         kein Eintrag mit erfasst_ts gefunden wurde."""
@@ -2199,6 +2214,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                         rec.pop("karte_id", None)
                     else:
                         rec["karte_id"] = karte_id
+                if anbieter is not None:
+                    if anbieter.strip():
+                        rec["anbieter"] = anbieter.strip()
+                    else:
+                        rec.pop("anbieter", None)
                 if start_ts is not None:
                     rec["start_ts"] = start_ts
                 if end_ts is not None and rec.get("start_ts") is not None:
@@ -2652,7 +2672,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         eur_je_100km ein, aber NICHT in "fremd" (siehe
         engine.charging_location_breakdown()'s extra_cost-Dokumentation)
         -- eine Subskriptionsgebuehr ist keinem Ladeort zuzuordnen und
-        wuerde sonst fremd.preis_je_kwh verzerren."""
+        wuerde sonst fremd.preis_je_kwh verzerren.
+
+        Zusaetzlich unter "anbieter" die Fremdladungs-Aufschluesselung nach
+        Ladenetz-/Betreibername (siehe engine.anbieter_breakdown() -- NICHT
+        zu verwechseln mit "ladekarten", das ist WOMIT bezahlt wurde, hier
+        geht es um WO geladen wurde) und unter "bekannte_anbieter" die
+        bisher erfassten Anbieter-Namen fuer die Vorschlagsliste im Panel
+        (siehe engine.bekannte_anbieter()), jeweils nur wenn nicht leer."""
         home_kwh = self._home_kwh_since_setup()
         home_cost = self._home_cost_since_setup()
         if home_cost is None and home_kwh is not None:
@@ -2669,11 +2696,18 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             home_kwh, home_cost, extern_kwh, extern_cost, km_driven, home_solar_pct,
             extra_cost=ladekarten.get("gesamt"),
         )
-        ac_dc = ac_dc_breakdown(self.data.get("history") or [], AC_MAX_KW)
+        history = self.data.get("history") or []
+        ac_dc = ac_dc_breakdown(history, AC_MAX_KW)
         if ac_dc:
             result["ac_dc"] = ac_dc
         if ladekarten:
             result["ladekarten"] = ladekarten
+        anbieter = anbieter_breakdown(history)
+        if anbieter:
+            result["anbieter"] = anbieter
+        bekannte = bekannte_anbieter(history)
+        if bekannte:
+            result["bekannte_anbieter"] = bekannte
         return result
 
     def leasing_stats(self) -> dict:

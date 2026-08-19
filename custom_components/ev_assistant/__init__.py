@@ -185,6 +185,7 @@ LOG_SCHEMA = vol.Schema({
     vol.Optional("block_fee", default=0.0): vol.Coerce(float),
     vol.Optional("time_fee", default=0.0): vol.Coerce(float),
     vol.Optional("karte_id"): vol.Coerce(int),
+    vol.Optional("anbieter"): str,
 })
 
 DISCARD_SCHEMA = vol.Schema({
@@ -212,6 +213,9 @@ EDIT_SCHEMA = vol.Schema({
     vol.Optional("soc_start"): vol.Coerce(float),
     vol.Optional("soc_end"): vol.Coerce(float),
     vol.Optional("karte_id"): vol.Coerce(int),
+    # Leerer String loescht einen zuvor gesetzten Anbieter wieder, siehe
+    # coordinator.py::async_edit_charge().
+    vol.Optional("anbieter"): str,
 })
 
 DELETE_SCHEMA = vol.Schema({
@@ -349,7 +353,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 call.data.get("start_fee", 0.0), call.data.get("block_fee", 0.0),
                 call.data.get("time_fee", 0.0), call.data.get("end_ts"),
                 call.data.get("soc_start"), call.data.get("soc_end"),
-                call.data.get("karte_id"),
+                call.data.get("karte_id"), call.data.get("anbieter"),
             )
 
     async def _handle_discard(call: ServiceCall) -> None:
@@ -379,6 +383,7 @@ def _register_services(hass: HomeAssistant) -> None:
                 call.data.get("soc_start"),
                 call.data.get("soc_end"),
                 call.data.get("karte_id"),
+                call.data.get("anbieter"),
             )
 
     async def _handle_delete(call: ServiceCall) -> None:

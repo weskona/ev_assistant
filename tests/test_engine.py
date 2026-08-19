@@ -8,9 +8,12 @@ from engine import (
     SignalDebouncer,
     TripDetector,
     TripSample,
+    UNBEKANNTER_ANBIETER,
     ac_dc_breakdown,
+    anbieter_breakdown,
     average_efficiency,
     battery_capacity_samples,
+    bekannte_anbieter,
     calculate_co2_savings,
     calculate_range_km,
     calculate_savings,
@@ -28,6 +31,7 @@ from engine import (
     ladekarten_summary,
     leasing_status,
     merge_pending,
+    normalize_anbieter,
     pop_pending,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
@@ -1369,6 +1373,113 @@ def test_charging_location_breakdown_nur_extra_cost_liefert_trotzdem_eur_je_100k
         extra_cost=10.0,
     )
     assert result == {"eur_je_100km": 20.0}
+
+
+# ----- normalize_anbieter / bekannte_anbieter / anbieter_breakdown:
+# Fremdladung-Anbieter (WO geladen, NICHT die Ladekarte/WOMIT bezahlt) -------
+
+def test_normalize_anbieter_trimmt_und_kleinschreibt():
+    assert normalize_anbieter("  EnBW  ") == "enbw"
+    assert normalize_anbieter("Ionity") == "ionity"
+
+
+def test_normalize_anbieter_leer_oder_none_liefert_none():
+    assert normalize_anbieter(None) is None
+    assert normalize_anbieter("") is None
+    assert normalize_anbieter("   ") is None
+
+
+def test_bekannte_anbieter_dedupliziert_case_insensitiv_neueste_zuerst():
+    # history ist bereits neueste-zuerst sortiert (siehe
+    # coordinator.py::async_log_charge()) -- "EnBW" (juengste Schreibweise)
+    # gewinnt gegen die aeltere "enbw"-Schreibweise.
+    history = [
+        {"anbieter": "Ionity"},
+        {"anbieter": "EnBW"},
+        {"anbieter": "enbw"},
+    ]
+    assert bekannte_anbieter(history) == ["Ionity", "EnBW"]
+
+
+def test_bekannte_anbieter_ignoriert_ladungen_ohne_anbieter():
+    history = [{"anbieter": None}, {}, {"anbieter": "Aral pulse"}]
+    assert bekannte_anbieter(history) == ["Aral pulse"]
+
+
+def test_bekannte_anbieter_limit():
+    history = [{"anbieter": "A"}, {"anbieter": "B"}, {"anbieter": "C"}]
+    assert bekannte_anbieter(history, limit=2) == ["A", "B"]
+
+
+def test_bekannte_anbieter_leere_historie_liefert_leere_liste():
+    assert bekannte_anbieter([]) == []
+    assert bekannte_anbieter(None) == []
+
+
+def test_anbieter_breakdown_klassifiziert_je_anbieter():
+    history = [
+        {"anbieter": "EnBW", "kwh": 10.0, "kosten": 5.0},
+        {"anbieter": "Ionity", "kwh": 30.0, "kosten": 21.0},
+    ]
+    result = anbieter_breakdown(history)
+    assert result["EnBW"]["kwh"] == 10.0
+    assert result["EnBW"]["anzahl"] == 1
+    assert result["EnBW"]["kwh_anteil_pct"] == 25.0
+    assert result["EnBW"]["preis_je_kwh"] == 0.5
+    assert result["Ionity"]["kwh"] == 30.0
+    assert result["Ionity"]["kwh_anteil_pct"] == 75.0
+
+
+def test_anbieter_breakdown_ohne_anbieter_landet_unter_unbekannt_statt_verworfen():
+    history = [
+        {"anbieter": "EnBW", "kwh": 10.0, "kosten": 5.0},
+        {"kwh": 20.0, "kosten": 10.0},  # kein anbieter-Feld
+        {"anbieter": "", "kwh": 5.0, "kosten": 2.0},  # leerer Anbieter
+    ]
+    result = anbieter_breakdown(history)
+    assert UNBEKANNTER_ANBIETER in result
+    assert result[UNBEKANNTER_ANBIETER]["anzahl"] == 2
+    assert result[UNBEKANNTER_ANBIETER]["kwh"] == 25.0
+    assert "EnBW" in result
+
+
+def test_anbieter_breakdown_case_insensitiv_zusammengefuehrt_neueste_schreibweise_gewinnt():
+    # history neueste-zuerst: "EnBW" ist jungste Schreibweise, "enbw" aelter.
+    history = [
+        {"anbieter": "EnBW", "kwh": 10.0, "kosten": 5.0},
+        {"anbieter": "enbw", "kwh": 5.0, "kosten": 2.5},
+    ]
+    result = anbieter_breakdown(history)
+    assert list(result.keys()) == ["EnBW"]
+    assert result["EnBW"]["kwh"] == 15.0
+    assert result["EnBW"]["anzahl"] == 2
+
+
+def test_anbieter_breakdown_fehlende_einzelfelder_werden_ausgelassen_nicht_null():
+    # Eine Ladung ohne kwh traegt nichts zur kWh-Summe bei, zaehlt aber
+    # trotzdem mit (anzahl), und die Kosten-Summe bleibt unberuehrt.
+    history = [
+        {"anbieter": "EnBW", "kosten": 5.0},  # kein kwh
+        {"anbieter": "EnBW", "kwh": 10.0, "kosten": 4.0},
+    ]
+    result = anbieter_breakdown(history)
+    assert result["EnBW"]["kwh"] == 10.0
+    assert result["EnBW"]["kosten"] == 9.0
+    assert result["EnBW"]["anzahl"] == 2
+    assert result["EnBW"]["preis_je_kwh"] == 0.9
+
+
+def test_anbieter_breakdown_leere_historie_liefert_leeres_dict():
+    assert anbieter_breakdown([]) == {}
+    assert anbieter_breakdown(None) == {}
+
+
+def test_anbieter_breakdown_ladekarten_grundgebuehr_fliesst_nicht_ein():
+    # anbieter_breakdown() kennt Ladekarten gar nicht -- es aggregiert nur
+    # rec["kosten"] (die tatsaechlichen Ladungskosten), niemals extra_cost.
+    history = [{"anbieter": "EnBW", "kwh": 10.0, "kosten": 5.0}]
+    result = anbieter_breakdown(history)
+    assert result["EnBW"]["kosten"] == 5.0
 
 
 # ----- ladekarte_accrued_cost / ladekarten_summary: Ladekarten-Grundgebuehren

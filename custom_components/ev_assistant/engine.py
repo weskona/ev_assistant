@@ -1403,6 +1403,111 @@ def ac_dc_breakdown(history: list, ac_max_kw: float = 22.0) -> dict:
     return result
 
 
+# Sammelkategorie fuer Fremdladungen ohne erfassten Anbieter (siehe
+# anbieter_breakdown()) -- werden dort gesammelt, nicht verworfen.
+UNBEKANNTER_ANBIETER = "Unbekannt"
+
+
+def normalize_anbieter(name: Optional[str]) -> Optional[str]:
+    """Normalisierte Form eines Anbieter-Namens (WO geladen wurde, z.B.
+    "EnBW"/"Ionity"/"Aral pulse" -- NICHT zu verwechseln mit der Ladekarte,
+    WOMIT bezahlt wurde, siehe ladekarten_summary()) fuers Dedup-
+    Vergleichen: getrimmt und kleingeschrieben, damit "EnBW" und "enbw"
+    beim Zusammenfuehren nicht als zwei verschiedene Anbieter gezaehlt
+    werden. Die ANZEIGE-Schreibweise (Original, nur getrimmt) liefern
+    bekannte_anbieter()/anbieter_breakdown() separat -- diese Funktion ist
+    nur fuer den Vergleich selbst. None/leer bleibt None (kein
+    Fantasiewert, kein erfundener Anbietername)."""
+    if not name:
+        return None
+    trimmed = name.strip()
+    return trimmed.lower() or None
+
+
+def bekannte_anbieter(history: list, limit: Optional[int] = None) -> list:
+    """Bisher bei Fremdladungen erfasste Anbieter-Namen (Original-
+    Schreibweise, case-insensitiv dedupliziert -- siehe
+    normalize_anbieter()), fuer die Vorschlagsliste im Panel. `history`
+    ist bereits neueste-zuerst sortiert (siehe coordinator.py::
+    async_log_charge()), daher liefert einfaches Durchlaufen und den
+    ERSTEN Treffer je normalisiertem Namen behalten automatisch "zuletzt
+    verwendet zuerst" UND legt bei einem Gross-/Kleinschreibungs-Konflikt
+    (z.B. "EnBW" vs. "enbw" in verschiedenen Ladungen) die Schreibweise
+    der juengsten Verwendung fest. Ladungen ohne Anbieter werden
+    ausgelassen. `limit` optional, um die Vorschlagsliste zu deckeln."""
+    seen: set = set()
+    result: list = []
+    for rec in history or []:
+        anbieter = rec.get("anbieter")
+        norm = normalize_anbieter(anbieter)
+        if norm is None or norm in seen:
+            continue
+        seen.add(norm)
+        result.append(anbieter.strip())
+        if limit is not None and len(result) >= limit:
+            break
+    return result
+
+
+def anbieter_breakdown(history: list) -> dict:
+    """Fremdladungen nach Anbieter aufgeschluesselt (WO geladen wurde --
+    NICHT zu verwechseln mit der Ladekarte, WOMIT bezahlt wurde, siehe
+    ladekarten_summary()). Rueckgabe je Anbieter (Original-Schreibweise
+    der juengsten Verwendung als Schluessel, siehe bekannte_anbieter()):
+    "kwh"/"kosten" (Summe, nur ueber tatsaechlich bekannte Werte -- eine
+    Ladung mit fehlendem kwh/kosten traegt dort einfach nichts bei, wird
+    aber trotzdem gezaehlt), "anzahl" (Ladungen), "kwh_anteil_pct"/
+    "kosten_anteil_pct" (Anteil an der jeweiligen Gesamtsumme, nur wenn
+    diese > 0), "preis_je_kwh" (nur wenn kwh > 0). Ladungen OHNE Anbieter
+    werden unter UNBEKANNTER_ANBIETER gesammelt, NICHT verworfen --
+    "keine Angabe" ist selbst eine aussagekraeftige Kategorie (z.B. "die
+    Haelfte meiner Ladungen hat gar keinen Anbieter erfasst").
+
+    Ladekarten-Grundgebuehren fliessen bewusst NICHT ein -- die gehoeren
+    keinem einzelnen Ladevorgang/Anbieter zu (siehe coordinator.py::
+    _ladekarten_cost_total()), nur die tatsaechlichen Ladungskosten je
+    Anbieter werden hier aggregiert. Leere Historie liefert ein leeres
+    dict."""
+    buckets: dict = {}
+    for rec in history or []:
+        anbieter = rec.get("anbieter")
+        norm = normalize_anbieter(anbieter) or UNBEKANNTER_ANBIETER.lower()
+        label = anbieter.strip() if anbieter else UNBEKANNTER_ANBIETER
+        bucket = buckets.setdefault(norm, {
+            "label": label, "kwh": 0.0, "kosten": 0.0, "anzahl": 0,
+            "has_kwh": False, "has_kosten": False,
+        })
+        kwh = rec.get("kwh")
+        if kwh is not None:
+            bucket["kwh"] += kwh
+            bucket["has_kwh"] = True
+        kosten = rec.get("kosten")
+        if kosten is not None:
+            bucket["kosten"] += kosten
+            bucket["has_kosten"] = True
+        bucket["anzahl"] += 1
+
+    if not buckets:
+        return {}
+    total_kwh = sum(b["kwh"] for b in buckets.values() if b["has_kwh"])
+    total_kosten = sum(b["kosten"] for b in buckets.values() if b["has_kosten"])
+    result: dict = {}
+    for bucket in buckets.values():
+        entry: dict = {"anzahl": bucket["anzahl"]}
+        if bucket["has_kwh"]:
+            entry["kwh"] = round(bucket["kwh"], 2)
+            if total_kwh > 0:
+                entry["kwh_anteil_pct"] = round(bucket["kwh"] / total_kwh * 100.0, 1)
+        if bucket["has_kosten"]:
+            entry["kosten"] = round(bucket["kosten"], 2)
+            if total_kosten > 0:
+                entry["kosten_anteil_pct"] = round(bucket["kosten"] / total_kosten * 100.0, 1)
+        if bucket["has_kwh"] and bucket["kwh"] > 0 and bucket["has_kosten"]:
+            entry["preis_je_kwh"] = round(bucket["kosten"] / bucket["kwh"], 4)
+        result[bucket["label"]] = entry
+    return result
+
+
 def _leasing_projection(
     gefahrene_vertrags_km: float,
     tempo_km_pro_tag: Optional[float],

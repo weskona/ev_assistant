@@ -962,6 +962,8 @@ class EVAssistantPanel extends HTMLElement {
                 <label>Blockiergebühr € (optional)<input type="text" inputmode="decimal" class="em-block-fee" placeholder="0,00"></label>
                 <label>Zeitgebühr € (optional)<input type="text" inputmode="decimal" class="em-time-fee" placeholder="0,00"></label>
                 <label class="em-karte-label hidden">Ladekarte (optional)<select class="em-karte"></select></label>
+                <label>Anbieter (optional)<input type="text" class="em-anbieter" list="em-anbieter-list" placeholder="z.B. EnBW"></label>
+                <datalist id="em-anbieter-list"></datalist>
                 <button class="btn btn-primary em-save" disabled>Speichern</button>
                 <button class="btn btn-ghost em-cancel">Abbrechen</button>
               </div>
@@ -1119,6 +1121,8 @@ class EVAssistantPanel extends HTMLElement {
     const endTsInput    = form.querySelector(".em-end-ts");
     const karteLabel    = form.querySelector(".em-karte-label");
     const karteSelect   = form.querySelector(".em-karte");
+    const anbieterInput = form.querySelector(".em-anbieter");
+    const anbieterList  = form.querySelector("#em-anbieter-list");
     const saveBtn   = form.querySelector(".em-save");
     const cancelBtn = form.querySelector(".em-cancel");
 
@@ -1146,6 +1150,8 @@ class EVAssistantPanel extends HTMLElement {
         const karten = this._ladekartenList();
         karteLabel.classList.toggle("hidden", karten.length === 0);
         karteSelect.innerHTML = this._karteOptionsHtml(null);
+        anbieterInput.value = "";
+        anbieterList.innerHTML = this._anbieterOptionsHtml();
         updateValidity();
       }
     });
@@ -1172,6 +1178,7 @@ class EVAssistantPanel extends HTMLElement {
       if (!karteLabel.classList.contains("hidden") && karteSelect.value !== "") {
         payload.karte_id = parseInt(karteSelect.value, 10);
       }
+      if (anbieterInput.value.trim()) payload.anbieter = anbieterInput.value.trim();
       this._call("log_charge", payload);
       form.classList.add("hidden");
     });
@@ -1315,6 +1322,16 @@ class EVAssistantPanel extends HTMLElement {
           Geschätzt aus der Durchschnittsleistung je Ladung (kWh ÷ Ladedauer) gegen eine 22-kW-Schwelle — keine
           direkte AC/DC-Messung. Grenzfälle möglich, insbesondere bei abgeregelten Schnellladungen.
         </div>
+      </div>
+      <div class="card hidden" id="analyse-anbieter-card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:map-marker-radius"></ha-icon></span><h2>Verteilung nach Anbieter</h2>
+        </div>
+        <div id="analyse-anbieter-list"></div>
+        <div class="profil-empty" style="padding-top:4px">
+          Nur tatsächliche Ladungskosten je Anbieter (WO geladen wurde) — Ladekarten-Grundgebühren gehören
+          keinem einzelnen Anbieter zu und fließen hier nicht ein.
+        </div>
       </div>`;
 
     const q = (s) => wrap.querySelector(s);
@@ -1351,6 +1368,8 @@ class EVAssistantPanel extends HTMLElement {
       analyseAcdcDcPrice: q("#analyse-acdc-dc-price"),
       analyseAcdcDcCount: q("#analyse-acdc-dc-count"),
       analyseAcdcNote:    q("#analyse-acdc-note"),
+      analyseAnbieterCard: q("#analyse-anbieter-card"),
+      analyseAnbieterList: q("#analyse-anbieter-list"),
     };
     return wrap;
   }
@@ -1470,6 +1489,37 @@ class EVAssistantPanel extends HTMLElement {
       r.analyseAcdcDcPct.textContent = fmt(acDc.dc.kwh_anteil_pct, 1);
       r.analyseAcdcDcPrice.textContent = fmt(acDc.dc.preis_je_kwh, 3);
       r.analyseAcdcDcCount.textContent = fmt(acDc.dc.anzahl, 0);
+    }
+
+    // Verteilung nach Anbieter (WO geladen wurde -- siehe engine.py::
+    // anbieter_breakdown(), NICHT zu verwechseln mit Ladekarten). In
+    // "nur_zuhause" faellt keine Fremdladung an, die Karte waere dort
+    // immer leer -- daher ausgeblendet statt eine leere Karte zu zeigen.
+    // Ebenso ausgeblendet bei <=1 Anbieter-Bucket (z.B. alles unter
+    // "Unbekannt"), da eine Verteilung mit nur einem Balken nichts aussagt.
+    const anbieter = locAttrs.anbieter || {};
+    const anbieterEntries = Object.entries(anbieter);
+    const showAnbieter = anbieterEntries.length > 1 && this._ladeModus() !== "nur_zuhause";
+    r.analyseAnbieterCard.classList.toggle("hidden", !showAnbieter);
+    if (showAnbieter) {
+      const byKwh = anbieterEntries.some(([, v]) => typeof v.kwh === "number");
+      anbieterEntries.sort((a, b) => {
+        const va = byKwh ? (a[1].kwh || 0) : (a[1].kosten || 0);
+        const vb = byKwh ? (b[1].kwh || 0) : (b[1].kosten || 0);
+        return vb - va;
+      });
+      const maxVal = Math.max(...anbieterEntries.map(([, v]) => (byKwh ? v.kwh : v.kosten) || 0), 0.1);
+      r.analyseAnbieterList.innerHTML = anbieterEntries.map(([label, v]) => {
+        const val = (byKwh ? v.kwh : v.kosten) || 0;
+        const pct = Math.max(2, Math.round((val / maxVal) * 100));
+        const valText = byKwh ? `${this._fmtNum(val, 1)} kWh` : `${this._fmtNum(val, 2)} EUR`;
+        return `
+          <div class="anbieter-bar-row">
+            <div class="anbieter-bar-label" title="${label}">${label}</div>
+            <div class="veh-soc-bar-wrap"><div class="veh-soc-bar-fill" style="width:${pct}%"></div></div>
+            <div class="anbieter-bar-val">${valText}</div>
+          </div>`;
+      }).join("");
     }
 
     const rangeEid = this._eid("range_estimate");
@@ -2439,6 +2489,34 @@ class EVAssistantPanel extends HTMLElement {
     return opts.join("");
   }
 
+  // --- Anbieter-Helfer (siehe coordinator.py::charging_location_stats()) -
+  // WO geladen wurde (Ladenetz-/Betreibername) -- NICHT zu verwechseln
+  // mit den Ladekarten-Helfern oben (WOMIT bezahlt wurde). Freitext ohne
+  // festen Katalog, daher nur eine Vorschlagsliste (<datalist>) statt
+  // eines <select>, siehe _anbieterDatalistHtml().
+
+  _bekannteAnbieter() {
+    const eid = this._eid("charging_location_breakdown");
+    const s = eid && this._hass ? this._hass.states[eid] : null;
+    const list = s && Array.isArray((s.attributes || {}).bekannte_anbieter) ? s.attributes.bekannte_anbieter : [];
+    return list;
+  }
+
+  // <option>-Liste der bereits verwendeten Anbieter, fuer die kombinierten
+  // Freitext-Inputs (list="...") in Erfassen-/Bearbeiten-/Bestaetigen-
+  // Formularen -- Auswahl fuellt das Feld, freie Eingabe bleibt moeglich.
+  _anbieterOptionsHtml() {
+    return this._bekannteAnbieter().map((name) => `<option value="${name}"></option>`).join("");
+  }
+
+  // Fertiges <datalist>-Element fuer einmalig aus Template-Strings
+  // gebaute Bereiche (Historie-Zeilen, offene Fremdladungen) -- dort wird
+  // ohnehin bei jedem Rebuild neu gerendert, ein statisches <datalist> mit
+  // spaeter befuellten Optionen (wie im Manuell-Formular) waere unnoetig.
+  _anbieterDatalistHtml(id) {
+    return `<datalist id="${id}">${this._anbieterOptionsHtml()}</datalist>`;
+  }
+
   _renderPendingCharges(items) {
     const el = this._r.estExtItem;
     if (!el) return;
@@ -2451,7 +2529,7 @@ class EVAssistantPanel extends HTMLElement {
       const key = p.start_ts;
       const fs = (this._formState.charge ||= {});
       const st = (fs[key] ||= {
-        kwh: p.energy_kwh != null ? Number(p.energy_kwh).toFixed(2) : "", price: "", fee: "", blockFee: "", timeFee: "",
+        kwh: p.energy_kwh != null ? Number(p.energy_kwh).toFixed(2) : "", price: "", fee: "", blockFee: "", timeFee: "", anbieter: "",
       });
 
       const soc = (p.soc_start != null && p.soc_end != null)
@@ -2480,6 +2558,8 @@ class EVAssistantPanel extends HTMLElement {
           <label>Startgebühr € (optional)<input type="text" inputmode="decimal" class="pf-fee" value="${st.fee}" placeholder="0,00"></label>
           <label>Blockiergebühr € (optional)<input type="text" inputmode="decimal" class="pf-block-fee" value="${st.blockFee}" placeholder="0,00"></label>
           <label>Zeitgebühr € (optional)<input type="text" inputmode="decimal" class="pf-time-fee" value="${st.timeFee}" placeholder="0,00"></label>
+          <label>Anbieter (optional)<input type="text" class="pf-anbieter" list="pf-anbieter-list-${key}" value="${st.anbieter}" placeholder="z.B. EnBW"></label>
+          ${this._anbieterDatalistHtml(`pf-anbieter-list-${key}`)}
         </div>
         <div class="pend-actions">
           <button class="btn btn-ghost pf-discard">Verwerfen</button>
@@ -2491,6 +2571,7 @@ class EVAssistantPanel extends HTMLElement {
       const feeInput = row.querySelector(".pf-fee");
       const blockFeeInput = row.querySelector(".pf-block-fee");
       const timeFeeInput = row.querySelector(".pf-time-fee");
+      const anbieterInput = row.querySelector(".pf-anbieter");
       const confirmBtn = row.querySelector(".pf-confirm");
       const updateValidity = () => {
         const valid = !isNaN(parseFloat(st.kwh)) && !isNaN(parseFloat(st.price));
@@ -2504,17 +2585,20 @@ class EVAssistantPanel extends HTMLElement {
       feeInput.addEventListener("input", (e) => { st.fee = e.target.value.replace(",", "."); });
       blockFeeInput.addEventListener("input", (e) => { st.blockFee = e.target.value.replace(",", "."); });
       timeFeeInput.addEventListener("input", (e) => { st.timeFee = e.target.value.replace(",", "."); });
+      anbieterInput.addEventListener("input", (e) => { st.anbieter = e.target.value; });
       confirmBtn.addEventListener("click", () => {
         const kwh = parseFloat(st.kwh), price = parseFloat(st.price);
         if (isNaN(kwh) || isNaN(price)) return;
         const fee = parseFloat(st.fee);
         const blockFee = parseFloat(st.blockFee);
         const timeFee = parseFloat(st.timeFee);
-        this._call("log_charge", {
+        const payload = {
           kwh, price_kwh: price, start_ts: key,
           start_fee: isNaN(fee) ? 0 : fee, block_fee: isNaN(blockFee) ? 0 : blockFee,
           time_fee: isNaN(timeFee) ? 0 : timeFee,
-        });
+        };
+        if (st.anbieter && st.anbieter.trim()) payload.anbieter = st.anbieter.trim();
+        this._call("log_charge", payload);
         delete fs[key];
       });
       row.querySelector(".pf-discard").addEventListener("click", () => {
@@ -2604,11 +2688,14 @@ class EVAssistantPanel extends HTMLElement {
     const hist = expanded ? full : full.slice(0, 5);
     const karten = this._ladekartenList();
     const hasKarten = karten.length > 0;
-    // Ladekarten-Liste im Signatur-String, damit eine neu angelegte/
-    // gelöschte Karte die (sonst nur an erfasst_ts geknüpfte) Render-
-    // Sperre durchbricht -- sonst würde ein bereits offenes Bearbeiten-
-    // Formular nicht die aktuelle Kartenliste zeigen.
-    const sig = expanded + "|" + full.map((h) => h.erfasst_ts).join(",") + "|" + karten.map((k) => k.id).join(",");
+    const bekannteAnbieter = this._bekannteAnbieter();
+    // Ladekarten-/Anbieter-Liste im Signatur-String, damit eine neu
+    // angelegte/gelöschte Karte bzw. ein neuer Anbieter die (sonst nur an
+    // erfasst_ts geknüpfte) Render-Sperre durchbricht -- sonst würde ein
+    // bereits offenes Bearbeiten-Formular nicht die aktuelle Karten-/
+    // Anbieter-Vorschlagsliste zeigen.
+    const sig = expanded + "|" + full.map((h) => h.erfasst_ts).join(",") + "|" + karten.map((k) => k.id).join(",")
+      + "|" + bekannteAnbieter.join(",");
     if (sig === this._histChargeSig && list.dataset.built === "1") return;
     this._histChargeSig = sig;
     list.dataset.built = "1";
@@ -2656,6 +2743,7 @@ class EVAssistantPanel extends HTMLElement {
             ${h.blockiergebuehr ? `<span class="hist-fee">+ ${this._fmtNum(h.blockiergebuehr, 2)} € Blockiergebühr</span>` : ""}
             ${h.zeitgebuehr ? `<span class="hist-fee">+ ${this._fmtNum(h.zeitgebuehr, 2)} € Zeitgebühr</span>` : ""}
             ${this._karteName(h.karte_id) ? `<span class="hist-fee">🎫 ${this._karteName(h.karte_id)}</span>` : ""}
+            ${h.anbieter ? `<span class="hist-fee">🏢 ${h.anbieter}</span>` : ""}
           </div>
           <span class="hist-cost">${this._fmtNum(h.kosten, 2)} €</span>
         </div>
@@ -2671,6 +2759,8 @@ class EVAssistantPanel extends HTMLElement {
           <label>SoC Start (%)<input type="text" inputmode="decimal" class="hf-soc-start" value="${h.soc_start ?? ""}"></label>
           <label>SoC Ende (%)<input type="text" inputmode="decimal" class="hf-soc-end" value="${h.soc_end ?? ""}"></label>
           ${hasKarten ? `<label>Ladekarte<select class="hf-karte">${this._karteOptionsHtml(h.karte_id)}</select></label>` : ""}
+          <label>Anbieter (optional)<input type="text" class="hf-anbieter" list="hf-anbieter-list-${ts}" value="${h.anbieter || ""}"></label>
+          ${this._anbieterDatalistHtml(`hf-anbieter-list-${ts}`)}
           <button class="btn btn-primary hf-save">Speichern</button>
           <button class="btn btn-ghost hf-cancel">Abbrechen</button>
         </div>
@@ -2709,6 +2799,7 @@ class EVAssistantPanel extends HTMLElement {
         if (karteSelect) {
           payload.karte_id = karteSelect.value === "" ? 0 : parseInt(karteSelect.value, 10);
         }
+        payload.anbieter = row.querySelector(".hf-anbieter").value.trim();
         this._call("edit_charge", payload);
         form.classList.add("hidden");
       });
@@ -4018,6 +4109,14 @@ class EVAssistantPanel extends HTMLElement {
       .veh-soc-bar-wrap { width: 120px; height: 7px; border-radius: 4px; background: var(--line); overflow: hidden; }
       .veh-soc-bar-fill { height: 100%; border-radius: 4px; background: var(--accent); transition: width 0.6s ease; width: 0; }
       .veh-soc-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.09em; color: var(--ink-dim); font-weight: 700; }
+
+      /* Anbieter-Verteilung (Analyse-Tab) -- nutzt dieselbe Balken-Optik
+         wie veh-soc-bar-wrap/-fill, nur horizontal ueber die volle Breite
+         statt der festen 120px, siehe _updateAnalyse(). */
+      .anbieter-bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+      .anbieter-bar-row .veh-soc-bar-wrap { width: auto; flex: 1; }
+      .anbieter-bar-label { flex-shrink: 0; width: 96px; font-size: 0.82rem; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .anbieter-bar-val { flex-shrink: 0; min-width: 64px; text-align: right; font-size: 0.82rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
 
       /* Summary-Card Akzente */
       .card-home:not(.card-hist) { border-top: 3px solid var(--c-home); }

@@ -148,6 +148,17 @@ log_charge:
       selector:
         number:
           mode: box
+    anbieter:
+      name: Anbieter
+      description: >
+        Optional. Ladenetz-/Betreibername, WO geladen wurde (z.B. "EnBW",
+        "Ionity", "Aral pulse") -- etwas anderes als karte_id (WOMIT
+        bezahlt wurde). Freitext, kein fester Katalog; im Panel werden
+        bereits verwendete Namen als Vorschlag angeboten.
+      required: false
+      example: EnBW
+      selector:
+        text:
 
 discard_pending:
   name: Offene Fremdladung verwerfen
@@ -313,6 +324,16 @@ edit_charge:
       selector:
         number:
           mode: box
+    anbieter:
+      name: Anbieter
+      description: >
+        Optional. Ändert den Ladenetz-/Betreibernamen (WO geladen wurde,
+        siehe log_charge). Ein leerer Text entfernt einen bestehenden
+        Anbieter wieder.
+      required: false
+      example: EnBW
+      selector:
+        text:
 
 delete_charge:
   name: Fremdladung löschen
