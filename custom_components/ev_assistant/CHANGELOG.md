@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.69.1] - 2026-08-19
+
+### Changed
+
+- **"Verteilung nach Anbieter" card refinement**: each provider row now leads with its share of the total (%) instead of the raw kWh/EUR figure, with the raw total and the average price per kWh shown as a smaller secondary line underneath. The bar itself now spans the card's full width below the label/percentage line instead of being squeezed between them. Panel-only, no backend/data change.
+
 ## [0.69.0] - 2026-08-19
 
 ### Added

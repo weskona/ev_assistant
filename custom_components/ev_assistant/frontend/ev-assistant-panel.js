@@ -1513,11 +1513,24 @@ class EVAssistantPanel extends HTMLElement {
         const val = (byKwh ? v.kwh : v.kosten) || 0;
         const pct = Math.max(2, Math.round((val / maxVal) * 100));
         const valText = byKwh ? `${this._fmtNum(val, 1)} kWh` : `${this._fmtNum(val, 2)} EUR`;
+        // Anteil an der Gesamtsumme und Ø Preis/kWh -- beide bereits aus
+        // engine.anbieter_breakdown(), nur angezeigt wenn die zugrunde-
+        // liegenden Werte tatsaechlich bekannt sind (preis_je_kwh fehlt
+        // z.B. ganz ohne kwh-Angabe).
+        const sharePct = byKwh ? v.kwh_anteil_pct : v.kosten_anteil_pct;
+        const pctText = typeof sharePct === "number" ? `${this._fmtNum(sharePct, 1)}%` : "—";
+        const subParts = [valText];
+        if (typeof v.preis_je_kwh === "number") subParts.push(`Ø ${this._fmtNum(v.preis_je_kwh, 3)} €/kWh`);
         return `
           <div class="anbieter-bar-row">
-            <div class="anbieter-bar-label" title="${label}">${label}</div>
+            <div class="anbieter-bar-top">
+              <div class="anbieter-bar-label" title="${label}">${label}</div>
+              <div class="anbieter-bar-val">
+                <div class="anbieter-bar-val-main">${pctText}</div>
+                <div class="anbieter-bar-val-sub">${subParts.join(" · ")}</div>
+              </div>
+            </div>
             <div class="veh-soc-bar-wrap"><div class="veh-soc-bar-fill" style="width:${pct}%"></div></div>
-            <div class="anbieter-bar-val">${valText}</div>
           </div>`;
       }).join("");
     }
@@ -4113,10 +4126,13 @@ class EVAssistantPanel extends HTMLElement {
       /* Anbieter-Verteilung (Analyse-Tab) -- nutzt dieselbe Balken-Optik
          wie veh-soc-bar-wrap/-fill, nur horizontal ueber die volle Breite
          statt der festen 120px, siehe _updateAnalyse(). */
-      .anbieter-bar-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-      .anbieter-bar-row .veh-soc-bar-wrap { width: auto; flex: 1; }
-      .anbieter-bar-label { flex-shrink: 0; width: 96px; font-size: 0.82rem; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .anbieter-bar-val { flex-shrink: 0; min-width: 64px; text-align: right; font-size: 0.82rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+      .anbieter-bar-row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; }
+      .anbieter-bar-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .anbieter-bar-row .veh-soc-bar-wrap { width: 100%; }
+      .anbieter-bar-label { flex-shrink: 1; min-width: 0; font-size: 0.82rem; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .anbieter-bar-val { flex-shrink: 0; text-align: right; display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+      .anbieter-bar-val-main { font-size: 0.82rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+      .anbieter-bar-val-sub { font-size: 0.68rem; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
 
       /* Summary-Card Akzente */
       .card-home:not(.card-hist) { border-top: 3px solid var(--c-home); }
