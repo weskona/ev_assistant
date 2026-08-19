@@ -1053,12 +1053,15 @@ class LadekartenKostenSensor(EvAssistantEntity, SensorEntity):
     """Aufgelaufene Ladekarten-Grundgebuehren (siehe coordinator.py::
     ladekarten_stats()/engine.py::ladekarten_summary()) -- Hauptwert ist
     die Summe ueber alle Karten, volle Aufschluesselung je Karte (Name,
-    monatliche Gebuehr, Start-/Enddatum, aufgelaufene Kosten) als Attribut
-    "karten". Diese Summe fliesst bereits automatisch in die Fremdladung-
-    Gesamtkosten ein (Ersparnis, EUR/100km, Kosten-Perioden, siehe
-    coordinator.py::_ladekarten_cost_total()) -- dieser Sensor macht sie
-    nur zusaetzlich einzeln sichtbar. unknown, solange keine Karte angelegt
-    ist -- absichtlich KEIN Rauschen ohne Konfiguration (analog
+    Start-/Enddatum, "gebuehren" als Liste von Gebuehrenstufen -- z.B. ein
+    reduzierter Einfuehrungspreis, der spaeter auf den regulaeren Preis
+    steigt, siehe async_add_ladekarte_preisstufe() -- sowie "aktuelle_
+    gebuehr" und aufgelaufene "kosten") als Attribut "karten". Diese Summe
+    fliesst bereits automatisch in die Fremdladung-Gesamtkosten ein
+    (Ersparnis, EUR/100km, Kosten-Perioden, siehe coordinator.py::
+    _ladekarten_cost_total()) -- dieser Sensor macht sie nur zusaetzlich
+    einzeln sichtbar. unknown, solange keine Karte angelegt ist --
+    absichtlich KEIN Rauschen ohne Konfiguration (analog
     LeasingKmVorRuecklaufSensor)."""
 
     _attr_translation_key = "ladekarten_kosten"

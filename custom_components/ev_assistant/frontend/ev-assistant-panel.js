@@ -1827,7 +1827,10 @@ class EVAssistantPanel extends HTMLElement {
   _renderLadekartenList(karten) {
     const list = this._r.lkList;
     if (!list) return;
-    const sig = karten.map((k) => `${k.id}:${k.name}:${k.monatliche_gebuehr}:${k.start_datum}:${k.end_datum}`).join("|");
+    const sig = karten.map((k) => {
+      const stufen = (k.gebuehren || []).map((s) => `${s.ab_datum}:${s.gebuehr}`).join(",");
+      return `${k.id}:${k.name}:${k.start_datum}:${k.end_datum}:${stufen}`;
+    }).join("|");
     if (sig === this._lkSig && list.dataset.built === "1") return;
     this._lkSig = sig;
     list.dataset.built = "1";
@@ -1841,6 +1844,18 @@ class EVAssistantPanel extends HTMLElement {
       const row = document.createElement("div");
       row.className = "hist-card";
       const aktiv = !k.end_datum || k.end_datum >= new Date().toISOString().slice(0, 10);
+      const stufen = [...(k.gebuehren || [])].sort((a, b) => (a.ab_datum < b.ab_datum ? -1 : 1));
+      const fruehesteAbDatum = stufen.length ? stufen[0].ab_datum : null;
+      const stufenHtml = stufen.map((s) => {
+        const kannLoeschen = s.ab_datum !== fruehesteAbDatum;
+        return `
+          <div class="km-item lk-stufe" data-ab="${s.ab_datum}">
+            <span class="km-label">ab ${fmtDate(s.ab_datum)}</span>
+            <span class="km-val">${this._fmtNum(s.gebuehr, 2)}</span>
+            <span class="km-unit">EUR/Monat</span>
+            ${kannLoeschen ? `<button class="btn-icon sm lk-stufe-delete" title="Preisstufe entfernen"><ha-icon icon="mdi:close"></ha-icon></button>` : ""}
+          </div>`;
+      }).join("");
       row.innerHTML = `
         <div class="hist-top">
           <span class="hist-date">${k.name}${aktiv ? "" : ` <span class="hist-meta">· gekündigt</span>`}</span>
@@ -1851,14 +1866,24 @@ class EVAssistantPanel extends HTMLElement {
         </div>
         <div class="hist-figures">
           <div class="hist-figures-left">
-            <span class="hist-price">${this._fmtNum(k.monatliche_gebuehr, 2)} €/Monat</span>
+            <span class="hist-price">${this._fmtNum(k.aktuelle_gebuehr, 2)} €/Monat (aktuell)</span>
             <span class="hist-fee">seit ${fmtDate(k.start_datum)}${k.end_datum ? ` bis ${fmtDate(k.end_datum)}` : ""}</span>
           </div>
           <span class="hist-cost">${this._fmtNum(k.kosten, 2)} €</span>
         </div>
+        <div class="km-col lk-stufen">${stufenHtml}</div>
+        <div class="hist-edit-form hidden lk-stufe-form">
+          <label>Gültig ab<input type="date" class="lks-ab"></label>
+          <label>Monatliche Gebühr €<input type="text" inputmode="decimal" class="lks-gebuehr" placeholder="0,00"></label>
+          <button class="btn btn-primary lks-save" disabled>Preisstufe speichern</button>
+          <button class="btn btn-ghost lks-cancel">Abbrechen</button>
+        </div>
+        <button class="btn btn-ghost sm lk-stufe-toggle">
+          <ha-icon icon="mdi:plus" style="--mdc-icon-size:14px;vertical-align:-2px"></ha-icon> Preisänderung
+        </button>
         <div class="hist-edit-form hidden">
           <label>Name<input type="text" class="lke-name" value="${k.name}"></label>
-          <label>Monatliche Gebühr €<input type="text" inputmode="decimal" class="lke-gebuehr" value="${k.monatliche_gebuehr}"></label>
+          <label>Startgebühr € (früheste Stufe)<input type="text" inputmode="decimal" class="lke-gebuehr" value="${stufen[0] ? stufen[0].gebuehr : ""}"></label>
           <label>Startdatum<input type="date" class="lke-start" value="${k.start_datum || ""}"></label>
           <label>Enddatum (optional)<input type="date" class="lke-end" value="${k.end_datum || ""}"></label>
           <button class="btn btn-primary lke-save">Speichern</button>
@@ -1869,10 +1894,12 @@ class EVAssistantPanel extends HTMLElement {
           <button class="btn btn-danger lkd-confirm">Löschen</button>
           <button class="btn btn-ghost lkd-cancel">Abbrechen</button>
         </div>`;
-      const form = row.querySelector(".hist-edit-form");
+      const form = row.querySelector(".hist-edit-form:not(.lk-stufe-form)");
       const delConfirm = row.querySelector(".hist-delete-confirm");
+      const stufeForm = row.querySelector(".lk-stufe-form");
       row.querySelector(".lk-edit").addEventListener("click", () => {
         delConfirm.classList.add("hidden");
+        stufeForm.classList.add("hidden");
         form.classList.toggle("hidden");
       });
       row.querySelector(".lke-cancel").addEventListener("click", () => form.classList.add("hidden"));
@@ -1900,6 +1927,42 @@ class EVAssistantPanel extends HTMLElement {
       row.querySelector(".lkd-confirm").addEventListener("click", () => {
         this._call("delete_ladekarte", { karte_id: k.id });
         delConfirm.classList.add("hidden");
+      });
+      // Preisstufen: neue hinzufuegen (z.B. Ende eines Einfuehrungspreises)
+      // oder eine bereits vorhandene (ausser der fruehesten, siehe
+      // coordinator.py::async_delete_ladekarte_preisstufe()) entfernen.
+      const stufeToggle = row.querySelector(".lk-stufe-toggle");
+      const stufeAbInput = row.querySelector(".lks-ab");
+      const stufeGebuehrInput = row.querySelector(".lks-gebuehr");
+      const stufeSaveBtn = row.querySelector(".lks-save");
+      const stufeUpdateValidity = () => {
+        const gebuehr = parseFloat(stufeGebuehrInput.value.replace(",", "."));
+        stufeSaveBtn.disabled = !stufeAbInput.value || isNaN(gebuehr);
+      };
+      stufeAbInput.addEventListener("input", stufeUpdateValidity);
+      stufeGebuehrInput.addEventListener("input", stufeUpdateValidity);
+      stufeToggle.addEventListener("click", () => {
+        form.classList.add("hidden");
+        const opening = stufeForm.classList.contains("hidden");
+        stufeForm.classList.toggle("hidden");
+        if (opening) {
+          stufeAbInput.value = "";
+          stufeGebuehrInput.value = "";
+          stufeUpdateValidity();
+        }
+      });
+      row.querySelector(".lks-cancel").addEventListener("click", () => stufeForm.classList.add("hidden"));
+      stufeSaveBtn.addEventListener("click", () => {
+        const gebuehr = parseFloat(stufeGebuehrInput.value.replace(",", "."));
+        if (!stufeAbInput.value || isNaN(gebuehr)) return;
+        this._call("add_ladekarte_preisstufe", { karte_id: k.id, gebuehr, ab_datum: stufeAbInput.value });
+        stufeForm.classList.add("hidden");
+      });
+      row.querySelectorAll(".lk-stufe-delete").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const ab = btn.closest(".lk-stufe").dataset.ab;
+          this._call("delete_ladekarte_preisstufe", { karte_id: k.id, ab_datum: ab });
+        });
       });
       list.appendChild(row);
     });

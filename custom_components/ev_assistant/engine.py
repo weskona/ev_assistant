@@ -1188,7 +1188,7 @@ def charging_location_breakdown(
 def ladekarte_accrued_cost(
     start_datum: Optional[str],
     end_datum: Optional[str],
-    monatliche_gebuehr: float,
+    gebuehren: list,
     heute: str,
     avg_days_per_month: float = 365.25 / 12,
 ) -> float:
@@ -1197,14 +1197,26 @@ def ladekarte_accrued_cost(
     leasing_status()). Reine Naeherung: eine echte Kartenabrechnung erfolgt
     in monatlichen Spruengen, nicht stetig -- hier bewusst als laufende
     Summe behandelt (aktive Tage / durchschnittliche Monatslaenge *
-    monatliche Gebuehr, siehe const.py::LADEKARTE_AVG_DAYS_PER_MONTH),
+    jeweils gueltige Gebuehr, siehe const.py::LADEKARTE_AVG_DAYS_PER_MONTH),
     damit sie sich wie jede andere Kostensumme in dieser App
     kontinuierlich mitzieht statt in Spruengen.
 
+    `gebuehren`: Liste von Gebuehrenstufen `{"ab_datum": ISO-Datum,
+    "gebuehr": EUR/Monat}` -- deckt z.B. einen reduzierten Einfuehrungspreis
+    fuer die ersten Monate ab, der danach auf den reguleren Preis steigt.
+    Jede Stufe gilt ab ihrem ab_datum bis zum ab_datum der naechsten Stufe
+    (exklusiv) bzw. bis end_datum/heute fuer die zeitlich letzte Stufe --
+    Reihenfolge in der Liste ist egal, wird intern nach ab_datum sortiert.
+    Tage vor der fruehesten Stufe zaehlen mit 0 (keine bekannte Gebuehr fuer
+    diesen Zeitraum, kein Fantasiewert). Stufen mit nicht parsbarem
+    ab_datum/gebuehr werden einzeln uebersprungen statt die ganze Karte auf
+    0 zu setzen.
+
     0.0 vor Vertragsbeginn (start_datum liegt nach `heute`), bei nicht
-    parsbarem start_datum/heute, oder wenn end_datum vor start_datum liegt
-    -- kein Fantasiewert, keine Exception. `end_datum` optional (Karte noch
-    aktiv, laeuft bis `heute` weiter)."""
+    parsbarem start_datum/heute, bei leerer/komplett unbrauchbarer
+    `gebuehren`-Liste, oder wenn end_datum vor start_datum liegt -- kein
+    Fantasiewert, keine Exception. `end_datum` optional (Karte noch aktiv,
+    laeuft bis `heute` weiter)."""
     try:
         start = date.fromisoformat(start_datum)
         heute_d = date.fromisoformat(heute)
@@ -1218,30 +1230,101 @@ def ladekarte_accrued_cost(
             return 0.0
     if ende < start:
         return 0.0
-    tage_aktiv = (ende - start).days + 1
-    return round(monatliche_gebuehr * tage_aktiv / avg_days_per_month, 2)
+
+    stufen = []
+    for stufe in gebuehren or []:
+        try:
+            ab = date.fromisoformat(stufe.get("ab_datum"))
+            gebuehr = float(stufe.get("gebuehr"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        stufen.append((ab, gebuehr))
+    if not stufen:
+        return 0.0
+    stufen.sort(key=lambda s: s[0])
+
+    kosten = 0.0
+    for i, (ab, gebuehr) in enumerate(stufen):
+        segment_start = max(ab, start)
+        naechste_stufe_ab = stufen[i + 1][0] if i + 1 < len(stufen) else None
+        segment_end = (naechste_stufe_ab - timedelta(days=1)) if naechste_stufe_ab else ende
+        segment_end = min(segment_end, ende)
+        if segment_end < segment_start:
+            continue
+        tage = (segment_end - segment_start).days + 1
+        kosten += gebuehr * tage / avg_days_per_month
+    return round(kosten, 2)
+
+
+def ladekarte_legacy_gebuehren(karte: dict) -> list:
+    """Ruecklauf-Kompatibilitaet fuer Karten aus der Zeit vor Gebuehrenstufen
+    (bis v0.67.0): eine einzelne monatliche_gebuehr wird als Einzelstufe ab
+    start_datum behandelt, wenn die Karte noch kein "gebuehren"-Feld hat."""
+    gebuehr = karte.get("monatliche_gebuehr")
+    start = karte.get("start_datum")
+    if gebuehr is None or start is None:
+        return []
+    return [{"ab_datum": start, "gebuehr": gebuehr}]
+
+
+def ladekarte_current_fee(gebuehren: list, heute: str) -> Optional[float]:
+    """Aktuell gueltige Gebuehr (die Stufe mit dem groessten ab_datum <=
+    `heute`, sonst -- falls alle Stufen erst in der Zukunft beginnen -- die
+    zeitlich fruehste) -- fuer die Anzeige "aktuelle monatliche Gebuehr"
+    einer Karte, ohne dass der Aufrufer die Stufen-Logik selbst nachbauen
+    muss. None bei leerer/komplett unbrauchbarer Liste."""
+    try:
+        heute_d = date.fromisoformat(heute)
+    except (TypeError, ValueError):
+        heute_d = None
+    stufen = []
+    for stufe in gebuehren or []:
+        try:
+            ab = date.fromisoformat(stufe.get("ab_datum"))
+            gebuehr = float(stufe.get("gebuehr"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        stufen.append((ab, gebuehr))
+    if not stufen:
+        return None
+    stufen.sort(key=lambda s: s[0])
+    if heute_d is not None:
+        gueltige = [g for ab, g in stufen if ab <= heute_d]
+        if gueltige:
+            return gueltige[-1]
+    return stufen[0][1]
 
 
 def ladekarten_summary(
     karten: list, heute: str, avg_days_per_month: float = 365.25 / 12,
 ) -> dict:
     """Aufschluesselung aller Ladekarten (siehe ladekarte_accrued_cost()) --
-    "karten" (jede Eingabekarte plus berechnetem "kosten"-Feld) und
-    "gesamt" (Summe ueber alle). Leeres dict ohne jede Karte -- macht das
-    Feature komplett inaktiv/unsichtbar, solange keine Karte angelegt ist
-    (analog leasing_stats()). Eine Karte mit nicht parsbaren Daten wird mit
-    0 EUR gefuehrt statt die gesamte Berechnung abzubrechen."""
+    "karten" (jede Eingabekarte plus berechnetem "kosten"- und
+    "aktuelle_gebuehr"-Feld, siehe ladekarte_current_fee()) und "gesamt"
+    (Summe ueber alle). Leeres dict ohne jede Karte -- macht das Feature
+    komplett inaktiv/unsichtbar, solange keine Karte angelegt ist (analog
+    leasing_stats()). Eine Karte mit nicht parsbaren Daten wird mit 0 EUR
+    gefuehrt statt die gesamte Berechnung abzubrechen. Karten ohne
+    "gebuehren"-Feld (angelegt vor Einfuehrung der Gebuehrenstufen) fallen
+    auf ladekarte_legacy_gebuehren() zurueck."""
     if not karten:
         return {}
     result_karten = []
     gesamt = 0.0
     for karte in karten:
+        gebuehren = karte.get("gebuehren")
+        if not gebuehren:
+            gebuehren = ladekarte_legacy_gebuehren(karte)
         kosten = ladekarte_accrued_cost(
-            karte.get("start_datum"), karte.get("end_datum"),
-            karte.get("monatliche_gebuehr", 0.0), heute, avg_days_per_month,
+            karte.get("start_datum"), karte.get("end_datum"), gebuehren, heute, avg_days_per_month,
         )
         gesamt += kosten
-        result_karten.append({**karte, "kosten": kosten})
+        result_karten.append({
+            **karte,
+            "gebuehren": gebuehren,
+            "kosten": kosten,
+            "aktuelle_gebuehr": ladekarte_current_fee(gebuehren, heute),
+        })
     return {"karten": result_karten, "gesamt": round(gesamt, 2)}
 
 

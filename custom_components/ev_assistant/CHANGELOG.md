@@ -2,6 +2,14 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.68.0] - 2026-08-19
+
+### Added
+
+- **Charging card price tiers**: some providers offer a reduced introductory monthly fee for the first few months, then raise it to the regular price. Charging cards now track a list of fee tiers (each with its own start date) instead of a single flat fee — the accrued cost is calculated piecewise per tier, so a price change is reflected exactly from the date it took effect, not applied retroactively to earlier (cheaper) months. Existing cards with a single fee keep working unchanged (read as a one-tier list automatically).
+- Two new services: `add_ladekarte_preisstufe` (add or correct a fee tier by date) and `delete_ladekarte_preisstufe` (remove one again). The earliest tier can't be deleted — a card always needs at least one known fee. `edit_ladekarte`'s `monatliche_gebuehr` now corrects only the earliest tier (fixing a typo at setup) — an actual price change goes through `add_ladekarte_preisstufe` instead, since editing an ambiguous "the fee" wouldn't say which tier is meant once there's more than one.
+- The panel's Ladekarten tab shows each card's current fee plus its price history, with a small form to add a new tier ("Preisänderung") and a delete action per tier (except the earliest).
+
 ## [0.67.0] - 2026-08-19
 
 ### Added

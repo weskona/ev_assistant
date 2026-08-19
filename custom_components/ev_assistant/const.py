@@ -376,5 +376,7 @@ SERVICE_IMPORT_TRIPS = "import_fahrtenbuch"
 SERVICE_ADD_LADEKARTE = "add_ladekarte"
 SERVICE_EDIT_LADEKARTE = "edit_ladekarte"
 SERVICE_DELETE_LADEKARTE = "delete_ladekarte"
+SERVICE_ADD_LADEKARTE_PREISSTUFE = "add_ladekarte_preisstufe"
+SERVICE_DELETE_LADEKARTE_PREISSTUFE = "delete_ladekarte_preisstufe"
 
 NOTIFY_TAG = "ev_assistant"

@@ -17,8 +17,10 @@ from .const import (
     EVCC_CONF_KEYS,
     PLATFORMS,
     SERVICE_ADD_LADEKARTE,
+    SERVICE_ADD_LADEKARTE_PREISSTUFE,
     SERVICE_DELETE,
     SERVICE_DELETE_LADEKARTE,
+    SERVICE_DELETE_LADEKARTE_PREISSTUFE,
     SERVICE_DELETE_TRIP,
     SERVICE_DISCARD,
     SERVICE_DISCARD_TRIP,
@@ -290,6 +292,19 @@ DELETE_LADEKARTE_SCHEMA = vol.Schema({
     vol.Required("karte_id"): vol.Coerce(int),
 })
 
+ADD_LADEKARTE_PREISSTUFE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("karte_id"): vol.Coerce(int),
+    vol.Required("gebuehr"): vol.Coerce(float),
+    vol.Required("ab_datum"): str,
+})
+
+DELETE_LADEKARTE_PREISSTUFE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("karte_id"): vol.Coerce(int),
+    vol.Required("ab_datum"): str,
+})
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Backfill fuer Entries von vor Einfuehrung der unique_id (siehe
@@ -447,6 +462,18 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_delete_ladekarte(call.data["karte_id"])
 
+    async def _handle_add_ladekarte_preisstufe(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_add_ladekarte_preisstufe(
+                call.data["karte_id"], call.data["gebuehr"], call.data["ab_datum"],
+            )
+
+    async def _handle_delete_ladekarte_preisstufe(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_delete_ladekarte_preisstufe(call.data["karte_id"], call.data["ab_datum"])
+
     hass.services.async_register(DOMAIN, SERVICE_LOG, _handle_log, schema=LOG_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCARD, _handle_discard, schema=DISCARD_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE, _handle_simulate, schema=SIMULATE_SCHEMA)
@@ -462,6 +489,14 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_EDIT_LADEKARTE, _handle_edit_ladekarte, schema=EDIT_LADEKARTE_SCHEMA)
     hass.services.async_register(
         DOMAIN, SERVICE_DELETE_LADEKARTE, _handle_delete_ladekarte, schema=DELETE_LADEKARTE_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_ADD_LADEKARTE_PREISSTUFE, _handle_add_ladekarte_preisstufe,
+        schema=ADD_LADEKARTE_PREISSTUFE_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_DELETE_LADEKARTE_PREISSTUFE, _handle_delete_ladekarte_preisstufe,
+        schema=DELETE_LADEKARTE_PREISSTUFE_SCHEMA,
     )
     hass.services.async_register(DOMAIN, SERVICE_IMPORT_TRIPS, _handle_import_trips, schema=IMPORT_TRIPS_SCHEMA)
 
@@ -482,6 +517,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_LOG_TRIP, SERVICE_DISCARD_TRIP, SERVICE_EXPORT_TRIPS, SERVICE_SIMULATE_TRIP,
                 SERVICE_EDIT_TRIP, SERVICE_DELETE_TRIP, SERVICE_IMPORT_TRIPS,
                 SERVICE_ADD_LADEKARTE, SERVICE_EDIT_LADEKARTE, SERVICE_DELETE_LADEKARTE,
+                SERVICE_ADD_LADEKARTE_PREISSTUFE, SERVICE_DELETE_LADEKARTE_PREISSTUFE,
             ):
                 hass.services.async_remove(DOMAIN, service)
         else:

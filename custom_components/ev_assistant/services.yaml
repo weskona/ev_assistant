@@ -640,7 +640,10 @@ add_ladekarte:
     Fremdlade-Anbieters mit monatlicher Grundgebühr). Die aufgelaufene
     Grundgebühr fließt automatisch in die Fremdladung-Gesamtkosten ein
     (Ersparnis-Vergleich, EUR/100km, Kosten-Perioden), aber nicht in den
-    Preis pro kWh einzelner Ladungen.
+    Preis pro kWh einzelner Ladungen. Bietet der Anbieter zunächst einen
+    reduzierten Einführungspreis an, der später auf den regulären Preis
+    steigt, zunächst mit dem Einführungspreis anlegen und den späteren
+    Preiswechsel per add_ladekarte_preisstufe nachtragen.
   fields:
     config_entry_id:
       name: Fahrzeug
@@ -658,6 +661,7 @@ add_ladekarte:
         text:
     monatliche_gebuehr:
       name: Monatliche Grundgebühr
+      description: Die zunächst gültige Gebühr (z.B. ein Einführungspreis).
       required: true
       example: 5.90
       selector:
@@ -712,6 +716,11 @@ edit_ladekarte:
         text:
     monatliche_gebuehr:
       name: Monatliche Grundgebühr
+      description: >
+        Korrigiert die Gebühr der zeitlich frühesten Stufe (z.B. ein
+        Tippfehler beim Anlegen). Für einen echten Preiswechsel (z.B. Ende
+        eines Einführungspreises) stattdessen add_ladekarte_preisstufe
+        verwenden.
       required: false
       example: 6.90
       selector:
@@ -759,3 +768,77 @@ delete_ladekarte:
       selector:
         number:
           mode: box
+
+add_ladekarte_preisstufe:
+  name: Ladekarte-Preisstufe hinzufügen
+  description: >
+    Fügt einer bestehenden Ladekarte eine neue Gebührenstufe hinzu -- z.B.
+    wenn ein reduzierter Einführungspreis nach einigen Monaten auf den
+    regulären Preis steigt. Jede Stufe gilt ab ihrem Datum bis zur
+    nächsten (nach Datum sortiert, Reihenfolge der Aufrufe ist egal).
+    Existiert bereits eine Stufe mit exakt diesem Datum, wird deren Gebühr
+    ersetzt statt eine doppelte Stufe anzulegen.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    karte_id:
+      name: Karten-ID
+      description: Identifiziert die Karte (Wert aus deren id-Attribut).
+      required: true
+      example: 1755000000000
+      selector:
+        number:
+          mode: box
+    gebuehr:
+      name: Monatliche Gebühr ab diesem Datum
+      required: true
+      example: 5.90
+      selector:
+        number:
+          min: 0
+          max: 500
+          step: 0.01
+          unit_of_measurement: EUR
+          mode: box
+    ab_datum:
+      name: Gültig ab
+      required: true
+      example: "2026-04-01"
+      selector:
+        date:
+
+delete_ladekarte_preisstufe:
+  name: Ladekarte-Preisstufe entfernen
+  description: >
+    Entfernt eine zuvor hinzugefügte Gebührenstufe wieder (z.B. eine
+    versehentlich angelegte). Die zeitlich früheste Stufe einer Karte kann
+    nicht entfernt werden -- eine Karte braucht immer mindestens eine
+    bekannte Gebühr.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    karte_id:
+      name: Karten-ID
+      description: Identifiziert die Karte (Wert aus deren id-Attribut).
+      required: true
+      example: 1755000000000
+      selector:
+        number:
+          mode: box
+    ab_datum:
+      name: Zu entfernende Stufe
+      description: Das Datum der zu entfernenden Gebührenstufe.
+      required: true
+      example: "2026-04-01"
+      selector:
+        date:

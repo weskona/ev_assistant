@@ -154,6 +154,7 @@ from .engine import (
     home_capacity_sample,
     home_session_solar_and_cost,
     is_plausible_trip_consumption,
+    ladekarte_legacy_gebuehren,
     ladekarten_summary,
     leasing_status,
     merge_pending,
@@ -2257,11 +2258,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         ein simpler Millisekunden-Zeitstempel -- analog erfasst_ts bei
         Fremdladungen/Fahrten, hier ausreichend, da Karten einzeln von
         Hand angelegt werden (kein Tight-Loop-Kollisionsrisiko wie beim
-        Bulk-Import von Fahrten)."""
+        Bulk-Import von Fahrten). `monatliche_gebuehr` wird als erste
+        Gebuehrenstufe ab `start_datum` gespeichert (siehe "gebuehren" in
+        engine.ladekarte_accrued_cost()) -- weitere Stufen (z.B. Ende eines
+        reduzierten Einfuehrungspreises) kommen ueber
+        async_add_ladekarte_preisstufe() dazu."""
         karte = {
             "id": int(time.time() * 1000),
             "name": name.strip(),
-            "monatliche_gebuehr": round(float(monatliche_gebuehr), 2),
+            "gebuehren": [{"ab_datum": start_datum, "gebuehr": round(float(monatliche_gebuehr), 2)}],
             "start_datum": start_datum,
             "end_datum": end_datum,
         }
@@ -2270,6 +2275,20 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["ladekarten"] = karten
         await self._save()
         self.async_set_updated_data(self.data)
+
+    @staticmethod
+    def _ladekarte_gebuehren(karte: dict) -> list:
+        """Gebuehrenstufen einer Karte, mit Ruecklauf-Kompatibilitaet fuer
+        Karten aus der Zeit vor Gebuehrenstufen (siehe engine.
+        ladekarte_legacy_gebuehren()) -- gibt IMMER die tatsaechliche Liste
+        zurueck (nicht nur zur Berechnung wie im engine-Pendant), damit
+        Schreibzugriffe (Stufe hinzufuegen/loeschen) sie direkt mutieren
+        koennen."""
+        gebuehren = karte.get("gebuehren")
+        if not gebuehren:
+            gebuehren = ladekarte_legacy_gebuehren(karte)
+            karte["gebuehren"] = gebuehren
+        return gebuehren
 
     async def async_edit_ladekarte(
         self,
@@ -2285,7 +2304,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         loescht ein zuvor gesetztes Enddatum (z.B. eine gekuendigte Karte
         reaktivieren) -- unterscheidbar, weil ein Service-Aufruf ohne
         end_datum-Feld ueberhaupt None liefert, waehrend ein explizit
-        geleertes Formularfeld "" liefert. Gibt False zurueck, wenn keine
+        geleertes Formularfeld "" liefert. monatliche_gebuehr korrigiert die
+        Gebuehr der ZEITLICH FRUEHESTEN Stufe (typischerweise ein Tippfehler
+        beim Anlegen) -- ein PREISWECHSEL (z.B. Ende eines reduzierten
+        Einfuehrungspreises) laeuft stattdessen ueber
+        async_add_ladekarte_preisstufe(), da hier nicht klar waere, welche
+        von mehreren Stufen gemeint ist. Gibt False zurueck, wenn keine
         Karte mit dieser id gefunden wurde."""
         karten = self.data.get("ladekarten") or []
         for karte in karten:
@@ -2293,7 +2317,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 if name is not None:
                     karte["name"] = name.strip()
                 if monatliche_gebuehr is not None:
-                    karte["monatliche_gebuehr"] = round(float(monatliche_gebuehr), 2)
+                    gebuehren = self._ladekarte_gebuehren(karte)
+                    if gebuehren:
+                        fruehste = min(gebuehren, key=lambda s: s.get("ab_datum") or "")
+                        fruehste["gebuehr"] = round(float(monatliche_gebuehr), 2)
                 if start_datum is not None:
                     karte["start_datum"] = start_datum
                 if end_datum is not None:
@@ -2301,6 +2328,55 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 await self._save()
                 self.async_set_updated_data(self.data)
                 return True
+        return False
+
+    async def async_add_ladekarte_preisstufe(self, karte_id: int, gebuehr: float, ab_datum: str) -> bool:
+        """Fuegt einer bestehenden Ladekarte eine neue Gebuehrenstufe hinzu
+        (siehe engine.ladekarte_accrued_cost()) -- z.B. wenn ein reduzierter
+        Einfuehrungspreis nach einigen Monaten auf den regulaeren Preis
+        steigt. Existiert bereits eine Stufe mit exakt diesem ab_datum,
+        wird deren Gebuehr ersetzt statt eine doppelte Stufe anzulegen
+        (Korrektur eines Tippfehlers bei einem bereits erfassten
+        Preiswechsel). Gibt False zurueck, wenn keine Karte mit dieser id
+        gefunden wurde."""
+        karten = self.data.get("ladekarten") or []
+        for karte in karten:
+            if karte.get("id") == karte_id:
+                gebuehren = self._ladekarte_gebuehren(karte)
+                for stufe in gebuehren:
+                    if stufe.get("ab_datum") == ab_datum:
+                        stufe["gebuehr"] = round(float(gebuehr), 2)
+                        break
+                else:
+                    gebuehren.append({"ab_datum": ab_datum, "gebuehr": round(float(gebuehr), 2)})
+                await self._save()
+                self.async_set_updated_data(self.data)
+                return True
+        return False
+
+    async def async_delete_ladekarte_preisstufe(self, karte_id: int, ab_datum: str) -> bool:
+        """Entfernt eine Gebuehrenstufe wieder (siehe
+        async_add_ladekarte_preisstufe()) -- z.B. eine versehentlich
+        angelegte. Die zeitlich fruehste Stufe kann nicht geloescht werden
+        (eine Karte braucht immer mindestens eine bekannte Gebuehr, siehe
+        engine.ladekarte_accrued_cost()) -- der Aufruf gibt dafuer False
+        zurueck, genau wie wenn Karte oder Stufe nicht gefunden wurden."""
+        karten = self.data.get("ladekarten") or []
+        for karte in karten:
+            if karte.get("id") == karte_id:
+                gebuehren = self._ladekarte_gebuehren(karte)
+                if len(gebuehren) <= 1:
+                    return False
+                fruehste = min(gebuehren, key=lambda s: s.get("ab_datum") or "")
+                if fruehste.get("ab_datum") == ab_datum:
+                    return False
+                for i, stufe in enumerate(gebuehren):
+                    if stufe.get("ab_datum") == ab_datum:
+                        gebuehren.pop(i)
+                        await self._save()
+                        self.async_set_updated_data(self.data)
+                        return True
+                return False
         return False
 
     async def async_delete_ladekarte(self, karte_id: int) -> bool:

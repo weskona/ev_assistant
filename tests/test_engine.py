@@ -24,6 +24,7 @@ from engine import (
     home_session_solar_and_cost,
     is_plausible_trip_consumption,
     ladekarte_accrued_cost,
+    ladekarte_current_fee,
     ladekarten_summary,
     leasing_status,
     merge_pending,
@@ -1370,20 +1371,24 @@ def test_charging_location_breakdown_nur_extra_cost_liefert_trotzdem_eur_je_100k
     assert result == {"eur_je_100km": 20.0}
 
 
-# ----- ladekarte_accrued_cost / ladekarten_summary: Ladekarten-Grundgebuehren --
+# ----- ladekarte_accrued_cost / ladekarten_summary: Ladekarten-Grundgebuehren
+# (inkl. Gebuehrenstufen, z.B. reduzierter Einfuehrungspreis) -----------------
 
 def test_ladekarte_accrued_cost_durchgerechnetes_beispiel():
     # 30 Tage aktiv (inklusive Start- und Endtag) bei einer Monatslaenge
     # von genau 30 Tagen -- exakt eine Monatsgebuehr.
     kosten = ladekarte_accrued_cost(
-        "2026-01-01", None, monatliche_gebuehr=9.90, heute="2026-01-30",
+        "2026-01-01", None, [{"ab_datum": "2026-01-01", "gebuehr": 9.90}], heute="2026-01-30",
         avg_days_per_month=30.0,
     )
     assert kosten == 9.90
 
 
 def test_ladekarte_accrued_cost_vor_vertragsbeginn_liefert_null():
-    kosten = ladekarte_accrued_cost("2026-02-01", None, 9.90, heute="2026-01-15", avg_days_per_month=30.0)
+    kosten = ladekarte_accrued_cost(
+        "2026-02-01", None, [{"ab_datum": "2026-02-01", "gebuehr": 9.90}],
+        heute="2026-01-15", avg_days_per_month=30.0,
+    )
     assert kosten == 0.0
 
 
@@ -1391,22 +1396,91 @@ def test_ladekarte_accrued_cost_gekuendigt_zaehlt_nur_bis_enddatum():
     # Karte zum 2026-01-15 gekuendigt -- Tage danach (bis "heute") zaehlen
     # nicht mehr, auch wenn heute viel spaeter liegt.
     kosten = ladekarte_accrued_cost(
-        "2026-01-01", "2026-01-15", monatliche_gebuehr=30.0, heute="2026-06-01",
-        avg_days_per_month=30.0,
+        "2026-01-01", "2026-01-15", [{"ab_datum": "2026-01-01", "gebuehr": 30.0}],
+        heute="2026-06-01", avg_days_per_month=30.0,
     )
     # (15 - 1) Tage + 1 = 15 aktive Tage von 30 Tagen Monatslaenge.
     assert kosten == 15.0
 
 
 def test_ladekarte_accrued_cost_enddatum_vor_startdatum_liefert_null():
-    kosten = ladekarte_accrued_cost("2026-02-01", "2026-01-01", 9.90, heute="2026-03-01")
+    kosten = ladekarte_accrued_cost(
+        "2026-02-01", "2026-01-01", [{"ab_datum": "2026-02-01", "gebuehr": 9.90}], heute="2026-03-01",
+    )
     assert kosten == 0.0
 
 
 def test_ladekarte_accrued_cost_nicht_parsbares_datum_liefert_null_statt_exception():
-    assert ladekarte_accrued_cost(None, None, 9.90, heute="2026-01-01") == 0.0
-    assert ladekarte_accrued_cost("keinDatum", None, 9.90, heute="2026-01-01") == 0.0
-    assert ladekarte_accrued_cost("2026-01-01", "keinDatum", 9.90, heute="2026-01-15") == 0.0
+    gebuehren = [{"ab_datum": "2026-01-01", "gebuehr": 9.90}]
+    assert ladekarte_accrued_cost(None, None, gebuehren, heute="2026-01-01") == 0.0
+    assert ladekarte_accrued_cost("keinDatum", None, gebuehren, heute="2026-01-01") == 0.0
+    assert ladekarte_accrued_cost("2026-01-01", "keinDatum", gebuehren, heute="2026-01-15") == 0.0
+
+
+def test_ladekarte_accrued_cost_ohne_gebuehren_liefert_null():
+    assert ladekarte_accrued_cost("2026-01-01", None, [], heute="2026-01-15") == 0.0
+    assert ladekarte_accrued_cost("2026-01-01", None, None, heute="2026-01-15") == 0.0
+
+
+def test_ladekarte_accrued_cost_reduzierter_einfuehrungspreis_dann_regulaerer_preis():
+    # Feldfall: 2,90 EUR/Monat fuer die ersten 30 Tage, danach 5,90 EUR/Monat.
+    # Stufen absichtlich NICHT sortiert eingegeben -- Reihenfolge ist egal.
+    gebuehren = [
+        {"ab_datum": "2026-02-01", "gebuehr": 5.90},
+        {"ab_datum": "2026-01-01", "gebuehr": 2.90},
+    ]
+    # Genau am Stufenwechsel (60 Tage: 31 Tage zu 2.90, 29 Tage zu 5.90).
+    kosten = ladekarte_accrued_cost(
+        "2026-01-01", None, gebuehren, heute="2026-03-01", avg_days_per_month=30.0,
+    )
+    erwartet = round(2.90 * 31 / 30.0 + 5.90 * 29 / 30.0, 2)
+    assert kosten == erwartet
+    # Vor dem Stufenwechsel: nur der Einfuehrungspreis zaehlt.
+    kosten_vorher = ladekarte_accrued_cost(
+        "2026-01-01", None, gebuehren, heute="2026-01-20", avg_days_per_month=30.0,
+    )
+    assert kosten_vorher == round(2.90 * 20 / 30.0, 2)
+
+
+def test_ladekarte_accrued_cost_tage_vor_erster_stufe_zaehlen_nicht():
+    # start_datum liegt vor der fruehesten Gebuehrenstufe -- die Tage
+    # dazwischen haben keine bekannte Gebuehr, zaehlen mit 0 statt geraten.
+    gebuehren = [{"ab_datum": "2026-01-11", "gebuehr": 10.0}]
+    kosten = ladekarte_accrued_cost(
+        "2026-01-01", None, gebuehren, heute="2026-01-20", avg_days_per_month=30.0,
+    )
+    # Nur 2026-01-11 bis 2026-01-20 = 10 Tage zaehlen.
+    assert kosten == round(10.0 * 10 / 30.0, 2)
+
+
+def test_ladekarte_accrued_cost_kaputte_einzelstufe_wird_uebersprungen():
+    gebuehren = [
+        {"ab_datum": "nixdatum", "gebuehr": 999.0},
+        {"ab_datum": "2026-01-01", "gebuehr": 10.0},
+    ]
+    kosten = ladekarte_accrued_cost(
+        "2026-01-01", None, gebuehren, heute="2026-01-10", avg_days_per_month=30.0,
+    )
+    assert kosten == round(10.0 * 10 / 30.0, 2)
+
+
+def test_ladekarte_current_fee_waehlt_die_zeitlich_juengste_gueltige_stufe():
+    gebuehren = [
+        {"ab_datum": "2026-01-01", "gebuehr": 2.90},
+        {"ab_datum": "2026-02-01", "gebuehr": 5.90},
+    ]
+    assert ladekarte_current_fee(gebuehren, heute="2026-01-15") == 2.90
+    assert ladekarte_current_fee(gebuehren, heute="2026-02-15") == 5.90
+
+
+def test_ladekarte_current_fee_vor_erster_stufe_liefert_die_fruehste():
+    gebuehren = [{"ab_datum": "2026-02-01", "gebuehr": 5.90}]
+    assert ladekarte_current_fee(gebuehren, heute="2026-01-01") == 5.90
+
+
+def test_ladekarte_current_fee_ohne_gebuehren_liefert_none():
+    assert ladekarte_current_fee([], heute="2026-01-01") is None
+    assert ladekarte_current_fee(None, heute="2026-01-01") is None
 
 
 def test_ladekarten_summary_leere_liste_liefert_leeres_dict():
@@ -1415,13 +1489,16 @@ def test_ladekarten_summary_leere_liste_liefert_leeres_dict():
 
 def test_ladekarten_summary_mehrere_karten_summieren_sich():
     karten = [
-        {"id": 1, "name": "Karte A", "monatliche_gebuehr": 30.0, "start_datum": "2026-01-01", "end_datum": None},
-        {"id": 2, "name": "Karte B", "monatliche_gebuehr": 15.0, "start_datum": "2026-01-01", "end_datum": None},
+        {"id": 1, "name": "Karte A", "gebuehren": [{"ab_datum": "2026-01-01", "gebuehr": 30.0}],
+         "start_datum": "2026-01-01", "end_datum": None},
+        {"id": 2, "name": "Karte B", "gebuehren": [{"ab_datum": "2026-01-01", "gebuehr": 15.0}],
+         "start_datum": "2026-01-01", "end_datum": None},
     ]
     result = ladekarten_summary(karten, heute="2026-01-30", avg_days_per_month=30.0)
     assert result["gesamt"] == 45.0
     assert result["karten"][0]["kosten"] == 30.0
     assert result["karten"][1]["kosten"] == 15.0
+    assert result["karten"][0]["aktuelle_gebuehr"] == 30.0
     # Eingabefelder bleiben erhalten (Panel braucht Name/Gebuehr/Daten
     # weiterhin, nicht nur die berechneten Kosten).
     assert result["karten"][0]["name"] == "Karte A"
@@ -1429,13 +1506,25 @@ def test_ladekarten_summary_mehrere_karten_summieren_sich():
 
 def test_ladekarten_summary_karte_mit_kaputtem_datum_bricht_nicht_alles_ab():
     karten = [
-        {"id": 1, "name": "Kaputt", "monatliche_gebuehr": 30.0, "start_datum": "nixdaten", "end_datum": None},
-        {"id": 2, "name": "Gut", "monatliche_gebuehr": 15.0, "start_datum": "2026-01-01", "end_datum": None},
+        {"id": 1, "name": "Kaputt", "gebuehren": [{"ab_datum": "2026-01-01", "gebuehr": 30.0}],
+         "start_datum": "nixdaten", "end_datum": None},
+        {"id": 2, "name": "Gut", "gebuehren": [{"ab_datum": "2026-01-01", "gebuehr": 15.0}],
+         "start_datum": "2026-01-01", "end_datum": None},
     ]
     result = ladekarten_summary(karten, heute="2026-01-30", avg_days_per_month=30.0)
     assert result["karten"][0]["kosten"] == 0.0
     assert result["karten"][1]["kosten"] == 15.0
     assert result["gesamt"] == 15.0
+
+
+def test_ladekarten_summary_alte_karte_ohne_gebuehren_feld_faellt_auf_monatliche_gebuehr_zurueck():
+    # Ruecklauf-Kompatibilitaet: Karten aus der Zeit vor Gebuehrenstufen
+    # (bis v0.67.0) haben nur "monatliche_gebuehr", kein "gebuehren".
+    karten = [{"id": 1, "name": "Alt", "monatliche_gebuehr": 30.0, "start_datum": "2026-01-01", "end_datum": None}]
+    result = ladekarten_summary(karten, heute="2026-01-30", avg_days_per_month=30.0)
+    assert result["karten"][0]["kosten"] == 30.0
+    assert result["karten"][0]["aktuelle_gebuehr"] == 30.0
+    assert result["karten"][0]["gebuehren"] == [{"ab_datum": "2026-01-01", "gebuehr": 30.0}]
 
 
 # ----- ac_dc_breakdown: Fremdladungen nach AC/DC (aus Durchschnittsleistung) --
