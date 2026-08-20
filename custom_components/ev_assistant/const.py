@@ -291,6 +291,22 @@ TRIP_CONSUMPTION_CHECK_MIN_KM = 5.0
 # Fremdladungen -- Heimladen ist baulich praktisch immer AC.
 AC_MAX_KW = 22.0
 
+# Ab wann Detail-Eintraege aus "fahrten"/"history" in ein separates,
+# unbegrenzt wachsendes Archiv wandern statt in der haeufig (bei praktisch
+# jeder Coordinator-Aktualisierung) gespeicherten .storage-Datei zu bleiben
+# (siehe coordinator.py::_async_truncate_lifetime_lists()) -- ueber mehrere
+# Jahre Leasing wuerden sonst sowohl diese Datei als auch jeder ungecachte
+# Voll-Scan unbegrenzt weiterwachsen. Bewusst konservativ hoch gewaehlt und
+# kein Config-Flow-Feld (analog AC_MAX_KW). WICHTIG: kein Datenverlust --
+# archivierte Eintraege bleiben vollstaendig erhalten und fliessen weiter
+# in async_export_fahrtenbuch() ein; alle kumulativen Kennzahlen
+# (Vollzyklen, Verbrauchs-/Temperaturband-/Wochentags-Schnitt, AC/DC-/
+# Anbieter-Aufschluesselung) haengen NICHT an dieser Schwelle, sondern an
+# separaten Lebenszeit-Baselines (siehe die *_totals-Felder in
+# coordinator._empty_data()), die von der Kuerzung unberuehrt bleiben.
+FAHRTEN_MAX_MONATE = 24
+HISTORY_MAX_MONATE = 24
+
 # Naeherung fuer die Umrechnung "monatliche Grundgebuehr" -> laufende
 # Tagesrate (siehe engine.ladekarte_accrued_cost()): eine echte
 # Kartenabrechnung erfolgt in monatlichen Spruengen, nicht stetig -- hier

@@ -109,6 +109,8 @@ from .const import (
     EVENT_TRIP_IMPORTED,
     EVENT_TRIP_LOGGED,
     EVENT_TRIP_PENDING,
+    FAHRTEN_MAX_MONATE,
+    HISTORY_MAX_MONATE,
     IMPLAUSIBLE_POWER_RATIO,
     IMPLAUSIBLE_REGEN_DELTA_PCT,
     LADEKARTE_AVG_DAYS_PER_MONTH,
@@ -139,8 +141,10 @@ from .engine import (
     SignalDebouncer,
     TripDetector,
     TripSample,
-    ac_dc_breakdown,
-    anbieter_breakdown,
+    ac_dc_breakdown_from_totals,
+    anbieter_breakdown_from_totals,
+    apply_ac_dc_delta,
+    apply_anbieter_delta,
     average_efficiency,
     battery_capacity_samples,
     bekannte_anbieter,
@@ -149,9 +153,10 @@ from .engine import (
     calculate_savings,
     charge_before_pv_decision,
     charge_cost,
+    charge_pct_of_history_entry,
     charging_location_breakdown,
-    consumption_by_temp_bucket,
-    equivalent_full_cycles,
+    consumption_by_temp_bucket_from_totals,
+    equivalent_full_cycles_from_totals,
     estimate_battery_capacity_kwh,
     home_capacity_sample,
     home_session_solar_and_cost,
@@ -163,9 +168,15 @@ from .engine import (
     pop_pending,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
+    split_by_age,
+    temp_bucket_contribution,
     temperature_bucket,
+    trip_avg_consumption_kwh_from_totals,
+    trip_consumption_contribution,
+    trip_discharge_pct,
+    trip_weekday_kwh_parts,
     update_period_baseline,
-    weekday_usage_profile,
+    weekday_usage_profile_from_totals,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -284,6 +295,25 @@ def _empty_data() -> dict:
         "kwh_periods": {},
         "odo_lts": {},
         "ladekarten": [],
+        # Lebenszeit-Baselines, unabhaengig von der Laenge von "fahrten"/
+        # "history" (siehe _apply_trip_baselines()/_apply_charge_baselines(),
+        # _migrate_lifetime_baselines() und _async_truncate_lifetime_lists())
+        # -- tragen equivalent_full_cycles(), _trip_avg_consumption_kwh(),
+        # _consumption_by_temp_bucket(), charging_location_stats()'s
+        # ac_dc/anbieter-Aufschluesselung und usage_profile(), damit diese
+        # Kennzahlen beim Archivieren alter Detail-Eintraege unveraendert
+        # bleiben.
+        "fahrten_discharge_pct_total": 0.0,
+        "history_charge_pct_total": 0.0,
+        "ac_dc_totals": {},
+        "anbieter_totals": {},
+        "trip_consumption_exact_totals": {"sum_kwh": 0.0, "count": 0},
+        "trip_consumption_deltasoc_totals": {"sum_frac": 0.0, "count": 0},
+        "temp_bucket_totals": {},
+        "fahrtenbuch_first_ts": None,
+        "weekday_kwh_exact_totals": {},
+        "weekday_km_est_totals": {},
+        "lifetime_baselines_migrated": False,
     }
 
 
@@ -299,6 +329,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         super().__init__(hass, _LOGGER, name=DOMAIN, update_interval=None)
         self.entry = entry
         self._store = Store(hass, STORAGE_VERSION, f"{STORAGE_KEY}_{entry.entry_id}")
+        # Separates, unbegrenzt wachsendes Archiv fuer aus "fahrten"/
+        # "history" ausgelagerte, aeltere Detail-Eintraege (siehe
+        # _async_truncate_lifetime_lists()) -- bewusst NICHT derselbe Store
+        # wie self._store: der wird bei praktisch jeder Coordinator-
+        # Aktualisierung neu geschrieben (siehe _save()/_save_soon()), ein
+        # unbegrenzt wachsendes Archiv darin wuerde die urspruengliche
+        # Wachstumsproblematik nur verschieben statt loesen. Dieser Store
+        # wird stattdessen nur einmal taeglich (Truncation) sowie bei
+        # Export/Import gelesen/geschrieben.
+        self._archive_store = Store(hass, 1, f"{STORAGE_KEY}_{entry.entry_id}_archiv")
         self._notify_tag = f"{NOTIFY_TAG}_{entry.entry_id}"
         self._unsub: list[Callable] = []
         self._soc: Optional[float] = None
@@ -342,17 +382,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Version-Zaehler fuer data["fahrten"] -- erhoeht sich bei jeder
         # Mutation (neue/bearbeitete/geloeschte/importierte Fahrt, siehe
         # _finalize_trip_record()/async_edit_trip()/async_delete_trip()/
-        # async_import_fahrtenbuch()). _trip_avg_consumption_kwh(),
-        # _daily_kwh_from_trips() und usage_profile() iterieren sonst bei
-        # JEDEM Coordinator-Update (jedes SoC-/Odo-/Wallbox-Sample) die
-        # komplette, seit Einrichtung unbegrenzt wachsende Fahrtenbuch-Liste
-        # neu -- die drei Caches unten sorgen dafuer, dass das nur bei
-        # tatsaechlicher Aenderung passiert, nicht bei jedem Sensor-Update.
-        # Rein im Arbeitsspeicher (kein Persistenzbedarf: nach einem Neustart
-        # ist das erste Ergebnis ohnehin ein Cache-Miss).
+        # async_import_fahrtenbuch()). _trip_avg_consumption_kwh() und
+        # usage_profile() lesen inzwischen aus laufend gepflegten
+        # Lebenszeit-Baselines (siehe _apply_trip_baselines()) statt die
+        # fahrten-Liste bei jedem Coordinator-Update (jedes SoC-/Odo-/
+        # Wallbox-Sample) neu zu durchlaufen -- die Caches unten sorgen
+        # trotzdem dafuer, dass selbst dieser (guenstige) Baseline-Zugriff
+        # nur bei tatsaechlicher Aenderung neu passiert, nicht bei jedem
+        # Sensor-Update. Rein im Arbeitsspeicher (kein Persistenzbedarf:
+        # nach einem Neustart ist das erste Ergebnis ohnehin ein Cache-Miss).
         self._fahrten_version = 0
         self._trip_avg_cache: Optional[tuple[int, Optional[float]]] = None
-        self._daily_kwh_cache: Optional[tuple[int, dict]] = None
         self._usage_profile_cache: Optional[tuple[int, str, Optional[dict]]] = None
         # Repair-Issues fuer laenger unavailable/entfernte Quell-Entitaeten
         # (siehe _check_entity_health()) -- rein im Arbeitsspeicher, ein
@@ -425,6 +465,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self.data["pending"] = [pending]
         elif pending is None:
             self.data["pending"] = []
+        # Migration: Lebenszeit-Baselines (Vollzyklen/Verbrauchs-/
+        # Temperaturband-/Wochentags-Schnitt, AC/DC-/Anbieter-
+        # Aufschluesselung) aus einer bereits vorhandenen fahrten/history-
+        # Liste ruecksichern -- MUSS vor der ersten Archivierung/Kuerzung
+        # laufen, siehe _migrate_lifetime_baselines(). Sofort persistiert
+        # (nicht ueber _save_soon()), damit ein Neustart vor dem naechsten
+        # regulaeren Speichern die Migration nicht unbemerkt verliert und
+        # beim naechsten Start faelschlich doppelt zaehlend wiederholt.
+        if self._migrate_lifetime_baselines():
+            await self._save()
         # Letzter bekannter Kraftstoff-/Heimstrompreis der jeweiligen
         # Live-Entitaet als Fallback, bevor sich die Entitaet nach dem Start
         # ueberhaupt zum ersten Mal wieder meldet (siehe
@@ -1053,6 +1103,72 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.hass.async_create_task(self._daily_odo_period_rollover())
         self.hass.async_create_task(self._daily_cost_period_rollover())
         self.hass.async_create_task(self._daily_kwh_period_rollover())
+        self.hass.async_create_task(self._async_truncate_lifetime_lists())
+
+    async def _load_archive(self) -> dict:
+        """Laedt das Archiv aus ausgelagerten fahrten/history-Eintraegen
+        (siehe _async_truncate_lifetime_lists()) -- leeres Archiv, falls
+        noch nie etwas archiviert wurde."""
+        stored = await self._archive_store.async_load()
+        if not stored:
+            return {"fahrten": [], "history": []}
+        stored.setdefault("fahrten", [])
+        stored.setdefault("history", [])
+        return stored
+
+    async def _async_truncate_lifetime_lists(self) -> None:
+        """Kuerzt "fahrten"/"history" auf die letzten FAHRTEN_MAX_MONATE/
+        HISTORY_MAX_MONATE (siehe const.py) und verschiebt aeltere
+        Eintraege UNVERAENDERT (nicht geloescht) in ein separates,
+        unbegrenzt wachsendes Archiv (siehe _archive_store/_load_archive())
+        -- das eigentliche Ziel: die HAEUFIG gespeicherte self.data-Datei
+        (siehe _save()/_save_soon(), bei praktisch jeder Coordinator-
+        Aktualisierung) waechst nicht mehr unbegrenzt mit jedem weiteren
+        Jahr Leasing, waehrend echte Nutzerdaten vollstaendig erhalten
+        bleiben -- siehe async_export_fahrtenbuch() (fuehrt Archiv + Liste
+        zusammen) und async_import_fahrtenbuch() (Dublettenpruefung
+        ebenfalls gegen das Archiv).
+
+        Alle kumulativen Kennzahlen (equivalent_full_cycles(),
+        _trip_avg_consumption_kwh(), _consumption_by_temp_bucket(),
+        charging_location_stats()'s ac_dc/anbieter-Aufschluesselung,
+        usage_profile()) haengen NICHT an dieser Kuerzung, sondern an
+        separaten Lebenszeit-Baselines (siehe _apply_trip_baselines()/
+        _apply_charge_baselines()), die von _migrate_lifetime_baselines()
+        VOR der allerersten Kuerzung aus dem damaligen Vollbestand
+        ruecksichert wurden (siehe async_setup()) und seither nur noch
+        durch echtes Hinzufuegen/Bearbeiten/Loeschen veraendert werden --
+        eine Kuerzung selbst aendert sie nicht.
+
+        Laeuft taeglich (siehe _daily_lts_refresh(), NICHT bei jedem
+        einzelnen Sample) und ist idempotent: ohne etwas zu Kuerzendes
+        passiert nichts (kein Archiv-Schreibzugriff, kein Save)."""
+        now = time.time()
+        fahrten_cutoff = now - FAHRTEN_MAX_MONATE * 30.44 * 86400
+        history_cutoff = now - HISTORY_MAX_MONATE * 30.44 * 86400
+        fahrten = self.data.get("fahrten") or []
+        history = self.data.get("history") or []
+        aktuelle_fahrten, alte_fahrten = split_by_age(fahrten, "start_ts", fahrten_cutoff)
+        aktuelle_history, alte_history = split_by_age(history, "erfasst_ts", history_cutoff)
+        if not alte_fahrten and not alte_history:
+            return
+        archiv = await self._load_archive()
+        archiv["fahrten"].extend(alte_fahrten)
+        archiv["history"].extend(alte_history)
+        await self._archive_store.async_save(archiv)
+        self.data["fahrten"] = aktuelle_fahrten
+        self.data["history"] = aktuelle_history
+        if alte_fahrten:
+            self._fahrten_version += 1
+        if alte_history:
+            self._history_version += 1
+        await self._save()
+        self.async_set_updated_data(self.data)
+        _LOGGER.info(
+            "ev_assistant: %d Fahrt(en) und %d Fremdladung(en) ins Archiv verschoben "
+            "(aelter als %s/%s Monate)",
+            len(alte_fahrten), len(alte_history), FAHRTEN_MAX_MONATE, HISTORY_MAX_MONATE,
+        )
 
     async def _daily_odo_period_rollover(self) -> None:
         """Rollt die Tag/Woche/Monat/Jahr-Baselines (siehe
@@ -1428,25 +1544,25 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         nutzbare kWh. delta_soc ist beim Fahren negativ (SoC sinkt) -- auf
         >= 0 geklemmt, falls Rekuperation den SoC waehrend der Fahrt per
         saldo hat steigen lassen. None ohne einen einzigen Eintrag mit
-        bekanntem Verbrauch. Ergebnis wird pro _fahrten_version zwischen-
-        gespeichert (siehe __init__) -- ohne das wuerde die komplette, seit
-        Einrichtung unbegrenzt wachsende Fahrtenbuch-Liste bei jedem
-        Coordinator-Update (jedes SoC-/Odo-/Wallbox-Sample) neu durchlaufen,
-        nicht nur wenn sich tatsaechlich eine Fahrt geaendert hat."""
+        bekanntem Verbrauch.
+
+        Berechnet aus zwei laufend gepflegten Lebenszeit-Summen (siehe
+        engine.trip_consumption_contribution()/trip_avg_consumption_kwh_from_totals(),
+        _apply_trip_baselines()) statt aus der vollen fahrten-Liste --
+        seit der Fahrtenbuch/History-Archivierung (siehe const.py::
+        FAHRTEN_MAX_MONATE) waechst diese Liste nicht mehr unbegrenzt mit,
+        die Summen bleiben davon unberuehrt. Ergebnis wird pro
+        _fahrten_version zwischengespeichert (siehe __init__)."""
         if self._trip_avg_cache is not None and self._trip_avg_cache[0] == self._fahrten_version:
             return self._trip_avg_cache[1]
-        fahrten = self.data.get("fahrten") or []
+        exact = self.data.get("trip_consumption_exact_totals") or {"sum_kwh": 0.0, "count": 0}
+        deltasoc = self.data.get("trip_consumption_deltasoc_totals") or {"sum_frac": 0.0, "count": 0}
         usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
-        values: list[float] = []
-        for rec in fahrten:
-            verbrauch = rec.get("verbrauch_kwh")
-            if verbrauch is not None:
-                values.append(float(verbrauch))
-                continue
-            delta_soc = rec.get("delta_soc")
-            if delta_soc is not None:
-                values.append(max(0.0, -delta_soc) / 100.0 * usable_kwh)
-        result = round(sum(values) / len(values), 2) if values else None
+        result = trip_avg_consumption_kwh_from_totals(
+            exact.get("sum_kwh", 0.0), exact.get("count", 0),
+            deltasoc.get("sum_frac", 0.0), deltasoc.get("count", 0),
+            usable_kwh,
+        )
         self._trip_avg_cache = (self._fahrten_version, result)
         return result
 
@@ -1806,11 +1922,91 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 )
         return rec
 
+    def _apply_trip_baselines(self, rec: dict, sign: int) -> None:
+        """Pflegt die von der fahrten-Liste selbst unabhaengigen Lebenszeit-
+        Baselines (Vollzyklen-Entladeanteil, Verbrauchsschnitt,
+        Temperaturband-Schnitt, Wochentags-Profil) parallel zu
+        "trip_totals" -- sign=+1 beim Bestaetigen/Importieren einer Fahrt,
+        -1 beim Loeschen; async_edit_trip() ruft dies zweimal auf (-1 fuer
+        den alten, +1 fuer den neuen Stand), analog dem bestehenden
+        Delta-Muster bei "trip_totals". Reine HA-Verdrahtung -- die
+        eigentliche Rechenlogik (was ein einzelner Eintrag beitraegt) steht
+        in engine.py, siehe dort fuer die Begruendung, warum diese
+        Baselines unabhaengig von einer spaeteren Archivierung/Kuerzung der
+        fahrten-Liste dieselben Ergebnisse liefern wie die alte
+        volle-Liste-Berechnung."""
+        self.data["fahrten_discharge_pct_total"] = round(
+            self.data.get("fahrten_discharge_pct_total", 0.0) + sign * trip_discharge_pct(rec), 4
+        )
+        contribution = trip_consumption_contribution(rec)
+        if contribution is not None:
+            kind, value = contribution
+            field = "trip_consumption_exact_totals" if kind == "exact" else "trip_consumption_deltasoc_totals"
+            sum_field = "sum_kwh" if kind == "exact" else "sum_frac"
+            totals = self.data.setdefault(field, {sum_field: 0.0, "count": 0})
+            totals[sum_field] = round(totals.get(sum_field, 0.0) + sign * value, 6)
+            totals["count"] = max(0, totals.get("count", 0) + sign)
+        temp_contribution = temp_bucket_contribution(rec, TEMP_BUCKET_BOUNDARIES)
+        if temp_contribution is not None:
+            bucket_key, pct = temp_contribution
+            buckets = self.data.setdefault("temp_bucket_totals", {})
+            entry = buckets.setdefault(bucket_key, {"sum_pct": 0.0, "count": 0})
+            entry["sum_pct"] = round(entry.get("sum_pct", 0.0) + sign * pct, 4)
+            entry["count"] = max(0, entry.get("count", 0) + sign)
+            if entry["count"] <= 0:
+                buckets.pop(bucket_key, None)
+        ts = rec.get("start_ts")
+        weekday_parts = trip_weekday_kwh_parts(rec)
+        if weekday_parts is not None and ts is not None:
+            kind, value = weekday_parts
+            weekday = dt_util.as_local(dt_util.utc_from_timestamp(ts)).date().weekday()
+            weekday_field = "weekday_kwh_exact_totals" if kind == "exact" else "weekday_km_est_totals"
+            weekday_totals = self.data.setdefault(weekday_field, {})
+            key = str(weekday)
+            weekday_totals[key] = round(weekday_totals.get(key, 0.0) + sign * value, 4)
+        if sign > 0 and ts is not None:
+            first_ts = self.data.get("fahrtenbuch_first_ts")
+            if first_ts is None or ts < first_ts:
+                self.data["fahrtenbuch_first_ts"] = ts
+
+    def _apply_charge_baselines(self, rec: dict, sign: int) -> None:
+        """Analog _apply_trip_baselines(), fuer Fremdladungen ("history"):
+        Vollzyklen-Ladeanteil sowie die AC/DC- und Anbieter-Baselines
+        (siehe engine.apply_ac_dc_delta()/apply_anbieter_delta())."""
+        self.data["history_charge_pct_total"] = round(
+            self.data.get("history_charge_pct_total", 0.0) + sign * charge_pct_of_history_entry(rec), 4
+        )
+        self.data["ac_dc_totals"] = apply_ac_dc_delta(self.data.get("ac_dc_totals") or {}, rec, sign, AC_MAX_KW)
+        self.data["anbieter_totals"] = apply_anbieter_delta(self.data.get("anbieter_totals") or {}, rec, sign)
+
+    def _migrate_lifetime_baselines(self) -> bool:
+        """Einmalige Ruecksicherung der Lebenszeit-Baselines (siehe
+        _apply_trip_baselines()/_apply_charge_baselines()) aus der beim
+        Upgrade bereits vorhandenen VOLLEN fahrten/history-Liste -- MUSS vor
+        der ersten Archivierung/Kuerzung gelaufen sein (siehe
+        _async_truncate_lifetime_lists()), sonst wuerden aeltere
+        Bestandsdaten beim ersten Kuerzen ersatzlos aus diesen Kennzahlen
+        verschwinden. Ein persistiertes Flag verhindert ein erneutes (und
+        dann falsches, doppelt zaehlendes) Nachrechnen bei jedem weiteren
+        Neustart. Gibt True zurueck, wenn die Migration gerade eben
+        gelaufen ist (der Aufrufer muss dann sofort speichern, siehe
+        async_setup()) -- False, wenn sie (typischerweise) bereits vorher
+        gelaufen war."""
+        if self.data.get("lifetime_baselines_migrated"):
+            return False
+        for rec in self.data.get("fahrten") or []:
+            self._apply_trip_baselines(rec, 1)
+        for rec in self.data.get("history") or []:
+            self._apply_charge_baselines(rec, 1)
+        self.data["lifetime_baselines_migrated"] = True
+        return True
+
     def _finalize_trip_record(self, rec: dict) -> None:
         self.data.setdefault("fahrten", []).insert(0, rec)
         totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
         totals["km"] = round(totals.get("km", 0.0) + rec["km"], 2)
         totals["count"] = totals.get("count", 0) + 1
+        self._apply_trip_baselines(rec, 1)
         self._fahrten_version += 1
 
     async def async_log_trip(self, start_ort: str, end_ort: str, start_ts: Optional[float] = None) -> None:
@@ -1876,6 +2072,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         fahrten = self.data.get("fahrten") or []
         for rec in fahrten:
             if rec.get("erfasst_ts") == erfasst_ts:
+                old_rec = dict(rec)
                 if start_ort is not None:
                     rec["start_ort"] = start_ort
                 if end_ort is not None:
@@ -1914,6 +2111,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                     # mehr, daher kein Unsicher-Flag.
                     rec["verbrauch_kwh"] = round(float(verbrauch_kwh), 2)
                     rec["verbrauch_unsicher"] = False
+                self._apply_trip_baselines(old_rec, -1)
+                self._apply_trip_baselines(rec, 1)
                 self._fahrten_version += 1
                 await self._save()
                 self.hass.bus.async_fire(EVENT_TRIP_EDITED, rec)
@@ -1934,6 +2133,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
                 totals["km"] = round(totals.get("km", 0.0) - rec["km"], 2)
                 totals["count"] = max(0, totals.get("count", 0) - 1)
+                self._apply_trip_baselines(rec, -1)
                 self._fahrten_version += 1
                 await self._save()
                 self.hass.bus.async_fire(EVENT_TRIP_DELETED, rec)
@@ -1952,9 +2152,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Ungueltige Eintraege werden uebersprungen (Warnung im Log) statt
         den gesamten Import abzubrechen. Eintraege mit einem bereits
         vorhandenen start_ts werden uebersprungen, damit ein wiederholter
-        Import keine Dubletten erzeugt. Gibt die Anzahl tatsaechlich neu
-        importierter Fahrten zurueck."""
+        Import keine Dubletten erzeugt -- die Pruefung beruecksichtigt dafuer
+        NEBEN der aktuellen fahrten-Liste auch das Archiv (siehe
+        _async_truncate_lifetime_lists()), sonst koennte ein laengst
+        archivierter Import bei einem erneuten Lauf faelschlich als "neu"
+        durchgehen. Gibt die Anzahl tatsaechlich neu importierter Fahrten
+        zurueck."""
+        archiv = await self._load_archive()
         existing_starts = {rec.get("start_ts") for rec in self.data.get("fahrten") or []}
+        existing_starts.update(rec.get("start_ts") for rec in archiv.get("fahrten", []))
         imported: list[dict] = []
         # Ein Basiswert + laufender Index statt in jeder Iteration neu
         # int(time.time()) zu lesen -- sonst bekaemen mehrere Fahrten in
@@ -2002,6 +2208,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
         totals["km"] = round(totals.get("km", 0.0) + sum(r["km"] for r in imported), 2)
         totals["count"] = totals.get("count", 0) + len(imported)
+        for rec in imported:
+            self._apply_trip_baselines(rec, 1)
         self._fahrten_version += 1
 
         await self._save()
@@ -2036,9 +2244,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._handle_pending_trip(pend)
 
     async def async_export_fahrtenbuch(self) -> str:
-        """Exportiert das Fahrtenbuch (chronologisch aufsteigend) als CSV
-        nach www/, damit es unter /local/... herunterladbar ist."""
-        fahrten = list(reversed(self.data.get("fahrten") or []))
+        """Exportiert das GESAMTE Fahrtenbuch (chronologisch aufsteigend,
+        inkl. archivierter Fahrten, siehe _async_truncate_lifetime_lists())
+        als CSV nach www/, damit es unter /local/... herunterladbar ist --
+        der Export bleibt dadurch vollstaendig, auch wenn die aktuelle
+        fahrten-Liste laengst gekuerzt wurde."""
+        archiv = await self._load_archive()
+        fahrten = archiv.get("fahrten", []) + list(self.data.get("fahrten") or [])
+        fahrten.sort(key=lambda r: r.get("start_ts") or 0)
         path = self.hass.config.path("www", f"ev_assistant_fahrtenbuch_{self.entry.entry_id}.csv")
         await self.hass.async_add_executor_job(self._write_fahrtenbuch_csv, path, fahrten)
         filename = os.path.basename(path)
@@ -2142,11 +2355,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["pending"] = pending_list
 
         self.data.setdefault("history", []).insert(0, rec)
-        self._history_version += 1
         totals = self.data["totals"]
         totals["kwh"] = round(totals.get("kwh", 0.0) + kwh, 2)
         totals["kosten"] = round(totals.get("kosten", 0.0) + rec["kosten"], 2)
         totals["count"] = totals.get("count", 0) + 1
+        self._apply_charge_baselines(rec, 1)
+        self._history_version += 1
         self.data["last_price"] = price
         await self._save()
         self.hass.bus.async_fire(EVENT_LOGGED, rec)
@@ -2192,6 +2406,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         history = self.data.get("history") or []
         for rec in history:
             if rec.get("erfasst_ts") == erfasst_ts:
+                old_rec = dict(rec)
                 old_kwh = rec["kwh"]
                 old_kosten = rec["kosten"]
                 kwh = round(float(kwh), 2) if kwh is not None else rec["kwh"]
@@ -2232,6 +2447,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                         rec["delta_soc"] = round(rec["soc_end"] - rec["soc_start"], 1)
                 if history[0] is rec:
                     self.data["last_price"] = price
+                self._apply_charge_baselines(old_rec, -1)
+                self._apply_charge_baselines(rec, 1)
                 self._history_version += 1
                 await self._save()
                 self.hass.bus.async_fire(EVENT_EDITED, rec)
@@ -2258,6 +2475,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 totals["count"] = max(0, totals.get("count", 0) - 1)
                 if was_newest:
                     self.data["last_price"] = history[0]["preis_kwh"] if history else 0.0
+                self._apply_charge_baselines(rec, -1)
                 self._history_version += 1
                 await self._save()
                 self.hass.bus.async_fire(EVENT_DELETED, rec)
@@ -2546,13 +2764,18 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     def _consumption_by_temp_bucket(self) -> dict:
         """Durchschnittsverbrauch je Temperaturband (siehe engine.
-        consumption_by_temp_bucket()) -- nur Baender mit genug Fahrten
-        (TEMP_BUCKET_MIN_SAMPLES) sind enthalten. Ergebnis wird pro
-        _fahrten_version zwischengespeichert, analog _trip_avg_cache."""
+        consumption_by_temp_bucket_from_totals()) -- nur Baender mit genug
+        Fahrten (TEMP_BUCKET_MIN_SAMPLES) sind enthalten. Berechnet aus
+        einer laufend gepflegten Lebenszeit-Summe je Band (siehe
+        _apply_trip_baselines()) statt aus der vollen fahrten-Liste, bleibt
+        also von einer Archivierung/Kuerzung dieser Liste unberuehrt.
+        Ergebnis wird pro _fahrten_version zwischengespeichert, analog
+        _trip_avg_cache."""
         if self._temp_bucket_cache is not None and self._temp_bucket_cache[0] == self._fahrten_version:
             return self._temp_bucket_cache[1]
-        fahrten = self.data.get("fahrten") or []
-        result = consumption_by_temp_bucket(fahrten, TEMP_BUCKET_BOUNDARIES, TEMP_BUCKET_MIN_SAMPLES)
+        result = consumption_by_temp_bucket_from_totals(
+            self.data.get("temp_bucket_totals") or {}, TEMP_BUCKET_MIN_SAMPLES
+        )
         self._temp_bucket_cache = (self._fahrten_version, result)
         return result
 
@@ -2564,18 +2787,22 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     def equivalent_full_cycles(self) -> float:
         """Aequivalente Vollzyklen aus Fahrtenbuch (Entladung), Fremd- und
-        Heim-Ladungen (Ladung), siehe engine.equivalent_full_cycles(). Wird
-        pro (_fahrten_version, _history_version, _home_capacity_version)
-        zwischengespeichert -- Letzteres, da home_charge_pct_total ueber
-        _record_home_charge_pct() denselben Zaehler wie die Kapazitaets-
-        Stichproben mitbenutzt (siehe dort)."""
+        Heim-Ladungen (Ladung), siehe engine.equivalent_full_cycles_from_totals().
+        Berechnet aus zwei laufend gepflegten Lebenszeit-Summen (siehe
+        _apply_trip_baselines()/_apply_charge_baselines()) statt aus den
+        vollen fahrten/history-Listen, bleibt also von einer Archivierung/
+        Kuerzung dieser Listen unberuehrt. Wird pro (_fahrten_version,
+        _history_version, _home_capacity_version) zwischengespeichert --
+        Letzteres, da home_charge_pct_total ueber _record_home_charge_pct()
+        denselben Zaehler wie die Kapazitaets-Stichproben mitbenutzt (siehe
+        dort)."""
         cache_key = (self._fahrten_version, self._history_version, self._home_capacity_version)
         if self._cycles_cache is not None and self._cycles_cache[0] == cache_key:
             return self._cycles_cache[1]
-        fahrten = self.data.get("fahrten") or []
-        history = self.data.get("history") or []
+        fahrten_discharge = self.data.get("fahrten_discharge_pct_total", 0.0)
+        history_charge = self.data.get("history_charge_pct_total", 0.0)
         home_charge_pct_total = self.data.get("home_charge_pct_total", 0.0)
-        result = equivalent_full_cycles(fahrten, history, home_charge_pct_total)
+        result = equivalent_full_cycles_from_totals(fahrten_discharge, history_charge, home_charge_pct_total)
         self._cycles_cache = (cache_key, result)
         return result
 
@@ -2644,11 +2871,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         home_price), Fremd-kWh/-Kosten aus den bestaetigten Historien-
         Summen, gefahrene km aus _km_driven(), Heim-Solaranteil aus
         home_session_stats(). Zusaetzlich unter "ac_dc" die AC/DC-
-        Aufschluesselung der Fremdladungen (siehe engine.ac_dc_breakdown())
-        -- eigene Funktion statt Teil von charging_location_breakdown(),
-        da diese bewusst nur bereits berechnete Aggregate zusammenfuehrt,
-        waehrend die AC/DC-Einordnung selbst aus den rohen Historien-
-        Eintraegen (kWh/Ladedauer je Ladung) ableitet.
+        Aufschluesselung der Fremdladungen (siehe
+        engine.ac_dc_breakdown_from_totals()) -- eigene Funktion statt Teil
+        von charging_location_breakdown(), da diese bewusst nur bereits
+        berechnete Aggregate zusammenfuehrt, waehrend die AC/DC-Einordnung
+        aus einer eigenen, laufend gepflegten Lebenszeit-Summe je Kategorie
+        stammt (siehe _apply_charge_baselines()) -- bleibt dadurch von
+        einer Archivierung/Kuerzung der history-Liste unberuehrt.
 
         Absichtlich UNGECACHT (bewusst gegen einen Versionszaehler-Cache
         geprueft und verworfen, siehe ChargingLocationSensor/AcChargingKwhSensor/
@@ -2675,11 +2904,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         wuerde sonst fremd.preis_je_kwh verzerren.
 
         Zusaetzlich unter "anbieter" die Fremdladungs-Aufschluesselung nach
-        Ladenetz-/Betreibername (siehe engine.anbieter_breakdown() -- NICHT
-        zu verwechseln mit "ladekarten", das ist WOMIT bezahlt wurde, hier
-        geht es um WO geladen wurde) und unter "bekannte_anbieter" die
-        bisher erfassten Anbieter-Namen fuer die Vorschlagsliste im Panel
-        (siehe engine.bekannte_anbieter()), jeweils nur wenn nicht leer."""
+        Ladenetz-/Betreibername (siehe engine.anbieter_breakdown_from_totals(),
+        ebenfalls aus einer laufend gepflegten Lebenszeit-Summe, siehe
+        _apply_charge_baselines() -- NICHT zu verwechseln mit "ladekarten",
+        das ist WOMIT bezahlt wurde, hier geht es um WO geladen wurde) und
+        unter "bekannte_anbieter" die bisher erfassten Anbieter-Namen fuer
+        die Vorschlagsliste im Panel (siehe engine.bekannte_anbieter() --
+        bewusst weiter aus der aktuellen history-Liste statt aus einer
+        Baseline: laengst nicht mehr genutzte Anbieter duerfen aus dieser
+        reinen Vorschlagsliste ausklingen), jeweils nur wenn nicht leer."""
         home_kwh = self._home_kwh_since_setup()
         home_cost = self._home_cost_since_setup()
         if home_cost is None and home_kwh is not None:
@@ -2696,16 +2929,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             home_kwh, home_cost, extern_kwh, extern_cost, km_driven, home_solar_pct,
             extra_cost=ladekarten.get("gesamt"),
         )
-        history = self.data.get("history") or []
-        ac_dc = ac_dc_breakdown(history, AC_MAX_KW)
+        ac_dc = ac_dc_breakdown_from_totals(self.data.get("ac_dc_totals") or {})
         if ac_dc:
             result["ac_dc"] = ac_dc
         if ladekarten:
             result["ladekarten"] = ladekarten
-        anbieter = anbieter_breakdown(history)
+        anbieter = anbieter_breakdown_from_totals(self.data.get("anbieter_totals") or {})
         if anbieter:
             result["anbieter"] = anbieter
-        bekannte = bekannte_anbieter(history)
+        bekannte = bekannte_anbieter(self.data.get("history") or [])
         if bekannte:
             result["bekannte_anbieter"] = bekannte
         return result
@@ -3058,61 +3290,26 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             co2_per_liter_kg=self._co2_per_liter_kg(),
         )
 
-    def _daily_kwh_from_trips(self) -> dict:
-        """Fahrtenbuch-kWh pro Kalendertag (lokale Zeit, ISO-Datum -> kWh),
-        fuer usage_profile()/engine.py::weekday_usage_profile(). Nutzt pro
-        Fahrt verbrauch_kwh, falls vorhanden, sonst km * Fahrzeug-
-        Durchschnittsverbrauch als Schaetzung (siehe
-        _vehicle_avg_consumption_kwh_per_100km()) -- Fahrten ohne SoC-Delta
-        (z.B. importierte ohne verbrauch_kwh) haetten sonst gar keinen
-        Energiewert.
-
-        Ergebnis wird pro _fahrten_version zwischengespeichert (siehe
-        __init__ und _trip_avg_consumption_kwh()) -- Kehrseite: avg_
-        consumption selbst haengt ueber die seit Einrichtung gefahrenen
-        Gesamt-km/kWh von JEDEM Odo-/Wallbox-Sample ab, wuerde man das mit
-        in den Cache-Schluessel aufnehmen, waere der Cache waehrend einer
-        laufenden Fahrt/Ladung wertlos (genau dort, wo er am meisten
-        bringt). Der Cache haengt daher bewusst NUR an _fahrten_version --
-        die geschaetzte kWh fuer Fahrten ohne verbrauch_kwh (der einzige
-        Ort, an dem avg_consumption ueberhaupt einfliesst) kann dadurch bis
-        zur naechsten Fahrtenbuch-Aenderung geringfuegig hinter dem
-        allerneuesten Durchschnitt zuruecklaufen -- bei einem Lebenszeit-
-        Durchschnitt, der sich pro einzelnem Sample nur marginal
-        verschiebt, in der Praxis nicht wahrnehmbar."""
-        if self._daily_kwh_cache is not None and self._daily_kwh_cache[0] == self._fahrten_version:
-            return self._daily_kwh_cache[1]
-        fahrten = self.data.get("fahrten") or []
-        avg_consumption = self._vehicle_avg_consumption_kwh_per_100km()
-        daily: dict = {}
-        for t in fahrten:
-            ts = t.get("start_ts")
-            if ts is None:
-                continue
-            kwh = t.get("verbrauch_kwh")
-            if kwh is None:
-                km = t.get("km")
-                if km is not None and avg_consumption is not None:
-                    kwh = km * avg_consumption / 100.0
-            if kwh is None:
-                continue
-            day = dt_util.as_local(dt_util.utc_from_timestamp(ts)).date().isoformat()
-            daily[day] = daily.get(day, 0.0) + kwh
-        self._daily_kwh_cache = (self._fahrten_version, daily)
-        return daily
-
     def usage_profile(self) -> Optional[dict]:
         """Durchschnittlicher kWh-Bedarf pro Wochentag (siehe
-        engine.py::weekday_usage_profile()), aus der gesamten
+        engine.py::weekday_usage_profile_from_totals()), aus der gesamten
         Fahrtenbuch-Historie seit der ersten bestaetigten Fahrt. None ohne
         Fahrten oder mit weniger als MIN_USAGE_PROFILE_DAYS Tagen Historie
         (zu wenig fuer ein aussagekraeftiges Profil).
 
+        Berechnet aus zwei laufend gepflegten Lebenszeit-Summen je Wochentag
+        (siehe _apply_trip_baselines()) statt aus einer taeglich
+        aufsummierten vollen fahrten-Liste -- bleibt dadurch von einer
+        Archivierung/Kuerzung dieser Liste unberuehrt; der Beobachtungs-
+        zeitraum-Start ("erste Fahrt") kommt aus dem separat gefuehrten,
+        durch Kuerzung ebenfalls unveraenderten fahrtenbuch_first_ts (siehe
+        _apply_trip_baselines()) statt aus min(start_ts) der aktuellen
+        Liste.
+
         Ergebnis wird pro (_fahrten_version, heutiges Datum) zwischen-
         gespeichert -- das Datum gehoert mit in den Schluessel, weil
         last_date sich auch ohne jede Fahrtenbuch-Aenderung einmal pro Tag
-        weiterbewegt (siehe _fahrten_version-Kommentar in __init__ und bei
-        _daily_kwh_from_trips())."""
+        weiterbewegt (siehe _fahrten_version-Kommentar in __init__)."""
         today = dt_util.now().date().isoformat()
         if (
             self._usage_profile_cache is not None
@@ -3120,14 +3317,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             and self._usage_profile_cache[1] == today
         ):
             return self._usage_profile_cache[2]
-        fahrten = self.data.get("fahrten") or []
-        ts_values = [t["start_ts"] for t in fahrten if t.get("start_ts") is not None]
-        if not ts_values:
+        first_ts = self.data.get("fahrtenbuch_first_ts")
+        if first_ts is None:
             result = None
         else:
-            first_date = dt_util.as_local(dt_util.utc_from_timestamp(min(ts_values))).date().isoformat()
-            result = weekday_usage_profile(
-                self._daily_kwh_from_trips(), first_date, today, min_days=MIN_USAGE_PROFILE_DAYS
+            first_date = dt_util.as_local(dt_util.utc_from_timestamp(first_ts)).date().isoformat()
+            avg_consumption = self._vehicle_avg_consumption_kwh_per_100km()
+            result = weekday_usage_profile_from_totals(
+                self.data.get("weekday_kwh_exact_totals") or {},
+                self.data.get("weekday_km_est_totals") or {},
+                avg_consumption, first_date, today, min_days=MIN_USAGE_PROFILE_DAYS,
             )
         self._usage_profile_cache = (self._fahrten_version, today, result)
         return result

@@ -2,15 +2,20 @@
 
 import pytest
 from engine import (
+    UNBEKANNTER_ANBIETER,
     ChargeDetector,
     ChargeSample,
     EfficiencyCalibrator,
     SignalDebouncer,
     TripDetector,
     TripSample,
-    UNBEKANNTER_ANBIETER,
     ac_dc_breakdown,
+    ac_dc_breakdown_from_totals,
+    ac_dc_bucket_key,
     anbieter_breakdown,
+    anbieter_breakdown_from_totals,
+    apply_ac_dc_delta,
+    apply_anbieter_delta,
     average_efficiency,
     battery_capacity_samples,
     bekannte_anbieter,
@@ -19,9 +24,12 @@ from engine import (
     calculate_savings,
     charge_before_pv_decision,
     charge_cost,
+    charge_pct_of_history_entry,
     charging_location_breakdown,
     consumption_by_temp_bucket,
+    consumption_by_temp_bucket_from_totals,
     equivalent_full_cycles,
+    equivalent_full_cycles_from_totals,
     estimate_battery_capacity_kwh,
     home_capacity_sample,
     home_session_solar_and_cost,
@@ -35,9 +43,16 @@ from engine import (
     pop_pending,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
+    split_by_age,
+    temp_bucket_contribution,
     temperature_bucket,
+    trip_avg_consumption_kwh_from_totals,
+    trip_consumption_contribution,
+    trip_discharge_pct,
+    trip_weekday_kwh_parts,
     update_period_baseline,
     weekday_usage_profile,
+    weekday_usage_profile_from_totals,
 )
 
 
@@ -780,6 +795,52 @@ def test_weekday_usage_profile_durchschnitt_ueber_mehrere_wochen():
     assert profil[1] == 0.0
 
 
+# ----- trip_weekday_kwh_parts()/weekday_usage_profile_from_totals(): --------
+# Baseline-Variante von weekday_usage_profile() (siehe Fahrtenbuch/History-
+# Archivierung, coordinator.py::_apply_trip_baselines()).
+
+def test_trip_weekday_kwh_parts_exakter_verbrauch():
+    assert trip_weekday_kwh_parts({"verbrauch_kwh": 12.0, "km": 50.0}) == ("exact", 12.0)
+
+
+def test_trip_weekday_kwh_parts_ohne_verbrauch_faellt_auf_km_zurueck():
+    assert trip_weekday_kwh_parts({"km": 50.0}) == ("est_km", 50.0)
+
+
+def test_trip_weekday_kwh_parts_ohne_beides_liefert_none():
+    assert trip_weekday_kwh_parts({}) is None
+
+
+def test_weekday_usage_profile_from_totals_exakte_werte_entsprechen_voller_liste():
+    # Montag (wd=0) zweimal mit bekanntem Verbrauch, Samstag (wd=5) zweimal --
+    # muss dieselben Werte liefern wie die volle-Liste-Variante oben.
+    weekday_kwh = {"0": 30.0, "5": 20.0}
+    result = weekday_usage_profile_from_totals(weekday_kwh, {}, None, "2024-01-01", "2024-01-14")
+    assert result[0] == 15.0
+    assert result[5] == 10.0
+    assert result[1] == 0.0
+
+
+def test_weekday_usage_profile_from_totals_schaetzung_nutzt_aktuellen_verbrauch():
+    # Fahrten ohne bekannten Verbrauch: km-Summe wird ERST HIER mit dem
+    # AKTUELLEN Durchschnittsverbrauch multipliziert (siehe Docstring) --
+    # nicht mit einem beim Einsortieren eingefrorenen Wert.
+    weekday_km = {"0": 100.0}  # 100 km an Montagen, kein bekannter Verbrauch
+    result = weekday_usage_profile_from_totals({}, weekday_km, 20.0, "2024-01-01", "2024-01-07", min_days=7)
+    # 100 km * 20 kWh/100km = 20 kWh, auf einen einzigen Montag in der Woche verteilt.
+    assert result[0] == 20.0
+
+
+def test_weekday_usage_profile_from_totals_ohne_avg_consumption_traegt_estimat_nichts_bei():
+    weekday_km = {"0": 100.0}
+    result = weekday_usage_profile_from_totals({}, weekday_km, None, "2024-01-01", "2024-01-07", min_days=7)
+    assert result[0] == 0.0
+
+
+def test_weekday_usage_profile_from_totals_zu_kurzer_zeitraum_liefert_none():
+    assert weekday_usage_profile_from_totals({}, {}, None, "2024-01-01", "2024-01-03", min_days=7) is None
+
+
 # ----- charge_before_pv_decision: Lade-Empfehlung ---------------------------
 
 def test_charge_before_pv_decision_ohne_prognose_akku_reicht():
@@ -1150,6 +1211,65 @@ def test_consumption_by_temp_bucket_ohne_pruefbare_daten_ausgeschlossen():
     assert consumption_by_temp_bucket(fahrten, min_samples=1) == {}
 
 
+def test_temp_bucket_contribution_entspricht_voller_liste_berechnung():
+    rec = {"verbrauch_kwh": 3.0, "km": 20.0, "temp_start": -5.0}
+    assert temp_bucket_contribution(rec) == ("<0°C", 15.0)
+
+
+def test_temp_bucket_contribution_ohne_pruefbare_daten_liefert_none():
+    assert temp_bucket_contribution({"verbrauch_kwh": None, "km": 20.0, "temp_start": 5.0}) is None
+    assert temp_bucket_contribution({"verbrauch_kwh": 3.0, "km": None, "temp_start": 5.0}) is None
+    assert temp_bucket_contribution({"verbrauch_kwh": 3.0, "km": 20.0, "temp_start": None}) is None
+
+
+def test_consumption_by_temp_bucket_from_totals_entspricht_voller_liste():
+    # Dieselben drei Fahrten wie test_consumption_by_temp_bucket_gruppiert_und_mittelt(),
+    # aber als laufend gepflegte Summe/Anzahl je Band (siehe
+    # coordinator.py::_apply_trip_baselines()) statt als volle Liste.
+    totals = {"<0°C": {"sum_pct": 15.0 + 20.0 + 17.5, "count": 3}}
+    result = consumption_by_temp_bucket_from_totals(totals, min_samples=3)
+    assert result == {"<0°C": 17.5}
+
+
+def test_consumption_by_temp_bucket_from_totals_unter_min_samples_ausgeschlossen():
+    totals = {"<0°C": {"sum_pct": 15.0, "count": 2}}
+    assert consumption_by_temp_bucket_from_totals(totals, min_samples=3) == {}
+
+
+# ----- trip_consumption_contribution()/trip_avg_consumption_kwh_from_totals():
+# Baseline-Variante von coordinator._trip_avg_consumption_kwh().
+
+def test_trip_consumption_contribution_exakter_verbrauch():
+    assert trip_consumption_contribution({"verbrauch_kwh": 12.0}) == ("exact", 12.0)
+
+
+def test_trip_consumption_contribution_aus_delta_soc():
+    # -40% SoC -> Bruchteil 0.4 (die nutzbare Kapazitaet wird ERST beim
+    # Lesen angewendet, siehe trip_avg_consumption_kwh_from_totals()).
+    kind, value = trip_consumption_contribution({"delta_soc": -40.0})
+    assert kind == "delta_soc"
+    assert value == pytest.approx(0.4)
+
+
+def test_trip_consumption_contribution_ohne_beides_liefert_none():
+    assert trip_consumption_contribution({}) is None
+
+
+def test_trip_avg_consumption_kwh_from_totals_mischung_exakt_und_geschaetzt():
+    # Ein Eintrag mit exaktem Verbrauch (12 kWh) + einer nur mit delta_soc
+    # (Bruchteil 0.4, bei 45 kWh nutzbarer Kapazitaet -> 18 kWh) -> Schnitt
+    # (12+18)/2 = 15.0, identisch zur alten Live-Berechnung mit denselben
+    # zwei Fahrten.
+    result = trip_avg_consumption_kwh_from_totals(
+        exact_sum_kwh=12.0, exact_count=1, deltasoc_sum_frac=0.4, deltasoc_count=1, usable_kwh=45.0,
+    )
+    assert result == 15.0
+
+
+def test_trip_avg_consumption_kwh_from_totals_ohne_eintraege_liefert_none():
+    assert trip_avg_consumption_kwh_from_totals(0.0, 0, 0.0, 0, 45.0) is None
+
+
 # ----- equivalent_full_cycles ------------------------------------------------
 
 def test_equivalent_full_cycles_ein_voller_zyklus():
@@ -1194,6 +1314,38 @@ def test_equivalent_full_cycles_negativer_heimladungs_gesamtwert_wird_geklemmt()
     fahrten = [{"delta_soc": -10.0}]
     history = []
     assert equivalent_full_cycles(fahrten, history, home_charge_pct_total=-5.0) == 0.05
+
+
+def test_trip_discharge_pct_und_charge_pct_of_history_entry():
+    assert trip_discharge_pct({"delta_soc": -30.0}) == 30.0
+    assert trip_discharge_pct({}) == 0.0
+    assert charge_pct_of_history_entry({"delta_soc": 40.0}) == 40.0
+    assert charge_pct_of_history_entry({"delta_soc": -10.0}) == 0.0  # geklemmt
+    assert charge_pct_of_history_entry({}) == 0.0
+
+
+def test_equivalent_full_cycles_from_totals_entspricht_voller_liste_berechnung():
+    fahrten = [{"delta_soc": -60.0}, {"delta_soc": -40.0}]
+    history = [{"delta_soc": 90.0}, {"delta_soc": -5.0}]  # zweiter Wert wird geklemmt
+    erwartet = equivalent_full_cycles(fahrten, history, home_charge_pct_total=10.0)
+    discharge_total = sum(trip_discharge_pct(r) for r in fahrten)
+    charge_total = sum(charge_pct_of_history_entry(r) for r in history)
+    result = equivalent_full_cycles_from_totals(discharge_total, charge_total, home_charge_pct_total=10.0)
+    assert result == erwartet == 1.0  # (100 + 90 + 10) / 200
+
+
+def test_equivalent_full_cycles_from_totals_bleibt_unveraendert_wenn_alte_eintraege_verschwinden():
+    # Der ganze Sinn der Baseline: wird die Detail-Liste spaeter gekuerzt
+    # (siehe split_by_age()), bleibt equivalent_full_cycles_from_totals()
+    # trotzdem beim ALTEN (korrekten) Ergebnis -- die Summen selbst wurden
+    # nie rueckwirkend veraendert, nur die (hier gar nicht mehr verwendete)
+    # Detail-Liste.
+    result_vor_kuerzung = equivalent_full_cycles_from_totals(100.0, 90.0, home_charge_pct_total=10.0)
+    # Nach einer Kuerzung stuenden dieselben zwei Zahlen weiter unveraendert
+    # in self.data["fahrten_discharge_pct_total"]/["history_charge_pct_total"] --
+    # sie haengen nicht an der (jetzt kuerzeren) Liste.
+    result_nach_kuerzung = equivalent_full_cycles_from_totals(100.0, 90.0, home_charge_pct_total=10.0)
+    assert result_vor_kuerzung == result_nach_kuerzung == 1.0
 
 
 # ----- home_session_solar_and_cost -------------------------------------------
@@ -1482,6 +1634,51 @@ def test_anbieter_breakdown_ladekarten_grundgebuehr_fliesst_nicht_ein():
     assert result["EnBW"]["kosten"] == 5.0
 
 
+# ----- apply_anbieter_delta()/anbieter_breakdown_from_totals(): Baseline-
+# Variante von anbieter_breakdown() (siehe Fahrtenbuch/History-Archivierung).
+
+def test_apply_anbieter_delta_addiert_und_ergebnis_entspricht_voller_liste():
+    history = [
+        {"anbieter": "EnBW", "kwh": 10.0, "kosten": 5.0, "erfasst_ts": 100},
+        {"anbieter": "Ionity", "kwh": 30.0, "kosten": 21.0, "erfasst_ts": 200},
+    ]
+    totals = {}
+    for rec in history:
+        totals = apply_anbieter_delta(totals, rec, 1)
+    result = anbieter_breakdown_from_totals(totals)
+    erwartet = anbieter_breakdown(history)
+    assert result == erwartet
+
+
+def test_apply_anbieter_delta_entfernen_macht_hinzufuegen_rueckgaengig():
+    rec = {"anbieter": "EnBW", "kwh": 10.0, "kosten": 5.0, "erfasst_ts": 100}
+    totals = apply_anbieter_delta({}, rec, 1)
+    totals = apply_anbieter_delta(totals, rec, -1)
+    assert totals == {}
+
+
+def test_apply_anbieter_delta_case_insensitiv_zusammengefuehrt():
+    totals = apply_anbieter_delta({}, {"anbieter": "enbw", "kwh": 5.0, "kosten": 2.5, "erfasst_ts": 100}, 1)
+    # Juengere Ladung mit anderer Schreibweise: kwh/kosten/anzahl summieren
+    # sich, Label wechselt auf die juengere Schreibweise (hoeherer erfasst_ts).
+    totals = apply_anbieter_delta(totals, {"anbieter": "EnBW", "kwh": 10.0, "kosten": 5.0, "erfasst_ts": 200}, 1)
+    result = anbieter_breakdown_from_totals(totals)
+    assert list(result.keys()) == ["EnBW"]
+    assert result["EnBW"]["kwh"] == 15.0
+    assert result["EnBW"]["anzahl"] == 2
+
+
+def test_apply_anbieter_delta_reine_funktion_mutiert_eingabe_nicht():
+    original = {}
+    apply_anbieter_delta(original, {"anbieter": "EnBW", "kwh": 1.0, "erfasst_ts": 1}, 1)
+    assert original == {}
+
+
+def test_anbieter_breakdown_from_totals_leer_liefert_leeres_dict():
+    assert anbieter_breakdown_from_totals({}) == {}
+    assert anbieter_breakdown_from_totals(None) == {}
+
+
 # ----- ladekarte_accrued_cost / ladekarten_summary: Ladekarten-Grundgebuehren
 # (inkl. Gebuehrenstufen, z.B. reduzierter Einfuehrungspreis) -----------------
 
@@ -1684,6 +1881,58 @@ def test_ac_dc_breakdown_leere_historie_liefert_leeres_dict():
     assert ac_dc_breakdown(None) == {}
 
 
+def test_ac_dc_bucket_key_klassifiziert_wie_ac_dc_breakdown():
+    assert ac_dc_bucket_key({"kwh": 10.0, "dauer_min": 60.0}) == "ac"
+    assert ac_dc_bucket_key({"kwh": 30.0, "dauer_min": 20.0}) == "dc"
+    assert ac_dc_bucket_key({"kwh": 10.0}) is None
+    assert ac_dc_bucket_key({}) is None
+
+
+# ----- apply_ac_dc_delta()/ac_dc_breakdown_from_totals(): Baseline-Variante
+# von ac_dc_breakdown() (siehe Fahrtenbuch/History-Archivierung).
+
+def test_apply_ac_dc_delta_addiert_und_ergebnis_entspricht_voller_liste():
+    history = [
+        {"kwh": 10.0, "kosten": 5.0, "dauer_min": 60.0},
+        {"kwh": 30.0, "kosten": 15.0, "dauer_min": 20.0},
+    ]
+    totals = {}
+    for rec in history:
+        totals = apply_ac_dc_delta(totals, rec, 1)
+    assert ac_dc_breakdown_from_totals(totals) == ac_dc_breakdown(history)
+
+
+def test_apply_ac_dc_delta_entfernen_macht_hinzufuegen_rueckgaengig():
+    rec = {"kwh": 10.0, "kosten": 5.0, "dauer_min": 60.0}
+    totals = apply_ac_dc_delta({}, rec, 1)
+    totals = apply_ac_dc_delta(totals, rec, -1)
+    assert totals == {}
+
+
+def test_apply_ac_dc_delta_reklassifizierung_bei_bearbeiteter_dauer():
+    # Bearbeiten kann die Klassifizierung aendern (siehe async_edit_charge()):
+    # alten Stand entfernen, neuen Stand hinzufuegen -- wie beim Delta-Muster
+    # bei "totals" fuer async_edit_trip()/async_edit_charge().
+    old_rec = {"kwh": 10.0, "kosten": 5.0, "dauer_min": 60.0}  # AC
+    new_rec = {"kwh": 10.0, "kosten": 5.0, "dauer_min": 5.0}   # DC (120 kW)
+    totals = apply_ac_dc_delta({}, old_rec, 1)
+    totals = apply_ac_dc_delta(totals, old_rec, -1)
+    totals = apply_ac_dc_delta(totals, new_rec, 1)
+    result = ac_dc_breakdown_from_totals(totals)
+    assert "ac" not in result
+    assert result["dc"]["anzahl"] == 1
+
+
+def test_apply_ac_dc_delta_ohne_einordenbare_daten_aendert_nichts():
+    totals = apply_ac_dc_delta({}, {"kwh": 10.0}, 1)
+    assert totals == {}
+
+
+def test_ac_dc_breakdown_from_totals_leer_liefert_leeres_dict():
+    assert ac_dc_breakdown_from_totals({}) == {}
+    assert ac_dc_breakdown_from_totals(None) == {}
+
+
 # ----- leasing_status ---------------------------------------------------------
 # Gemeinsame Vertragsbasis fuer die meisten Tests: 2026-01-01 bis 2027-01-01
 # (365 Tage), heute = 2026-04-11 (100 vergangene, 265 verbleibende Tage).
@@ -1867,3 +2116,208 @@ def test_leasing_status_verbleibende_tage_null_am_stichtag():
 ])
 def test_leasing_status_fehlende_oder_ungueltige_pflichtfelder_liefert_leeres_dict(kwargs):
     assert leasing_status(**kwargs) == {}
+
+
+# ----- split_by_age(): Grundlage der Fahrtenbuch/History-Archivierung -------
+# (siehe coordinator.py::_async_truncate_lifetime_lists()) -----------------
+
+def test_split_by_age_teilt_nach_schwelle():
+    records = [{"ts": 100}, {"ts": 50}, {"ts": 200}]
+    aktuell, alt = split_by_age(records, "ts", cutoff_ts=100)
+    assert aktuell == [{"ts": 100}, {"ts": 200}]
+    assert alt == [{"ts": 50}]
+
+
+def test_split_by_age_behaelt_reihenfolge():
+    records = [{"ts": 300}, {"ts": 100}, {"ts": 400}]
+    aktuell, _ = split_by_age(records, "ts", cutoff_ts=0)
+    assert aktuell == records  # unveraendert, nicht neu sortiert
+
+
+def test_split_by_age_fehlendes_feld_gilt_als_alt():
+    records = [{"ts": 500}, {"andere_spalte": 1}]
+    aktuell, alt = split_by_age(records, "ts", cutoff_ts=0)
+    assert aktuell == [{"ts": 500}]
+    assert alt == [{"andere_spalte": 1}]
+
+
+def test_split_by_age_leere_liste():
+    assert split_by_age([], "ts", cutoff_ts=100) == ([], [])
+
+
+def test_split_by_age_mutiert_eingabe_nicht():
+    records = [{"ts": 100}]
+    split_by_age(records, "ts", cutoff_ts=0)
+    assert records == [{"ts": 100}]
+
+
+def test_split_by_age_ist_idempotent():
+    records = [{"ts": 100}, {"ts": 50}, {"ts": 200}]
+    aktuell, alt = split_by_age(records, "ts", cutoff_ts=100)
+    # Erneutes Anwenden auf das "aktuell"-Ergebnis mit demselben (oder
+    # einem frueheren) cutoff_ts liefert keine weiteren "alt"-Eintraege.
+    aktuell2, alt2 = split_by_age(aktuell, "ts", cutoff_ts=100)
+    assert aktuell2 == aktuell
+    assert alt2 == []
+
+
+# ----- Kernanforderung: kumulative Kennzahlen bleiben nach dem Archivieren
+# alter Detail-Eintraege UNVERAENDERT -----------------------------------
+#
+# Simuliert eine mehrjaehrige Historie, baut die Lebenszeit-Baselines
+# (siehe coordinator.py::_apply_trip_baselines()/_apply_charge_baselines())
+# einmal record-fuer-record auf und zeigt:
+#   1. Die Baseline-Funktionen liefern zum Zeitpunkt der vollen Historie
+#      EXAKT dieselben Werte wie die alten volle-Liste-Funktionen.
+#   2. Nach einem simulierten Kuerzen (split_by_age(), analog
+#      _async_truncate_lifetime_lists()) liefern die Baseline-Funktionen
+#      WEITERHIN dieselben Werte -- sie lesen die (jetzt kuerzere) Liste
+#      gar nicht mehr.
+#   3. Zum Vergleich: wuerde man (falsch) die alten volle-Liste-Funktionen
+#      auf der gekuerzten Liste weiterlaufen lassen, kaeme ein ANDERES
+#      (zu kleines) Ergebnis heraus -- das ist genau die Verfaelschung,
+#      die die Baselines verhindern.
+
+_JAHRE_SEKUNDEN = 3 * 365 * 86400  # simulierte Gesamtlaenge: 3 Jahre
+
+
+def _synthetische_fahrten(anzahl=36):
+    # Ueber 3 Jahre verteilt, abwechselnd mit exaktem Verbrauch/nur
+    # delta_soc, mit/ohne Temperatur -- ein Querschnitt der echten Felder.
+    fahrten = []
+    for i in range(anzahl):
+        ts = i * (_JAHRE_SEKUNDEN // anzahl)
+        rec = {"start_ts": ts, "km": 20.0 + i}
+        if i % 2 == 0:
+            rec["verbrauch_kwh"] = 3.0 + (i % 5)
+            rec["delta_soc"] = -(rec["verbrauch_kwh"] / 45.0 * 100.0)
+        else:
+            rec["delta_soc"] = -(10.0 + i % 15)
+        if i % 3 == 0:
+            rec["temp_start"] = -5.0 + (i % 30)
+        fahrten.append(rec)
+    return fahrten
+
+
+def _synthetische_history(anzahl=24):
+    anbieter_liste = ["EnBW", "Ionity", None, "Aral pulse"]
+    history = []
+    for i in range(anzahl):
+        ts = i * (_JAHRE_SEKUNDEN // anzahl)
+        rec = {
+            "erfasst_ts": ts,
+            "kwh": 10.0 + i,
+            "kosten": round((10.0 + i) * 0.45, 2),
+            "dauer_min": 20.0 if i % 2 == 0 else 90.0,  # abwechselnd DC/AC
+            "delta_soc": 30.0 + (i % 40),
+            "anbieter": anbieter_liste[i % len(anbieter_liste)],
+        }
+        history.append(rec)
+    return history
+
+
+def test_baselines_entsprechen_voller_liste_und_bleiben_nach_kuerzung_unveraendert():
+    fahrten = _synthetische_fahrten()
+    history = _synthetische_history()
+    home_charge_pct_total = 42.0
+    usable_kwh = 45.0
+
+    # --- 1. Ausgangswerte ueber die volle Liste (alte Berechnung) ---
+    cycles_voll = equivalent_full_cycles(fahrten, history, home_charge_pct_total)
+    ac_dc_voll = ac_dc_breakdown(history)
+    anbieter_voll = anbieter_breakdown(history)
+    temp_voll = consumption_by_temp_bucket(fahrten)
+
+    def _trip_avg_alt(fahrten):
+        # Nachbau der ALTEN coordinator._trip_avg_consumption_kwh()-Formel,
+        # als unabhaengige Referenz (siehe dortigen Docstring vor der
+        # Baseline-Umstellung).
+        values = []
+        for rec in fahrten:
+            v = rec.get("verbrauch_kwh")
+            if v is not None:
+                values.append(float(v))
+                continue
+            d = rec.get("delta_soc")
+            if d is not None:
+                values.append(max(0.0, -d) / 100.0 * usable_kwh)
+        return round(sum(values) / len(values), 2) if values else None
+
+    trip_avg_voll = _trip_avg_alt(fahrten)
+
+    # --- 2. Baselines einmal record-fuer-record aus der VOLLEN Historie
+    # aufbauen (entspricht _migrate_lifetime_baselines()) ---
+    discharge_total = 0.0
+    exact_sum, exact_count = 0.0, 0
+    deltasoc_sum, deltasoc_count = 0.0, 0
+    temp_totals = {}
+    for rec in fahrten:
+        discharge_total += trip_discharge_pct(rec)
+        contribution = trip_consumption_contribution(rec)
+        if contribution is not None:
+            kind, value = contribution
+            if kind == "exact":
+                exact_sum += value
+                exact_count += 1
+            else:
+                deltasoc_sum += value
+                deltasoc_count += 1
+        temp_contribution = temp_bucket_contribution(rec)
+        if temp_contribution is not None:
+            bucket, pct = temp_contribution
+            entry = temp_totals.setdefault(bucket, {"sum_pct": 0.0, "count": 0})
+            entry["sum_pct"] += pct
+            entry["count"] += 1
+
+    charge_total = 0.0
+    ac_dc_totals, anbieter_totals = {}, {}
+    for rec in history:
+        charge_total += charge_pct_of_history_entry(rec)
+        ac_dc_totals = apply_ac_dc_delta(ac_dc_totals, rec, 1)
+        anbieter_totals = apply_anbieter_delta(anbieter_totals, rec, 1)
+
+    # --- 3. Baseline-Ergebnisse muessen den Ausgangswerten entsprechen ---
+    assert equivalent_full_cycles_from_totals(discharge_total, charge_total, home_charge_pct_total) == cycles_voll
+    assert ac_dc_breakdown_from_totals(ac_dc_totals) == ac_dc_voll
+    assert anbieter_breakdown_from_totals(anbieter_totals) == anbieter_voll
+    assert consumption_by_temp_bucket_from_totals(temp_totals) == temp_voll
+    assert trip_avg_consumption_kwh_from_totals(
+        exact_sum, exact_count, deltasoc_sum, deltasoc_count, usable_kwh
+    ) == trip_avg_voll
+
+    # --- 4. Simuliertes Kuerzen: nur die juengere Haelfte bleibt in der
+    # "heissen" Liste, der Rest waere jetzt im Archiv ---
+    cutoff = _JAHRE_SEKUNDEN // 2
+    fahrten_aktuell, fahrten_alt = split_by_age(fahrten, "start_ts", cutoff)
+    history_aktuell, history_alt = split_by_age(history, "erfasst_ts", cutoff)
+    assert fahrten_alt and history_alt  # Testaufbau: tatsaechlich etwas gekuerzt
+
+    # --- 5. Baseline-Ergebnisse sind UNVERAENDERT -- sie haengen nicht an
+    # der (jetzt kuerzeren) Liste, sondern an den bereits berechneten Summen ---
+    assert equivalent_full_cycles_from_totals(discharge_total, charge_total, home_charge_pct_total) == cycles_voll
+    assert ac_dc_breakdown_from_totals(ac_dc_totals) == ac_dc_voll
+    assert anbieter_breakdown_from_totals(anbieter_totals) == anbieter_voll
+    assert consumption_by_temp_bucket_from_totals(temp_totals) == temp_voll
+    assert trip_avg_consumption_kwh_from_totals(
+        exact_sum, exact_count, deltasoc_sum, deltasoc_count, usable_kwh
+    ) == trip_avg_voll
+
+    # --- 6. Gegenprobe: die ALTEN volle-Liste-Funktionen auf der jetzt
+    # gekuerzten Liste weiterlaufen zu lassen, waere FALSCH -- sie liefern
+    # ein anderes (zu kleines) Ergebnis. Das ist die Verfaelschung, die
+    # Aufgabe 2 verhindern soll.
+    cycles_gekuerzt = equivalent_full_cycles(fahrten_aktuell, history_aktuell, home_charge_pct_total)
+    assert cycles_gekuerzt != cycles_voll
+    assert ac_dc_breakdown(history_aktuell) != ac_dc_voll
+    assert anbieter_breakdown(history_aktuell) != anbieter_voll
+
+
+def test_split_by_age_idempotent_auf_bereits_gekuerzter_liste():
+    # Zweiter taeglicher Lauf ohne neu hinzugekommene alte Eintraege darf
+    # nichts mehr veraendern (siehe _async_truncate_lifetime_lists()).
+    fahrten = _synthetische_fahrten()
+    cutoff = _JAHRE_SEKUNDEN // 2
+    aktuell, _ = split_by_age(fahrten, "start_ts", cutoff)
+    aktuell2, alt2 = split_by_age(aktuell, "start_ts", cutoff)
+    assert aktuell2 == aktuell
+    assert alt2 == []

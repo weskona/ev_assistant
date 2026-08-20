@@ -2,6 +2,14 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.70.0] - 2026-08-20
+
+### Added
+
+- **Trip log / charge history archiving**: `fahrten` (trip log) and `history` (external charges) used to grow without bound (documented in `diagnostics.py` since v0.20.1) -- over several years of leasing this inflated both the frequently-saved `.storage` file and every uncached full scan. Entries older than `FAHRTEN_MAX_MONATE`/`HISTORY_MAX_MONATE` (`const.py`, default 24 months each) are now moved daily into a separate, unboundedly-growing archive file -- never deleted. `export_fahrtenbuch` merges the archive with the current list, so the CSV export stays complete; a repeated `import_fahrtenbuch` also checks the archive for duplicates so re-importing doesn't create dupes for already-archived trips.
+- **Guarantee**: savings, €/100km, total kWh/cost, equivalent full cycles, the AC/DC and provider breakdowns, and the consumption-by-temperature-band/weekday averages stay *exactly* unchanged by archiving -- as of this version they're computed from running lifetime totals (maintained incrementally on every add/edit/delete) instead of scanning the full list, so trimming old detail entries can no longer affect them. On upgrade, these totals are backfilled once from the existing history before the first archiving run, so nothing is lost for existing installations either.
+- What's honestly affected: no data is lost (see above), but after archiving, the "full" trip/charge list exposed via entity attributes (`fahrtenbuch`/`historie`) and rendered in the panel only shows the last `FAHRTEN_MAX_MONATE`/`HISTORY_MAX_MONATE` months -- use the `export_fahrtenbuch` service for the complete record. Two intentionally accepted, purely cosmetic approximations, neither affecting any total/average shown anywhere: a provider's display casing (e.g. "EnBW" vs. "enbw") can fall back to an older spelling if the single most recent charge for that provider is later deleted, until the provider is used again; the PV-charging weekday profile (`usage_profile`) still estimates trips with no SoC data using the CURRENT lifetime average consumption (same behavior as before), not the value that was current at the time of that specific trip.
+
 ## [0.69.1] - 2026-08-19
 
 ### Changed

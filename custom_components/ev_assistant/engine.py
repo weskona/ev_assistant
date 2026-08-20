@@ -743,6 +743,132 @@ def weekday_usage_profile(
     return {wd: round(totals[wd] / counts[wd], 2) for wd in range(7)}
 
 
+def trip_weekday_kwh_parts(rec: dict) -> Optional[tuple]:
+    """Beitrag EINER Fahrt zu weekday_usage_profile_from_totals(): ("exact",
+    kwh), wenn verbrauch_kwh bekannt ist -- sonst ("est_km", km), wenn
+    zumindest km bekannt ist (die eigentliche kWh-Schaetzung fuer diesen
+    Fall erfolgt ERST beim Lesen, siehe dort, nicht schon hier). None ohne
+    beides. Der Wochentag selbst kommt aus start_ts -- das ist Sache des
+    Aufrufers (coordinator.py, dt_util-Abhaengigkeit)."""
+    kwh = rec.get("verbrauch_kwh")
+    if kwh is not None:
+        return "exact", float(kwh)
+    km = rec.get("km")
+    if km is not None:
+        return "est_km", float(km)
+    return None
+
+
+def weekday_usage_profile_from_totals(
+    weekday_kwh_totals: dict,
+    weekday_km_est_totals: dict,
+    avg_consumption_kwh_per_100km: Optional[float],
+    first_date: str,
+    last_date: str,
+    min_days: int = 7,
+) -> Optional[dict]:
+    """Wie weekday_usage_profile(), aber aus zwei laufend gepflegten
+    Lebenszeit-Summen je Wochentag (String-Schluessel "0".."6", 0=Montag,
+    siehe trip_weekday_kwh_parts(), inkrementell gepflegt in coordinator.py::
+    _apply_trip_baselines()) statt aus taeglich aufsummierten
+    Fahrtenbuch-kWh der vollen Liste.
+
+    `weekday_kwh_totals`: Summe verbrauch_kwh der Fahrten MIT bekanntem
+    Verbrauch -- exakt, zeitlich eingefroren. `weekday_km_est_totals`:
+    km-Summe der Fahrten OHNE bekannten Verbrauch -- deren kWh-Beitrag wird
+    ERST HIER mit dem AKTUELLEN Fahrzeug-Lebenszeit-Durchschnittsverbrauch
+    (`avg_consumption_kwh_per_100km`) multipliziert, exakt wie es die alte
+    volle-Liste-Berechnung bei JEDEM Aufruf fuer ALLE derartigen Fahrten tat
+    (nicht mit dem zum Zeitpunkt der jeweiligen Fahrt gueltigen Wert) --
+    dadurch bleibt das Ergebnis identisch zur alten Berechnung, auch fuer
+    laengst archivierte/gekuerzte Fahrten. Ohne avg_consumption_kwh_per_100km
+    tragen solche Fahrten 0 bei (identisch zur alten "kwh bleibt None ->
+    wird uebersprungen"-Regel)."""
+    start = date.fromisoformat(first_date)
+    end = date.fromisoformat(last_date)
+    total_days = (end - start).days + 1
+    if total_days < min_days:
+        return None
+    counts = [0] * 7
+    d = start
+    while d <= end:
+        counts[d.weekday()] += 1
+        d += timedelta(days=1)
+    result = {}
+    for wd in range(7):
+        key = str(wd)
+        exact = (weekday_kwh_totals or {}).get(key, 0.0)
+        est_km = (weekday_km_est_totals or {}).get(key, 0.0)
+        est_kwh = (
+            est_km * avg_consumption_kwh_per_100km / 100.0
+            if avg_consumption_kwh_per_100km is not None
+            else 0.0
+        )
+        result[wd] = round((exact + est_kwh) / counts[wd], 2)
+    return result
+
+
+def trip_consumption_contribution(rec: dict) -> Optional[tuple]:
+    """Beitrag EINER Fahrt zu trip_avg_consumption_kwh_from_totals(),
+    aufgeteilt in ("exact", kwh) -- rec["verbrauch_kwh"] ist bereits final
+    -- oder ("delta_soc", bruchteil) -- ein reiner delta_soc-Wert OHNE die
+    zum Zeitpunkt der Abfrage gueltige nutzbare Akkukapazitaet, die wird
+    ERST beim Lesen angewendet (siehe dort) statt schon hier eingefroren,
+    damit das Ergebnis unabhaengig davon identisch zur alten
+    Live-Berechnung bleibt, wann/ob die nutzbare Kapazitaet zwischenzeitlich
+    (Options-Aenderung) angepasst wurde. None ohne beides."""
+    verbrauch = rec.get("verbrauch_kwh")
+    if verbrauch is not None:
+        return "exact", float(verbrauch)
+    delta_soc = rec.get("delta_soc")
+    if delta_soc is not None:
+        return "delta_soc", max(0.0, -delta_soc) / 100.0
+    return None
+
+
+def trip_avg_consumption_kwh_from_totals(
+    exact_sum_kwh: float,
+    exact_count: int,
+    deltasoc_sum_frac: float,
+    deltasoc_count: int,
+    usable_kwh: float,
+) -> Optional[float]:
+    """Wie coordinator._trip_avg_consumption_kwh(), aber aus vier laufend
+    gepflegten Lebenszeit-Summen (siehe trip_consumption_contribution(),
+    inkrementell gepflegt in coordinator.py::_apply_trip_baselines()) statt
+    aus der vollen fahrten-Liste. None ohne einen einzigen beitragenden
+    Eintrag."""
+    total_count = exact_count + deltasoc_count
+    if total_count <= 0:
+        return None
+    total_kwh = exact_sum_kwh + deltasoc_sum_frac * usable_kwh
+    return round(total_kwh / total_count, 2)
+
+
+def split_by_age(records: list, ts_field: str, cutoff_ts: float) -> tuple:
+    """Teilt `records` (fahrten ODER history) nach `ts_field` (z.B.
+    "start_ts"/"erfasst_ts") in (aktuell, alt) -- "aktuell" behaelt die
+    urspruengliche Reihenfolge, "alt" enthaelt alle Eintraege mit
+    ts_field < cutoff_ts ODER FEHLENDEM ts_field (konservativ als "alt"
+    behandelt, damit kaputte/unvollstaendige Legacy-Eintraege nicht auf
+    ewig in der haeufig gespeicherten Liste haengen bleiben -- sie landen
+    aber trotzdem im Archiv, nicht im Nichts, siehe coordinator.py::
+    _async_truncate_lifetime_lists()).
+
+    Reine Funktion, mutiert `records` nicht. Idempotent: ein erneuter
+    Aufruf mit dem "aktuell"-Ergebnis (und unveraendertem/spaeterem
+    cutoff_ts) liefert (aktuell, []) zurueck -- alle verbliebenen
+    Eintraege sind dann bereits >= cutoff_ts."""
+    aktuell, alt = [], []
+    for rec in records:
+        ts = rec.get(ts_field)
+        if ts is not None and ts >= cutoff_ts:
+            aktuell.append(rec)
+        else:
+            alt.append(rec)
+    return aktuell, alt
+
+
 def charge_cost(
     kwh: float, price_kwh: float, start_fee: float = 0.0, block_fee: float = 0.0, time_fee: float = 0.0,
 ) -> float:
@@ -1009,6 +1135,23 @@ def temperature_bucket(temp_c: Optional[float], boundaries: tuple = (0.0, 10.0, 
     return f">{sorted_b[-1]:g}°C"
 
 
+def temp_bucket_contribution(
+    rec: dict, boundaries: tuple = (0.0, 10.0, 20.0)
+) -> Optional[tuple]:
+    """Beitrag EINER Fahrt zu consumption_by_temp_bucket(): (Band, kWh/100km)
+    -- oder None, wenn Verbrauch/km/Start-Temperatur fehlen (siehe dort).
+    Fuer eine laufend gepflegte Lebenszeit-Baseline je Band (siehe
+    consumption_by_temp_bucket_from_totals(), coordinator.py::
+    _apply_trip_baselines())."""
+    verbrauch = rec.get("verbrauch_kwh")
+    km = rec.get("km")
+    temp = rec.get("temp_start")
+    if verbrauch is None or not km or km <= 0 or temp is None:
+        return None
+    bucket = temperature_bucket(temp, boundaries)
+    return bucket, verbrauch / km * 100.0
+
+
 def consumption_by_temp_bucket(
     fahrten: list, boundaries: tuple = (0.0, 10.0, 20.0), min_samples: int = 3
 ) -> dict:
@@ -1021,18 +1164,68 @@ def consumption_by_temp_bucket(
     verbessern."""
     buckets: dict[str, list[float]] = {}
     for rec in fahrten:
-        verbrauch = rec.get("verbrauch_kwh")
-        km = rec.get("km")
-        temp = rec.get("temp_start")
-        if verbrauch is None or not km or km <= 0 or temp is None:
+        contribution = temp_bucket_contribution(rec, boundaries)
+        if contribution is None:
             continue
-        bucket = temperature_bucket(temp, boundaries)
-        buckets.setdefault(bucket, []).append(verbrauch / km * 100.0)
+        bucket, pct = contribution
+        buckets.setdefault(bucket, []).append(pct)
     return {
         bucket: round(sum(values) / len(values), 2)
         for bucket, values in buckets.items()
         if len(values) >= min_samples
     }
+
+
+def consumption_by_temp_bucket_from_totals(temp_bucket_totals: dict, min_samples: int = 3) -> dict:
+    """Wie consumption_by_temp_bucket(), aber aus einer laufend gepflegten
+    Summe/Anzahl je Band (siehe temp_bucket_contribution(), inkrementell
+    gepflegt in coordinator.py::_apply_trip_baselines()) statt aus der
+    vollen fahrten-Liste -- `temp_bucket_totals` je Band: {"sum_pct":
+    Summe der kWh/100km-Werte, "count": Anzahl}. Liefert IDENTISCHE
+    Ergebnisse, unabhaengig davon, ob/wie weit die fahrten-Liste inzwischen
+    archiviert/gekuerzt wurde."""
+    return {
+        bucket: round(v["sum_pct"] / v["count"], 2)
+        for bucket, v in (temp_bucket_totals or {}).items()
+        if v.get("count", 0) >= min_samples
+    }
+
+
+def trip_discharge_pct(rec: dict) -> float:
+    """Entlade-Beitrag (Prozentpunkte) EINER Fahrt zu equivalent_full_cycles()
+    -- 0.0 ohne bekanntes delta_soc. Fuer eine laufend gepflegte Lebenszeit-
+    Baseline (siehe equivalent_full_cycles_from_totals(), coordinator.py::
+    _apply_trip_baselines()), damit die Vollzyklen-Zahl nicht mehr von der
+    Laenge der fahrten-Liste abhaengt."""
+    delta = rec.get("delta_soc")
+    return abs(delta) if delta is not None else 0.0
+
+
+def charge_pct_of_history_entry(rec: dict) -> float:
+    """Lade-Beitrag (Prozentpunkte) EINER Fremdladung zu
+    equivalent_full_cycles() -- auf >= 0 geklemmt (analog dort), 0.0 ohne
+    bekanntes delta_soc. Gegenstueck zu trip_discharge_pct() fuer "history"."""
+    delta = rec.get("delta_soc")
+    return max(0.0, delta) if delta is not None else 0.0
+
+
+def equivalent_full_cycles_from_totals(
+    fahrten_discharge_pct_total: float,
+    history_charge_pct_total: float,
+    home_charge_pct_total: float = 0.0,
+) -> float:
+    """Wie equivalent_full_cycles(), aber aus zwei laufend gepflegten
+    Lebenszeit-Summen (siehe trip_discharge_pct()/charge_pct_of_history_entry(),
+    inkrementell gepflegt in coordinator.py::_apply_trip_baselines()/
+    _apply_charge_baselines()) statt aus den vollen fahrten/history-Listen.
+    Liefert IDENTISCHE Ergebnisse, unabhaengig davon, ob/wie weit die
+    Detail-Listen inzwischen archiviert/gekuerzt wurden (siehe CHANGELOG zur
+    Fahrtenbuch/History-Archivierung) -- die beiden Summen selbst werden nie
+    rueckwirkend durch eine Kuerzung veraendert, nur durch echtes
+    Hinzufuegen/Bearbeiten/Loeschen einzelner Eintraege."""
+    discharge_pct = max(0.0, fahrten_discharge_pct_total)
+    charge_pct = max(0.0, history_charge_pct_total) + max(0.0, home_charge_pct_total)
+    return round((discharge_pct + charge_pct) / 200.0, 2)
 
 
 def equivalent_full_cycles(fahrten: list, history: list, home_charge_pct_total: float = 0.0) -> float:
@@ -1373,17 +1566,35 @@ def ac_dc_breakdown(history: list, ac_max_kw: float = 22.0) -> dict:
     leeres dict."""
     buckets: dict = {}
     for rec in history or []:
-        kwh = rec.get("kwh")
-        dauer_min = rec.get("dauer_min")
-        if kwh is None or not dauer_min:
+        key = ac_dc_bucket_key(rec, ac_max_kw)
+        if key is None:
             continue
-        avg_kw = kwh / (dauer_min / 60.0)
-        key = "dc" if avg_kw > ac_max_kw else "ac"
         bucket = buckets.setdefault(key, {"kwh": 0.0, "kosten": 0.0, "anzahl": 0})
-        bucket["kwh"] += kwh
+        bucket["kwh"] += rec.get("kwh") or 0.0
         bucket["kosten"] += rec.get("kosten") or 0.0
         bucket["anzahl"] += 1
+    return _ac_dc_result_from_buckets(buckets)
 
+
+def ac_dc_bucket_key(rec: dict, ac_max_kw: float = 22.0) -> Optional[str]:
+    """"ac"/"dc"-Einordnung EINES Fremdladungs-Eintrags nach
+    Durchschnittsleistung (siehe ac_dc_breakdown() fuer die volle
+    Begruendung/Grenzen dieser Schaetzung). None, wenn kwh oder dauer_min
+    fehlen -- dann laesst sich der Eintrag nicht einordnen. Fuer eine
+    laufend gepflegte Lebenszeit-Baseline (siehe ac_dc_breakdown_from_totals(),
+    coordinator.py::_apply_charge_baselines())."""
+    kwh = rec.get("kwh")
+    dauer_min = rec.get("dauer_min")
+    if kwh is None or not dauer_min:
+        return None
+    avg_kw = kwh / (dauer_min / 60.0)
+    return "dc" if avg_kw > ac_max_kw else "ac"
+
+
+def _ac_dc_result_from_buckets(buckets: dict) -> dict:
+    """Gemeinsame Aufbereitung (Anteile/Preis je kWh) fuer ac_dc_breakdown()
+    und ac_dc_breakdown_from_totals() -- `buckets` je Kategorie ("ac"/"dc"):
+    {"kwh", "kosten", "anzahl"}."""
     total_kwh = sum(b["kwh"] for b in buckets.values())
     total_cost = sum(b["kosten"] for b in buckets.values())
     result: dict = {}
@@ -1400,6 +1611,43 @@ def ac_dc_breakdown(history: list, ac_max_kw: float = 22.0) -> dict:
         if total_cost > 0:
             entry["kosten_anteil_pct"] = round(bucket["kosten"] / total_cost * 100.0, 1)
         result[key] = entry
+    return result
+
+
+def ac_dc_breakdown_from_totals(ac_dc_totals: dict) -> dict:
+    """Wie ac_dc_breakdown(), aber aus einer laufend gepflegten Summe je
+    Kategorie (siehe ac_dc_bucket_key(), inkrementell gepflegt in
+    coordinator.py::_apply_charge_baselines()) statt aus der vollen
+    history-Liste -- `ac_dc_totals` je Kategorie: {"kwh", "kosten",
+    "anzahl"}. Liefert IDENTISCHE Ergebnisse, unabhaengig davon, ob/wie
+    weit die history-Liste inzwischen archiviert/gekuerzt wurde."""
+    return _ac_dc_result_from_buckets(ac_dc_totals or {})
+
+
+def apply_ac_dc_delta(totals: dict, rec: dict, sign: int, ac_max_kw: float = 22.0) -> dict:
+    """Aktualisiert `totals` (siehe ac_dc_breakdown_from_totals()) um den
+    Beitrag EINES Fremdladungs-Eintrags -- sign=+1 beim Hinzufuegen/
+    Bestaetigen, -1 beim Entfernen; async_edit_charge() ruft dies zweimal
+    auf (-1 fuer den alten, +1 fuer den neuen Stand, siehe coordinator.py),
+    analog dem bestehenden Delta-Muster bei "totals"/"trip_totals". Ein
+    Eintrag, der sich nicht einordnen laesst (siehe ac_dc_bucket_key()),
+    aendert nichts. Eine Kategorie ohne verbleibende Ladung (anzahl <= 0,
+    z.B. nach dem Loeschen der letzten Ladung dieser Kategorie) wird
+    entfernt, nicht mit anzahl=0 aufbewahrt -- analog "kein Bucket ohne
+    qualifizierende Eintraege" bei ac_dc_breakdown(). Reine Funktion:
+    `totals` bleibt unveraendert, ein NEUES dict wird zurueckgegeben."""
+    key = ac_dc_bucket_key(rec, ac_max_kw)
+    if key is None:
+        return totals or {}
+    result = {k: dict(v) for k, v in (totals or {}).items()}
+    bucket = result.setdefault(key, {"kwh": 0.0, "kosten": 0.0, "anzahl": 0})
+    bucket["kwh"] = round(bucket.get("kwh", 0.0) + sign * (rec.get("kwh") or 0.0), 4)
+    bucket["kosten"] = round(bucket.get("kosten", 0.0) + sign * (rec.get("kosten") or 0.0), 4)
+    bucket["anzahl"] = max(0, bucket.get("anzahl", 0) + sign)
+    if bucket["anzahl"] <= 0:
+        result.pop(key, None)
+    else:
+        result[key] = bucket
     return result
 
 
@@ -1486,7 +1734,14 @@ def anbieter_breakdown(history: list) -> dict:
             bucket["kosten"] += kosten
             bucket["has_kosten"] = True
         bucket["anzahl"] += 1
+    return _anbieter_result_from_buckets(buckets)
 
+
+def _anbieter_result_from_buckets(buckets: dict) -> dict:
+    """Gemeinsame Aufbereitung (Anteile/Preis je kWh) fuer anbieter_breakdown()
+    und anbieter_breakdown_from_totals() -- `buckets` je normalisiertem
+    Anbieternamen: {"label", "kwh", "has_kwh", "kosten", "has_kosten",
+    "anzahl"}."""
     if not buckets:
         return {}
     total_kwh = sum(b["kwh"] for b in buckets.values() if b["has_kwh"])
@@ -1505,6 +1760,75 @@ def anbieter_breakdown(history: list) -> dict:
         if bucket["has_kwh"] and bucket["kwh"] > 0 and bucket["has_kosten"]:
             entry["preis_je_kwh"] = round(bucket["kosten"] / bucket["kwh"], 4)
         result[bucket["label"]] = entry
+    return result
+
+
+def anbieter_breakdown_from_totals(anbieter_totals: dict) -> dict:
+    """Wie anbieter_breakdown(), aber aus einer laufend gepflegten Summe je
+    Anbieter (siehe apply_anbieter_delta(), inkrementell gepflegt in
+    coordinator.py::_apply_charge_baselines()) statt aus der vollen
+    history-Liste. Liefert IDENTISCHE kwh-/kosten-/anzahl-Werte,
+    unabhaengig davon, ob/wie weit die history-Liste inzwischen archiviert/
+    gekuerzt wurde -- die Anzeige-Schreibweise (siehe apply_anbieter_delta())
+    ist dabei bestmoeglich, aber nicht in jedem Randfall (Loeschen
+    ausgerechnet der juengsten Ladung eines Anbieters) so exakt wie eine
+    Neuberechnung ueber die volle Liste, siehe dort."""
+    buckets = {
+        key: {
+            "label": b["label"],
+            "anzahl": b["anzahl"],
+            "kwh": b.get("kwh", 0.0),
+            "has_kwh": b.get("kwh_count", 0) > 0,
+            "kosten": b.get("kosten", 0.0),
+            "has_kosten": b.get("kosten_count", 0) > 0,
+        }
+        for key, b in (anbieter_totals or {}).items()
+    }
+    return _anbieter_result_from_buckets(buckets)
+
+
+def apply_anbieter_delta(totals: dict, rec: dict, sign: int) -> dict:
+    """Aktualisiert `totals` (siehe anbieter_breakdown_from_totals()) um den
+    Beitrag EINES Fremdladungs-Eintrags -- sign=+1 beim Hinzufuegen/
+    Bestaetigen, -1 beim Entfernen; async_edit_charge() ruft dies zweimal
+    auf (-1 fuer den alten, +1 fuer den neuen Stand, siehe coordinator.py).
+    Haelt zusaetzlich in "label"/"label_ts" die Anzeige-Schreibweise der
+    ZEITLICH JUENGSTEN Verwendung fest (rec["erfasst_ts"] als Vergleichswert)
+    -- dieselbe Regel wie bekannte_anbieter()/anbieter_breakdown() auf der
+    vollen (neueste-zuerst sortierten) Liste. Wird ausgerechnet die Ladung
+    entfernt, die aktuell die Schreibweise vorgibt, faellt das Label NICHT
+    automatisch auf die zweitjuengste zurueck (das wuerde eine erneute
+    Vollsuche erfordern) -- bleibt bis zur naechsten Ladung mit diesem
+    Anbieter auf dem bisherigen Stand. Rein kosmetisch (nur die
+    Schreibweise, z.B. "EnBW" vs. "enbw"), betrifft NICHT kwh/kosten/anzahl.
+    Eine Kategorie ohne verbleibende Ladung (anzahl <= 0) wird entfernt,
+    nicht mit anzahl=0 aufbewahrt. Reine Funktion: `totals` bleibt
+    unveraendert, ein NEUES dict wird zurueckgegeben."""
+    anbieter = rec.get("anbieter")
+    norm = normalize_anbieter(anbieter) or UNBEKANNTER_ANBIETER.lower()
+    label = anbieter.strip() if anbieter else UNBEKANNTER_ANBIETER
+    ts = rec.get("erfasst_ts") or 0
+    result = {k: dict(v) for k, v in (totals or {}).items()}
+    bucket = result.setdefault(norm, {
+        "label": label, "label_ts": ts, "kwh": 0.0, "kwh_count": 0,
+        "kosten": 0.0, "kosten_count": 0, "anzahl": 0,
+    })
+    kwh = rec.get("kwh")
+    if kwh is not None:
+        bucket["kwh"] = round(bucket.get("kwh", 0.0) + sign * kwh, 4)
+        bucket["kwh_count"] = max(0, bucket.get("kwh_count", 0) + sign)
+    kosten = rec.get("kosten")
+    if kosten is not None:
+        bucket["kosten"] = round(bucket.get("kosten", 0.0) + sign * kosten, 4)
+        bucket["kosten_count"] = max(0, bucket.get("kosten_count", 0) + sign)
+    bucket["anzahl"] = max(0, bucket.get("anzahl", 0) + sign)
+    if sign > 0 and ts >= bucket.get("label_ts", 0):
+        bucket["label"] = label
+        bucket["label_ts"] = ts
+    if bucket["anzahl"] <= 0:
+        result.pop(norm, None)
+    else:
+        result[norm] = bucket
     return result
 
 
