@@ -24,3 +24,15 @@ ignore = [
 # stilistischer Umbau ueber die ganze Codebase ohne funktionalen Nutzen
 # (from __future__ import annotations macht beide Schreibweisen ohnehin
 # aequivalent).
+
+[tool.pytest.ini_options]
+# Noetig, damit pytest-asyncio (Abhaengigkeit von pytest-homeassistant-
+# custom-component, siehe requirements_test.txt/tests/ha/) async Tests/
+# Fixtures automatisch erkennt -- OHNE das bricht bereits das reine
+# Installieren des Pakets alle synchronen Tests in tests/test_engine.py
+# (dessen autouse-async-Fixture "enable_event_loop_debug" laesst sich im
+# strikten Default-Modus nicht an einen synchronen Test andocken). Wirkt
+# sich NICHT aus, wenn nur pytest selbst installiert ist (tests/test_engine.py
+# allein) -- dann nur eine harmlose "Unknown config option"-Warnung, siehe
+# requirements_test.txt.
+asyncio_mode = "auto"

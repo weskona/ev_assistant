@@ -36,3 +36,29 @@ jobs:
 
       - name: Ruff
         uses: astral-sh/ruff-action@v3
+
+  test:
+    name: Test (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # pytest-homeassistant-custom-component (requirements_test.txt) pinnt
+      # eine konkrete Home-Assistant-Version und erfordert deren
+      # Python-Version -- siehe requirements_test.txt fuer die Begruendung,
+      # bei einem Versions-Update dort ggf. mitziehen.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install test dependencies
+        run: pip install -r requirements_test.txt
+
+      # Deckt beide Test-Stile in einem Lauf ab: tests/test_engine.py (reine
+      # Logik, kein HA noetig) und tests/ha/ (Coordinator/config_flow/
+      # __init__ ueber echte hass-/MockConfigEntry-Fixtures, siehe
+      # tests/ha/conftest.py fuer die Koexistenz-Details).
+      - name: Run tests
+        run: pytest tests -q

@@ -292,9 +292,15 @@ Alle Summen und Durchschnittswerte — Ersparnis, €/100 km, Gesamt-kWh/-Kosten
 
 ## Testen
 
-**Unit-Tests (kein HA erforderlich):**
+**Unit-Tests (reine Logik, `tests/test_engine.py`, kein HA erforderlich):**
 ```bash
-python -m pytest tests -q
+python -m pytest tests/test_engine.py -q
+```
+
+**HA-Verdrahtungstests (`tests/ha/`, Config-Flow/Coordinator/Entry-Lifecycle — benötigt `pytest-homeassistant-custom-component`, siehe `requirements_test.txt`):**
+```bash
+pip install -r requirements_test.txt
+pytest tests -q  # laesst beide Suiten zusammen laufen, siehe tests/ha/conftest.py fuer die Koexistenz
 ```
 
 **End-to-End in HA (kein Auto erforderlich):**

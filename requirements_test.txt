@@ -1,0 +1,10 @@
+# Test-Abhaengigkeiten fuer die HA-Verdrahtungsschicht (coordinator/config_flow/
+# __init__, siehe tests/ha/) -- die reine Logik in engine.py (tests/test_engine.py)
+# braucht dafuer weiterhin nur pytest selbst, siehe dortiges conftest.py.
+#
+# pytest-homeassistant-custom-component pinnt homeassistant/pytest/pytest-asyncio
+# etc. transitiv exakt (Requires-Python >=3.14) -- daher hier bewusst NICHT
+# zusaetzlich einzeln pinnen, das wuerde nur mit den eigenen Pins kollidieren
+# koennen. Version bei Bedarf zusammen mit der unterstuetzten HA-Version
+# aktualisieren (das Paket wird taeglich synchron zu Home Assistant releast).
+pytest-homeassistant-custom-component==0.13.356

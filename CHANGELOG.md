@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.70.1] - 2026-08-20
+
+### Changed
+
+- **Test coverage for the HA wiring layer**: `engine.py`'s pure logic has had a thorough pytest suite for a while, but `coordinator.py`/`config_flow.py`/`__init__.py` (Home Assistant setup, config/options flow, storage, entry lifecycle) had none. Added `pytest-homeassistant-custom-component` as a test-only dependency (`requirements_test.txt`) and a new `tests/ha/` suite covering: `_carry_forward()` not losing evcc/wallbox config across a `nur_auswaerts` mode switch and back; `_migrate_lifetime_baselines()` backfilling identical totals from an existing installation's history and staying idempotent on a second run; the fahrten/history archiving roundtrip (entries move to the archive, never vanish, `export_fahrtenbuch`/`import_fahrtenbuch` still see them, cumulative metrics stay unchanged); and the config-entry lifecycle (setup creates the coordinator/entities, unload cleans up `hass.data` without a `KeyError` and flushes a pending debounced save). Pure test hardening — no behavior change, and no impact on the shipped integration (the new files live outside `custom_components/ev_assistant/`, so they're not part of the HACS release). CI gained its first pytest job (`.github/workflows/validate.yml`), running both the existing engine suite and the new one together.
+
 ## [0.70.0] - 2026-08-20
 
 ### Added

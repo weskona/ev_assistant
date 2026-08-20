@@ -292,9 +292,15 @@ All totals and averages — savings, €/100 km, total kWh/cost, `equivalent_ful
 
 ## Testing
 
-**Unit tests (no HA needed):**
+**Unit tests (pure logic, `tests/test_engine.py`, no HA needed):**
 ```bash
-python -m pytest tests -q
+python -m pytest tests/test_engine.py -q
+```
+
+**HA wiring tests (`tests/ha/`, config flow/coordinator/entry lifecycle — needs `pytest-homeassistant-custom-component`, see `requirements_test.txt`):**
+```bash
+pip install -r requirements_test.txt
+pytest tests -q  # runs both suites together, see tests/ha/conftest.py for how they coexist
 ```
 
 **End-to-end in HA (no car needed):**
