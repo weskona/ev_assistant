@@ -134,7 +134,17 @@ class LastCostSensor(EvAssistantEntity, SensorEntity):
     def extra_state_attributes(self):
         hist = self.coordinator.data.get("history") or []
         attrs: dict = dict(hist[0]) if hist else {}
-        attrs["historie"] = hist
+        # Anzeigereihenfolge nach tatsaechlichem Ladebeginn (start_ts), nicht
+        # nach Bestaetigungsreihenfolge (Speicherreihenfolge von "history",
+        # siehe async_log_charge()::insert(0, rec)) -- eine nachtraeglich
+        # manuell erfasste oder spaeter bestaetigte Ladung landet sonst an
+        # der falschen chronologischen Position im Panel. Nur die hier
+        # exponierte Kopie wird sortiert; "history" selbst (u.a. hist[0]
+        # oben, async_edit_charge()'s "war das der juengste Eintrag"-Check)
+        # bleibt bewusst in Bestaetigungsreihenfolge.
+        attrs["historie"] = sorted(
+            hist, key=lambda r: r.get("start_ts") or r.get("erfasst_ts") or 0, reverse=True
+        )
         return attrs
 
 
@@ -734,7 +744,17 @@ class LastTripSensor(EvAssistantEntity, SensorEntity):
     def extra_state_attributes(self):
         fahrten = self.coordinator.data.get("fahrten") or []
         attrs: dict = dict(fahrten[0]) if fahrten else {}
-        attrs["fahrtenbuch"] = fahrten
+        # Anzeigereihenfolge nach start_ts, analog LastCostSensor: normale
+        # Fahrterkennung haelt "fahrten" zwar praktisch immer schon in
+        # dieser Reihenfolge (insert(0, rec) bei monoton steigendem
+        # start_ts, plus expliziter Re-Sort nach Import, siehe
+        # async_import_fahrtenbuch()), aber async_edit_trip(start_ts=...)
+        # aendert start_ts nachtraeglich OHNE Re-Sort -- ohne die Sortierung
+        # hier koennte eine solche Korrektur die Fahrt an der falschen
+        # Position zeigen. Nur die hier exponierte Kopie wird sortiert.
+        attrs["fahrtenbuch"] = sorted(
+            fahrten, key=lambda r: r.get("start_ts") or r.get("erfasst_ts") or 0, reverse=True
+        )
         return attrs
 
 

@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.70.2] - 2026-08-20
+
+### Fixed
+
+- **External charge history displayed out of chronological order**: the `historie` attribute (feeding the panel's charge history list) reflected storage/confirmation order instead of the actual charge time (`start_ts`) — a manually logged or later-confirmed charge could show up in the wrong position relative to other charges, even though its displayed date was already correct. Now sorted by `start_ts` descending (falling back to `erfasst_ts` for the rare entry missing it), matching how the trip log is ordered. `native_value` (e.g. `last_cost`) is unaffected — it intentionally still reflects the most recently *confirmed* entry, not the chronologically latest one.
+- Applied the same fix to the trip log's `fahrtenbuch` attribute: `edit_trip`'s optional `start_ts` correction didn't re-sort the list either, so a corrected trip could likewise end up in the wrong position.
+
 ## [0.70.1] - 2026-08-20
 
 ### Changed
