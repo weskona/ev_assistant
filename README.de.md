@@ -120,7 +120,7 @@ Alle Kilometerstand-Sensoren sind `entity_category: diagnostic`. Die Perioden- u
 |-----|------|--------------|
 | `trip_pending` | Fahrt Erfassung offen | Binary Sensor — **on**, solange ≥ 1 erkannte Fahrt auf Start-/Zielort wartet. |
 | `trip_pending_estimate` | Fahrt ausstehend | Strecke (km) der ältesten offenen Fahrt. |
-| `last_trip_km` | Fahrt km (letzte) | Strecke der zuletzt bestätigten Fahrt. Attribut `fahrtenbuch` enthält die vollständige Historie. Einträge ohne direkt gemeldeten Verbrauch erhalten ihren `verbrauch_kwh`-Wert aus dem SoC-Abfall während der Fahrt geschätzt; liegt diese Schätzung außerhalb eines plausiblen Bands von ca. 8–40 kWh/100 km (Fahrten unter 5 km sind ausgenommen), wird der Eintrag mit `verbrauch_unsicher: true` markiert — im Panel mit ⚠️ angezeigt — da eine Verbindungslücke zum Fahrzeug während der Fahrt den SoC-Wert einfrieren und die Schätzung stark verzerren kann. Wird zurückgesetzt, sobald über `edit_trip` ein echter Wert eingetragen wird. |
+| `last_trip_km` | Fahrt km (letzte) | Strecke der zuletzt bestätigten Fahrt. Attribut `fahrtenbuch` enthält die Fahrtenbuch-Historie der letzten `FAHRTEN_MAX_MONATE` Monate (siehe [Datenaufbewahrung](#datenaufbewahrung) — ältere Fahrten wandern ins Archiv, für den vollständigen Datensatz `export_fahrtenbuch` verwenden). Einträge ohne direkt gemeldeten Verbrauch erhalten ihren `verbrauch_kwh`-Wert aus dem SoC-Abfall während der Fahrt geschätzt; liegt diese Schätzung außerhalb eines plausiblen Bands von ca. 8–40 kWh/100 km (Fahrten unter 5 km sind ausgenommen), wird der Eintrag mit `verbrauch_unsicher: true` markiert — im Panel mit ⚠️ angezeigt — da eine Verbindungslücke zum Fahrzeug während der Fahrt den SoC-Wert einfrieren und die Schätzung stark verzerren kann. Wird zurückgesetzt, sobald über `edit_trip` ein echter Wert eingetragen wird. |
 | `trip_count` | Fahrtenbuch Anzahl | Gesamtanzahl aller bestätigten Fahrten (`state_class: total_increasing`). |
 | `total_trip_km` | Fahrtenbuch km (gesamt) | Laufende Summe aller bestätigten Fahrstrecken (`state_class: total_increasing`). |
 | `trip_avg_consumption` | Fahrtenbuch Durchschnittsverbrauch | Durchschnittlicher Verbrauch in kWh pro Fahrt, über alle Fahrten mit bekanntem Verbrauch (direkt importiert oder aus dem SoC-Delta erkannter Fahrten abgeleitet). `unknown` ohne nutzbare Daten. |
@@ -271,6 +271,14 @@ Wirkungsgrad = (SoC-Gewinn% × nutzbare_kWh) ÷ Wallbox_kWh_Delta
 ```
 
 Nach 3 gültigen Sitzungen (≥ 5 Prozentpunkte SoC-Gewinn, Ergebnis im Bereich 50–100 %) wird der Durchschnitt der letzten 10 Messwerte gebildet und automatisch angewendet — kein Neustart erforderlich. Der Sensor `Ladewirkungsgrad (gemessen)` zeigt den aktuellen Wert und seinen Status.
+
+---
+
+## Datenaufbewahrung
+
+Fahrtenbuch- und Fremdladungs-Einträge sammeln sich an, solange die Integration eingerichtet ist — bei einem Leasingvertrag potenziell über Jahre. Damit die Speicherdatei von Home Assistant und jeder Scan dieser Daten nicht unbegrenzt wächst, wandern Einträge, die älter als `FAHRTEN_MAX_MONATE`/`HISTORY_MAX_MONATE` sind (beide standardmäßig 24 Monate, `const.py`), täglich in eine separate Archivdatei — **nie gelöscht**. `export_fahrtenbuch` liest das Archiv zusammen mit der aktuellen Liste, der CSV-Export deckt also immer alles ab; ein erneuter Aufruf von `import_fahrtenbuch` prüft ebenfalls gegen das Archiv und erzeugt daher keine Dubletten für bereits archivierte Fahrten.
+
+Alle Summen und Durchschnittswerte — Ersparnis, €/100 km, Gesamt-kWh/-Kosten, `equivalent_full_cycles`, die AC/DC- und Anbieter-Aufschlüsselung sowie die Verbrauchs-/Temperaturband-/Wochentags-Werte — werden aus laufend gepflegten Lebenszeit-Summen berechnet, nicht direkt aus den Fahrtenbuch-/Ladehistorie-Listen — die Archivierung ändert sie daher nie. Nur das "aktuelle Fenster", das über die `fahrtenbuch`/`historie`-Entity-Attribute und die Historien-Ansichten im Panel sichtbar ist, schrumpft mit der Zeit; der vollständige Datensatz bleibt über `export_fahrtenbuch` verfügbar.
 
 ---
 

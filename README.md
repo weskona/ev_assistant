@@ -120,7 +120,7 @@ All odometer sensors are `entity_category: diagnostic`. The period and LTS senso
 |-----|------|-------------|
 | `trip_pending` | Trip Capture Open | Binary sensor — **on** while ≥ 1 detected trip awaits a start/end location. |
 | `trip_pending_estimate` | Trip Pending | Distance (km) of the oldest pending trip. |
-| `last_trip_km` | Trip km (last) | Distance of the most recently confirmed trip. Attribute `fahrtenbuch` contains the full trip history list. Entries without a directly-reported consumption get their `verbrauch_kwh` estimated from the SoC drop during the trip; if that estimate falls outside a plausible ~8–40 kWh/100 km band (trips under 5 km are exempt), the entry is marked `verbrauch_unsicher: true` — shown with a ⚠️ in the panel — since a vehicle connectivity gap during the trip can freeze the SoC reading and badly skew the estimate. Cleared once a real value is entered via `edit_trip`. |
+| `last_trip_km` | Trip km (last) | Distance of the most recently confirmed trip. Attribute `fahrtenbuch` contains the trip history list from the last `FAHRTEN_MAX_MONATE` months (see [Data Retention](#data-retention) — older trips move to an archive, use `export_fahrtenbuch` for the full record). Entries without a directly-reported consumption get their `verbrauch_kwh` estimated from the SoC drop during the trip; if that estimate falls outside a plausible ~8–40 kWh/100 km band (trips under 5 km are exempt), the entry is marked `verbrauch_unsicher: true` — shown with a ⚠️ in the panel — since a vehicle connectivity gap during the trip can freeze the SoC reading and badly skew the estimate. Cleared once a real value is entered via `edit_trip`. |
 | `trip_count` | Trip Log Count | Total number of confirmed trips (`state_class: total_increasing`). |
 | `total_trip_km` | Trip Log km (total) | Running total of all confirmed trip distances (`state_class: total_increasing`). |
 | `trip_avg_consumption` | Trip Log Avg Consumption | Average kWh consumed per trip, across all trips with known consumption (imported directly, or derived from SoC delta for detected trips). `unknown` without any usable data. |
@@ -271,6 +271,14 @@ efficiency = (soc_gain% × usable_kWh) ÷ wallbox_kWh_delta
 ```
 
 After 3 valid sessions (≥ 5 pp SoC gain, result in 50–100 % range) it starts averaging the last 10 samples and automatically applies the result — no restart required. The `Charge Efficiency (Measured)` sensor shows the live value and its status.
+
+---
+
+## Data Retention
+
+Trip log and external-charge entries accumulate for as long as the integration is set up — potentially years for a leasing contract. To keep Home Assistant's storage file and every scan of that data bounded, entries older than `FAHRTEN_MAX_MONATE`/`HISTORY_MAX_MONATE` (both 24 months by default, `const.py`) are moved daily into a separate archive file — **never deleted**. `export_fahrtenbuch` reads the archive together with the current list, so the CSV export always covers everything; re-running `import_fahrtenbuch` also checks the archive, so it won't create duplicates for already-archived trips.
+
+All totals and averages — savings, €/100 km, total kWh/cost, `equivalent_full_cycles`, the AC/DC and provider breakdowns, and the consumption-by-temperature-band/weekday figures — are computed from running lifetime totals, not from the trip/charge lists directly, so archiving never changes any of them. Only the "recent window" you see via the `fahrtenbuch`/`historie` entity attributes and the panel's history views shrinks over time; the full record stays available through `export_fahrtenbuch`.
 
 ---
 
