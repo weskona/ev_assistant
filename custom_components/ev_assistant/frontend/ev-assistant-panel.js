@@ -753,6 +753,35 @@ class EVAssistantPanel extends HTMLElement {
   }
 
   _fillVehicleContent(container) {
+    // Lade-Modus (siehe _ladeModus()): Heim- bzw. Fremd-spezifische Elemente
+    // dieser Karte gaenzlich weglassen statt leer/als 0 zu zeigen, analog
+    // _buildOverview() -- ein reiner Heim- bzw. Fremdlader hat vom jeweils
+    // anderen konzeptionell keine Daten. "gemischt" (Default) zeigt beides,
+    // exakt wie vor dieser Aenderung.
+    const modus = this._ladeModus();
+    const showHome = modus !== "nur_auswaerts";
+    const showExt = modus !== "nur_zuhause";
+    // Legende fuer "Ladeuebersicht"/"Kostenuebersicht": im Einmodus nur die
+    // tatsaechlich vorhandene Reihe zeigen (siehe _renderChart()/
+    // _renderChartKosten() fuer den dazugehoerigen series-Filter), sonst
+    // (gemischt) beide wie bisher.
+    const chargeLegend = showHome && showExt
+      ? `<span class="cleg"><span class="cleg-dot home"></span>Heimladen</span>
+         <span class="cleg"><span class="cleg-dot ext"></span>Fremdladung</span>`
+      : showHome
+        ? `<span class="cleg"><span class="cleg-dot home"></span>Heimladen</span>`
+        : `<span class="cleg"><span class="cleg-dot ext"></span>Fremdladung</span>`;
+    // "Solaranteil" ist rein heim-basiert (Solarbezug gibt es nur an der
+    // eigenen Wallbox, nie an fremden Ladepunkten) -- in "nur_auswaerts"
+    // ganz weglassen statt eine bedeutungslose 0%-Spalte zu zeigen.
+    const solarColHtml = showHome ? `
+          <div class="chart-col">
+            <div class="chart-col-title">Solaranteil</div>
+            <div class="chart-legend">
+              <span class="cleg"><span class="cleg-dot solar"></span>Solar Ø</span>
+            </div>
+            <div id="solar-chart"></div>
+          </div>` : "";
     container.innerHTML = `
       <div class="badge-row">
         <div class="badge badge-ext hidden" id="vh-badge-ext">
@@ -875,30 +904,21 @@ class EVAssistantPanel extends HTMLElement {
           <div class="chart-col">
             <div class="chart-col-title">Ladeübersicht</div>
             <div class="chart-legend">
-              <span class="cleg"><span class="cleg-dot home"></span>Heimladen</span>
-              <span class="cleg"><span class="cleg-dot ext"></span>Fremdladung</span>
+              ${chargeLegend}
             </div>
             <div id="overview-chart"></div>
           </div>
           <div class="chart-col">
             <div class="chart-col-title">Kostenübersicht</div>
             <div class="chart-legend">
-              <span class="cleg"><span class="cleg-dot home"></span>Heimladen</span>
-              <span class="cleg"><span class="cleg-dot ext"></span>Fremdladung</span>
+              ${chargeLegend}
             </div>
             <div id="kosten-chart"></div>
-          </div>
-          <div class="chart-col">
-            <div class="chart-col-title">Solaranteil</div>
-            <div class="chart-legend">
-              <span class="cleg"><span class="cleg-dot solar"></span>Solar Ø</span>
-            </div>
-            <div id="solar-chart"></div>
-          </div>
+          </div>${solarColHtml}
         </div>
       </div>
 
-      <div class="vh-3col">
+      <div class="vh-3col">${showHome ? `
         <div class="vh-col">
           <div class="card card-home">
             <div class="card-head">
@@ -926,7 +946,7 @@ class EVAssistantPanel extends HTMLElement {
               <div class="hist-list" id="hist-home-list"></div>
             </div>
           </div>
-        </div>
+        </div>` : ""}${showExt ? `
         <div class="vh-col">
           <div class="card card-ext">
             <div class="card-head">
@@ -970,7 +990,7 @@ class EVAssistantPanel extends HTMLElement {
               <div class="hist-list" id="hist-charge-list"></div>
             </div>
           </div>
-        </div>
+        </div>` : ""}
         <div class="vh-col">
           <div class="card card-trip">
             <div class="card-head">
@@ -996,6 +1016,21 @@ class EVAssistantPanel extends HTMLElement {
           </div>
         </div>
       </div>`;
+
+    // Grid-Spaltenzahl an tatsaechlich vorhandene Karten/Spalten anpassen
+    // (siehe .charts-grid/.vh-3col: repeat(var(--...-cols, 3), 1fr) in den
+    // Stilen weiter unten) -- ohne das bliebe bei einer weggelassenen
+    // Spalte eine leere Luecke im festen 3-Spalten-Raster stehen. Nur bei
+    // tatsaechlich fehlender Spalte gesetzt; ohne Wert greift der Default
+    // (3), optisch identisch zu vorher.
+    if (!showHome) {
+      const chartsGrid = container.querySelector(".charts-grid");
+      if (chartsGrid) chartsGrid.style.setProperty("--charts-cols", "2");
+    }
+    if (modus !== "gemischt") {
+      const vh3col = container.querySelector(".vh-3col");
+      if (vh3col) vh3col.style.setProperty("--vh3-cols", "2");
+    }
 
     const q = (s) => container.querySelector(s);
     this._r = {
@@ -2321,7 +2356,10 @@ class EVAssistantPanel extends HTMLElement {
 
   _updateVehicle() {
     const r = this._r;
-    if (!r.vhExtKwhTotal) return;
+    // Modus-neutraler Guard (statt vhExtKwhTotal, siehe _fillVehicleContent()):
+    // die Heim- bzw. Fremdladung-Karte kann je Lade-Modus fehlen, die
+    // Haupt-Fahrzeugkarte (u.a. vh-odo) dagegen immer.
+    if (!r.vhOdo) return;
 
     r.vhBadgeExt.classList.toggle("hidden", !this._isOn("pending"));
     r.vhBadgeTrip.classList.toggle("hidden", !this._isOn("trip_pending"));
@@ -2338,22 +2376,30 @@ class EVAssistantPanel extends HTMLElement {
     this._renderTripHistory();
     // evcc-Sessions kommen per WS-Abruf (keine reaktive hass.states-Aktualisierung wie
     // sonst) — daher alle 5 Minuten neu holen, damit neu abgeschlossene Heimladungen
-    // auftauchen, ohne bei jedem hass-Update (praktisch dauernd) nachzufragen.
-    if (this._homeSessions === null || Date.now() - this._homeSessionsFetchedAt > 300000) {
-      this._fetchHomeSessions();
-    } else {
-      this._renderHomeHistory();
+    // auftauchen, ohne bei jedem hass-Update (praktisch dauernd) nachzufragen. Ohne
+    // Heimladen-Karte (siehe _fillVehicleContent()) gibt es nichts zu befuellen --
+    // analog _updateOverviewAuswaerts(), das denselben Abruf ebenfalls auslaesst.
+    if (r.histHomeList) {
+      if (this._homeSessions === null || Date.now() - this._homeSessionsFetchedAt > 300000) {
+        this._fetchHomeSessions();
+      } else {
+        this._renderHomeHistory();
+      }
     }
 
-    r.vhExtKwhTotal.textContent  = this._num("total_kwh", 1);
-    r.vhExtCostTotal.textContent = this._num("total_cost", 2);
-    r.vhExtCount.textContent     = this._num("count", 0);
-    r.vhExtKwhLast.textContent   = this._num("last_kwh", 2);
-    r.vhExtCostLast.textContent  = this._num("last_cost", 2);
-    r.vhExtPriceLast.textContent = this._num("last_price", 4);
-    r.vhExtDurLast.textContent   = this._duration("last_duration");
-    r.vhHomeKwh.textContent      = this._num("home_kwh", 1);
-    r.vhHomeCost.textContent     = this._num("home_cost", 2);
+    if (r.vhExtKwhTotal) {
+      r.vhExtKwhTotal.textContent  = this._num("total_kwh", 1);
+      r.vhExtCostTotal.textContent = this._num("total_cost", 2);
+      r.vhExtCount.textContent     = this._num("count", 0);
+      r.vhExtKwhLast.textContent   = this._num("last_kwh", 2);
+      r.vhExtCostLast.textContent  = this._num("last_cost", 2);
+      r.vhExtPriceLast.textContent = this._num("last_price", 4);
+      r.vhExtDurLast.textContent   = this._duration("last_duration");
+    }
+    if (r.vhHomeKwh) {
+      r.vhHomeKwh.textContent      = this._num("home_kwh", 1);
+      r.vhHomeCost.textContent     = this._num("home_cost", 2);
+    }
     r.vhTripCount.textContent    = this._num("trip_count", 0);
     this._renderAllCharts();
     r.vhTripKmTotal.textContent  = this._num("total_trip_km", 0);
@@ -3335,6 +3381,17 @@ class EVAssistantPanel extends HTMLElement {
     this._renderChartSolar();
   }
 
+  // Reihen fuer "Ladeuebersicht"/"Kostenuebersicht" je Lade-Modus (siehe
+  // _fillVehicleContent()/chargeLegend fuer die dazugehoerige Legende) --
+  // die Bucket-Summenbildung selbst bleibt fuer beide Reihen unveraendert,
+  // nur die tatsaechlich gezeichnete/gestapelte Reihe wird gefiltert.
+  _chargeSeries() {
+    const modus = this._ladeModus();
+    if (modus === "nur_zuhause") return [{key: "home", color: "var(--c-home)"}];
+    if (modus === "nur_auswaerts") return [{key: "ext", color: "var(--c-ext)"}];
+    return [{key: "home", color: "var(--c-home)"}, {key: "ext", color: "var(--c-ext)"}];
+  }
+
   _renderChart() {
     const buckets = this._buildBuckets().map(b => ({...b, home: 0, ext: 0}));
     this._homeSessionsFiltered().forEach((s) => {
@@ -3347,8 +3404,7 @@ class EVAssistantPanel extends HTMLElement {
       const kwh = typeof h.kwh === "number" ? h.kwh : 0;
       if (ts != null && kwh > 0) buckets.forEach((b) => { if (ts >= b.start && ts < b.end) b.ext += kwh; });
     });
-    this._svgBarChart(this._r && this._r.overviewChart, buckets,
-      [{key: "home", color: "var(--c-home)"}, {key: "ext", color: "var(--c-ext)"}]);
+    this._svgBarChart(this._r && this._r.overviewChart, buckets, this._chargeSeries());
   }
 
   _renderChartKosten() {
@@ -3363,12 +3419,15 @@ class EVAssistantPanel extends HTMLElement {
       const cost = typeof h.kosten === "number" ? h.kosten : 0;
       if (ts != null && cost > 0) buckets.forEach((b) => { if (ts >= b.start && ts < b.end) b.ext += cost; });
     });
-    this._svgBarChart(this._r && this._r.kostenChart, buckets,
-      [{key: "home", color: "var(--c-home)"}, {key: "ext", color: "var(--c-ext)"}],
-      {});
+    this._svgBarChart(this._r && this._r.kostenChart, buckets, this._chargeSeries(), {});
   }
 
   _renderChartSolar() {
+    // Rein heim-basiert -- ohne Heimladen-Karte (siehe _fillVehicleContent(),
+    // "nur_auswaerts") existiert #solar-chart gar nicht mehr; _svgBarChart()
+    // wuerde das zwar ohnehin selbst abfangen (wrap === null), aber so bleibt
+    // die Absicht hier explizit statt implizit ueber einen fremden Guard.
+    if (this._ladeModus() === "nur_auswaerts") return;
     const buckets = this._buildBuckets().map(b => ({...b, solar: 0, _kwh: 0, _skwh: 0}));
     this._homeSessionsFiltered().forEach((s) => {
       const ts  = s.created ? Date.parse(s.created) / 1000 : null;
@@ -3998,7 +4057,7 @@ class EVAssistantPanel extends HTMLElement {
 
       /* Ladeübersicht Chart */
       .card-head-charts { align-items: flex-start; }
-      .charts-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin-top: 10px; }
+      .charts-grid { display: grid; grid-template-columns: repeat(var(--charts-cols, 3), 1fr); gap: 0; margin-top: 10px; }
       .chart-col { padding: 0 var(--gap); }
       .chart-col:first-child { padding-left: 0; }
       .chart-col:last-child  { padding-right: 0; }
@@ -4037,7 +4096,7 @@ class EVAssistantPanel extends HTMLElement {
       /* Fahrzeuge tab */
       .tab-wrap { display: flex; flex-direction: column; gap: var(--gap); }
       #vh-content { display: flex; flex-direction: column; gap: var(--gap); }
-      .vh-3col { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--gap); align-items: start; }
+      .vh-3col { display: grid; grid-template-columns: repeat(var(--vh3-cols, 3), 1fr); gap: var(--gap); align-items: start; }
       .vh-col  { display: flex; flex-direction: column; gap: var(--gap); }
       .vt-pills { display: flex; gap: 6px; flex-wrap: wrap; }
       .vt-pill {

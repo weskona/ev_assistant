@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.70.3] - 2026-08-22
+
+### Fixed
+
+- **Vehicle card ignored the charging mode**: the mode switch (0.60.0) made the Overview tab mode-aware, but the Vehicle tab's charge/cost charts, solar-share chart, and the Home Charging/External Charging cards still always showed both, regardless of the configured mode — a "home only" setup saw a meaningless external-charging card (and vice versa for "away only"), with data that conceptually doesn't exist in that mode. The Vehicle tab now hides what doesn't apply, matching the Overview tab: "home only" drops the External Charging card and its chart legend/row; "away only" additionally drops the Home Charging card and the solar-share chart entirely (solar only ever applies to home charging). "Mixed" (the default) is unchanged. Panel-only, no sensor/data change.
+
 ## [0.70.2] - 2026-08-20
 
 ### Fixed
