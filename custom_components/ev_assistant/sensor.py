@@ -20,6 +20,7 @@ from .const import (
     DEFAULT_EFFICIENCY,
     DOMAIN,
     EFF_MIN_SAMPLES,
+    WARTUNG_PRESETS,
 )
 from .entity import EvAssistantEntity
 
@@ -80,6 +81,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         UsageProfileSensor(coordinator, entry),
         UsageProfileTomorrowSensor(coordinator, entry),
         AvailableKwhSensor(coordinator, entry),
+        WartungSensor(coordinator, entry),
     ])
 
 
@@ -1099,6 +1101,39 @@ class LadekartenKostenSensor(EvAssistantEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         return self.coordinator.ladekarten_stats()
+
+
+class WartungSensor(EvAssistantEntity, SensorEntity):
+    """Faellige Wartungspunkte (siehe coordinator.py::wartung_stats()/
+    engine.py::wartung_uebersicht()) -- Hauptwert ist die Anzahl Punkte mit
+    Status "bald_faellig" ODER "ueberfaellig" zusammen (fuer eine einfache
+    Automatisierung "wenn > 0"), volle Aufschluesselung je Punkt (Name,
+    Kriterien, berechneter Status/Restkilometer/-tage/Faelligkeitsdatum,
+    siehe engine.wartung_status()) als Attribut "punkte". "naechste" ist
+    der dringendste aktive Punkt (None ohne jede Dringlichkeit). "presets"
+    spiegelt const.WARTUNG_PRESETS 1:1 (Panel-Dropdown zum Anlegen liest
+    das direkt, statt die Vorlagen zusaetzlich im Panel-JS zu duplizieren).
+    unknown, solange kein Wartungspunkt angelegt ist -- absichtlich KEIN
+    Rauschen ohne Konfiguration (analog LadekartenKostenSensor)."""
+
+    _attr_translation_key = "wartung_faellig"
+    _attr_icon = "mdi:wrench-clock"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "wartung_faellig")
+
+    @property
+    def native_value(self):
+        stats = self.coordinator.wartung_stats()
+        if not stats:
+            return None
+        return stats.get("anzahl_bald_faellig", 0) + stats.get("anzahl_ueberfaellig", 0)
+
+    @property
+    def extra_state_attributes(self):
+        attrs = dict(self.coordinator.wartung_stats())
+        attrs["presets"] = [{"key": key, **preset} for key, preset in WARTUNG_PRESETS.items()]
+        return attrs
 
 
 class Co2SavingsSensor(EvAssistantEntity, SensorEntity):

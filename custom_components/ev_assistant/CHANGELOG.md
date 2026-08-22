@@ -2,6 +2,44 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.72.0] - 2026-08-22
+
+### Changed
+
+- **Wartung: km-Rest bei kombinierten Fälligkeitskriterien sichtbar**: a maintenance item with more than one criterion (e.g. "every 20,000 km OR every 730 days") only showed the days-based countdown in the list; the km side was invisible unless it happened to be the winning criterion. The row now leads with the earliest-due criterion ("zuerst fällig: in 313 Tagen (1.7.2027)") and, whenever a km interval is also configured, adds a second line with the actual remaining distance and target ("noch 4.200 km bis 20.000 km") — no duplicate line when km is the only known criterion. No engine change was needed for this — `engine.wartung_status()` already returned `rest_km` alongside a winning non-km criterion; the panel just wasn't showing it.
+- **Wartung: Formular in Gruppen statt einer flachen Feldreihe**: the add form (and the per-item edit form) is now split into labeled sections — Grunddaten (Vorlage + Name, with a hint that picking a preset only pre-fills fields below), Fälligkeit (the three interval fields, with an explicit "at least one required, earliest wins" hint), Letzter Service (km + date paired), and Kosten — instead of 8 same-looking fields in a row. Save/Cancel moved to their own row at the end. The edit form now also disables Save when clearing all three criteria would leave none (previously only enforced server-side, silently doing nothing on click). Groups collapse to a single column on narrow screens. No service/data model change — layout and validation hints only.
+
+## [0.71.4] - 2026-08-22
+
+### Changed
+
+- **Scroll arrow buttons refined once more**: now a small rounded square with a thin border, using the same text color as the tab labels (and the same hover color shift). Purely cosmetic, no behavior change.
+
+## [0.71.3] - 2026-08-22
+
+### Fixed
+
+- **Scroll arrow buttons didn't match the tab bar's design**: the chevron buttons added in 0.71.2 reused the small bordered/boxed icon-button style from list-row actions (edit/delete), which looked out of place next to the flat, borderless tabs. They're now styled to match the tab bar itself — no border/background, full appbar height, same hover color transition as the tabs.
+
+## [0.71.2] - 2026-08-22
+
+### Changed
+
+- **Tab bar / vehicle-switch bar scrolling now uses arrow buttons**: the mouse-wheel scrolling added in 0.71.1 worked but felt unnatural as the only way to reach hidden tabs. Both bars now show a left/right chevron button whenever they actually overflow (hidden again once scrolled all the way to that end, and entirely absent when everything already fits), scrolling by a chunk with a smooth animation on click. Mouse-wheel scrolling over either bar still works as well. Panel-only, no data change.
+
+## [0.71.1] - 2026-08-22
+
+### Fixed
+
+- **Tab bar not scrollable on desktop**: the top tab bar and the (2+ vehicle) vehicle-switch bar scroll horizontally on overflow, but the scrollbar is intentionally hidden and a desktop mouse only produces vertical wheel scroll — with more tabs than fit (now 8, since the Wartung tab), there was no way to reach the hidden ones with a mouse (touch/trackpad swipe already worked). Vertical wheel input over either bar now scrolls it horizontally when it has overflow. Panel-only, no data change.
+
+## [0.71.0] - 2026-08-22
+
+### Added
+
+- **Vehicle maintenance tracking ("Wartung")**: a new "Wartung" panel tab and 4 services (`add_maintenance`, `edit_maintenance`, `delete_maintenance`, `mark_maintenance_done`) for tracking recurring maintenance items (HU/TÜV, inspection, seasonal tire change, brake fluid, ...) per vehicle. Each item can have a km interval, a time interval (days), and/or a fixed due date — any combination, and whichever comes due first decides the status ("OK" / "due soon" / "overdue"), shown as a colored indicator plus "due in X days"/"in Y km". Optional presets (`tuev`, `inspektion`, `reifenwechsel_saisonal`, `innenraumfilter`, `bremsfluessigkeit`, `reifenalter`) only pre-fill the add form's fields as a starting point — every value stays freely editable, and the intervals themselves are common defaults, not manufacturer-specific figures. A new `wartung_faellig` sensor exposes the count of due/overdue items plus the full list as an attribute, and an opt-in notification (like the leasing-budget one) fires once when an item newly becomes due or overdue, without repeating on every check while the status doesn't improve.
+- **Honesty about the km-based due date**: when only a km interval is set (no fixed date), the "due in X days" figure is a *projection* based on the vehicle's recent driving pace (rolling 30-day average) — it shifts as driving pace changes and is not an exact date, unlike a fixed-date or already-logged last-service date. If driving pace is unknown (e.g. right after setup), the km criterion is compared by distance only ("due in X km"), without a projected date.
+
 ## [0.70.3] - 2026-08-22
 
 ### Fixed

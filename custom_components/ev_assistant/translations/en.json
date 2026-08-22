@@ -245,7 +245,8 @@
         "soc_schwelle": "SoC threshold reached",
         "fahrt": "Trip detected",
         "tankerkoenig": "Tankerkönig unavailable",
-        "leasing": "Leasing mileage budget critical"
+        "leasing": "Leasing mileage budget critical",
+        "wartung": "Maintenance due"
       }
     },
     "lade_modus": {
@@ -377,6 +378,9 @@
       },
       "ladekarten_kosten": {
         "name": "Charging Card Costs"
+      },
+      "wartung_faellig": {
+        "name": "Maintenance Due"
       },
       "co2_savings": {
         "name": "CO2 Savings vs. ICE Vehicle"

@@ -33,17 +33,20 @@ NOTIFY_EVENT_SOC_SCHWELLE = "soc_schwelle"
 NOTIFY_EVENT_FAHRT = "fahrt"
 NOTIFY_EVENT_TANKERKOENIG = "tankerkoenig"
 NOTIFY_EVENT_LEASING = "leasing"
+NOTIFY_EVENT_WARTUNG = "wartung"
 NOTIFY_EVENTS = [
     NOTIFY_EVENT_FREMDLADUNG, NOTIFY_EVENT_SOC_SCHWELLE,
     NOTIFY_EVENT_FAHRT, NOTIFY_EVENT_TANKERKOENIG, NOTIFY_EVENT_LEASING,
+    NOTIFY_EVENT_WARTUNG,
 ]
 # Verhaelt sich wie vor Einfuehrung der Auswahl: nur Fremdladung loeste einen
 # Push aus. Tupel statt Liste: DEFAULT_NOTIFY_EVENTS wird an vielen Stellen
 # (mehrere Config Entries, jedes Mal derselbe Objektverweis) als Fallback-
 # Wert zurueckgegeben -- ein Tupel schliesst aus, dass eine versehentliche
 # In-Place-Mutation (z.B. .append()) diesen Fallback fuer alle Entries
-# gleichzeitig verfaelscht. NOTIFY_EVENT_LEASING bewusst NICHT enthalten --
-# jeder, der Leasing einrichtet, soll die Benachrichtigung aktiv dazuwaehlen.
+# gleichzeitig verfaelscht. NOTIFY_EVENT_LEASING/NOTIFY_EVENT_WARTUNG bewusst
+# NICHT enthalten -- jeder, der Leasing/Wartung einrichtet, soll die
+# Benachrichtigung aktiv dazuwaehlen.
 DEFAULT_NOTIFY_EVENTS = (NOTIFY_EVENT_FREMDLADUNG,)
 
 # SoC-Schwellenwerte (%) fuer eine Benachrichtigung waehrend eines laufenden
@@ -394,5 +397,37 @@ SERVICE_EDIT_LADEKARTE = "edit_ladekarte"
 SERVICE_DELETE_LADEKARTE = "delete_ladekarte"
 SERVICE_ADD_LADEKARTE_PREISSTUFE = "add_ladekarte_preisstufe"
 SERVICE_DELETE_LADEKARTE_PREISSTUFE = "delete_ladekarte_preisstufe"
+SERVICE_ADD_MAINTENANCE = "add_maintenance"
+SERVICE_EDIT_MAINTENANCE = "edit_maintenance"
+SERVICE_DELETE_MAINTENANCE = "delete_maintenance"
+SERVICE_MARK_MAINTENANCE_DONE = "mark_maintenance_done"
 
 NOTIFY_TAG = "ev_assistant"
+
+# Interne Schwellwerte fuer engine.wartung_status() -- keine Config-Flow-
+# Felder, analog LEASING_KNAPP_SCHWELLE_PCT/TEMP_BUCKET_MIN_SAMPLES.
+# bald_faellig_km ist nur der FALLBACK, wenn keine Datums-Prognose moeglich
+# ist (kein rollierendes Tempo bekannt, siehe wartung_status()) -- normal
+# entscheidet bald_faellig_tage.
+WARTUNG_BALD_FAELLIG_TAGE = 30.0
+WARTUNG_BALD_FAELLIG_KM = 1000.0
+
+# Eigenes, von _LEASING_ROLLING_WINDOW_DAYS (coordinator.py) isoliertes
+# Rolling-Fenster fuer km_pro_tag in wartung_status() -- bewusst NICHT
+# wiederverwendet/umbenannt, um den bestehenden, getesteten Leasing-Code
+# nicht anzufassen, auch wenn der Wert identisch ist.
+WARTUNG_ROLLING_WINDOW_DAYS = 30
+
+# Wartungs-Vorlagen (siehe coordinator.py::async_add_maintenance()/Panel-Tab
+# "Wartung") -- reine Startwerte fuer km_intervall/zeit_intervall_tage, beim
+# Anlegen frei ueberschreibbar (auch der Name). Intervalle sind grobe,
+# gaengige Herstellerfaustregeln -- im Einzelfall (Fahrzeug-Handbuch/
+# Vertragswerkstatt) koennen sie abweichen, siehe CHANGELOG.
+WARTUNG_PRESETS = {
+    "tuev": {"name": "HU/TÜV", "zeit_intervall_tage": 730},
+    "inspektion": {"name": "Inspektion", "km_intervall": 30000.0, "zeit_intervall_tage": 730},
+    "reifenwechsel_saisonal": {"name": "Reifenwechsel (saisonal)", "zeit_intervall_tage": 182},
+    "innenraumfilter": {"name": "Innenraumfilter", "km_intervall": 30000.0, "zeit_intervall_tage": 730},
+    "bremsfluessigkeit": {"name": "Bremsflüssigkeit", "zeit_intervall_tage": 730},
+    "reifenalter": {"name": "Reifenalter", "zeit_intervall_tage": 2190},
+}

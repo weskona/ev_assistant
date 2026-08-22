@@ -253,6 +253,7 @@ class EVAssistantPanel extends HTMLElement {
       ["analyse",    "mdi:chart-line",             "Analyse"],
       ["leasing",    "mdi:file-document-outline",  "Leasing"],
       ["ladekarten", "mdi:credit-card-multiple-outline", "Ladekarten"],
+      ["wartung",    "mdi:wrench-clock",           "Wartung"],
     ];
     this._tabs = {};
     for (const [id, icon, label] of TAB_DEFS) {
@@ -264,8 +265,60 @@ class EVAssistantPanel extends HTMLElement {
       tabBar.appendChild(btn);
     }
     bar.appendChild(brand);
-    bar.appendChild(tabBar);
+    bar.appendChild(this._buildScrollWrap(tabBar, "tabs-wrap"));
     return bar;
+  }
+
+  // Baut einen horizontal scrollbaren Container mit Pfeil-Buttons an den
+  // Enden -- eine reine overflow-x:auto-Leiste mit ausgeblendetem
+  // Scrollbalken ist am Desktop mit der Maus sonst kaum bedienbar (Mausrad
+  // per _wireHorizontalWheelScroll geht zwar, wirkt aber nicht wie eine
+  // "richtige" Bedienung). Die Pfeile blenden sich per scroll-/resize-
+  // getriebenem updateArrows() automatisch aus, sobald in ihre Richtung
+  // nichts mehr zu scrollen ist (oder gar kein Overflow besteht).
+  _buildScrollWrap(scrollEl, extraClass) {
+    const wrap = document.createElement("div");
+    wrap.className = "scroll-wrap" + (extraClass ? " " + extraClass : "");
+    const prevBtn = document.createElement("button");
+    prevBtn.className = "scroll-arrow hidden";
+    prevBtn.innerHTML = `<ha-icon icon="mdi:chevron-left"></ha-icon>`;
+    const nextBtn = document.createElement("button");
+    nextBtn.className = "scroll-arrow hidden";
+    nextBtn.innerHTML = `<ha-icon icon="mdi:chevron-right"></ha-icon>`;
+
+    const scrollByChunk = (dir) => {
+      scrollEl.scrollBy({ left: dir * Math.round(scrollEl.clientWidth * 0.7), behavior: "smooth" });
+    };
+    prevBtn.addEventListener("click", () => scrollByChunk(-1));
+    nextBtn.addEventListener("click", () => scrollByChunk(1));
+
+    const updateArrows = () => {
+      const overflow = scrollEl.scrollWidth > scrollEl.clientWidth + 1;
+      prevBtn.classList.toggle("hidden", !overflow || scrollEl.scrollLeft <= 0);
+      nextBtn.classList.toggle("hidden",
+        !overflow || scrollEl.scrollLeft >= scrollEl.scrollWidth - scrollEl.clientWidth - 1);
+    };
+    scrollEl.addEventListener("scroll", updateArrows, { passive: true });
+    new ResizeObserver(updateArrows).observe(scrollEl);
+    this._wireHorizontalWheelScroll(scrollEl);
+
+    wrap.appendChild(prevBtn);
+    wrap.appendChild(scrollEl);
+    wrap.appendChild(nextBtn);
+    return wrap;
+  }
+
+  // Desktop-Mäuse liefern nur vertikales Wheel-Delta -- ohne diese
+  // Übersetzung ist eine per overflow-x:auto scrollbare Leiste (Tabs,
+  // Fahrzeug-Umschalter) am Desktop faktisch nicht bedienbar, da der
+  // native Scrollbalken bewusst ausgeblendet ist (schmaleres Design).
+  _wireHorizontalWheelScroll(el) {
+    el.addEventListener("wheel", (e) => {
+      if (el.scrollWidth <= el.clientWidth) return;
+      if (Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    }, { passive: false });
   }
 
   // Eigene Zeile unter der App-Bar, nur wenn mehr als ein Fahrzeug konfiguriert
@@ -275,8 +328,6 @@ class EVAssistantPanel extends HTMLElement {
     this._vtBtns = [];
     if (!vehicles || vehicles.length < 2) return null;
 
-    const row = document.createElement("div");
-    row.className = "vt-bar";
     const pills = document.createElement("div");
     pills.className = "vt-pills";
     vehicles.forEach((v, idx) => {
@@ -287,7 +338,13 @@ class EVAssistantPanel extends HTMLElement {
       this._vtBtns.push(btn);
       pills.appendChild(btn);
     });
-    row.appendChild(pills);
+    const scroll = document.createElement("div");
+    scroll.className = "vt-bar-scroll";
+    scroll.appendChild(pills);
+
+    const row = document.createElement("div");
+    row.className = "vt-bar";
+    row.appendChild(this._buildScrollWrap(scroll));
     return row;
   }
 
@@ -306,6 +363,7 @@ class EVAssistantPanel extends HTMLElement {
     else if (view === "analyse") this._main.appendChild(this._buildAnalyse());
     else if (view === "leasing") this._main.appendChild(this._buildLeasing());
     else if (view === "ladekarten") this._main.appendChild(this._buildLadekarten());
+    else if (view === "wartung") this._main.appendChild(this._buildWartung());
     this._update();
   }
 
@@ -2066,6 +2124,344 @@ class EVAssistantPanel extends HTMLElement {
     });
   }
 
+  // --- Tab: Wartung -------------------------------------------------------------
+
+  _wartungPresets() {
+    const eid = this._eid("wartung_faellig");
+    const s = eid && this._hass ? this._hass.states[eid] : null;
+    return (s && Array.isArray((s.attributes || {}).presets)) ? s.attributes.presets : [];
+  }
+
+  _buildWartung() {
+    const wrap = document.createElement("div");
+    wrap.className = "tab-wrap";
+    wrap.innerHTML = `
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:wrench-clock"></ha-icon></span><h2>Wartung</h2>
+          <button class="btn btn-ghost wt-add-toggle" style="margin-left:auto">
+            <ha-icon icon="mdi:plus" style="--mdc-icon-size:14px;vertical-align:-2px"></ha-icon> Wartungspunkt anlegen
+          </button>
+        </div>
+        <div class="hist-edit-form grouped hidden" id="wt-add-form">
+          <div class="wt-group">
+            <label>Vorlage (optional)<select class="wt-preset"><option value="">— eigene —</option></select></label>
+            <label>Name<input type="text" class="wt-name" placeholder="z.B. Inspektion"></label>
+          </div>
+          <div class="dim wt-group-hint">Vorlage füllt die Felder unten vor — danach frei überschreibbar.</div>
+          <div class="wt-group">
+            <div class="sub-head wt-group-title">Fälligkeit</div>
+            <div class="dim wt-group-hint">Mindestens ein Kriterium angeben. Bei mehreren gilt, was zuerst eintritt.</div>
+            <label>Kilometer-Intervall (optional)<input type="text" inputmode="decimal" class="wt-km-intervall" placeholder="z.B. 30000"></label>
+            <label>Zeit-Intervall in Tagen (optional)<input type="text" inputmode="decimal" class="wt-zeit-intervall" placeholder="z.B. 730"></label>
+            <label>Festes Fälligkeitsdatum (optional)<input type="date" class="wt-festes-datum"></label>
+          </div>
+          <div class="wt-group">
+            <div class="sub-head wt-group-title">Letzter Service (optional)</div>
+            <label>Kilometerstand<input type="text" inputmode="decimal" class="wt-last-km" placeholder="optional"></label>
+            <label>Datum<input type="date" class="wt-last-datum"></label>
+          </div>
+          <div class="wt-group">
+            <label>Kosten € (optional)<input type="text" inputmode="decimal" class="wt-kosten" placeholder="0,00"></label>
+          </div>
+          <div class="wt-group wt-group-actions">
+            <button class="btn btn-primary wt-save" disabled>Speichern</button>
+            <button class="btn btn-ghost wt-cancel">Abbrechen</button>
+          </div>
+        </div>
+        <div class="profil-empty" id="wt-empty">
+          Noch kein Wartungspunkt angelegt — z.B. HU/TÜV, Inspektion oder Reifenwechsel, fällig nach
+          Kilometerstand, Zeit oder beidem ("je nachdem was zuerst kommt").
+        </div>
+        <div class="hidden" id="wt-content">
+          <div class="hist-list" id="wt-list"></div>
+        </div>
+      </div>`;
+
+    const q = (s) => wrap.querySelector(s);
+    this._r.wtEmpty = q("#wt-empty");
+    this._r.wtContent = q("#wt-content");
+    this._r.wtList = q("#wt-list");
+    this._r.wtPresetSelect = q(".wt-preset");
+
+    this._wireWartungAddForm(wrap);
+    return wrap;
+  }
+
+  _wireWartungAddForm(container) {
+    const toggle = container.querySelector(".wt-add-toggle");
+    const form = container.querySelector("#wt-add-form");
+    if (!toggle || !form) return;
+    const presetSelect = form.querySelector(".wt-preset");
+    const nameInput = form.querySelector(".wt-name");
+    const kmInput = form.querySelector(".wt-km-intervall");
+    const zeitInput = form.querySelector(".wt-zeit-intervall");
+    const festInput = form.querySelector(".wt-festes-datum");
+    const kostenInput = form.querySelector(".wt-kosten");
+    const lastKmInput = form.querySelector(".wt-last-km");
+    const lastDatumInput = form.querySelector(".wt-last-datum");
+    const saveBtn = form.querySelector(".wt-save");
+    const cancelBtn = form.querySelector(".wt-cancel");
+
+    const updateValidity = () => {
+      const hatKriterium = kmInput.value.trim() || zeitInput.value.trim() || festInput.value;
+      saveBtn.disabled = !nameInput.value.trim() || !hatKriterium;
+    };
+    [nameInput, kmInput, zeitInput].forEach((el) => el.addEventListener("input", updateValidity));
+    festInput.addEventListener("change", updateValidity);
+
+    // Vorlage befuellt nur LEERE Felder -- bleibt danach frei ueberschreibbar
+    // (siehe const.py::WARTUNG_PRESETS-Docstring, "Presets sind nur Startwerte").
+    presetSelect.addEventListener("change", () => {
+      const preset = this._wartungPresets().find((p) => p.key === presetSelect.value);
+      if (!preset) return;
+      if (!nameInput.value.trim()) nameInput.value = preset.name || "";
+      if (!kmInput.value.trim() && preset.km_intervall != null) kmInput.value = preset.km_intervall;
+      if (!zeitInput.value.trim() && preset.zeit_intervall_tage != null) zeitInput.value = preset.zeit_intervall_tage;
+      updateValidity();
+    });
+
+    toggle.addEventListener("click", () => {
+      const opening = form.classList.contains("hidden");
+      form.classList.toggle("hidden");
+      if (opening) {
+        presetSelect.value = "";
+        nameInput.value = "";
+        kmInput.value = "";
+        zeitInput.value = "";
+        festInput.value = "";
+        kostenInput.value = "";
+        lastKmInput.value = "";
+        lastDatumInput.value = "";
+        updateValidity();
+      }
+    });
+    cancelBtn.addEventListener("click", () => form.classList.add("hidden"));
+    saveBtn.addEventListener("click", () => {
+      const name = nameInput.value.trim();
+      const km = parseFloat(kmInput.value.replace(",", "."));
+      const zeit = parseInt(zeitInput.value, 10);
+      if (!name || (isNaN(km) && isNaN(zeit) && !festInput.value)) return;
+      const payload = { name };
+      if (!isNaN(km)) payload.km_intervall = km;
+      if (!isNaN(zeit)) payload.zeit_intervall_tage = zeit;
+      if (festInput.value) payload.festes_datum = festInput.value;
+      const kosten = parseFloat(kostenInput.value.replace(",", "."));
+      if (!isNaN(kosten)) payload.kosten = kosten;
+      const lastKm = parseFloat(lastKmInput.value.replace(",", "."));
+      if (!isNaN(lastKm)) payload.last_done_km = lastKm;
+      if (lastDatumInput.value) payload.last_done_datum = lastDatumInput.value;
+      this._call("add_maintenance", payload);
+      form.classList.add("hidden");
+    });
+  }
+
+  _renderWartungPresetOptions() {
+    const select = this._r.wtPresetSelect;
+    if (!select) return;
+    const presets = this._wartungPresets();
+    const sig = presets.map((p) => p.key).join(",");
+    if (sig === this._wtPresetSig) return;
+    this._wtPresetSig = sig;
+    select.innerHTML = `<option value="">— eigene —</option>`
+      + presets.map((p) => `<option value="${p.key}">${p.name}</option>`).join("");
+  }
+
+  _updateWartung() {
+    const r = this._r;
+    if (!r.wtContent) return;
+    this._renderWartungPresetOptions();
+    const eid = this._eid("wartung_faellig");
+    const state = eid ? this._hass.states[eid] : null;
+    const punkte = (state && Array.isArray((state.attributes || {}).punkte)) ? state.attributes.punkte : [];
+    const hasPunkte = punkte.length > 0;
+    r.wtEmpty.classList.toggle("hidden", hasPunkte);
+    r.wtContent.classList.toggle("hidden", !hasPunkte);
+    if (!hasPunkte) return;
+    this._renderWartungList(punkte);
+  }
+
+  _renderWartungList(punkte) {
+    const list = this._r.wtList;
+    if (!list) return;
+    const sig = punkte.map((p) =>
+      `${p.id}:${p.name}:${p.km_intervall}:${p.zeit_intervall_tage}:${p.festes_datum}:`
+      + `${JSON.stringify(p.last_done)}:${p.kosten}:${p.aktiv}`
+    ).join("|");
+    if (sig === this._wtSig && list.dataset.built === "1") return;
+    this._wtSig = sig;
+    list.dataset.built = "1";
+    list.innerHTML = "";
+    const STATUS_LABELS = { ok: "OK", bald_faellig: "Bald fällig", ueberfaellig: "Überfällig", unbekannt: "Unbekannt" };
+    const STATUS_COLORS = { ok: "#4ade80", bald_faellig: "#f97316", ueberfaellig: "#ef4444", unbekannt: "var(--ink-dim)" };
+    const fmtDate = (iso) => {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      return isNaN(d.getTime()) ? iso : d.toLocaleDateString("de-DE");
+    };
+    punkte.forEach((p) => {
+      const row = document.createElement("div");
+      row.className = "hist-card";
+      const color = STATUS_COLORS[p.status] || STATUS_COLORS.unbekannt;
+      const label = STATUS_LABELS[p.status] || p.status;
+      // Das FRUEHERE (bereits von engine.wartung_status() ermittelte) Kriterium
+      // fuehrt die Anzeige an. rest_km bleibt laut engine.wartung_status() auch
+      // erhalten, wenn ein ANDERES Kriterium gewinnt -- dann als eigene
+      // "noch X km bis Y km"-Zusatzzeile mit Zielwert (last_done.km +
+      // km_intervall). Nur wenn rest_km die EINZIGE bekannte Groesse ist
+      // (kein rest_tage, z.B. km_pro_tag unbekannt), wird es stattdessen zur
+      // Primaerzeile -- sonst waere die Zusatzzeile ein reines Duplikat.
+      let primaryText = null;
+      if (p.rest_tage != null) {
+        primaryText = `zuerst fällig: ${p.rest_tage >= 0 ? "in" : "vor"} ${Math.abs(p.rest_tage)} Tag(en)`;
+        if (p.faellig_datum) primaryText += ` (${fmtDate(p.faellig_datum)})`;
+      } else if (p.rest_km != null) {
+        primaryText = `zuerst fällig: ${p.rest_km >= 0 ? "in" : "vor"} ${this._fmtNum(Math.abs(p.rest_km), 0)} km`;
+      }
+      let secondaryKmText = null;
+      if (p.rest_tage != null && p.rest_km != null) {
+        const zielKm = (p.last_done && p.last_done.km != null && p.km_intervall)
+          ? p.last_done.km + p.km_intervall : null;
+        const abs = this._fmtNum(Math.abs(p.rest_km), 0);
+        secondaryKmText = p.rest_km >= 0
+          ? `noch ${abs} km` + (zielKm != null ? ` bis ${this._fmtNum(zielKm, 0)} km` : "")
+          : `${abs} km über` + (zielKm != null ? ` ${this._fmtNum(zielKm, 0)} km` : " Fälligkeit");
+      }
+      const statusLine = [label];
+      if (p.status !== "unbekannt") {
+        if (primaryText) statusLine.push(primaryText);
+        if (secondaryKmText) statusLine.push(secondaryKmText);
+      }
+      const kriterien = [];
+      if (p.km_intervall) kriterien.push(`alle ${this._fmtNum(p.km_intervall, 0)} km`);
+      if (p.zeit_intervall_tage) kriterien.push(`alle ${p.zeit_intervall_tage} Tage`);
+      if (p.festes_datum) kriterien.push(`fest: ${fmtDate(p.festes_datum)}`);
+      const lastDoneParts = [];
+      if (p.last_done && p.last_done.km != null) lastDoneParts.push(`${this._fmtNum(p.last_done.km, 0)} km`);
+      if (p.last_done && p.last_done.datum) lastDoneParts.push(fmtDate(p.last_done.datum));
+      row.innerHTML = `
+        <div class="hist-top">
+          <span class="hist-date">
+            <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:6px"></span>
+            ${p.name}${p.aktiv === false ? ` <span class="hist-meta">· pausiert</span>` : ""}
+          </span>
+          <div class="hist-actions">
+            <button class="btn-icon sm wt-done" title="Als erledigt markieren"><ha-icon icon="mdi:check"></ha-icon></button>
+            <button class="btn-icon sm wt-edit" title="Bearbeiten"><ha-icon icon="mdi:pencil"></ha-icon></button>
+            <button class="btn-icon sm wt-delete" title="Löschen"><ha-icon icon="mdi:delete"></ha-icon></button>
+          </div>
+        </div>
+        <div class="hist-figures">
+          <div class="hist-figures-left">
+            <span class="hist-price" style="color:${color}">${statusLine.join(" · ")}</span>
+            <span class="hist-fee">${kriterien.join(" · ") || "kein Kriterium"}</span>
+            <span class="hist-fee">Letzter Service: ${lastDoneParts.join(" · ") || "—"}</span>
+          </div>
+          ${p.kosten != null ? `<span class="hist-cost">${this._fmtNum(p.kosten, 2)} €</span>` : ""}
+        </div>
+        <div class="hist-edit-form grouped hidden">
+          <div class="wt-group">
+            <label>Name<input type="text" class="wte-name" value="${p.name}"></label>
+            <label><input type="checkbox" class="wte-aktiv" ${p.aktiv !== false ? "checked" : ""}> Aktiv</label>
+          </div>
+          <div class="wt-group">
+            <div class="sub-head wt-group-title">Fälligkeit</div>
+            <div class="dim wt-group-hint">Mindestens ein Kriterium angeben. Bei mehreren gilt, was zuerst eintritt.</div>
+            <label>Kilometer-Intervall (leer = kein Kriterium)<input type="text" inputmode="decimal" class="wte-km" value="${p.km_intervall ?? ""}"></label>
+            <label>Zeit-Intervall in Tagen (leer = kein Kriterium)<input type="text" inputmode="decimal" class="wte-zeit" value="${p.zeit_intervall_tage ?? ""}"></label>
+            <label>Festes Fälligkeitsdatum (leer = kein Kriterium)<input type="date" class="wte-fest" value="${p.festes_datum || ""}"></label>
+          </div>
+          <div class="wt-group">
+            <div class="sub-head wt-group-title">Letzter Service</div>
+            <label>Kilometerstand<input type="text" inputmode="decimal" class="wte-last-km" value="${(p.last_done && p.last_done.km != null) ? p.last_done.km : ""}"></label>
+            <label>Datum<input type="date" class="wte-last-datum" value="${(p.last_done && p.last_done.datum) ? p.last_done.datum : ""}"></label>
+          </div>
+          <div class="wt-group">
+            <label>Kosten €<input type="text" inputmode="decimal" class="wte-kosten" value="${p.kosten ?? ""}"></label>
+          </div>
+          <div class="wt-group wt-group-actions">
+            <button class="btn btn-primary wte-save">Speichern</button>
+            <button class="btn btn-ghost wte-cancel">Abbrechen</button>
+          </div>
+        </div>
+        <div class="hist-delete-confirm hidden">
+          <span class="hist-delete-text">Diesen Wartungspunkt dauerhaft löschen?</span>
+          <button class="btn btn-danger wtd-confirm">Löschen</button>
+          <button class="btn btn-ghost wtd-cancel">Abbrechen</button>
+        </div>`;
+      const form = row.querySelector(".hist-edit-form");
+      const delConfirm = row.querySelector(".hist-delete-confirm");
+      const wteKm = row.querySelector(".wte-km");
+      const wteZeit = row.querySelector(".wte-zeit");
+      const wteFest = row.querySelector(".wte-fest");
+      const wteSave = row.querySelector(".wte-save");
+      // Server lehnt das Entfernen des letzten Kriteriums ohnehin ab
+      // (async_edit_maintenance()), aber ohne clientseitige Sperre wuerde
+      // ein Klick auf Speichern dabei stillschweigend nichts tun.
+      const updateEditValidity = () => {
+        wteSave.disabled = !wteKm.value.trim() && !wteZeit.value.trim() && !wteFest.value;
+      };
+      [wteKm, wteZeit].forEach((el) => el.addEventListener("input", updateEditValidity));
+      wteFest.addEventListener("change", updateEditValidity);
+      updateEditValidity();
+      row.querySelector(".wt-done").addEventListener("click", () => {
+        this._call("mark_maintenance_done", { wartung_id: p.id });
+      });
+      row.querySelector(".wt-edit").addEventListener("click", () => {
+        delConfirm.classList.add("hidden");
+        form.classList.toggle("hidden");
+      });
+      row.querySelector(".wte-cancel").addEventListener("click", () => form.classList.add("hidden"));
+      row.querySelector(".wte-save").addEventListener("click", () => {
+        const payload = { wartung_id: p.id };
+        const name = row.querySelector(".wte-name").value.trim();
+        if (name) payload.name = name;
+        const kmVal = row.querySelector(".wte-km").value.trim();
+        if (kmVal === "") {
+          payload.km_intervall = "";
+        } else {
+          const v = parseFloat(kmVal.replace(",", "."));
+          if (!isNaN(v)) payload.km_intervall = v;
+        }
+        const zeitVal = row.querySelector(".wte-zeit").value.trim();
+        if (zeitVal === "") {
+          payload.zeit_intervall_tage = "";
+        } else {
+          const v = parseInt(zeitVal, 10);
+          if (!isNaN(v)) payload.zeit_intervall_tage = v;
+        }
+        payload.festes_datum = row.querySelector(".wte-fest").value || "";
+        const kostenVal = row.querySelector(".wte-kosten").value.trim();
+        if (kostenVal === "") {
+          payload.kosten = "";
+        } else {
+          const v = parseFloat(kostenVal.replace(",", "."));
+          if (!isNaN(v)) payload.kosten = v;
+        }
+        const lastKmVal = row.querySelector(".wte-last-km").value.trim();
+        if (lastKmVal !== "") {
+          const v = parseFloat(lastKmVal.replace(",", "."));
+          if (!isNaN(v)) payload.last_done_km = v;
+        }
+        const lastDatumVal = row.querySelector(".wte-last-datum").value;
+        if (lastDatumVal) payload.last_done_datum = lastDatumVal;
+        payload.aktiv = row.querySelector(".wte-aktiv").checked;
+        this._call("edit_maintenance", payload);
+        form.classList.add("hidden");
+      });
+      row.querySelector(".wt-delete").addEventListener("click", () => {
+        form.classList.add("hidden");
+        delConfirm.classList.toggle("hidden");
+      });
+      row.querySelector(".wtd-cancel").addEventListener("click", () => delConfirm.classList.add("hidden"));
+      row.querySelector(".wtd-confirm").addEventListener("click", () => {
+        this._call("delete_maintenance", { wartung_id: p.id });
+        delConfirm.classList.add("hidden");
+      });
+      list.appendChild(row);
+    });
+  }
+
   // --- Update loop ------------------------------------------------------------
 
   _update() {
@@ -2077,6 +2473,7 @@ class EVAssistantPanel extends HTMLElement {
     else if (this._view === "analyse") this._updateAnalyse();
     else if (this._view === "leasing") this._updateLeasing();
     else if (this._view === "ladekarten") this._updateLadekarten();
+    else if (this._view === "wartung") this._updateWartung();
   }
 
   _updateOverview() {
@@ -3881,7 +4278,18 @@ class EVAssistantPanel extends HTMLElement {
       }
       .brand .bt-name { font-size: 15px; font-weight: 700; }
       .brand .bt-sub  { font-size: 11px; color: var(--ink-dim); margin-top: 1px; }
-      .tabs { display: flex; align-items: stretch; gap: 2px; height: 100%; overflow-x: auto; scrollbar-width: none; }
+      /* Scrollbare Leiste mit Pfeil-Buttons (Tab-Leiste, Fahrzeug-Umschalter) --
+         siehe _buildScrollWrap(). */
+      .scroll-wrap { display: flex; align-items: center; gap: 4px; min-width: 0; flex: 1; }
+      .tabs-wrap { align-items: stretch; height: 100%; }
+      .scroll-arrow {
+        flex-shrink: 0; align-self: center; display: flex; align-items: center; justify-content: center;
+        width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line-s);
+        background: none; cursor: pointer; color: var(--ink-mid); --mdc-icon-size: 16px;
+        transition: color 0.15s, border-color 0.15s;
+      }
+      .scroll-arrow:hover { color: var(--ink); border-color: var(--ink-mid); }
+      .tabs { display: flex; align-items: stretch; gap: 2px; height: 100%; min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: none; }
       .tabs::-webkit-scrollbar { display: none; }
       .tab {
         display: flex; align-items: center; gap: 8px; padding: 0 18px; height: 100%;
@@ -3892,11 +4300,11 @@ class EVAssistantPanel extends HTMLElement {
       .tab:hover { color: var(--ink); }
       .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
       .vt-bar {
-        display: flex; align-items: center; padding: 10px 30px;
+        display: flex; align-items: center; padding: 10px 30px; gap: 4px;
         border-bottom: 1px solid var(--line); flex-shrink: 0;
-        overflow-x: auto; scrollbar-width: none;
       }
-      .vt-bar::-webkit-scrollbar { display: none; }
+      .vt-bar-scroll { display: flex; align-items: center; min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: none; }
+      .vt-bar-scroll::-webkit-scrollbar { display: none; }
 
       /* Main scroll area */
       .main { flex: 1; overflow-y: auto; padding: 24px 28px 40px; overscroll-behavior: contain; }
@@ -4387,6 +4795,14 @@ class EVAssistantPanel extends HTMLElement {
         background: var(--bg-0); color: var(--ink); width: 110px;
       }
       .hist-edit-form input[type="text"] { width: 140px; }
+      /* Gruppierte Variante (siehe _buildWartung()/_renderWartungList()) --
+         Gruppen stehen untereinander, jede Gruppe ist innen wieder eine
+         umbrechende Reihe wie das normale .hist-edit-form. */
+      .hist-edit-form.grouped { flex-direction: column; align-items: stretch; gap: 14px; }
+      .wt-group { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+      .wt-group-title { width: 100%; }
+      .wt-group-hint { width: 100%; margin-bottom: 2px; }
+      .wt-group-actions { justify-content: flex-end; }
       .hist-delete-confirm {
         display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px;
       }
@@ -4427,6 +4843,7 @@ class EVAssistantPanel extends HTMLElement {
         .pend-inputs label { flex: 1 1 90px; }
         .hist-date { min-width: 0; }
         .hist-main { gap: 8px 14px; }
+        .wt-group label { flex: 1 1 100%; }
       }
       @container panel (max-width: 700px) {
         .vh-3col { grid-template-columns: 1fr; }
@@ -4442,6 +4859,7 @@ class EVAssistantPanel extends HTMLElement {
         .pend-inputs label { flex: 1 1 90px; }
         .hist-date { min-width: 0; }
         .hist-main { gap: 8px 14px; }
+        .wt-group label { flex: 1 1 100%; }
       }
     `;
     return el;

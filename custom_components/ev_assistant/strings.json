@@ -245,7 +245,8 @@
         "soc_schwelle": "SoC-Schwelle erreicht",
         "fahrt": "Fahrt erkannt",
         "tankerkoenig": "Tankerkönig nicht verfügbar",
-        "leasing": "Leasing-Kilometerbudget kritisch"
+        "leasing": "Leasing-Kilometerbudget kritisch",
+        "wartung": "Wartung fällig"
       }
     },
     "lade_modus": {
@@ -377,6 +378,9 @@
       },
       "ladekarten_kosten": {
         "name": "Ladekarten-Kosten"
+      },
+      "wartung_faellig": {
+        "name": "Wartung fällig"
       },
       "co2_savings": {
         "name": "CO2-Ersparnis ggü. Verbrenner"

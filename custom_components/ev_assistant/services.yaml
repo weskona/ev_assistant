@@ -863,3 +863,242 @@ delete_ladekarte_preisstufe:
       example: "2026-04-01"
       selector:
         date:
+
+add_maintenance:
+  name: Wartungspunkt anlegen
+  description: >
+    Legt einen neuen Wartungspunkt an (z.B. HU/TÜV, Inspektion,
+    Reifenwechsel). Fälligkeit kann auf bis zu drei Kriterien beruhen
+    (Kilometer-Intervall, Zeit-Intervall, festes Datum) -- bei mehreren
+    gilt "je nachdem was zuerst kommt". Mindestens eines der drei
+    Kriterien muss angegeben werden (auch über preset). preset füllt
+    Name/Intervalle einer Vorlage vor, jedes Feld bleibt einzeln
+    überschreibbar.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    name:
+      name: Name
+      description: Erforderlich, außer preset liefert bereits einen Namen.
+      required: false
+      example: Inspektion
+      selector:
+        text:
+    preset:
+      name: Vorlage
+      description: Optional -- füllt Name/Intervalle einer Standard-Vorlage vor.
+      required: false
+      selector:
+        select:
+          options: [tuev, inspektion, reifenwechsel_saisonal, innenraumfilter, bremsfluessigkeit, reifenalter]
+    km_intervall:
+      name: Kilometer-Intervall
+      description: Fällig alle X km seit dem letzten Service.
+      required: false
+      example: 30000
+      selector:
+        number:
+          min: 0
+          max: 200000
+          step: 100
+          unit_of_measurement: km
+          mode: box
+    zeit_intervall_tage:
+      name: Zeit-Intervall (Tage)
+      description: Fällig alle X Tage seit dem letzten Service.
+      required: false
+      example: 730
+      selector:
+        number:
+          min: 0
+          max: 3650
+          step: 1
+          unit_of_measurement: Tage
+          mode: box
+    festes_datum:
+      name: Festes Fälligkeitsdatum
+      description: Bereits bekannter nächster Termin, unabhängig vom letzten Service.
+      required: false
+      example: "2026-06-01"
+      selector:
+        date:
+    kosten:
+      name: Kosten (optional)
+      description: Letzte/geschätzte Kosten, rein informativ.
+      required: false
+      example: 250.0
+      selector:
+        number:
+          min: 0
+          max: 10000
+          step: 0.01
+          unit_of_measurement: EUR
+          mode: box
+    last_done_km:
+      name: Letzter Service -- Kilometerstand (optional)
+      description: Zum Nacherfassen eines bereits vergangenen Service.
+      required: false
+      example: 45000
+      selector:
+        number:
+          mode: box
+    last_done_datum:
+      name: Letzter Service -- Datum (optional)
+      required: false
+      example: "2026-01-15"
+      selector:
+        date:
+
+edit_maintenance:
+  name: Wartungspunkt korrigieren
+  description: >
+    Korrigiert einen bestehenden Wartungspunkt. Alle Felder außer
+    config_entry_id/wartung_id sind optional -- nur mitgegebene Werte
+    werden geändert. km_intervall/zeit_intervall_tage/festes_datum/kosten
+    leer lassen entfernt das jeweilige Kriterium wieder -- danach muss
+    mindestens eines übrig bleiben, sonst wird die gesamte Änderung
+    verworfen.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    wartung_id:
+      name: Wartungspunkt-ID
+      description: Identifiziert den zu korrigierenden Punkt (Wert aus dessen id-Attribut).
+      required: true
+      example: 1755000000000
+      selector:
+        number:
+          mode: box
+    name:
+      name: Name
+      required: false
+      example: Inspektion
+      selector:
+        text:
+    km_intervall:
+      name: Kilometer-Intervall
+      required: false
+      example: 30000
+      selector:
+        number:
+          min: 0
+          max: 200000
+          step: 100
+          unit_of_measurement: km
+          mode: box
+    zeit_intervall_tage:
+      name: Zeit-Intervall (Tage)
+      required: false
+      example: 730
+      selector:
+        number:
+          min: 0
+          max: 3650
+          step: 1
+          unit_of_measurement: Tage
+          mode: box
+    festes_datum:
+      name: Festes Fälligkeitsdatum
+      required: false
+      example: "2026-06-01"
+      selector:
+        date:
+    kosten:
+      name: Kosten (optional)
+      required: false
+      example: 250.0
+      selector:
+        number:
+          min: 0
+          max: 10000
+          step: 0.01
+          unit_of_measurement: EUR
+          mode: box
+    last_done_km:
+      name: Letzter Service -- Kilometerstand (optional)
+      description: Korrigiert den zuletzt erfassten Service direkt (z.B. Tippfehler).
+      required: false
+      example: 45000
+      selector:
+        number:
+          mode: box
+    last_done_datum:
+      name: Letzter Service -- Datum (optional)
+      required: false
+      example: "2026-01-15"
+      selector:
+        date:
+    aktiv:
+      name: Aktiv
+      description: Deaktivieren pausiert den Punkt (keine Fälligkeit/Benachrichtigung), ohne ihn zu löschen.
+      required: false
+      selector:
+        boolean:
+
+delete_maintenance:
+  name: Wartungspunkt löschen
+  description: Löscht einen Wartungspunkt vollständig.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    wartung_id:
+      name: Wartungspunkt-ID
+      description: Identifiziert den zu löschenden Punkt (Wert aus dessen id-Attribut).
+      required: true
+      example: 1755000000000
+      selector:
+        number:
+          mode: box
+
+mark_maintenance_done:
+  name: Wartung als erledigt markieren
+  description: >
+    Setzt den letzten Service auf den aktuellen Kilometerstand und heute
+    -- oder auf km/datum, falls angegeben (z.B. um einen vor ein paar
+    Tagen tatsächlich durchgeführten Termin nachzutragen).
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    wartung_id:
+      name: Wartungspunkt-ID
+      description: Identifiziert den Punkt (Wert aus dessen id-Attribut).
+      required: true
+      example: 1755000000000
+      selector:
+        number:
+          mode: box
+    km:
+      name: Kilometerstand (optional)
+      description: Ohne Angabe wird der aktuelle Kilometerstand verwendet.
+      required: false
+      example: 45000
+      selector:
+        number:
+          mode: box
+    datum:
+      name: Datum (optional)
+      description: Ohne Angabe wird heute verwendet.
+      required: false
+      example: "2026-01-15"
+      selector:
+        date:

@@ -18,19 +18,23 @@ from .const import (
     PLATFORMS,
     SERVICE_ADD_LADEKARTE,
     SERVICE_ADD_LADEKARTE_PREISSTUFE,
+    SERVICE_ADD_MAINTENANCE,
     SERVICE_DELETE,
     SERVICE_DELETE_LADEKARTE,
     SERVICE_DELETE_LADEKARTE_PREISSTUFE,
+    SERVICE_DELETE_MAINTENANCE,
     SERVICE_DELETE_TRIP,
     SERVICE_DISCARD,
     SERVICE_DISCARD_TRIP,
     SERVICE_EDIT,
     SERVICE_EDIT_LADEKARTE,
+    SERVICE_EDIT_MAINTENANCE,
     SERVICE_EDIT_TRIP,
     SERVICE_EXPORT_TRIPS,
     SERVICE_IMPORT_TRIPS,
     SERVICE_LOG,
     SERVICE_LOG_TRIP,
+    SERVICE_MARK_MAINTENANCE_DONE,
     SERVICE_SIMULATE,
     SERVICE_SIMULATE_TRIP,
 )
@@ -309,6 +313,45 @@ DELETE_LADEKARTE_PREISSTUFE_SCHEMA = vol.Schema({
     vol.Required("ab_datum"): str,
 })
 
+ADD_MAINTENANCE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Optional("name"): str,
+    vol.Optional("preset"): str,
+    vol.Optional("km_intervall"): vol.Coerce(float),
+    vol.Optional("zeit_intervall_tage"): vol.Coerce(int),
+    vol.Optional("festes_datum"): str,
+    vol.Optional("kosten"): vol.Coerce(float),
+    vol.Optional("last_done_km"): vol.Coerce(float),
+    vol.Optional("last_done_datum"): str,
+})
+
+EDIT_MAINTENANCE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("wartung_id"): vol.Coerce(int),
+    vol.Optional("name"): str,
+    # Leerer String entfernt das jeweilige Kriterium/die Kosten wieder,
+    # siehe coordinator.py::async_edit_maintenance().
+    vol.Optional("km_intervall"): vol.Any("", vol.Coerce(float)),
+    vol.Optional("zeit_intervall_tage"): vol.Any("", vol.Coerce(int)),
+    vol.Optional("festes_datum"): str,
+    vol.Optional("kosten"): vol.Any("", vol.Coerce(float)),
+    vol.Optional("last_done_km"): vol.Coerce(float),
+    vol.Optional("last_done_datum"): str,
+    vol.Optional("aktiv"): bool,
+})
+
+DELETE_MAINTENANCE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("wartung_id"): vol.Coerce(int),
+})
+
+MARK_MAINTENANCE_DONE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("wartung_id"): vol.Coerce(int),
+    vol.Optional("km"): vol.Coerce(float),
+    vol.Optional("datum"): str,
+})
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Backfill fuer Entries von vor Einfuehrung der unique_id (siehe
@@ -479,6 +522,43 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_delete_ladekarte_preisstufe(call.data["karte_id"], call.data["ab_datum"])
 
+    async def _handle_add_maintenance(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_add_maintenance(
+                call.data.get("name"), call.data.get("preset"),
+                call.data.get("km_intervall"), call.data.get("zeit_intervall_tage"),
+                call.data.get("festes_datum"), call.data.get("kosten"),
+                call.data.get("last_done_km"), call.data.get("last_done_datum"),
+            )
+
+    async def _handle_edit_maintenance(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_edit_maintenance(
+                call.data["wartung_id"],
+                call.data.get("name"),
+                call.data.get("km_intervall"),
+                call.data.get("zeit_intervall_tage"),
+                call.data.get("festes_datum"),
+                call.data.get("kosten"),
+                call.data.get("last_done_km"),
+                call.data.get("last_done_datum"),
+                call.data.get("aktiv"),
+            )
+
+    async def _handle_delete_maintenance(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_delete_maintenance(call.data["wartung_id"])
+
+    async def _handle_mark_maintenance_done(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_mark_maintenance_done(
+                call.data["wartung_id"], call.data.get("km"), call.data.get("datum"),
+            )
+
     hass.services.async_register(DOMAIN, SERVICE_LOG, _handle_log, schema=LOG_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCARD, _handle_discard, schema=DISCARD_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE, _handle_simulate, schema=SIMULATE_SCHEMA)
@@ -504,6 +584,17 @@ def _register_services(hass: HomeAssistant) -> None:
         schema=DELETE_LADEKARTE_PREISSTUFE_SCHEMA,
     )
     hass.services.async_register(DOMAIN, SERVICE_IMPORT_TRIPS, _handle_import_trips, schema=IMPORT_TRIPS_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_ADD_MAINTENANCE, _handle_add_maintenance, schema=ADD_MAINTENANCE_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, SERVICE_EDIT_MAINTENANCE, _handle_edit_maintenance, schema=EDIT_MAINTENANCE_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_DELETE_MAINTENANCE, _handle_delete_maintenance, schema=DELETE_MAINTENANCE_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_MARK_MAINTENANCE_DONE, _handle_mark_maintenance_done,
+        schema=MARK_MAINTENANCE_DONE_SCHEMA,
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -523,6 +614,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_EDIT_TRIP, SERVICE_DELETE_TRIP, SERVICE_IMPORT_TRIPS,
                 SERVICE_ADD_LADEKARTE, SERVICE_EDIT_LADEKARTE, SERVICE_DELETE_LADEKARTE,
                 SERVICE_ADD_LADEKARTE_PREISSTUFE, SERVICE_DELETE_LADEKARTE_PREISSTUFE,
+                SERVICE_ADD_MAINTENANCE, SERVICE_EDIT_MAINTENANCE, SERVICE_DELETE_MAINTENANCE,
+                SERVICE_MARK_MAINTENANCE_DONE,
             ):
                 hass.services.async_remove(DOMAIN, service)
         else:

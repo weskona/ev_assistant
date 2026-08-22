@@ -1992,3 +1992,165 @@ def leasing_status(
             (inkl_gesamt_km - gefahrene_vertrags_km) / verbleibende_tage, 1
         )
     return {k: v for k, v in result.items() if v is not None}
+
+
+def wartung_status(
+    aktueller_km: Optional[float],
+    km_pro_tag: Optional[float],
+    last_done: Optional[dict],
+    km_intervall: Optional[float],
+    zeit_intervall_tage: Optional[float],
+    festes_datum: Optional[str],
+    heute: str,
+    bald_faellig_tage: float = 30.0,
+    bald_faellig_km: float = 1000.0,
+) -> dict:
+    """Faelligkeit EINES Wartungspunkts (siehe coordinator.py::
+    async_add_maintenance()) aus bis zu drei unabhaengig optionalen
+    Kriterien -- "je nachdem was zuerst kommt" (analog einer realen
+    Inspektion "24 Monate oder 30.000 km"):
+
+    - km-Kriterium: braucht km_intervall UND last_done["km"] UND
+      aktueller_km. Restkilometer = last_done.km + km_intervall -
+      aktueller_km. Nur wenn zusaetzlich km_pro_tag bekannt UND > 0 (Division
+      durch 0 wird NICHT versucht) laesst sich daraus ein Prognosedatum
+      ableiten -- erst dadurch wird diese Achse mit der Zeitachse
+      vergleichbar (siehe rolling_km_per_day() fuers rollierende Tempo,
+      analog leasing_status()).
+    - Zeit-Kriterium: braucht zeit_intervall_tage UND last_done["datum"].
+    - Festes-Datum-Kriterium: braucht NUR festes_datum, kein last_done
+      noetig -- deckt einen bereits bekannten naechsten Termin ab (z.B.
+      ein online gebuchter TUEV-Termin), unabhaengig davon, ob/wann der
+      letzte Termin erfasst wurde.
+
+    Von allen Kriterien, die ein vergleichbares Datum liefern, gewinnt das
+    FRUEHESTE -- das bestimmt "status" (ueberfaellig <= 0 Tage,
+    bald_faellig <= bald_faellig_tage, sonst ok) und "rest_tage"/
+    "faellig_datum"/"naechste_quelle". Liefert KEIN Kriterium ein Datum
+    (z.B. km_pro_tag fehlt/ist 0, keine anderen Kriterien gesetzt), aber
+    rest_km ist bekannt, faellt die Entscheidung ersatzweise ueber
+    bald_faellig_km (dann ohne rest_tage/faellig_datum -- "dann nur
+    Zeitachse" gilt hier umgekehrt: ohne Zeitachse bleibt nur die
+    km-Aussage). Ist ueberhaupt nichts berechenbar (z.B. km_intervall
+    gesetzt, aber last_done fehlt komplett und kein festes_datum vorhanden),
+    lautet der Status "unbekannt" -- niemals ein fingierter 0-Wert."""
+    heute_date = date.fromisoformat(heute)
+    last_done = last_done or {}
+    last_done_km = last_done.get("km")
+    last_done_datum = last_done.get("datum")
+
+    rest_km = None
+    faellig_datum_km = None
+    if km_intervall and last_done_km is not None and aktueller_km is not None:
+        rest_km = round(last_done_km + km_intervall - aktueller_km, 0)
+        if km_pro_tag:
+            faellig_datum_km = heute_date + timedelta(days=rest_km / km_pro_tag)
+
+    faellig_datum_zeit = None
+    if zeit_intervall_tage and last_done_datum is not None:
+        try:
+            faellig_datum_zeit = date.fromisoformat(last_done_datum) + timedelta(days=zeit_intervall_tage)
+        except (TypeError, ValueError):
+            faellig_datum_zeit = None
+
+    faellig_datum_fest = None
+    if festes_datum:
+        try:
+            faellig_datum_fest = date.fromisoformat(festes_datum)
+        except (TypeError, ValueError):
+            faellig_datum_fest = None
+
+    kandidaten = [
+        (quelle, datum) for quelle, datum in (
+            ("km", faellig_datum_km), ("zeit", faellig_datum_zeit), ("fest", faellig_datum_fest),
+        ) if datum is not None
+    ]
+    if kandidaten:
+        naechste_quelle, faellig_datum = min(kandidaten, key=lambda k: k[1])
+        rest_tage = (faellig_datum - heute_date).days
+        if rest_tage <= 0:
+            status = "ueberfaellig"
+        elif rest_tage <= bald_faellig_tage:
+            status = "bald_faellig"
+        else:
+            status = "ok"
+        result = {
+            "status": status, "naechste_quelle": naechste_quelle,
+            "faellig_datum": faellig_datum.isoformat(), "rest_tage": rest_tage,
+        }
+        if rest_km is not None:
+            result["rest_km"] = rest_km
+        return result
+
+    if rest_km is not None:
+        if rest_km <= 0:
+            status = "ueberfaellig"
+        elif rest_km <= bald_faellig_km:
+            status = "bald_faellig"
+        else:
+            status = "ok"
+        return {"status": status, "naechste_quelle": "km", "rest_km": rest_km}
+
+    return {"status": "unbekannt"}
+
+
+def wartung_uebersicht(
+    punkte: list,
+    aktueller_km: Optional[float],
+    km_pro_tag: Optional[float],
+    heute: str,
+    bald_faellig_tage: float = 30.0,
+    bald_faellig_km: float = 1000.0,
+) -> dict:
+    """Faelligkeit ALLER Wartungspunkte (siehe wartung_status()), analog
+    ladekarten_summary(): "punkte" (jeder Eingabepunkt plus den von
+    wartung_status() berechneten Feldern), "anzahl_bald_faellig"/
+    "anzahl_ueberfaellig" (nur ueber aktive Punkte, siehe "aktiv"-Flag) und
+    "naechste" (der dringendste AKTIVE Punkt -- ueberfaellig vor
+    bald_faellig vor ok, innerhalb einer Stufe der mit den wenigsten
+    rest_tage/rest_km; None ohne einen einzigen aktiven, nicht-"unbekannt"-
+    Punkt). Inaktive Punkte ("aktiv": False, z.B. pausiert) bekommen
+    trotzdem einen berechneten Status (fuer die Anzeige), zaehlen aber
+    nirgends mit. Leeres dict ohne jeden Punkt (analog leasing_stats()) --
+    macht das Feature komplett inaktiv/unsichtbar, bis der erste
+    Wartungspunkt angelegt ist."""
+    if not punkte:
+        return {}
+    _RANG = {"ok": 0, "unbekannt": 0, "bald_faellig": 1, "ueberfaellig": 2}
+    result_punkte = []
+    anzahl_bald_faellig = 0
+    anzahl_ueberfaellig = 0
+    naechste = None
+    naechste_rang = -1
+    naechste_sort = None
+    for punkt in punkte:
+        status = wartung_status(
+            aktueller_km, km_pro_tag, punkt.get("last_done"),
+            punkt.get("km_intervall"), punkt.get("zeit_intervall_tage"), punkt.get("festes_datum"),
+            heute, bald_faellig_tage, bald_faellig_km,
+        )
+        merged = {**punkt, **status}
+        result_punkte.append(merged)
+        aktiv = punkt.get("aktiv", True)
+        if not aktiv:
+            continue
+        rang = _RANG.get(status["status"], 0)
+        if status["status"] == "bald_faellig":
+            anzahl_bald_faellig += 1
+        elif status["status"] == "ueberfaellig":
+            anzahl_ueberfaellig += 1
+        if rang == 0:
+            continue
+        sort_key = status.get("rest_tage", status.get("rest_km"))
+        if rang > naechste_rang or (rang == naechste_rang and sort_key is not None and (
+            naechste_sort is None or sort_key < naechste_sort
+        )):
+            naechste = merged
+            naechste_rang = rang
+            naechste_sort = sort_key
+    return {
+        "punkte": result_punkte,
+        "anzahl_bald_faellig": anzahl_bald_faellig,
+        "anzahl_ueberfaellig": anzahl_ueberfaellig,
+        "naechste": naechste,
+    }

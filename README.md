@@ -159,6 +159,14 @@ Purely additive and entirely panel-managed (no config-flow step) — see the "La
 |-----|------|-------------|
 | `ladekarten_kosten` | Ladekarten-Kosten | Sum of all cards' accrued base fees (active days since each card's `start_datum`, capped at `end_datum` if set, ÷ an average 30.44-day month × the fee tier(s) in effect — a deliberate approximation, since real billing happens in monthly jumps, not continuously). `unknown` without any card configured. Attribute `karten`: the full list, each with `id`, `name`, `start_datum`, `end_datum`, `gebuehren` (the list of fee tiers, each `{ab_datum, gebuehr}` — supports a reduced introductory price that later rises to the regular one, see `add_ladekarte_preisstufe` below), `aktuelle_gebuehr` (the fee in effect right now), and its own accrued `kosten` (correctly split across tiers if the fee changed partway through). This sum automatically flows into `savings`, `vehicle_avg_consumption`-adjacent cost totals (EUR/100km via `charging_location_breakdown`), and the `cost_day`/`cost_week`/`cost_month`/`cost_year` sensors — but deliberately **not** into `charging_location_breakdown`'s `fremd.kosten`/`fremd.preis_je_kwh` or any external charge's own price, since a subscription fee isn't tied to a specific kWh or location. |
 
+### Vehicle Maintenance
+
+Purely additive and entirely panel-managed (no config-flow step) — see the "Wartung tab" section below. Track recurring maintenance items (HU/TÜV, inspection, seasonal tire change, brake fluid, ...) with up to three independent due-date criteria per item — a km interval, a time interval (days), and/or a fixed date — whichever comes due first decides the status.
+
+| Key | Name | Description |
+|-----|------|-------------|
+| `wartung_faellig` | Wartung fällig | Count of due-soon-or-overdue *active* items (paused items don't count). `unknown` without any item configured. Attribute `punkte`: the full list, each with the item's own fields plus the computed `status` (`ok`/`bald_faellig`/`ueberfaellig`/`unbekannt`), `naechste_quelle` (which criterion is winning), `rest_tage`/`faellig_datum` (from whichever criterion is earliest — the km criterion only contributes a date once your recent driving pace, a rolling 30-day average, is known), and `rest_km` (the km criterion's own remaining distance, kept independent of whether it's the winning criterion — so a time-based item with a km interval too still shows both). `presets`: the built-in starting templates (`tuev`, `inspektion`, `reifenwechsel_saisonal`, `innenraumfilter`, `bremsfluessigkeit`, `reifenalter`) offered in the panel's add form — pre-fill only, freely overridable, not manufacturer-specific figures. |
+
 ### Usage Profile
 
 See the "Usage Profile tab" section above for the underlying idea.
@@ -222,6 +230,10 @@ Always visible in the tab bar (so there's somewhere to add your first card from)
 
 Separately, those same forms (plus the pending-charge confirmation card) also have an "Anbieter" field — free-text, with previously used names suggested — for the charging network/operator itself (e.g. "EnBW", "Ionity"), shown as a 🏢 badge in the history. Don't confuse the two: a charging card is *what you paid with*, the provider is *where you charged* — a charge can have either, both, or neither, and they're tracked completely independently (see `anbieter` on `charging_location_breakdown` above, and the "Verteilung nach Anbieter" card in the Analyse tab below).
 
+### Wartung tab
+
+Always visible in the tab bar, but shows a plain empty-state hint instead of any content until at least one maintenance item exists. The add form (and each item's edit form) is grouped into Grunddaten (optional preset + name), Fälligkeit (the three interval fields — at least one required, whichever comes first wins), Letzter Service (km + date), and Kosten, instead of one flat row of fields. Each item in the list shows a status indicator (OK/bald fällig/überfällig), the earliest-due criterion ("zuerst fällig: in X Tagen (date)"), a separate remaining-distance line when a km interval is also configured ("noch X km bis Y km", omitted if that would just duplicate the primary line), the configured criteria, the last-service record, and an optional cost. Actions per item: mark as done (resets the last-service record to today's odometer/date), edit, delete, or pause (excludes it from the due count without deleting it).
+
 ---
 
 ## Services
@@ -247,6 +259,10 @@ All services require `config_entry_id` to target a specific vehicle when multipl
 | `delete_ladekarte` | `config_entry_id`, `karte_id` | Remove a charging card. **Not reversible.** Charges already attributed to it keep that (then orphaned) reference — the history itself is untouched. |
 | `add_ladekarte_preisstufe` | `config_entry_id`, `karte_id`, `gebuehr`, `ab_datum` | Add a new fee tier to an existing card — e.g. when a reduced introductory price ends and the regular price takes over. Each tier applies from its own date until the next tier's date; order of calls doesn't matter. A tier already existing for that exact date gets its fee replaced instead of duplicated. |
 | `delete_ladekarte_preisstufe` | `config_entry_id`, `karte_id`, `ab_datum` | Remove a previously added fee tier. The card's earliest tier can't be removed — a card always needs at least one known fee. |
+| `add_maintenance` | `config_entry_id`, `name`*, `preset`*, `km_intervall`*, `zeit_intervall_tage`*, `festes_datum`*, `kosten`*, `last_done_km`*, `last_done_datum`* | Add a new maintenance item (see [Vehicle Maintenance](#vehicle-maintenance) above). `preset` (one of `tuev`, `inspektion`, `reifenwechsel_saisonal`, `innenraumfilter`, `bremsfluessigkeit`, `reifenalter`) fills `name`/interval defaults as a starting point — any explicitly given field wins. Requires a name (own or from the preset) and at least one due-date criterion (km interval, time interval, and/or fixed date) after the preset is applied, otherwise the call is rejected and logged. |
+| `edit_maintenance` | `config_entry_id`, `wartung_id`, `name`*, `km_intervall`*, `zeit_intervall_tage`*, `festes_datum`*, `kosten`*, `last_done_km`*, `last_done_datum`*, `aktiv`* | Correct any field of an existing item. Only given fields change; an empty `km_intervall`/`zeit_intervall_tage`/`kosten`/`festes_datum` clears that field. Rejected (and rolled back) if it would leave the item with zero due-date criteria — an item always needs at least one. `aktiv: false` pauses the item (excluded from `wartung_faellig`'s count, still shown in the panel). |
+| `delete_maintenance` | `config_entry_id`, `wartung_id` | Remove a maintenance item. **Not reversible.** |
+| `mark_maintenance_done` | `config_entry_id`, `wartung_id`, `km`*, `datum`* | Record the item as done, resetting its due-date calculation. Defaults to the current odometer reading and today's date if `km`/`datum` aren't given. |
 
 *optional
 

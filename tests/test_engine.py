@@ -51,6 +51,8 @@ from engine import (
     trip_discharge_pct,
     trip_weekday_kwh_parts,
     update_period_baseline,
+    wartung_status,
+    wartung_uebersicht,
     weekday_usage_profile,
     weekday_usage_profile_from_totals,
 )
@@ -2321,3 +2323,192 @@ def test_split_by_age_idempotent_auf_bereits_gekuerzter_liste():
     aktuell2, alt2 = split_by_age(aktuell, "start_ts", cutoff)
     assert aktuell2 == aktuell
     assert alt2 == []
+
+
+# ----- wartung_status()/wartung_uebersicht(): Fahrzeugwartung -------------
+
+def test_wartung_status_nur_km_kriterium():
+    result = wartung_status(
+        aktueller_km=10000.0, km_pro_tag=100.0,
+        last_done={"km": 10000.0}, km_intervall=5000.0,
+        zeit_intervall_tage=None, festes_datum=None, heute="2026-01-01",
+    )
+    assert result["status"] == "ok"
+    assert result["rest_km"] == 5000.0
+    assert result["naechste_quelle"] == "km"
+    assert result["rest_tage"] == 50
+    assert result["faellig_datum"] == "2026-02-20"
+
+
+def test_wartung_status_nur_zeit_kriterium():
+    result = wartung_status(
+        aktueller_km=None, km_pro_tag=None,
+        last_done={"datum": "2026-01-01"}, km_intervall=None,
+        zeit_intervall_tage=40, festes_datum=None, heute="2026-01-01",
+    )
+    assert result["status"] == "ok"
+    assert result["naechste_quelle"] == "zeit"
+    assert result["rest_tage"] == 40
+    assert result["faellig_datum"] == "2026-02-10"
+    assert "rest_km" not in result
+
+
+def test_wartung_status_nur_festes_datum_kriterium_ohne_last_done():
+    # festes_datum braucht KEIN last_done (bereits bekannter Termin).
+    result = wartung_status(
+        aktueller_km=None, km_pro_tag=None, last_done=None,
+        km_intervall=None, zeit_intervall_tage=None,
+        festes_datum="2026-03-01", heute="2026-01-01",
+    )
+    assert result["status"] == "ok"
+    assert result["naechste_quelle"] == "fest"
+    assert result["rest_tage"] == 59
+    assert result["faellig_datum"] == "2026-03-01"
+
+
+def test_wartung_status_kombiniert_km_gewinnt_wenn_frueher():
+    result = wartung_status(
+        aktueller_km=10000.0, km_pro_tag=100.0,
+        last_done={"km": 10000.0, "datum": "2026-01-01"},
+        km_intervall=1000.0,  # rest_km=1000, /100 pro Tag = 10 Tage -> 2026-01-11
+        zeit_intervall_tage=59,  # -> 2026-03-01, 59 Tage entfernt
+        festes_datum=None, heute="2026-01-01",
+    )
+    assert result["naechste_quelle"] == "km"
+    assert result["rest_tage"] == 10
+    assert result["faellig_datum"] == "2026-01-11"
+    assert result["status"] == "bald_faellig"
+    assert result["rest_km"] == 1000.0
+
+
+def test_wartung_status_kombiniert_zeit_gewinnt_wenn_frueher():
+    result = wartung_status(
+        aktueller_km=10000.0, km_pro_tag=10.0,
+        last_done={"km": 10000.0, "datum": "2026-01-01"},
+        km_intervall=1000.0,  # rest_km=1000, /10 pro Tag = 100 Tage -> weit weg
+        zeit_intervall_tage=5,  # -> 2026-01-06, nur 5 Tage entfernt
+        festes_datum=None, heute="2026-01-01",
+    )
+    assert result["naechste_quelle"] == "zeit"
+    assert result["rest_tage"] == 5
+    assert result["faellig_datum"] == "2026-01-06"
+    assert result["status"] == "bald_faellig"
+    assert result["rest_km"] == 1000.0  # bleibt als Zusatzinfo erhalten
+
+
+@pytest.mark.parametrize("km_pro_tag", [0.0, None])
+def test_wartung_status_km_pro_tag_null_faellt_auf_zeitkriterium_zurueck(km_pro_tag):
+    result = wartung_status(
+        aktueller_km=10000.0, km_pro_tag=km_pro_tag,
+        last_done={"km": 10000.0, "datum": "2026-01-01"},
+        km_intervall=500.0, zeit_intervall_tage=10,
+        festes_datum=None, heute="2026-01-01",
+    )
+    assert result["naechste_quelle"] == "zeit"
+    assert result["rest_tage"] == 10
+    assert result["status"] == "bald_faellig"
+    assert result["rest_km"] == 500.0  # Restkilometer bleiben bekannt ...
+
+
+@pytest.mark.parametrize("km_pro_tag", [0.0, None])
+def test_wartung_status_km_pro_tag_null_und_nur_km_kriterium_nutzt_km_schwelle(km_pro_tag):
+    # Ohne jedes Zeit-vergleichbare Kriterium faellt die Entscheidung auf
+    # die km-Schwelle zurueck -- kein Prognosedatum, keine ZeroDivisionError.
+    result = wartung_status(
+        aktueller_km=10000.0, km_pro_tag=km_pro_tag,
+        last_done={"km": 10000.0}, km_intervall=500.0,
+        zeit_intervall_tage=None, festes_datum=None, heute="2026-01-01",
+        bald_faellig_km=1000.0,
+    )
+    assert result["status"] == "bald_faellig"  # rest_km=500 <= 1000
+    assert result["naechste_quelle"] == "km"
+    assert result["rest_km"] == 500.0
+    assert "rest_tage" not in result
+    assert "faellig_datum" not in result
+
+
+def test_wartung_status_ueberfaellig():
+    result = wartung_status(
+        aktueller_km=None, km_pro_tag=None, last_done=None,
+        km_intervall=None, zeit_intervall_tage=None,
+        festes_datum="2025-12-01", heute="2026-01-01",
+    )
+    assert result["status"] == "ueberfaellig"
+    assert result["rest_tage"] == -31
+
+
+def test_wartung_status_bald_faellig_schwelle_grenzfall():
+    genau_an_schwelle = wartung_status(
+        aktueller_km=None, km_pro_tag=None, last_done=None,
+        km_intervall=None, zeit_intervall_tage=None,
+        festes_datum="2026-01-11", heute="2026-01-01", bald_faellig_tage=10,
+    )
+    assert genau_an_schwelle["rest_tage"] == 10
+    assert genau_an_schwelle["status"] == "bald_faellig"
+
+    knapp_darueber = wartung_status(
+        aktueller_km=None, km_pro_tag=None, last_done=None,
+        km_intervall=None, zeit_intervall_tage=None,
+        festes_datum="2026-01-12", heute="2026-01-01", bald_faellig_tage=10,
+    )
+    assert knapp_darueber["rest_tage"] == 11
+    assert knapp_darueber["status"] == "ok"
+
+
+def test_wartung_status_kein_last_done_nur_festes_datum_greift():
+    # km_intervall/zeit_intervall_tage sind gesetzt, aber ohne last_done
+    # unbrauchbar -- nur festes_datum liefert ein Ergebnis.
+    result = wartung_status(
+        aktueller_km=10000.0, km_pro_tag=50.0, last_done=None,
+        km_intervall=1000.0, zeit_intervall_tage=100,
+        festes_datum="2026-02-01", heute="2026-01-01",
+    )
+    assert result["naechste_quelle"] == "fest"
+    assert "rest_km" not in result
+
+
+def test_wartung_status_kein_last_done_und_kein_festes_datum_liefert_unbekannt():
+    result = wartung_status(
+        aktueller_km=10000.0, km_pro_tag=50.0, last_done=None,
+        km_intervall=1000.0, zeit_intervall_tage=100,
+        festes_datum=None, heute="2026-01-01",
+    )
+    assert result == {"status": "unbekannt"}
+
+
+def test_wartung_status_ganz_ohne_kriterien_liefert_unbekannt():
+    result = wartung_status(
+        aktueller_km=10000.0, km_pro_tag=50.0, last_done={"km": 9000.0, "datum": "2026-01-01"},
+        km_intervall=None, zeit_intervall_tage=None, festes_datum=None, heute="2026-01-01",
+    )
+    assert result == {"status": "unbekannt"}
+
+
+def test_wartung_uebersicht_leere_liste_liefert_leeres_dict():
+    assert wartung_uebersicht([], 10000.0, 50.0, "2026-01-01") == {}
+
+
+def test_wartung_uebersicht_zaehlt_nur_aktive_punkte_und_findet_naechste():
+    punkte = [
+        {"id": 1, "name": "OK-Punkt", "festes_datum": "2027-01-01"},
+        {"id": 2, "name": "Bald faellig", "festes_datum": "2026-01-15"},
+        {"id": 3, "name": "Ueberfaellig, wenig", "festes_datum": "2025-12-27"},  # -5 Tage
+        {"id": 4, "name": "Ueberfaellig, viel", "festes_datum": "2025-12-12"},  # -20 Tage, dringender
+        {"id": 5, "name": "Inaktiv ueberfaellig", "festes_datum": "2025-01-01", "aktiv": False},
+        {"id": 6, "name": "Unbekannt"},
+    ]
+    result = wartung_uebersicht(punkte, 10000.0, 50.0, "2026-01-01")
+    assert len(result["punkte"]) == 6
+    assert result["anzahl_bald_faellig"] == 1
+    assert result["anzahl_ueberfaellig"] == 2  # Punkt 5 (inaktiv) zaehlt nicht mit
+    assert result["naechste"]["id"] == 4  # am staerksten ueberfaellig gewinnt gegen Punkt 3
+    # Rohfelder des Eingabepunkts bleiben im Ergebnis erhalten.
+    assert result["naechste"]["name"] == "Ueberfaellig, viel"
+
+
+def test_wartung_uebersicht_ohne_jede_dringlichkeit_liefert_keine_naechste():
+    punkte = [{"id": 1, "name": "Alles gut", "festes_datum": "2030-01-01"}]
+    result = wartung_uebersicht(punkte, 10000.0, 50.0, "2026-01-01")
+    assert result["anzahl_bald_faellig"] == 0
+    assert result["anzahl_ueberfaellig"] == 0
+    assert result["naechste"] is None
