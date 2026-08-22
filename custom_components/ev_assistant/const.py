@@ -418,16 +418,27 @@ WARTUNG_BALD_FAELLIG_KM = 1000.0
 # nicht anzufassen, auch wenn der Wert identisch ist.
 WARTUNG_ROLLING_WINDOW_DAYS = 30
 
+# Durchschnittliche Monatslaenge fuer die EINMALIGE Migration alter
+# zeit_intervall_tage-Werte auf zeit_intervall_monate (siehe
+# coordinator.py::_migrate_wartung_zeit_einheiten()) sowie fuer die
+# Umrechnung von reminder_monate (Service-/Panel-Ebene) auf das intern
+# gespeicherte reminder_tage (siehe async_add_maintenance()/
+# async_edit_maintenance()). Bewusst approximativ -- Tage lassen sich nicht
+# exakt auf Kalendermonate abbilden -- fuer glatte Alt-Presets (730 Tage)
+# ergibt das aber exakt 24 Monate.
+WARTUNG_TAGE_PRO_MONAT = 30.44
+
 # Wartungs-Vorlagen (siehe coordinator.py::async_add_maintenance()/Panel-Tab
-# "Wartung") -- reine Startwerte fuer km_intervall/zeit_intervall_tage, beim
-# Anlegen frei ueberschreibbar (auch der Name). Intervalle sind grobe,
+# "Wartung") -- reine Startwerte fuer km_intervall/zeit_intervall_monate,
+# beim Anlegen frei ueberschreibbar (auch der Name). Intervalle sind grobe,
 # gaengige Herstellerfaustregeln -- im Einzelfall (Fahrzeug-Handbuch/
-# Vertragswerkstatt) koennen sie abweichen, siehe CHANGELOG.
+# Vertragswerkstatt) koennen sie abweichen, siehe CHANGELOG. Bewusst auf
+# HU/TUEV und Inspektion reduziert (vormals auch Reifenwechsel/
+# Innenraumfilter/Bremsfluessigkeit/Reifenalter) -- NUR aus der
+# Auswahlliste entfernt, bereits angelegte Wartungspunkte aus einem
+# entfernten Preset bleiben unveraendert (Presets werden nur beim Anlegen
+# gelesen, nie danach referenziert).
 WARTUNG_PRESETS = {
-    "tuev": {"name": "HU/TÜV", "zeit_intervall_tage": 730},
-    "inspektion": {"name": "Inspektion", "km_intervall": 30000.0, "zeit_intervall_tage": 730},
-    "reifenwechsel_saisonal": {"name": "Reifenwechsel (saisonal)", "zeit_intervall_tage": 182},
-    "innenraumfilter": {"name": "Innenraumfilter", "km_intervall": 30000.0, "zeit_intervall_tage": 730},
-    "bremsfluessigkeit": {"name": "Bremsflüssigkeit", "zeit_intervall_tage": 730},
-    "reifenalter": {"name": "Reifenalter", "zeit_intervall_tage": 2190},
+    "tuev": {"name": "HU/TÜV", "zeit_intervall_monate": 24},
+    "inspektion": {"name": "Inspektion", "km_intervall": 30000.0, "zeit_intervall_monate": 24},
 }

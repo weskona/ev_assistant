@@ -867,10 +867,10 @@ delete_ladekarte_preisstufe:
 add_maintenance:
   name: Wartungspunkt anlegen
   description: >
-    Legt einen neuen Wartungspunkt an (z.B. HU/TÜV, Inspektion,
-    Reifenwechsel). Fälligkeit kann auf bis zu drei Kriterien beruhen
-    (Kilometer-Intervall, Zeit-Intervall, festes Datum) -- bei mehreren
-    gilt "je nachdem was zuerst kommt". Mindestens eines der drei
+    Legt einen neuen Wartungspunkt an (z.B. HU/TÜV, Inspektion, oder frei
+    benannt). Fälligkeit kann auf bis zu drei Kriterien beruhen
+    (Kilometer-Intervall, Zeit-Intervall in Monaten, festes Datum) -- bei
+    mehreren gilt "je nachdem was zuerst kommt". Mindestens eines der drei
     Kriterien muss angegeben werden (auch über preset). preset füllt
     Name/Intervalle einer Vorlage vor, jedes Feld bleibt einzeln
     überschreibbar.
@@ -895,7 +895,7 @@ add_maintenance:
       required: false
       selector:
         select:
-          options: [tuev, inspektion, reifenwechsel_saisonal, innenraumfilter, bremsfluessigkeit, reifenalter]
+          options: [tuev, inspektion]
     km_intervall:
       name: Kilometer-Intervall
       description: Fällig alle X km seit dem letzten Service.
@@ -908,21 +908,24 @@ add_maintenance:
           step: 100
           unit_of_measurement: km
           mode: box
-    zeit_intervall_tage:
-      name: Zeit-Intervall (Tage)
-      description: Fällig alle X Tage seit dem letzten Service.
+    zeit_intervall_monate:
+      name: Zeit-Intervall (Monate)
+      description: Fällig alle X Monate seit dem letzten Service (echter Kalendersprung, z.B. 31.01. + 1 Monat = 28./29.02.).
       required: false
-      example: 730
+      example: 24
       selector:
         number:
           min: 0
-          max: 3650
+          max: 120
           step: 1
-          unit_of_measurement: Tage
+          unit_of_measurement: Monate
           mode: box
     festes_datum:
       name: Festes Fälligkeitsdatum
-      description: Bereits bekannter nächster Termin, unabhängig vom letzten Service.
+      description: >
+        Bereits bekannter nächster Termin, unabhängig vom letzten Service.
+        Zusammen mit zeit_intervall_monate (z.B. HU/TÜV) wird dieses Datum
+        beim Erledigt-Markieren automatisch um das Intervall fortgeschrieben.
       required: false
       example: "2026-06-01"
       selector:
@@ -953,16 +956,43 @@ add_maintenance:
       example: "2026-01-15"
       selector:
         date:
+    reminder_monate:
+      name: Erinnerung (Monate, optional)
+      description: >
+        Überschreibt für diesen Punkt, wie viele Monate vor der zeit-/
+        datumsbasierten Fälligkeit "bald fällig" angezeigt wird (Standard
+        sonst global). Wird intern in Tage umgerechnet.
+      required: false
+      example: 1
+      selector:
+        number:
+          min: 0
+          max: 24
+          step: 0.5
+          unit_of_measurement: Monate
+          mode: box
+    reminder_km:
+      name: Erinnerung (km, optional)
+      description: Überschreibt für diesen Punkt, wie viele km vor der km-basierten Fälligkeit "bald fällig" angezeigt wird.
+      required: false
+      example: 500
+      selector:
+        number:
+          min: 0
+          max: 10000
+          step: 50
+          unit_of_measurement: km
+          mode: box
 
 edit_maintenance:
   name: Wartungspunkt korrigieren
   description: >
     Korrigiert einen bestehenden Wartungspunkt. Alle Felder außer
     config_entry_id/wartung_id sind optional -- nur mitgegebene Werte
-    werden geändert. km_intervall/zeit_intervall_tage/festes_datum/kosten
-    leer lassen entfernt das jeweilige Kriterium wieder -- danach muss
-    mindestens eines übrig bleiben, sonst wird die gesamte Änderung
-    verworfen.
+    werden geändert. km_intervall/zeit_intervall_monate/festes_datum/kosten/
+    reminder_monate/reminder_km leer lassen entfernt das jeweilige Feld
+    wieder -- bei den drei Fälligkeitskriterien muss danach mindestens
+    eines übrig bleiben, sonst wird die gesamte Änderung verworfen.
   fields:
     config_entry_id:
       name: Fahrzeug
@@ -996,16 +1026,16 @@ edit_maintenance:
           step: 100
           unit_of_measurement: km
           mode: box
-    zeit_intervall_tage:
-      name: Zeit-Intervall (Tage)
+    zeit_intervall_monate:
+      name: Zeit-Intervall (Monate)
       required: false
-      example: 730
+      example: 24
       selector:
         number:
           min: 0
-          max: 3650
+          max: 120
           step: 1
-          unit_of_measurement: Tage
+          unit_of_measurement: Monate
           mode: box
     festes_datum:
       name: Festes Fälligkeitsdatum
@@ -1044,6 +1074,30 @@ edit_maintenance:
       required: false
       selector:
         boolean:
+    reminder_monate:
+      name: Erinnerung (Monate, optional)
+      description: Überschreibt für diesen Punkt die zeit-/datumsbasierte "bald fällig"-Vorwarnzeit. Wird intern in Tage umgerechnet.
+      required: false
+      example: 1
+      selector:
+        number:
+          min: 0
+          max: 24
+          step: 0.5
+          unit_of_measurement: Monate
+          mode: box
+    reminder_km:
+      name: Erinnerung (km, optional)
+      description: Überschreibt für diesen Punkt die km-basierte "bald fällig"-Vorwarnzeit.
+      required: false
+      example: 500
+      selector:
+        number:
+          min: 0
+          max: 10000
+          step: 50
+          unit_of_measurement: km
+          mode: box
 
 delete_maintenance:
   name: Wartungspunkt löschen

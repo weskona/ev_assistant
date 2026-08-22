@@ -2132,6 +2132,44 @@ class EVAssistantPanel extends HTMLElement {
     return (s && Array.isArray((s.attributes || {}).presets)) ? s.attributes.presets : [];
   }
 
+  // Welche Feldgruppen eine Vorlage zeigt (siehe const.py::WARTUNG_PRESETS) --
+  // HU/TÜV braucht kein km-/letzter-Service-/Kosten-Feld, Inspektion kein
+  // festes Datum. "eigene" (kein Preset bzw. unbekannter Key) zeigt alles.
+  // "pflicht" (nur HU) verschaerft die generische "mind. ein Kriterium"-Regel
+  // auf "ALLE genannten Felder noetig" -- siehe updateValidity() in
+  // _wireWartungAddForm().
+  _wartungFeldSchema(presetKey) {
+    const schema = {
+      tuev: { sichtbar: ["fest", "zeit", "reminder-zeit"], pflicht: ["fest", "zeit"] },
+      inspektion: {
+        sichtbar: ["km", "zeit", "lastservice", "reminder-zeit", "reminder-km", "kosten"], pflicht: null,
+      },
+    };
+    return schema[presetKey] || {
+      sichtbar: ["km", "zeit", "fest", "lastservice", "reminder-zeit", "reminder-km", "kosten"], pflicht: null,
+    };
+  }
+
+  // "YYYY-MM" (<input type="month">) -> ISO-Datum des LETZTEN Tages dieses
+  // Monats. HU/TÜV ist "faellig bis Ende des Monats" -- engine.wartung_status()
+  // nimmt festes_datum unveraendert als exakten Stichtag, daher muss hier
+  // der MonatsLETZTE gespeichert werden, sonst waere der Punkt ab dem 1. des
+  // Monats faelschlich schon ueberfaellig. new Date(jahr, monat, 0) liefert
+  // den letzten Tag des VORHERIGEN Monatsindex, also genau den gesuchten.
+  _wartungMonthToDate(monthStr) {
+    if (!monthStr) return "";
+    const [jahr, monat] = monthStr.split("-").map(Number);
+    const letzterTag = new Date(jahr, monat, 0).getDate();
+    return `${monthStr}-${String(letzterTag).padStart(2, "0")}`;
+  }
+
+  // ISO-Datum -> "YYYY-MM" fuers <input type="month">. Funktioniert
+  // unveraendert auch fuer Alt-Eintraege mit vollem Tages-Datum (einfaches
+  // Abschneiden) -- keine Migration noetig, siehe CHANGELOG.
+  _wartungDateToMonth(iso) {
+    return iso ? iso.substring(0, 7) : "";
+  }
+
   _buildWartung() {
     const wrap = document.createElement("div");
     wrap.className = "tab-wrap";
@@ -2149,28 +2187,31 @@ class EVAssistantPanel extends HTMLElement {
             <label>Name<input type="text" class="wt-name" placeholder="z.B. Inspektion"></label>
           </div>
           <div class="dim wt-group-hint">Vorlage füllt die Felder unten vor — danach frei überschreibbar.</div>
-          <div class="wt-group">
+          <div class="wt-group wt-group-faelligkeit">
             <div class="sub-head wt-group-title">Fälligkeit</div>
-            <div class="dim wt-group-hint">Mindestens ein Kriterium angeben. Bei mehreren gilt, was zuerst eintritt.</div>
-            <label>Kilometer-Intervall (optional)<input type="text" inputmode="decimal" class="wt-km-intervall" placeholder="z.B. 30000"></label>
-            <label>Zeit-Intervall in Tagen (optional)<input type="text" inputmode="decimal" class="wt-zeit-intervall" placeholder="z.B. 730"></label>
-            <label>Festes Fälligkeitsdatum (optional)<input type="date" class="wt-festes-datum"></label>
+            <div class="dim wt-group-hint wt-faelligkeit-hint">Mindestens ein Kriterium angeben. Bei mehreren gilt, was zuerst eintritt.</div>
+            <div class="wt-fld-km"><label>Kilometer-Intervall (optional)<input type="text" inputmode="decimal" class="wt-km-intervall" placeholder="z.B. 30000"></label></div>
+            <div class="wt-fld-zeit"><label>Intervall (Monate, optional)<input type="text" inputmode="decimal" class="wt-zeit-intervall" placeholder="z.B. 24"></label></div>
+            <div class="wt-fld-fest"><label>Festes Fälligkeitsdatum (optional)<input type="month" class="wt-festes-datum"></label></div>
           </div>
-          <div class="wt-group">
+          <div class="wt-group wt-fld-lastservice">
             <div class="sub-head wt-group-title">Letzter Service (optional)</div>
             <label>Kilometerstand<input type="text" inputmode="decimal" class="wt-last-km" placeholder="optional"></label>
             <label>Datum<input type="date" class="wt-last-datum"></label>
           </div>
           <div class="wt-group">
-            <label>Kosten € (optional)<input type="text" inputmode="decimal" class="wt-kosten" placeholder="0,00"></label>
+            <div class="sub-head wt-group-title">Erinnerung (optional, sonst globaler Standard)</div>
+            <div class="wt-fld-reminder-zeit"><label>Vorwarnzeit (Monate)<input type="text" inputmode="decimal" class="wt-reminder-monate" placeholder="Standard"></label></div>
+            <div class="wt-fld-reminder-km"><label>Vorwarnzeit (km)<input type="text" inputmode="decimal" class="wt-reminder-km" placeholder="Standard"></label></div>
           </div>
+          <div class="wt-fld-kosten"><label>Kosten € (optional)<input type="text" inputmode="decimal" class="wt-kosten" placeholder="0,00"></label></div>
           <div class="wt-group wt-group-actions">
             <button class="btn btn-primary wt-save" disabled>Speichern</button>
             <button class="btn btn-ghost wt-cancel">Abbrechen</button>
           </div>
         </div>
         <div class="profil-empty" id="wt-empty">
-          Noch kein Wartungspunkt angelegt — z.B. HU/TÜV, Inspektion oder Reifenwechsel, fällig nach
+          Noch kein Wartungspunkt angelegt — z.B. HU/TÜV oder Inspektion, fällig nach
           Kilometerstand, Zeit oder beidem ("je nachdem was zuerst kommt").
         </div>
         <div class="hidden" id="wt-content">
@@ -2200,24 +2241,66 @@ class EVAssistantPanel extends HTMLElement {
     const kostenInput = form.querySelector(".wt-kosten");
     const lastKmInput = form.querySelector(".wt-last-km");
     const lastDatumInput = form.querySelector(".wt-last-datum");
+    const reminderMonateInput = form.querySelector(".wt-reminder-monate");
+    const reminderKmInput = form.querySelector(".wt-reminder-km");
     const saveBtn = form.querySelector(".wt-save");
     const cancelBtn = form.querySelector(".wt-cancel");
+    const faelligkeitHint = form.querySelector(".wt-faelligkeit-hint");
+    const fieldWraps = {
+      km: form.querySelector(".wt-fld-km"),
+      zeit: form.querySelector(".wt-fld-zeit"),
+      fest: form.querySelector(".wt-fld-fest"),
+      lastservice: form.querySelector(".wt-fld-lastservice"),
+      "reminder-zeit": form.querySelector(".wt-fld-reminder-zeit"),
+      "reminder-km": form.querySelector(".wt-fld-reminder-km"),
+      kosten: form.querySelector(".wt-fld-kosten"),
+    };
+    const STANDARD_HINT = "Mindestens ein Kriterium angeben. Bei mehreren gilt, was zuerst eintritt.";
+    const HU_HINT = "Festes Fälligkeitsdatum und Intervall sind für HU/TÜV beide Pflicht.";
 
+    // Bei HU/TÜV (schema.pflicht gesetzt) muessen ALLE genannten Felder
+    // gefuellt sein statt nur irgendeines -- strenger als die generische
+    // "mind. ein Kriterium"-Regel der anderen Vorlagen/"eigene".
     const updateValidity = () => {
-      const hatKriterium = kmInput.value.trim() || zeitInput.value.trim() || festInput.value;
+      const schema = this._wartungFeldSchema(presetSelect.value);
+      const werte = { fest: !!festInput.value, zeit: !!zeitInput.value.trim(), km: !!kmInput.value.trim() };
+      const hatKriterium = schema.pflicht
+        ? schema.pflicht.every((feld) => werte[feld])
+        : werte.km || werte.zeit || werte.fest;
       saveBtn.disabled = !nameInput.value.trim() || !hatKriterium;
     };
     [nameInput, kmInput, zeitInput].forEach((el) => el.addEventListener("input", updateValidity));
     festInput.addEventListener("change", updateValidity);
 
+    // Blendet Feldgruppen passend zur gewaehlten Vorlage ein/aus (siehe
+    // _wartungFeldSchema()) und leert dabei ausgeblendete Felder -- sonst
+    // wuerde ein beim vorherigen Preset befuellter, jetzt unsichtbarer Wert
+    // beim Speichern still mitgeschickt. Bei HU/TÜV steht das feste Datum
+    // per CSS-order VOR dem Intervall (sonst identische Feldreihenfolge wie
+    // bei Inspektion/"eigene" -- siehe .hu-mode .wt-fld-fest).
+    const applyFieldVisibility = (presetKey) => {
+      const schema = this._wartungFeldSchema(presetKey);
+      const sichtbar = new Set(schema.sichtbar);
+      for (const [key, el] of Object.entries(fieldWraps)) {
+        if (!el) continue;
+        const zeigen = sichtbar.has(key);
+        el.classList.toggle("hidden", !zeigen);
+        if (!zeigen) el.querySelectorAll("input").forEach((inp) => { inp.value = ""; });
+      }
+      form.querySelector(".wt-group-faelligkeit").classList.toggle("hu-mode", presetKey === "tuev");
+      if (faelligkeitHint) faelligkeitHint.textContent = presetKey === "tuev" ? HU_HINT : STANDARD_HINT;
+    };
+
     // Vorlage befuellt nur LEERE Felder -- bleibt danach frei ueberschreibbar
     // (siehe const.py::WARTUNG_PRESETS-Docstring, "Presets sind nur Startwerte").
     presetSelect.addEventListener("change", () => {
+      applyFieldVisibility(presetSelect.value);
       const preset = this._wartungPresets().find((p) => p.key === presetSelect.value);
-      if (!preset) return;
-      if (!nameInput.value.trim()) nameInput.value = preset.name || "";
-      if (!kmInput.value.trim() && preset.km_intervall != null) kmInput.value = preset.km_intervall;
-      if (!zeitInput.value.trim() && preset.zeit_intervall_tage != null) zeitInput.value = preset.zeit_intervall_tage;
+      if (preset) {
+        if (!nameInput.value.trim()) nameInput.value = preset.name || "";
+        if (!kmInput.value.trim() && preset.km_intervall != null) kmInput.value = preset.km_intervall;
+        if (!zeitInput.value.trim() && preset.zeit_intervall_monate != null) zeitInput.value = preset.zeit_intervall_monate;
+      }
       updateValidity();
     });
 
@@ -2233,6 +2316,9 @@ class EVAssistantPanel extends HTMLElement {
         kostenInput.value = "";
         lastKmInput.value = "";
         lastDatumInput.value = "";
+        reminderMonateInput.value = "";
+        reminderKmInput.value = "";
+        applyFieldVisibility("");
         updateValidity();
       }
     });
@@ -2244,13 +2330,17 @@ class EVAssistantPanel extends HTMLElement {
       if (!name || (isNaN(km) && isNaN(zeit) && !festInput.value)) return;
       const payload = { name };
       if (!isNaN(km)) payload.km_intervall = km;
-      if (!isNaN(zeit)) payload.zeit_intervall_tage = zeit;
-      if (festInput.value) payload.festes_datum = festInput.value;
+      if (!isNaN(zeit)) payload.zeit_intervall_monate = zeit;
+      if (festInput.value) payload.festes_datum = this._wartungMonthToDate(festInput.value);
       const kosten = parseFloat(kostenInput.value.replace(",", "."));
       if (!isNaN(kosten)) payload.kosten = kosten;
       const lastKm = parseFloat(lastKmInput.value.replace(",", "."));
       if (!isNaN(lastKm)) payload.last_done_km = lastKm;
       if (lastDatumInput.value) payload.last_done_datum = lastDatumInput.value;
+      const reminderMonate = parseFloat(reminderMonateInput.value.replace(",", "."));
+      if (!isNaN(reminderMonate)) payload.reminder_monate = reminderMonate;
+      const reminderKm = parseFloat(reminderKmInput.value.replace(",", "."));
+      if (!isNaN(reminderKm)) payload.reminder_km = reminderKm;
       this._call("add_maintenance", payload);
       form.classList.add("hidden");
     });
@@ -2285,8 +2375,8 @@ class EVAssistantPanel extends HTMLElement {
     const list = this._r.wtList;
     if (!list) return;
     const sig = punkte.map((p) =>
-      `${p.id}:${p.name}:${p.km_intervall}:${p.zeit_intervall_tage}:${p.festes_datum}:`
-      + `${JSON.stringify(p.last_done)}:${p.kosten}:${p.aktiv}`
+      `${p.id}:${p.name}:${p.km_intervall}:${p.zeit_intervall_monate}:${p.festes_datum}:`
+      + `${JSON.stringify(p.last_done)}:${p.kosten}:${p.aktiv}:${p.reminder_tage}:${p.reminder_km}`
     ).join("|");
     if (sig === this._wtSig && list.dataset.built === "1") return;
     this._wtSig = sig;
@@ -2298,6 +2388,14 @@ class EVAssistantPanel extends HTMLElement {
       if (!iso) return "—";
       const d = new Date(iso);
       return isNaN(d.getTime()) ? iso : d.toLocaleDateString("de-DE");
+    };
+    // Festes Fälligkeitsdatum wird nur noch monatsgenau erfasst (siehe
+    // _wartungMonthToDate()) -- der exakte Tag (immer Monatsletzter bei
+    // neu gespeicherten Werten) ist fuer die Anzeige nicht aussagekraeftig.
+    const fmtMonthYear = (iso) => {
+      if (!iso) return "—";
+      const d = new Date(iso);
+      return isNaN(d.getTime()) ? iso : d.toLocaleDateString("de-DE", { month: "2-digit", year: "numeric" });
     };
     punkte.forEach((p) => {
       const row = document.createElement("div");
@@ -2314,7 +2412,9 @@ class EVAssistantPanel extends HTMLElement {
       let primaryText = null;
       if (p.rest_tage != null) {
         primaryText = `zuerst fällig: ${p.rest_tage >= 0 ? "in" : "vor"} ${Math.abs(p.rest_tage)} Tag(en)`;
-        if (p.faellig_datum) primaryText += ` (${fmtDate(p.faellig_datum)})`;
+        if (p.faellig_datum) {
+          primaryText += ` (${p.naechste_quelle === "fest" ? fmtMonthYear(p.faellig_datum) : fmtDate(p.faellig_datum)})`;
+        }
       } else if (p.rest_km != null) {
         primaryText = `zuerst fällig: ${p.rest_km >= 0 ? "in" : "vor"} ${this._fmtNum(Math.abs(p.rest_km), 0)} km`;
       }
@@ -2334,8 +2434,8 @@ class EVAssistantPanel extends HTMLElement {
       }
       const kriterien = [];
       if (p.km_intervall) kriterien.push(`alle ${this._fmtNum(p.km_intervall, 0)} km`);
-      if (p.zeit_intervall_tage) kriterien.push(`alle ${p.zeit_intervall_tage} Tage`);
-      if (p.festes_datum) kriterien.push(`fest: ${fmtDate(p.festes_datum)}`);
+      if (p.zeit_intervall_monate) kriterien.push(`alle ${p.zeit_intervall_monate} Monate`);
+      if (p.festes_datum) kriterien.push(`fest: ${fmtMonthYear(p.festes_datum)}`);
       const lastDoneParts = [];
       if (p.last_done && p.last_done.km != null) lastDoneParts.push(`${this._fmtNum(p.last_done.km, 0)} km`);
       if (p.last_done && p.last_done.datum) lastDoneParts.push(fmtDate(p.last_done.datum));
@@ -2368,13 +2468,18 @@ class EVAssistantPanel extends HTMLElement {
             <div class="sub-head wt-group-title">Fälligkeit</div>
             <div class="dim wt-group-hint">Mindestens ein Kriterium angeben. Bei mehreren gilt, was zuerst eintritt.</div>
             <label>Kilometer-Intervall (leer = kein Kriterium)<input type="text" inputmode="decimal" class="wte-km" value="${p.km_intervall ?? ""}"></label>
-            <label>Zeit-Intervall in Tagen (leer = kein Kriterium)<input type="text" inputmode="decimal" class="wte-zeit" value="${p.zeit_intervall_tage ?? ""}"></label>
-            <label>Festes Fälligkeitsdatum (leer = kein Kriterium)<input type="date" class="wte-fest" value="${p.festes_datum || ""}"></label>
+            <label>Intervall in Monaten (leer = kein Kriterium)<input type="text" inputmode="decimal" class="wte-zeit" value="${p.zeit_intervall_monate ?? ""}"></label>
+            <label>Festes Fälligkeitsdatum (leer = kein Kriterium)<input type="month" class="wte-fest" value="${this._wartungDateToMonth(p.festes_datum)}"></label>
           </div>
           <div class="wt-group">
             <div class="sub-head wt-group-title">Letzter Service</div>
             <label>Kilometerstand<input type="text" inputmode="decimal" class="wte-last-km" value="${(p.last_done && p.last_done.km != null) ? p.last_done.km : ""}"></label>
             <label>Datum<input type="date" class="wte-last-datum" value="${(p.last_done && p.last_done.datum) ? p.last_done.datum : ""}"></label>
+          </div>
+          <div class="wt-group">
+            <div class="sub-head wt-group-title">Erinnerung (leer = globaler Standard)</div>
+            <label>Vorwarnzeit (Monate)<input type="text" inputmode="decimal" class="wte-reminder-monate" value="${p.reminder_tage != null ? Math.round((p.reminder_tage / 30.44) * 10) / 10 : ""}"></label>
+            <label>Vorwarnzeit (km)<input type="text" inputmode="decimal" class="wte-reminder-km" value="${p.reminder_km ?? ""}"></label>
           </div>
           <div class="wt-group">
             <label>Kosten €<input type="text" inputmode="decimal" class="wte-kosten" value="${p.kosten ?? ""}"></label>
@@ -2425,12 +2530,13 @@ class EVAssistantPanel extends HTMLElement {
         }
         const zeitVal = row.querySelector(".wte-zeit").value.trim();
         if (zeitVal === "") {
-          payload.zeit_intervall_tage = "";
+          payload.zeit_intervall_monate = "";
         } else {
           const v = parseInt(zeitVal, 10);
-          if (!isNaN(v)) payload.zeit_intervall_tage = v;
+          if (!isNaN(v)) payload.zeit_intervall_monate = v;
         }
-        payload.festes_datum = row.querySelector(".wte-fest").value || "";
+        const wteFestVal = row.querySelector(".wte-fest").value;
+        payload.festes_datum = wteFestVal ? this._wartungMonthToDate(wteFestVal) : "";
         const kostenVal = row.querySelector(".wte-kosten").value.trim();
         if (kostenVal === "") {
           payload.kosten = "";
@@ -2445,6 +2551,20 @@ class EVAssistantPanel extends HTMLElement {
         }
         const lastDatumVal = row.querySelector(".wte-last-datum").value;
         if (lastDatumVal) payload.last_done_datum = lastDatumVal;
+        const reminderMonateVal = row.querySelector(".wte-reminder-monate").value.trim();
+        if (reminderMonateVal === "") {
+          payload.reminder_monate = "";
+        } else {
+          const v = parseFloat(reminderMonateVal.replace(",", "."));
+          if (!isNaN(v)) payload.reminder_monate = v;
+        }
+        const reminderKmVal = row.querySelector(".wte-reminder-km").value.trim();
+        if (reminderKmVal === "") {
+          payload.reminder_km = "";
+        } else {
+          const v = parseFloat(reminderKmVal.replace(",", "."));
+          if (!isNaN(v)) payload.reminder_km = v;
+        }
         payload.aktiv = row.querySelector(".wte-aktiv").checked;
         this._call("edit_maintenance", payload);
         form.classList.add("hidden");
@@ -4803,6 +4923,9 @@ class EVAssistantPanel extends HTMLElement {
       .wt-group-title { width: 100%; }
       .wt-group-hint { width: 100%; margin-bottom: 2px; }
       .wt-group-actions { justify-content: flex-end; }
+      /* HU/TÜV: festes Datum vor dem Intervall, ohne die DOM-Reihenfolge
+         (und damit die Feldreihenfolge bei Inspektion/"eigene") anzufassen. */
+      .wt-group-faelligkeit.hu-mode .wt-fld-fest { order: -1; }
       .hist-delete-confirm {
         display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px;
       }

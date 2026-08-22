@@ -18,6 +18,7 @@ Energie (aussagekraeftig = AC am Ladepunkt, inkl. Ladeverluste):
   energy_batt_kwh = Batterie-netto
 """
 
+from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Optional
@@ -1994,12 +1995,45 @@ def leasing_status(
     return {k: v for k, v in result.items() if v is not None}
 
 
+def add_months(d: date, months: int) -> date:
+    """Echter Kalendersprung um `months` Monate, kein +30-Tage-Naeherung --
+    z.B. 31.01. + 1 Monat = 28.02. (oder 29.02. im Schaltjahr), 15.07.2029 +
+    24 Monate = 15.07.2031. Der Tag wird auf die tatsaechliche Laenge des
+    Zielmonats gekappt (monthrange), niemals in den uebernaechsten Monat
+    ueberlaufen gelassen."""
+    idx = d.month - 1 + months
+    jahr = d.year + idx // 12
+    monat = idx % 12 + 1
+    tag = min(d.day, monthrange(jahr, monat)[1])
+    return date(jahr, monat, tag)
+
+
+def wartung_festes_datum_fortschreiben(
+    festes_datum: Optional[str],
+    zeit_intervall_monate: Optional[int],
+    erledigt_datum: str,
+) -> Optional[str]:
+    """Naechstes festes Faelligkeitsdatum nach dem Markieren als erledigt
+    (siehe coordinator.py::async_mark_maintenance_done()) -- nur wenn BEIDE,
+    festes_datum UND zeit_intervall_monate, gesetzt sind (z.B. HU/TUEV: ein
+    bekannter naechster Termin, der sich nach Erledigung um ein festes
+    Monats-Intervall weiterschiebt). Der Takt verschiebt sich bewusst auf
+    den TATSAECHLICHEN Erledigungszeitpunkt (add_months(erledigt_datum, ...)),
+    nicht auf das alte festes_datum -- eine VERFRUEHTE Erledigung zieht die
+    naechste Faelligkeit also nach vorne, statt den urspruenglichen Rhythmus
+    beizubehalten. Ein reines Einmal-Datum ohne Intervall bleibt unveraendert
+    (None) -- dafuer gibt es hier nichts fortzuschreiben."""
+    if not festes_datum or not zeit_intervall_monate:
+        return None
+    return add_months(date.fromisoformat(erledigt_datum), int(zeit_intervall_monate)).isoformat()
+
+
 def wartung_status(
     aktueller_km: Optional[float],
     km_pro_tag: Optional[float],
     last_done: Optional[dict],
     km_intervall: Optional[float],
-    zeit_intervall_tage: Optional[float],
+    zeit_intervall_monate: Optional[float],
     festes_datum: Optional[str],
     heute: str,
     bald_faellig_tage: float = 30.0,
@@ -2017,11 +2051,16 @@ def wartung_status(
       ableiten -- erst dadurch wird diese Achse mit der Zeitachse
       vergleichbar (siehe rolling_km_per_day() fuers rollierende Tempo,
       analog leasing_status()).
-    - Zeit-Kriterium: braucht zeit_intervall_tage UND last_done["datum"].
+    - Zeit-Kriterium: braucht zeit_intervall_monate UND last_done["datum"].
+      Echte Kalendermonate (add_months()), keine 30-Tage-Naeherung.
     - Festes-Datum-Kriterium: braucht NUR festes_datum, kein last_done
       noetig -- deckt einen bereits bekannten naechsten Termin ab (z.B.
       ein online gebuchter TUEV-Termin), unabhaengig davon, ob/wann der
-      letzte Termin erfasst wurde.
+      letzte Termin erfasst wurde. Faehrt der Punkt zusaetzlich ein
+      zeit_intervall_monate, schreibt async_mark_maintenance_done() dieses
+      Datum beim Erledigen automatisch fort (siehe
+      wartung_festes_datum_fortschreiben()) -- hier wird festes_datum aber
+      immer nur als gegebener Wert genommen, nie selbst fortgeschrieben.
 
     Von allen Kriterien, die ein vergleichbares Datum liefern, gewinnt das
     FRUEHESTE -- das bestimmt "status" (ueberfaellig <= 0 Tage,
@@ -2047,9 +2086,9 @@ def wartung_status(
             faellig_datum_km = heute_date + timedelta(days=rest_km / km_pro_tag)
 
     faellig_datum_zeit = None
-    if zeit_intervall_tage and last_done_datum is not None:
+    if zeit_intervall_monate and last_done_datum is not None:
         try:
-            faellig_datum_zeit = date.fromisoformat(last_done_datum) + timedelta(days=zeit_intervall_tage)
+            faellig_datum_zeit = add_months(date.fromisoformat(last_done_datum), int(zeit_intervall_monate))
         except (TypeError, ValueError):
             faellig_datum_zeit = None
 
@@ -2113,7 +2152,15 @@ def wartung_uebersicht(
     trotzdem einen berechneten Status (fuer die Anzeige), zaehlen aber
     nirgends mit. Leeres dict ohne jeden Punkt (analog leasing_stats()) --
     macht das Feature komplett inaktiv/unsichtbar, bis der erste
-    Wartungspunkt angelegt ist."""
+    Wartungspunkt angelegt ist.
+
+    Ein Punkt kann ueber "reminder_tage"/"reminder_km" die globalen
+    bald_faellig_tage/bald_faellig_km-Schwellen individuell ueberschreiben
+    (z.B. bei HU/TUEV frueher vorwarnen als bei einer Inspektion) -- fehlt
+    der Wert, gilt unveraendert der globale Standard. wartung_status()
+    selbst bleibt dafuer unveraendert: die Aufloesung passiert HIER, bevor
+    die (weiterhin einfachen) bald_faellig_tage/-_km-Parameter uebergeben
+    werden."""
     if not punkte:
         return {}
     _RANG = {"ok": 0, "unbekannt": 0, "bald_faellig": 1, "ueberfaellig": 2}
@@ -2124,10 +2171,12 @@ def wartung_uebersicht(
     naechste_rang = -1
     naechste_sort = None
     for punkt in punkte:
+        effektiv_bald_faellig_tage = punkt.get("reminder_tage") or bald_faellig_tage
+        effektiv_bald_faellig_km = punkt.get("reminder_km") or bald_faellig_km
         status = wartung_status(
             aktueller_km, km_pro_tag, punkt.get("last_done"),
-            punkt.get("km_intervall"), punkt.get("zeit_intervall_tage"), punkt.get("festes_datum"),
-            heute, bald_faellig_tage, bald_faellig_km,
+            punkt.get("km_intervall"), punkt.get("zeit_intervall_monate"), punkt.get("festes_datum"),
+            heute, effektiv_bald_faellig_tage, effektiv_bald_faellig_km,
         )
         merged = {**punkt, **status}
         result_punkte.append(merged)

@@ -2,6 +2,23 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.73.1] - 2026-08-22
+
+### Changed
+
+- **HU/TÜV form: month-only due date, stricter validation**: "Festes Fälligkeitsdatum" is now a month/year picker (`<input type="month">`) instead of a full day picker, everywhere it appears (add form, all presets, and each item's edit form) — HU/TÜV is due by end-of-month, not a specific day, and no other use of this field in the feature needs day precision either. The panel stores it as the *last* day of the chosen month (not the first), since `wartung_status()` treats it as a literal deadline — storing the first day would make the item look overdue for the entire month. Existing items with a full exact date keep working unchanged (nothing to migrate — the day is simply irrelevant to the calculation and gets truncated for display); the next time such a field is actually re-saved through the panel, it silently normalizes to the new end-of-month convention. No service/engine change — `festes_datum` is still a plain date string at the API level.
+- **HU/TÜV form: field order and required fields**: the due date now comes before the interval field (previously reversed), and both are now required together for this preset specifically — stricter than the general "at least one of km/interval/date" rule, since a HU/TÜV item without both a known date *and* a recurrence interval can't auto-advance itself when marked done. The Kosten field is removed from the HU/TÜV preset's fields (still present for Inspektion and free-form items).
+
+## [0.73.0] - 2026-08-22
+
+### Changed
+
+- **Wartung: Zeit-Intervalle jetzt in Monaten, mit echter Kalenderarithmetik**: time-based maintenance intervals are now entered and stored in months (`zeit_intervall_monate`) instead of days, and due dates are computed with real calendar-month arithmetic (`engine.add_months()`) rather than a fixed 730-day-style approximation — e.g. Jan 31 + 1 month lands on Feb 28 (or 29 in a leap year, correctly clamped to the target month's actual length), and 24 months from a given month lands on the same month 2 years later. Existing items with the old `zeit_intervall_tage` are migrated once on upgrade (rounded via a 30.44-day month average — exact for the old built-in presets' 730 days, which becomes exactly 24 months, approximate for any custom day count entered by hand — days genuinely don't map onto calendar months exactly).
+- **Wartung: marking a fixed-date item done now advances its due date**: an item with *both* a fixed due date and a month interval (the HU/TÜV pattern: a known next appointment that also recurs) now has that fixed date automatically advanced by the interval when marked done — counted from the actual completion date, not the old due date. This is a deliberate choice: completing it early pulls the next due date forward too, rather than preserving the original once-booked rhythm. A fixed date with no interval (a genuine one-off) is untouched, same as before.
+- **Wartung: presets reduced to HU/TÜV and Inspektion**: the other four (seasonal tire change, cabin filter, brake fluid, tire age) are removed from the preset dropdown — they were generic rules of thumb more than genuinely useful defaults. This only affects the *selection list*; any existing item created from a removed preset is untouched (presets are only read once, at creation time, never referenced afterward). The add form now also shows only the fields each preset actually uses (HU/TÜV: fixed date + interval; Inspektion: km interval + interval + last service; no preset: everything), instead of one flat, undifferentiated row of 8 fields.
+- **Wartung: per-item reminder override**: each item can now optionally override the global "due soon" warning window — in months for the time-based side, in km for the km-based side — instead of always using the one global default for every item. Falls back to the global default when unset.
+- **Wartung: add/edit forms restructured into labeled groups**: Grunddaten, Fälligkeit (with an explicit "at least one required, earliest wins" hint), Letzter Service, Erinnerung, and Kosten, replacing the flat field row from 0.72.0.
+
 ## [0.72.0] - 2026-08-22
 
 ### Changed

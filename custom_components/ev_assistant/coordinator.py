@@ -137,6 +137,7 @@ from .const import (
     WARTUNG_BALD_FAELLIG_TAGE,
     WARTUNG_PRESETS,
     WARTUNG_ROLLING_WINDOW_DAYS,
+    WARTUNG_TAGE_PRO_MONAT,
     resolve_lade_modus,
 )
 from .engine import (
@@ -181,6 +182,7 @@ from .engine import (
     trip_discharge_pct,
     trip_weekday_kwh_parts,
     update_period_baseline,
+    wartung_festes_datum_fortschreiben,
     wartung_uebersicht,
     weekday_usage_profile_from_totals,
 )
@@ -493,6 +495,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # regulaeren Speichern die Migration nicht unbemerkt verliert und
         # beim naechsten Start faelschlich doppelt zaehlend wiederholt.
         if self._migrate_lifetime_baselines():
+            await self._save()
+        # Migration: Wartungspunkte vor der Umstellung auf Monats-Intervalle
+        # hatten zeit_intervall_tage statt zeit_intervall_monate (siehe
+        # _migrate_wartung_zeit_einheiten()). Ebenfalls sofort persistiert,
+        # aus demselben Grund wie oben.
+        if self._migrate_wartung_zeit_einheiten():
             await self._save()
         # Letzter bekannter Kraftstoff-/Heimstrompreis der jeweiligen
         # Live-Entitaet als Fallback, bevor sich die Entitaet nach dem Start
@@ -2026,6 +2034,27 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["lifetime_baselines_migrated"] = True
         return True
 
+    def _migrate_wartung_zeit_einheiten(self) -> bool:
+        """Einmalige Migration bestehender Wartungspunkte von
+        zeit_intervall_tage (Tage, vor der Umstellung auf Monats-Intervalle)
+        auf zeit_intervall_monate (siehe engine.wartung_status()). Tage
+        lassen sich nicht exakt auf Kalendermonate abbilden -- gerundet
+        ueber WARTUNG_TAGE_PRO_MONAT (fuer die alten glatten Presets, z.B.
+        730 Tage, ergibt das exakt 24 Monate). Idempotent OHNE eigenes
+        Flag: nach dem ersten Lauf existiert kein zeit_intervall_tage mehr,
+        ein zweiter Lauf findet also nichts mehr zu tun. Gibt True zurueck,
+        wenn mindestens ein Punkt migriert wurde (der Aufrufer muss dann
+        sofort speichern, siehe async_setup())."""
+        geaendert = False
+        for punkt in self.data.get("wartung") or []:
+            if "zeit_intervall_tage" not in punkt:
+                continue
+            alte_tage = punkt.pop("zeit_intervall_tage")
+            if alte_tage:
+                punkt["zeit_intervall_monate"] = max(1, round(alte_tage / WARTUNG_TAGE_PRO_MONAT))
+            geaendert = True
+        return geaendert
+
     def _finalize_trip_record(self, rec: dict) -> None:
         self.data.setdefault("fahrten", []).insert(0, rec)
         totals = self.data.setdefault("trip_totals", {"km": 0.0, "count": 0})
@@ -2662,34 +2691,44 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         name: Optional[str] = None,
         preset: Optional[str] = None,
         km_intervall: Optional[float] = None,
-        zeit_intervall_tage: Optional[int] = None,
+        zeit_intervall_monate: Optional[int] = None,
         festes_datum: Optional[str] = None,
         kosten: Optional[float] = None,
         last_done_km: Optional[float] = None,
         last_done_datum: Optional[str] = None,
+        reminder_monate: Optional[float] = None,
+        reminder_km: Optional[float] = None,
     ) -> Optional[int]:
         """Legt einen neuen Wartungspunkt an (siehe engine.wartung_status()
         fuer die Faelligkeitsberechnung) -- id ist ein simpler Millisekunden-
         Zeitstempel, analog async_add_ladekarte(). `preset` referenziert
         optional eine Vorlage (siehe const.py::WARTUNG_PRESETS, z.B. "tuev"):
-        liefert deren km_intervall/zeit_intervall_tage/name als FALLBACK, wo
-        das jeweilige Feld hier nicht explizit gesetzt ist -- Presets sind
-        nur Startwerte, jedes einzeln ueberschreibbar. `last_done_km`/
+        liefert deren km_intervall/zeit_intervall_monate/name als FALLBACK,
+        wo das jeweilige Feld hier nicht explizit gesetzt ist -- Presets
+        sind nur Startwerte, jedes einzeln ueberschreibbar. `last_done_km`/
         `last_done_datum` seeden optional einen bereits in der Vergangenheit
         liegenden letzten Service (z.B. beim Nacherfassen eines Termins von
         vor ein paar Monaten) -- fuer den Normalfall "gerade erledigt" siehe
-        stattdessen async_mark_maintenance_done().
+        stattdessen async_mark_maintenance_done(). `reminder_monate`/
+        `reminder_km` ueberschreiben pro Punkt die globalen
+        WARTUNG_BALD_FAELLIG_TAGE/-_KM-Schwellen (siehe
+        engine.wartung_uebersicht()) -- `reminder_monate` wird EINMALIG ueber
+        WARTUNG_TAGE_PRO_MONAT in Tage umgerechnet und als reminder_tage
+        gespeichert (die Schwelle selbst braucht keine Kalenderpraezision,
+        anders als zeit_intervall_monate).
 
         Ohne Namen (auch nicht aus dem Preset) oder ohne mindestens ein
-        Faelligkeitskriterium (km_intervall/zeit_intervall_tage/festes_datum,
-        auch nach Preset-Vorbefuellung) wird NICHTS angelegt (Warnung im
-        Log, analog async_log_trip() ohne offene Fahrt) -- ein
+        Faelligkeitskriterium (km_intervall/zeit_intervall_monate/
+        festes_datum, auch nach Preset-Vorbefuellung) wird NICHTS angelegt
+        (Warnung im Log, analog async_log_trip() ohne offene Fahrt) -- ein
         Wartungspunkt ganz ohne jedes Kriterium waere nie faellig und daher
         sinnlos. Gibt die neue id zurueck, oder None bei Ablehnung."""
         vorlage = WARTUNG_PRESETS.get(preset, {}) if preset else {}
         effektiver_name = (name or vorlage.get("name") or "").strip()
         effektiv_km = km_intervall if km_intervall is not None else vorlage.get("km_intervall")
-        effektiv_zeit = zeit_intervall_tage if zeit_intervall_tage is not None else vorlage.get("zeit_intervall_tage")
+        effektiv_zeit = (
+            zeit_intervall_monate if zeit_intervall_monate is not None else vorlage.get("zeit_intervall_monate")
+        )
         effektiv_fest = festes_datum if festes_datum is not None else vorlage.get("festes_datum")
         if not effektiver_name:
             _LOGGER.warning("ev_assistant: Wartungspunkt ohne Namen (auch nicht aus Preset) abgelehnt")
@@ -2703,7 +2742,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "id": int(time.time() * 1000),
             "name": effektiver_name,
             "km_intervall": effektiv_km,
-            "zeit_intervall_tage": effektiv_zeit,
+            "zeit_intervall_monate": effektiv_zeit,
             "festes_datum": effektiv_fest,
             "last_done": (
                 {"km": last_done_km, "datum": last_done_datum}
@@ -2711,6 +2750,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             ),
             "kosten": kosten,
             "aktiv": True,
+            "reminder_tage": round(reminder_monate * WARTUNG_TAGE_PRO_MONAT, 1) if reminder_monate is not None else None,
+            "reminder_km": reminder_km,
         }
         punkte = list(self.data.get("wartung") or [])
         punkte.append(punkt)
@@ -2724,27 +2765,31 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         wartung_id: int,
         name: Optional[str] = None,
         km_intervall: Optional[float] = None,
-        zeit_intervall_tage: Optional[int] = None,
+        zeit_intervall_monate: Optional[int] = None,
         festes_datum: Optional[str] = None,
         kosten: Optional[float] = None,
         last_done_km: Optional[float] = None,
         last_done_datum: Optional[str] = None,
         aktiv: Optional[bool] = None,
+        reminder_monate: Optional[float] = None,
+        reminder_km: Optional[float] = None,
     ) -> bool:
         """Korrigiert einen bestehenden Wartungspunkt -- alle Felder
         optional, nur mitgegebene Werte werden geaendert (analog
-        async_edit_ladekarte()). km_intervall/zeit_intervall_tage/
-        festes_datum/kosten: None laesst das Feld unveraendert, ein LEERER
-        STRING loescht ein zuvor gesetztes Kriterium (bzw. die Kosten) --
-        z.B. um von "km ODER Zeit" auf nur noch "Zeit" umzustellen. Nach
-        Anwenden aller Aenderungen muss mindestens ein Faelligkeitskriterium
-        uebrig bleiben, sonst wird die GESAMTE Aenderung verworfen (Warnung,
-        False) statt einen nutzlosen Wartungspunkt ohne jedes Kriterium zu
-        erzeugen. `last_done_km`/`last_done_datum` korrigieren den zuletzt
-        erfassten Service direkt (z.B. ein Tippfehler) -- fuer "gerade jetzt
-        erledigt" siehe async_mark_maintenance_done(). Gibt False zurueck,
-        wenn keine id gefunden wurde oder die Aenderung mangels Kriterium
-        verworfen wurde."""
+        async_edit_ladekarte()). km_intervall/zeit_intervall_monate/
+        festes_datum/kosten/reminder_monate/reminder_km: None laesst das
+        Feld unveraendert, ein LEERER STRING loescht ein zuvor gesetztes
+        Kriterium (bzw. die Kosten/den Reminder-Override) wieder -- z.B. um
+        von "km ODER Zeit" auf nur noch "Zeit" umzustellen. Nach Anwenden
+        aller Aenderungen muss mindestens ein Faelligkeitskriterium uebrig
+        bleiben, sonst wird die GESAMTE Aenderung verworfen (Warnung, False)
+        statt einen nutzlosen Wartungspunkt ohne jedes Kriterium zu
+        erzeugen -- reminder_monate/reminder_km zaehlen dabei NICHT als
+        Faelligkeitskriterium. `last_done_km`/`last_done_datum` korrigieren
+        den zuletzt erfassten Service direkt (z.B. ein Tippfehler) -- fuer
+        "gerade jetzt erledigt" siehe async_mark_maintenance_done(). Gibt
+        False zurueck, wenn keine id gefunden wurde oder die Aenderung
+        mangels Kriterium verworfen wurde."""
         punkte = self.data.get("wartung") or []
         for punkt in punkte:
             if punkt.get("id") != wartung_id:
@@ -2754,12 +2799,18 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 punkt["name"] = name.strip()
             if km_intervall is not None:
                 punkt["km_intervall"] = None if km_intervall == "" else float(km_intervall)
-            if zeit_intervall_tage is not None:
-                punkt["zeit_intervall_tage"] = None if zeit_intervall_tage == "" else int(zeit_intervall_tage)
+            if zeit_intervall_monate is not None:
+                punkt["zeit_intervall_monate"] = None if zeit_intervall_monate == "" else int(zeit_intervall_monate)
             if festes_datum is not None:
                 punkt["festes_datum"] = festes_datum or None
             if kosten is not None:
                 punkt["kosten"] = None if kosten == "" else float(kosten)
+            if reminder_monate is not None:
+                punkt["reminder_tage"] = (
+                    None if reminder_monate == "" else round(float(reminder_monate) * WARTUNG_TAGE_PRO_MONAT, 1)
+                )
+            if reminder_km is not None:
+                punkt["reminder_km"] = None if reminder_km == "" else float(reminder_km)
             if last_done_km is not None or last_done_datum is not None:
                 last_done = dict(punkt.get("last_done") or {})
                 if last_done_km is not None:
@@ -2769,7 +2820,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 punkt["last_done"] = last_done
             if aktiv is not None:
                 punkt["aktiv"] = aktiv
-            if not (punkt.get("km_intervall") or punkt.get("zeit_intervall_tage") or punkt.get("festes_datum")):
+            if not (punkt.get("km_intervall") or punkt.get("zeit_intervall_monate") or punkt.get("festes_datum")):
                 punkt.clear()
                 punkt.update(alt)
                 _LOGGER.warning(
@@ -2804,14 +2855,25 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         last_done immer, auch wenn km/datum zufaellig mit dem vorherigen
         Stand uebereinstimmen sollten -- das setzt gleichzeitig die
         Benachrichtigungs-Hysterese fuer diesen Punkt zurueck (siehe
-        _check_wartung_thresholds()). Gibt False zurueck, wenn keine id
-        gefunden wurde."""
+        _check_wartung_thresholds()). Hat der Punkt ZUSAETZLICH sowohl
+        festes_datum als auch zeit_intervall_monate gesetzt (z.B. HU/TUEV:
+        ein bekannter naechster Termin mit Wiederholungs-Intervall), wird
+        festes_datum auf den naechsten Termin AB DIESEM Erledigungszeitpunkt
+        fortgeschrieben (siehe engine.wartung_festes_datum_fortschreiben())
+        -- bewusst auch bei einer VERFRUEHTEN Erledigung, die den Takt dann
+        nach vorne zieht, statt den urspruenglichen Rhythmus beizubehalten.
+        Gibt False zurueck, wenn keine id gefunden wurde."""
         punkte = self.data.get("wartung") or []
         for punkt in punkte:
             if punkt.get("id") == wartung_id:
                 effektiv_km = km if km is not None else self._odo_km()
                 effektiv_datum = datum or dt_util.now().date().isoformat()
                 punkt["last_done"] = {"km": effektiv_km, "datum": effektiv_datum}
+                neues_festes_datum = wartung_festes_datum_fortschreiben(
+                    punkt.get("festes_datum"), punkt.get("zeit_intervall_monate"), effektiv_datum,
+                )
+                if neues_festes_datum is not None:
+                    punkt["festes_datum"] = neues_festes_datum
                 await self._save()
                 self.async_set_updated_data(self.data)
                 return True

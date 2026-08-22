@@ -318,26 +318,30 @@ ADD_MAINTENANCE_SCHEMA = vol.Schema({
     vol.Optional("name"): str,
     vol.Optional("preset"): str,
     vol.Optional("km_intervall"): vol.Coerce(float),
-    vol.Optional("zeit_intervall_tage"): vol.Coerce(int),
+    vol.Optional("zeit_intervall_monate"): vol.Coerce(int),
     vol.Optional("festes_datum"): str,
     vol.Optional("kosten"): vol.Coerce(float),
     vol.Optional("last_done_km"): vol.Coerce(float),
     vol.Optional("last_done_datum"): str,
+    vol.Optional("reminder_monate"): vol.Coerce(float),
+    vol.Optional("reminder_km"): vol.Coerce(float),
 })
 
 EDIT_MAINTENANCE_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
     vol.Required("wartung_id"): vol.Coerce(int),
     vol.Optional("name"): str,
-    # Leerer String entfernt das jeweilige Kriterium/die Kosten wieder,
-    # siehe coordinator.py::async_edit_maintenance().
+    # Leerer String entfernt das jeweilige Kriterium/die Kosten/den
+    # Reminder-Override wieder, siehe coordinator.py::async_edit_maintenance().
     vol.Optional("km_intervall"): vol.Any("", vol.Coerce(float)),
-    vol.Optional("zeit_intervall_tage"): vol.Any("", vol.Coerce(int)),
+    vol.Optional("zeit_intervall_monate"): vol.Any("", vol.Coerce(int)),
     vol.Optional("festes_datum"): str,
     vol.Optional("kosten"): vol.Any("", vol.Coerce(float)),
     vol.Optional("last_done_km"): vol.Coerce(float),
     vol.Optional("last_done_datum"): str,
     vol.Optional("aktiv"): bool,
+    vol.Optional("reminder_monate"): vol.Any("", vol.Coerce(float)),
+    vol.Optional("reminder_km"): vol.Any("", vol.Coerce(float)),
 })
 
 DELETE_MAINTENANCE_SCHEMA = vol.Schema({
@@ -526,10 +530,16 @@ def _register_services(hass: HomeAssistant) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
             await coordinator.async_add_maintenance(
-                call.data.get("name"), call.data.get("preset"),
-                call.data.get("km_intervall"), call.data.get("zeit_intervall_tage"),
-                call.data.get("festes_datum"), call.data.get("kosten"),
-                call.data.get("last_done_km"), call.data.get("last_done_datum"),
+                name=call.data.get("name"),
+                preset=call.data.get("preset"),
+                km_intervall=call.data.get("km_intervall"),
+                zeit_intervall_monate=call.data.get("zeit_intervall_monate"),
+                festes_datum=call.data.get("festes_datum"),
+                kosten=call.data.get("kosten"),
+                last_done_km=call.data.get("last_done_km"),
+                last_done_datum=call.data.get("last_done_datum"),
+                reminder_monate=call.data.get("reminder_monate"),
+                reminder_km=call.data.get("reminder_km"),
             )
 
     async def _handle_edit_maintenance(call: ServiceCall) -> None:
@@ -537,14 +547,16 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_edit_maintenance(
                 call.data["wartung_id"],
-                call.data.get("name"),
-                call.data.get("km_intervall"),
-                call.data.get("zeit_intervall_tage"),
-                call.data.get("festes_datum"),
-                call.data.get("kosten"),
-                call.data.get("last_done_km"),
-                call.data.get("last_done_datum"),
-                call.data.get("aktiv"),
+                name=call.data.get("name"),
+                km_intervall=call.data.get("km_intervall"),
+                zeit_intervall_monate=call.data.get("zeit_intervall_monate"),
+                festes_datum=call.data.get("festes_datum"),
+                kosten=call.data.get("kosten"),
+                last_done_km=call.data.get("last_done_km"),
+                last_done_datum=call.data.get("last_done_datum"),
+                aktiv=call.data.get("aktiv"),
+                reminder_monate=call.data.get("reminder_monate"),
+                reminder_km=call.data.get("reminder_km"),
             )
 
     async def _handle_delete_maintenance(call: ServiceCall) -> None:

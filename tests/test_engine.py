@@ -1,5 +1,7 @@
 """pytest fuer die reine Erkennungslogik (ohne Home Assistant)."""
 
+from datetime import date
+
 import pytest
 from engine import (
     UNBEKANNTER_ANBIETER,
@@ -12,6 +14,7 @@ from engine import (
     ac_dc_breakdown,
     ac_dc_breakdown_from_totals,
     ac_dc_bucket_key,
+    add_months,
     anbieter_breakdown,
     anbieter_breakdown_from_totals,
     apply_ac_dc_delta,
@@ -51,6 +54,7 @@ from engine import (
     trip_discharge_pct,
     trip_weekday_kwh_parts,
     update_period_baseline,
+    wartung_festes_datum_fortschreiben,
     wartung_status,
     wartung_uebersicht,
     weekday_usage_profile,
@@ -2325,13 +2329,69 @@ def test_split_by_age_idempotent_auf_bereits_gekuerzter_liste():
     assert alt2 == []
 
 
+# ----- add_months()/wartung_festes_datum_fortschreiben(): Kalendermonate --
+
+def test_add_months_kappt_auf_monatsende_nicht_leapyear():
+    # 2026 ist kein Schaltjahr -- Februar hat nur 28 Tage.
+    assert add_months(date(2026, 1, 31), 1) == date(2026, 2, 28)
+
+
+def test_add_months_kappt_auf_monatsende_leapyear():
+    # 2028 ist ein Schaltjahr -- Februar hat 29 Tage.
+    assert add_months(date(2028, 1, 31), 1) == date(2028, 2, 29)
+
+
+def test_add_months_kappt_auf_kuerzeren_monat():
+    assert add_months(date(2026, 3, 31), 1) == date(2026, 4, 30)
+
+
+def test_add_months_ganze_jahre_bleibt_exakt():
+    assert add_months(date(2029, 7, 15), 24) == date(2031, 7, 15)
+
+
+def test_add_months_ueberschreitet_jahresgrenze():
+    assert add_months(date(2026, 1, 15), 13) == date(2027, 2, 15)
+
+
+def test_wartung_festes_datum_fortschreiben_verschiebt_ab_erledigt_monat():
+    # Das im Prompt genannte Beispiel: faellig 07/29, Intervall 24 Monate,
+    # erledigt 09/29 -> naechste Faelligkeit 09/31 (Takt ab Erledigt-Monat,
+    # nicht ab dem alten festen Datum).
+    result = wartung_festes_datum_fortschreiben(
+        festes_datum="2029-07-15", zeit_intervall_monate=24, erledigt_datum="2029-09-01",
+    )
+    assert result == "2031-09-01"
+
+
+def test_wartung_festes_datum_fortschreiben_verfrueht_erledigt_zieht_takt_vor():
+    # Bewusste Entscheidung: eine VERFRUEHTE Erledigung (Monate vor dem
+    # eigentlichen festen Termin) zieht die naechste Faelligkeit ebenso
+    # nach vorne, statt den urspruenglichen Rhythmus beizubehalten.
+    result = wartung_festes_datum_fortschreiben(
+        festes_datum="2029-07-15", zeit_intervall_monate=24, erledigt_datum="2029-06-01",
+    )
+    assert result == "2031-06-01"
+
+
+def test_wartung_festes_datum_fortschreiben_ohne_intervall_bleibt_unveraendert():
+    assert wartung_festes_datum_fortschreiben(
+        festes_datum="2029-07-15", zeit_intervall_monate=None, erledigt_datum="2029-06-01",
+    ) is None
+
+
+def test_wartung_festes_datum_fortschreiben_ohne_festes_datum_liefert_none():
+    assert wartung_festes_datum_fortschreiben(
+        festes_datum=None, zeit_intervall_monate=24, erledigt_datum="2029-06-01",
+    ) is None
+
+
 # ----- wartung_status()/wartung_uebersicht(): Fahrzeugwartung -------------
 
 def test_wartung_status_nur_km_kriterium():
     result = wartung_status(
         aktueller_km=10000.0, km_pro_tag=100.0,
         last_done={"km": 10000.0}, km_intervall=5000.0,
-        zeit_intervall_tage=None, festes_datum=None, heute="2026-01-01",
+        zeit_intervall_monate=None, festes_datum=None, heute="2026-01-01",
     )
     assert result["status"] == "ok"
     assert result["rest_km"] == 5000.0
@@ -2344,12 +2404,14 @@ def test_wartung_status_nur_zeit_kriterium():
     result = wartung_status(
         aktueller_km=None, km_pro_tag=None,
         last_done={"datum": "2026-01-01"}, km_intervall=None,
-        zeit_intervall_tage=40, festes_datum=None, heute="2026-01-01",
+        zeit_intervall_monate=1, festes_datum=None, heute="2026-01-01",
     )
     assert result["status"] == "ok"
     assert result["naechste_quelle"] == "zeit"
-    assert result["rest_tage"] == 40
-    assert result["faellig_datum"] == "2026-02-10"
+    # add_months(2026-01-01, 1) = 2026-02-01, echter Kalendersprung (Januar
+    # hat 31 Tage) -- keine 30-Tage-Naeherung.
+    assert result["rest_tage"] == 31
+    assert result["faellig_datum"] == "2026-02-01"
     assert "rest_km" not in result
 
 
@@ -2357,7 +2419,7 @@ def test_wartung_status_nur_festes_datum_kriterium_ohne_last_done():
     # festes_datum braucht KEIN last_done (bereits bekannter Termin).
     result = wartung_status(
         aktueller_km=None, km_pro_tag=None, last_done=None,
-        km_intervall=None, zeit_intervall_tage=None,
+        km_intervall=None, zeit_intervall_monate=None,
         festes_datum="2026-03-01", heute="2026-01-01",
     )
     assert result["status"] == "ok"
@@ -2371,7 +2433,7 @@ def test_wartung_status_kombiniert_km_gewinnt_wenn_frueher():
         aktueller_km=10000.0, km_pro_tag=100.0,
         last_done={"km": 10000.0, "datum": "2026-01-01"},
         km_intervall=1000.0,  # rest_km=1000, /100 pro Tag = 10 Tage -> 2026-01-11
-        zeit_intervall_tage=59,  # -> 2026-03-01, 59 Tage entfernt
+        zeit_intervall_monate=2,  # add_months(2026-01-01, 2) = 2026-03-01, 59 Tage entfernt
         festes_datum=None, heute="2026-01-01",
     )
     assert result["naechste_quelle"] == "km"
@@ -2384,14 +2446,14 @@ def test_wartung_status_kombiniert_km_gewinnt_wenn_frueher():
 def test_wartung_status_kombiniert_zeit_gewinnt_wenn_frueher():
     result = wartung_status(
         aktueller_km=10000.0, km_pro_tag=10.0,
-        last_done={"km": 10000.0, "datum": "2026-01-01"},
+        last_done={"km": 10000.0, "datum": "2025-12-31"},
         km_intervall=1000.0,  # rest_km=1000, /10 pro Tag = 100 Tage -> weit weg
-        zeit_intervall_tage=5,  # -> 2026-01-06, nur 5 Tage entfernt
+        zeit_intervall_monate=1,  # add_months(2025-12-31, 1) = 2026-01-31, nur 30 Tage entfernt
         festes_datum=None, heute="2026-01-01",
     )
     assert result["naechste_quelle"] == "zeit"
-    assert result["rest_tage"] == 5
-    assert result["faellig_datum"] == "2026-01-06"
+    assert result["rest_tage"] == 30
+    assert result["faellig_datum"] == "2026-01-31"
     assert result["status"] == "bald_faellig"
     assert result["rest_km"] == 1000.0  # bleibt als Zusatzinfo erhalten
 
@@ -2401,12 +2463,12 @@ def test_wartung_status_km_pro_tag_null_faellt_auf_zeitkriterium_zurueck(km_pro_
     result = wartung_status(
         aktueller_km=10000.0, km_pro_tag=km_pro_tag,
         last_done={"km": 10000.0, "datum": "2026-01-01"},
-        km_intervall=500.0, zeit_intervall_tage=10,
+        km_intervall=500.0, zeit_intervall_monate=1,
         festes_datum=None, heute="2026-01-01",
     )
     assert result["naechste_quelle"] == "zeit"
-    assert result["rest_tage"] == 10
-    assert result["status"] == "bald_faellig"
+    assert result["rest_tage"] == 31  # add_months(2026-01-01, 1) = 2026-02-01
+    assert result["status"] == "ok"
     assert result["rest_km"] == 500.0  # Restkilometer bleiben bekannt ...
 
 
@@ -2417,7 +2479,7 @@ def test_wartung_status_km_pro_tag_null_und_nur_km_kriterium_nutzt_km_schwelle(k
     result = wartung_status(
         aktueller_km=10000.0, km_pro_tag=km_pro_tag,
         last_done={"km": 10000.0}, km_intervall=500.0,
-        zeit_intervall_tage=None, festes_datum=None, heute="2026-01-01",
+        zeit_intervall_monate=None, festes_datum=None, heute="2026-01-01",
         bald_faellig_km=1000.0,
     )
     assert result["status"] == "bald_faellig"  # rest_km=500 <= 1000
@@ -2430,7 +2492,7 @@ def test_wartung_status_km_pro_tag_null_und_nur_km_kriterium_nutzt_km_schwelle(k
 def test_wartung_status_ueberfaellig():
     result = wartung_status(
         aktueller_km=None, km_pro_tag=None, last_done=None,
-        km_intervall=None, zeit_intervall_tage=None,
+        km_intervall=None, zeit_intervall_monate=None,
         festes_datum="2025-12-01", heute="2026-01-01",
     )
     assert result["status"] == "ueberfaellig"
@@ -2440,7 +2502,7 @@ def test_wartung_status_ueberfaellig():
 def test_wartung_status_bald_faellig_schwelle_grenzfall():
     genau_an_schwelle = wartung_status(
         aktueller_km=None, km_pro_tag=None, last_done=None,
-        km_intervall=None, zeit_intervall_tage=None,
+        km_intervall=None, zeit_intervall_monate=None,
         festes_datum="2026-01-11", heute="2026-01-01", bald_faellig_tage=10,
     )
     assert genau_an_schwelle["rest_tage"] == 10
@@ -2448,7 +2510,7 @@ def test_wartung_status_bald_faellig_schwelle_grenzfall():
 
     knapp_darueber = wartung_status(
         aktueller_km=None, km_pro_tag=None, last_done=None,
-        km_intervall=None, zeit_intervall_tage=None,
+        km_intervall=None, zeit_intervall_monate=None,
         festes_datum="2026-01-12", heute="2026-01-01", bald_faellig_tage=10,
     )
     assert knapp_darueber["rest_tage"] == 11
@@ -2456,11 +2518,11 @@ def test_wartung_status_bald_faellig_schwelle_grenzfall():
 
 
 def test_wartung_status_kein_last_done_nur_festes_datum_greift():
-    # km_intervall/zeit_intervall_tage sind gesetzt, aber ohne last_done
+    # km_intervall/zeit_intervall_monate sind gesetzt, aber ohne last_done
     # unbrauchbar -- nur festes_datum liefert ein Ergebnis.
     result = wartung_status(
         aktueller_km=10000.0, km_pro_tag=50.0, last_done=None,
-        km_intervall=1000.0, zeit_intervall_tage=100,
+        km_intervall=1000.0, zeit_intervall_monate=36,
         festes_datum="2026-02-01", heute="2026-01-01",
     )
     assert result["naechste_quelle"] == "fest"
@@ -2470,7 +2532,7 @@ def test_wartung_status_kein_last_done_nur_festes_datum_greift():
 def test_wartung_status_kein_last_done_und_kein_festes_datum_liefert_unbekannt():
     result = wartung_status(
         aktueller_km=10000.0, km_pro_tag=50.0, last_done=None,
-        km_intervall=1000.0, zeit_intervall_tage=100,
+        km_intervall=1000.0, zeit_intervall_monate=36,
         festes_datum=None, heute="2026-01-01",
     )
     assert result == {"status": "unbekannt"}
@@ -2479,7 +2541,7 @@ def test_wartung_status_kein_last_done_und_kein_festes_datum_liefert_unbekannt()
 def test_wartung_status_ganz_ohne_kriterien_liefert_unbekannt():
     result = wartung_status(
         aktueller_km=10000.0, km_pro_tag=50.0, last_done={"km": 9000.0, "datum": "2026-01-01"},
-        km_intervall=None, zeit_intervall_tage=None, festes_datum=None, heute="2026-01-01",
+        km_intervall=None, zeit_intervall_monate=None, festes_datum=None, heute="2026-01-01",
     )
     assert result == {"status": "unbekannt"}
 
@@ -2512,3 +2574,39 @@ def test_wartung_uebersicht_ohne_jede_dringlichkeit_liefert_keine_naechste():
     assert result["anzahl_bald_faellig"] == 0
     assert result["anzahl_ueberfaellig"] == 0
     assert result["naechste"] is None
+
+
+def test_wartung_uebersicht_reminder_override_loest_frueher_bald_faellig_aus():
+    # Globaler Standard (bald_faellig_tage=30) wuerde bei 40 Tagen Rest noch
+    # "ok" liefern -- der Punkt-eigene reminder_tage=45 ueberschreibt das.
+    punkte = [{
+        "id": 1, "name": "Mit Override", "festes_datum": "2026-02-10",  # 40 Tage ab 2026-01-01
+        "reminder_tage": 45,
+    }]
+    result = wartung_uebersicht(punkte, 10000.0, 50.0, "2026-01-01", bald_faellig_tage=30.0)
+    assert result["punkte"][0]["status"] == "bald_faellig"
+    assert result["anzahl_bald_faellig"] == 1
+
+
+def test_wartung_uebersicht_ohne_reminder_override_nutzt_globalen_standard():
+    # Derselbe Punkt OHNE reminder_tage-Override bleibt beim globalen
+    # Standard (30 Tage) -- 40 Tage Rest sind dann noch "ok".
+    punkte = [{"id": 1, "name": "Ohne Override", "festes_datum": "2026-02-10"}]
+    result = wartung_uebersicht(punkte, 10000.0, 50.0, "2026-01-01", bald_faellig_tage=30.0)
+    assert result["punkte"][0]["status"] == "ok"
+    assert result["anzahl_bald_faellig"] == 0
+
+
+def test_wartung_uebersicht_reminder_km_override():
+    punkte = [{
+        "id": 1, "name": "km-Override", "km_intervall": 1000.0,
+        "last_done": {"km": 9000.0}, "reminder_km": 1500.0,
+    }]
+    # rest_km = 9000+1000-10000 = 0 -> ueberfaellig so oder so, also ein
+    # klareres Beispiel mit rest_km=500 gegen einen ANGEHOBENEN Schwellwert:
+    punkte[0]["last_done"]["km"] = 9500.0
+    result = wartung_uebersicht(punkte, 10000.0, None, "2026-01-01", bald_faellig_km=200.0)
+    # rest_km = 9500+1000-10000 = 500 -- globaler Standard (200) waere "ok",
+    # der Punkt-eigene reminder_km=1500 macht daraus "bald_faellig".
+    assert result["punkte"][0]["rest_km"] == 500.0
+    assert result["punkte"][0]["status"] == "bald_faellig"
