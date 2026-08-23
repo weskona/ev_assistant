@@ -23,13 +23,22 @@
       },
       "evcc": {
         "title": "EV Assistant - evcc & Wallbox",
-        "description": "Schritt 3/9: Wallbox- und Standort-Entitäten (Ladeleistung, PV, Netz, Tarife, Statistiken) werden automatisch aus der evcc-Integration übernommen. Hier nur noch: Fahrzeugname in evcc (filtert die Heimladen-Historie) und die Leistungsentität deiner Wallbox. Die Wallbox-Leistungsentität dient NUR der Ja/Nein-Erkennung \"lädt gerade zuhause\" (kein Energie-Messwert, liefert naturgemäß nur zuhause Werte) — ohne sie wird jede SoC-Zunahme fälschlich als Fremdladen erkannt. Für die Energie-Messung bei einer Fremdladung unterwegs siehe Schritt 4 (Fahrzeug-Ladeleistung, aus der Fahrzeug-Telemetrie).",
+        "description": "Schritt 3/9: evcc-Host (die Adresse deines evcc-Addons, z.B. http://192.168.178.1:7070) wird direkt per REST angesprochen — Wallbox- und Standort-Werte (Ladeleistung, PV, Netz, Tarife, Statistiken) kommen dann automatisch von dort, keine evcc_intg-Integration mehr nötig. Ohne Host bleiben diese Felder einfach leer. Zusätzlich: Fahrzeugname in evcc (filtert die Heimladen-Historie) und die Leistungsentität deiner Wallbox. Die Wallbox-Leistungsentität dient NUR der Ja/Nein-Erkennung \"lädt gerade zuhause\" (kein Energie-Messwert, liefert naturgemäß nur zuhause Werte) — ohne sie wird jede SoC-Zunahme fälschlich als Fremdladen erkannt. Für die Energie-Messung bei einer Fremdladung unterwegs siehe Schritt 4 (Fahrzeug-Ladeleistung, aus der Fahrzeug-Telemetrie).",
         "data": {
+          "evcc_host": "evcc-Adresse (z.B. http://192.168.178.1:7070)",
           "evcc_vehicle_name": "Fahrzeugname in evcc",
           "home_entity": "Wallbox Ladeleistung"
         },
         "data_description": {
+          "evcc_host": "Optional — ohne sie bleiben Ladeleistung/Modus/Tarife/PV im Panel einfach leer, alles andere funktioniert unverändert weiter.",
           "home_entity": "Nur ein Ja/Nein-Schwellwert (>0,1 kW = \"lädt gerade zuhause\") — kein Energie-Messwert und liefert nur Werte, während das Fahrzeug an dieser Wallbox hängt."
+        }
+      },
+      "evcc_loadpoint": {
+        "title": "EV Assistant - evcc-Ladepunkt",
+        "description": "evcc verwaltet mehr als einen Ladepunkt — welcher gehört zu diesem Fahrzeug?",
+        "data": {
+          "evcc_loadpoint_title": "Ladepunkt"
         }
       },
       "ladeleistung": {
@@ -114,7 +123,8 @@
     },
     "error": {
       "vehicle_name_required": "Bitte Hersteller und Modell angeben.",
-      "noise_too_high": "Das SoC-Rauschen muss kleiner sein als die Start-Schwelle."
+      "noise_too_high": "Das SoC-Rauschen muss kleiner sein als die Start-Schwelle.",
+      "cannot_connect": "Verbindung zu evcc fehlgeschlagen. Bitte Host pruefen."
     },
     "abort": {
       "already_configured": "Für diese SoC-Entität ist bereits ein Fahrzeug eingerichtet."
@@ -144,13 +154,22 @@
       },
       "evcc": {
         "title": "EV Assistant - evcc & Wallbox",
-        "description": "Schritt 3/9: Wallbox- und Standort-Entitäten werden automatisch aus der evcc-Integration übernommen.",
+        "description": "Schritt 3/9: evcc-Host wird direkt per REST angesprochen (Wallbox-/Standortwerte kommen dann automatisch von dort).",
         "data": {
+          "evcc_host": "evcc-Adresse (z.B. http://192.168.178.1:7070)",
           "evcc_vehicle_name": "Fahrzeugname in evcc",
           "home_entity": "Wallbox Ladeleistung"
         },
         "data_description": {
+          "evcc_host": "Optional — ohne sie bleiben Ladeleistung/Modus/Tarife/PV im Panel einfach leer, alles andere funktioniert unverändert weiter.",
           "home_entity": "Nur ein Ja/Nein-Schwellwert (>0,1 kW = \"lädt gerade zuhause\") — kein Energie-Messwert und liefert nur Werte, während das Fahrzeug an dieser Wallbox hängt."
+        }
+      },
+      "evcc_loadpoint": {
+        "title": "EV Assistant - evcc-Ladepunkt",
+        "description": "evcc verwaltet mehr als einen Ladepunkt — welcher gehört zu diesem Fahrzeug?",
+        "data": {
+          "evcc_loadpoint_title": "Ladepunkt"
         }
       },
       "ladeleistung": {
@@ -235,7 +254,8 @@
     },
     "error": {
       "vehicle_name_required": "Bitte Hersteller und Modell angeben.",
-      "noise_too_high": "Das SoC-Rauschen muss kleiner sein als die Start-Schwelle."
+      "noise_too_high": "Das SoC-Rauschen muss kleiner sein als die Start-Schwelle.",
+      "cannot_connect": "Verbindung zu evcc fehlgeschlagen. Bitte Host pruefen."
     }
   },
   "selector": {

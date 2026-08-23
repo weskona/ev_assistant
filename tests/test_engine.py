@@ -15,6 +15,7 @@ from engine import (
     ac_dc_breakdown_from_totals,
     ac_dc_bucket_key,
     add_months,
+    aggregate_sessions_by_vehicle,
     anbieter_breakdown,
     anbieter_breakdown_from_totals,
     apply_ac_dc_delta,
@@ -1401,6 +1402,41 @@ def test_home_session_solar_and_cost_ignoriert_sessions_ohne_oder_mit_null_kwh()
 
 def test_home_session_solar_and_cost_leere_liste_liefert_leeres_dict():
     assert home_session_solar_and_cost([]) == {}
+
+
+# ----- aggregate_sessions_by_vehicle ------------------------------------------
+
+def test_aggregate_sessions_by_vehicle_summiert_je_fahrzeug():
+    sessions = [
+        {"vehicle": "erifter", "chargedEnergy": 10.0, "price": 2.0, "chargeDuration": 3_600_000_000_000},
+        {"vehicle": "erifter", "chargedEnergy": 5.0, "price": 1.0, "chargeDuration": 1_800_000_000_000},
+        {"vehicle": "id4", "chargedEnergy": 20.0, "price": 4.0, "chargeDuration": 7_200_000_000_000},
+    ]
+    result = aggregate_sessions_by_vehicle(sessions)
+    assert result["erifter"] == {"chargedEnergy": 15.0, "cost": 3.0, "chargeDuration": 5400.0}
+    assert result["id4"] == {"chargedEnergy": 20.0, "cost": 4.0, "chargeDuration": 7200.0}
+
+
+def test_aggregate_sessions_by_vehicle_ignoriert_sessions_ohne_fahrzeug():
+    sessions = [
+        {"vehicle": "", "chargedEnergy": 10.0, "price": 2.0},
+        {"chargedEnergy": 5.0, "price": 1.0},  # kein "vehicle"-Feld
+        {"vehicle": "erifter", "chargedEnergy": 1.0, "price": 0.5},
+    ]
+    result = aggregate_sessions_by_vehicle(sessions)
+    assert list(result.keys()) == ["erifter"]
+
+
+def test_aggregate_sessions_by_vehicle_ungueltige_werte_zaehlen_als_null():
+    sessions = [
+        {"vehicle": "erifter", "chargedEnergy": None, "price": "n/a", "chargeDuration": -5},
+    ]
+    result = aggregate_sessions_by_vehicle(sessions)
+    assert result["erifter"] == {"chargedEnergy": 0.0, "cost": 0.0, "chargeDuration": 0.0}
+
+
+def test_aggregate_sessions_by_vehicle_leere_liste_liefert_leeres_dict():
+    assert aggregate_sessions_by_vehicle([]) == {}
 
 
 # ----- charging_location_breakdown -------------------------------------------

@@ -23,13 +23,22 @@
       },
       "evcc": {
         "title": "EV Assistant - evcc & Wallbox",
-        "description": "Step 3/9: Wallbox and site entities (charge power, PV, grid, tariffs, statistics) are automatically imported from the evcc integration. Only needed here: the vehicle name in evcc (filters home-charging history) and the power entity of your wallbox. The wallbox power entity is used ONLY for yes/no detection of 'currently charging at home' (not an energy value, and it naturally only reports anything while at home) — without it, every SoC increase will be incorrectly classified as external charging. For energy measurement during external charging, see step 4 (vehicle charge power, from vehicle telemetry).",
+        "description": "Step 3/9: the evcc host (your evcc add-on's address, e.g. http://192.168.178.1:7070) is queried directly over REST — wallbox and site values (charge power, PV, grid, tariffs, statistics) are then picked up from there automatically, no evcc_intg integration needed anymore. Without a host these fields simply stay empty. Also here: the vehicle name in evcc (filters home-charging history) and the power entity of your wallbox. The wallbox power entity is used ONLY for yes/no detection of 'currently charging at home' (not an energy value, and it naturally only reports anything while at home) — without it, every SoC increase will be incorrectly classified as external charging. For energy measurement during external charging, see step 4 (vehicle charge power, from vehicle telemetry).",
         "data": {
+          "evcc_host": "evcc address (e.g. http://192.168.178.1:7070)",
           "evcc_vehicle_name": "Vehicle name in evcc",
           "home_entity": "Wallbox charge power"
         },
         "data_description": {
+          "evcc_host": "Optional — without it, charge power/mode/tariffs/PV in the panel simply stay empty; everything else keeps working as before.",
           "home_entity": "Just a yes/no threshold (>0.1 kW = 'currently charging at home') — not an energy value, and only reports anything while the vehicle is plugged into this wallbox."
+        }
+      },
+      "evcc_loadpoint": {
+        "title": "EV Assistant - evcc Charge Point",
+        "description": "evcc manages more than one charge point — which one belongs to this vehicle?",
+        "data": {
+          "evcc_loadpoint_title": "Charge point"
         }
       },
       "ladeleistung": {
@@ -114,7 +123,8 @@
     },
     "error": {
       "vehicle_name_required": "Please enter manufacturer and model.",
-      "noise_too_high": "The SoC noise value must be smaller than the start threshold."
+      "noise_too_high": "The SoC noise value must be smaller than the start threshold.",
+      "cannot_connect": "Could not connect to evcc. Please check the host."
     },
     "abort": {
       "already_configured": "A vehicle is already configured for this SoC entity."
@@ -144,13 +154,22 @@
       },
       "evcc": {
         "title": "EV Assistant - evcc & Wallbox",
-        "description": "Step 3/9: Wallbox and site entities are automatically imported from the evcc integration.",
+        "description": "Step 3/9: the evcc host is queried directly over REST (wallbox/site values are then picked up from there automatically).",
         "data": {
+          "evcc_host": "evcc address (e.g. http://192.168.178.1:7070)",
           "evcc_vehicle_name": "Vehicle name in evcc",
           "home_entity": "Wallbox charge power"
         },
         "data_description": {
+          "evcc_host": "Optional — without it, charge power/mode/tariffs/PV in the panel simply stay empty; everything else keeps working as before.",
           "home_entity": "Just a yes/no threshold (>0.1 kW = 'currently charging at home') — not an energy value, and only reports anything while the vehicle is plugged into this wallbox."
+        }
+      },
+      "evcc_loadpoint": {
+        "title": "EV Assistant - evcc Charge Point",
+        "description": "evcc manages more than one charge point — which one belongs to this vehicle?",
+        "data": {
+          "evcc_loadpoint_title": "Charge point"
         }
       },
       "ladeleistung": {
@@ -235,7 +254,8 @@
     },
     "error": {
       "vehicle_name_required": "Please enter manufacturer and model.",
-      "noise_too_high": "The SoC noise value must be smaller than the start threshold."
+      "noise_too_high": "The SoC noise value must be smaller than the start threshold.",
+      "cannot_connect": "Could not connect to evcc. Please check the host."
     }
   },
   "selector": {

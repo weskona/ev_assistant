@@ -83,6 +83,16 @@ class EVAssistantPanel extends HTMLElement {
   _eid(key)  { return (this._vehicleConf().entities || {})[key]; }
   _title()   { return this._config.title || "EV Assistant"; }
 
+  // Live-evcc-Werte direkt vom evcc-Addon (siehe coordinator.py::
+  // evcc_live_attrs()) -- als Attribut auf der home_kwh-Entity mitgeliefert,
+  // kein eigener Entity/Netzwerkweg mehr pro Feld (ersetzt die fruehere
+  // evcc_intg-Entity-fuer-Entity-Zuordnung).
+  _evccLive() {
+    const eid = this._eid("home_kwh");
+    const s = eid && this._hass ? this._hass.states[eid] : null;
+    return (s && s.attributes && s.attributes.evcc_live) || {};
+  }
+
   // Lade-Modus (siehe const.py::resolve_lade_modus()) -- als Attribut am
   // "count"-Sensor mitgeliefert (coordinator.py::lade_modus(), sensor.py::
   // CountSensor.extra_state_attributes), kein eigener Netzwerkweg/Sensor
@@ -165,41 +175,6 @@ class EVAssistantPanel extends HTMLElement {
     return null;
   }
 
-  // config_entry_id of the evcc_intg integration — tries three routes:
-  // 1. Directly injected from panel config (Python sets this if evcc_intg is loaded)
-  // 2. hass.entities scan (only works if display-registry includes platform+config_entry_id)
-  // 3. Async entity registry lookup (see _resolveEvccEntryId)
-  _evccEntryId() {
-    if (this._config.evcc_entry_id) return this._config.evcc_entry_id;
-    if (this._evccEntryIdCache) return this._evccEntryIdCache;
-    if (!this._hass || !this._hass.entities) return null;
-    for (const eid in this._hass.entities) {
-      const entry = this._hass.entities[eid];
-      if (entry && entry.platform === "evcc_intg" && entry.config_entry_id) return entry.config_entry_id;
-    }
-    return null;
-  }
-
-  // Resolves evcc entry_id via entity registry WS when hass.entities lacks platform info.
-  // Result is cached in this._evccEntryIdCache so subsequent calls are synchronous.
-  async _resolveEvccEntryId() {
-    if (this._evccEntryIdCache) return this._evccEntryIdCache;
-    if (!this._hass || !this._hass.callWS) return null;
-    const entities = this._vehicleConf().entities || {};
-    const keys = ["evcc_tariff_grid", "evcc_charge_power", "evcc_session_energy", "evcc_grid_power", "evcc_tariff_feedin"];
-    for (const key of keys) {
-      const eid = entities[key];
-      if (!eid) continue;
-      try {
-        const reg = await this._hass.callWS({ type: "config/entity_registry/get", entity_id: eid });
-        if (reg && reg.config_entry_id) {
-          this._evccEntryIdCache = reg.config_entry_id;
-          return reg.config_entry_id;
-        }
-      } catch (_) { /* try next key */ }
-    }
-    return null;
-  }
 
   _call(service, data) {
     const config_entry_id = this._configEntryId();
@@ -2604,38 +2579,39 @@ class EVAssistantPanel extends HTMLElement {
     const r = this._r;
     if (!r.stKw) return;
 
-    // evcc values via configured entity IDs (set in config flow, step 9/9)
-    const ev = (key) => { const eid = this._eid(key); return eid ? this._raw(eid) : null; };
-    const power    = parseFloat(ev("evcc_charge_power")      ?? NaN);
-    const phases   = ev("evcc_phases_active");
+    // evcc-Live-Werte direkt vom evcc-Addon (siehe coordinator.py::evcc_live_attrs())
+    const live = this._evccLive();
+    const ev = (key) => (live[key] === undefined || live[key] === null) ? null : live[key];
+    const power    = parseFloat(ev("charge_power")      ?? NaN);
+    const phases   = ev("phases_active");
     const phaseNum = parseInt(phases ?? "3", 10) || 3;
     const maxKw    = phaseNum * 3.68;
-    const solarPct = parseFloat(ev("evcc_session_solar_pct") ?? NaN);
+    const solarPct = parseFloat(ev("session_solar_pct") ?? NaN);
     const socEid   = this._eid("soc_entity");
-    const soc      = socEid ? parseFloat(this._raw(socEid) ?? NaN) : parseFloat(ev("evcc_vehicle_soc") ?? NaN);
-    const socLim   = parseFloat(ev("evcc_limit_soc")         ?? NaN);
-    const rawConn  = ev("evcc_charge_status");               // binary_sensor → "on"/"off"
-    const mode     = ev("evcc_mode")                         || "";
-    const sessKwh  = parseFloat(ev("evcc_session_energy")    ?? NaN);
-    const sessEur  = parseFloat(ev("evcc_session_price")     ?? NaN);
-    const durSec   = parseFloat(ev("evcc_charge_duration")   ?? NaN);
-    const tGrid    = parseFloat(ev("evcc_tariff_grid")       ?? NaN);
-    const tFeedin  = parseFloat(ev("evcc_tariff_feedin")     ?? NaN);
-    const totalKwh = parseFloat(ev("evcc_stat_total_kwh")    ?? NaN);
-    const totalSol = parseFloat(ev("evcc_stat_solar_pct")    ?? NaN);
-    const avgPrice = parseFloat(ev("evcc_stat_avg_price")    ?? NaN);
+    const soc      = socEid ? parseFloat(this._raw(socEid) ?? NaN) : parseFloat(ev("vehicle_soc") ?? NaN);
+    const socLim   = parseFloat(ev("limit_soc")         ?? NaN);
+    const rawConn  = ev("charging");                         // boolean aus evccs Loadpoint-State
+    const mode     = ev("mode")                              || "";
+    const sessKwh  = parseFloat(ev("session_energy")    ?? NaN);
+    const sessEur  = parseFloat(ev("session_price")     ?? NaN);
+    const durSec   = parseFloat(ev("charge_duration")   ?? NaN);
+    const tGrid    = parseFloat(ev("tariff_grid")       ?? NaN);
+    const tFeedin  = parseFloat(ev("tariff_feedin")     ?? NaN);
+    const totalKwh = parseFloat(ev("stat_total_kwh")    ?? NaN);
+    const totalSol = parseFloat(ev("stat_solar_pct")    ?? NaN);
+    const avgPrice = parseFloat(ev("stat_avg_price")    ?? NaN);
     const homeKwh  = parseFloat(this._state("home_kwh") ?? NaN);
     const homeCost = parseFloat(this._state("home_cost") ?? NaN);
 
     // Site-level power (W → kW). gridPower: positive = import, negative = export.
     // battPower: positive = charging, negative = discharging (providing power).
-    const pvKw   = parseFloat(ev("evcc_pv_power")      ?? NaN) / 1000;
-    const gridPw = parseFloat(ev("evcc_grid_power")    ?? NaN) / 1000;
-    const battPw = parseFloat(ev("evcc_battery_power") ?? NaN) / 1000;
+    const pvKw   = parseFloat(ev("pv_power")      ?? NaN) / 1000;
+    const gridPw = parseFloat(ev("grid_power")    ?? NaN) / 1000;
+    const battPw = parseFloat(ev("battery_power") ?? NaN) / 1000;
 
     const isCharging  = !isNaN(power) && power > 0.05;
-    // Derive IEC 61851 status from connected binary_sensor + actual power
-    const status = rawConn === "on" ? (isCharging ? "C" : "B") : "A";
+    // Derive IEC 61851 status from evccs "charging"-Flag + tatsaechlicher Leistung
+    const status = rawConn === true ? (isCharging ? "C" : "B") : "A";
 
     // ----- Status ring -----
     this._updateRing(r.stRingSolar, r.stRingGrid, power, maxKw, r.stCirc, solarPct);
@@ -3555,9 +3531,7 @@ class EVAssistantPanel extends HTMLElement {
     if (this._homeSessionsFetching) return;
     this._homeSessionsFetching = true;
     this._homeSessionsFetchedAt = Date.now();
-    // Try fast synchronous lookup first; fall back to async entity registry WS call
-    let entryId = this._evccEntryId();
-    if (!entryId && this._hass && this._hass.callWS) entryId = await this._resolveEvccEntryId();
+    const entryId = this._configEntryId();
     if (!entryId || !this._hass || !this._hass.callWS) {
       // _homeSessions bleibt null (nicht []), damit ohne Dauerschleife erneut
       // versucht wird, sobald z. B. die Entity-Registry nachträglich verfügbar ist.
@@ -3566,7 +3540,7 @@ class EVAssistantPanel extends HTMLElement {
       return;
     }
     try {
-      const res = await this._hass.callWS({ type: "evcc_intg/sessions", entry_id: entryId });
+      const res = await this._hass.callWS({ type: "ev_assistant/evcc_sessions", config_entry_id: entryId });
       this._homeSessions = Array.isArray(res && res.sessions) ? res.sessions : [];
     } catch (err) {
       this._homeSessions = [];
@@ -4263,11 +4237,12 @@ class EVAssistantPanel extends HTMLElement {
   _updateBetaLiveStatus() {
     const r = this._r;
     if (!r.betaStatusText) return;
-    const ev = (key) => { const eid = this._eid(key); return eid ? this._raw(eid) : null; };
-    const power   = parseFloat(ev("evcc_charge_power") ?? NaN);
-    const rawConn = ev("evcc_charge_status");
+    const live = this._evccLive();
+    const ev = (key) => (live[key] === undefined || live[key] === null) ? null : live[key];
+    const power   = parseFloat(ev("charge_power") ?? NaN);
+    const rawConn = ev("charging");
     const isCharging = !isNaN(power) && power > 0.05;
-    const statusText = rawConn == null ? null : (rawConn === "on" ? (isCharging ? "Lädt" : "Verbunden") : "Nicht verbunden");
+    const statusText = rawConn == null ? null : (rawConn === true ? (isCharging ? "Lädt" : "Verbunden") : "Nicht verbunden");
     r.betaStatusChargingRow.classList.toggle("hidden", statusText == null);
     if (statusText != null) r.betaStatusText.textContent = statusText;
 
@@ -4280,7 +4255,7 @@ class EVAssistantPanel extends HTMLElement {
     r.betaStatusSocRow.classList.toggle("hidden", isNaN(soc));
     if (!isNaN(soc)) r.betaStatusSoc.textContent = this._fmtNum(soc, 0) + " %";
 
-    const solarPct = parseFloat(ev("evcc_session_solar_pct") ?? NaN);
+    const solarPct = parseFloat(ev("session_solar_pct") ?? NaN);
     r.betaStatusSolarRow.classList.toggle("hidden", isNaN(solarPct));
     if (!isNaN(solarPct)) r.betaStatusSolar.textContent = this._fmtNum(solarPct, 0) + " %";
 

@@ -8,13 +8,13 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 
+from . import websocket_api as ev_websocket_api
 from .const import (
     CONF_EVCC_VEHICLE_NAME,
     CONF_SOC_ENTITY,
     CONF_VEHICLE_HERSTELLER,
     CONF_VEHICLE_MODELL,
     DOMAIN,
-    EVCC_CONF_KEYS,
     PLATFORMS,
     SERVICE_ADD_LADEKARTE,
     SERVICE_ADD_LADEKARTE_PREISSTUFE,
@@ -48,6 +48,21 @@ _PANEL_TITLE = "EV Assistant"
 _PANEL_ICON = "mdi:car-electric"
 _STATIC_REGISTERED = "_ev_panel_static"
 _PANEL_REGISTERED = "_ev_panel"
+_WEBSOCKET_REGISTERED = "_ev_websocket"
+
+# Alte, seit Migration auf direkten evcc-Addon-Zugriff (CONF_EVCC_HOST)
+# unbenutzte Entity-ID-Config-Keys aus evcc_intg-Bestandsinstallationen --
+# siehe async_migrate_entry(). Absichtlich als Literale statt aus const.py
+# importiert: die Konstanten selbst wurden dort entfernt (sie waren reine
+# Discovery-Ergebnisse, keine Nutzereingaben), die Migration muss ihre
+# frueheren String-Werte aber weiterhin kennen, um sie sauber zu entfernen.
+_LEGACY_EVCC_ENTITY_KEYS = (
+    "evcc_charge_power", "evcc_charge_status", "evcc_mode", "evcc_phases_active",
+    "evcc_vehicle_soc", "evcc_limit_soc", "evcc_session_energy", "evcc_session_solar_pct",
+    "evcc_session_price", "evcc_charge_duration", "evcc_tariff_grid", "evcc_tariff_feedin",
+    "evcc_stat_total_kwh", "evcc_stat_solar_pct", "evcc_stat_avg_price",
+    "evcc_pv_power", "evcc_grid_power", "evcc_battery_power",
+)
 
 
 def _vehicle_display_name(ev_entry: ConfigEntry) -> str:
@@ -65,7 +80,7 @@ def _vehicle_display_name(ev_entry: ConfigEntry) -> str:
     return fahrzeug or ev_entry.title
 
 
-def _build_entity_map(ent_reg, ev_entry, evcc_conf_keys) -> dict:
+def _build_entity_map(ent_reg, ev_entry) -> dict:
     """Entity-Map für einen einzelnen Config-Entry aufbauen."""
     from homeassistant.helpers import entity_registry as er_mod
     entries = er_mod.async_entries_for_config_entry(ent_reg, ev_entry.entry_id)
@@ -74,10 +89,6 @@ def _build_entity_map(ent_reg, ev_entry, evcc_conf_keys) -> dict:
     for e in entries:
         if e.unique_id.startswith(prefix):
             entity_map[e.unique_id[len(prefix):]] = e.entity_id
-    for key in evcc_conf_keys:
-        eid = ev_entry.options.get(key) or ev_entry.data.get(key)
-        if eid:
-            entity_map[key] = eid
     # Fahrzeugkarte im Panel soll den SoC von DIESER Entitaet zeigen (Schritt 1,
     # immer konfiguriert, dieselbe Quelle, der auch die Erkennung vertraut) --
     # nicht von evcc_vehicle_soc, das evcc-Namensschema-abhaengig und optional ist.
@@ -114,7 +125,7 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
         # Alle ev_assistant-Entries sammeln → vehicles-Array für das Panel
         vehicles = []
         for ev_entry in hass.config_entries.async_entries(DOMAIN):
-            ev_map = _build_entity_map(ent_reg, ev_entry, EVCC_CONF_KEYS)
+            ev_map = _build_entity_map(ent_reg, ev_entry)
             vehicle: dict = {
                 "config_entry_id": ev_entry.entry_id,
                 "title": ev_entry.title,
@@ -127,7 +138,7 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
             vehicles.append(vehicle)
 
         # Aufrufenden Entry als Top-Level-Kontext setzen (Rückwärtskompatibilität)
-        entity_map = _build_entity_map(ent_reg, entry, EVCC_CONF_KEYS)
+        entity_map = _build_entity_map(ent_reg, entry)
         panel_config: dict = {
             "title": entry.title,
             "name": _vehicle_display_name(entry),
@@ -138,12 +149,6 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
         evcc_vehicle_name = entry.options.get(CONF_EVCC_VEHICLE_NAME) or entry.data.get(CONF_EVCC_VEHICLE_NAME)
         if evcc_vehicle_name:
             panel_config["evcc_vehicle_name"] = evcc_vehicle_name
-
-        # evcc_intg config_entry_id direkt mitgeben, damit _evccEntryId() im Panel
-        # nicht auf hass.entities.platform angewiesen ist (in panel_custom unzuverlaessig).
-        for evcc_entry in hass.config_entries.async_entries("evcc_intg"):
-            panel_config["evcc_entry_id"] = evcc_entry.entry_id
-            break
 
         try:
             frontend.async_remove_panel(hass, _PANEL_URL_PATH, warn_if_unknown=False)
@@ -357,6 +362,24 @@ MARK_MAINTENANCE_DONE_SCHEMA = vol.Schema({
 })
 
 
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Version 1 -> 2: evcc_intg-Entity-Discovery entfernt (siehe
+    config_flow.py) -- die damals automatisch ermittelten CONF_EVCC_*-
+    Entity-IDs (_LEGACY_EVCC_ENTITY_KEYS) sind seitdem unbenutzte
+    Karteileichen, die neuen evcc-Felder (CONF_EVCC_HOST/
+    CONF_EVCC_LOADPOINT_TITLE) haben eigene, davon unabhaengige Keys. Kein
+    Datenverlust bei Bestandsnutzern: sie muessen lediglich einmalig
+    CONF_EVCC_HOST in den Integrationseinstellungen nachtragen, um die
+    evcc-Anbindung zu reaktivieren -- ohne ihn bleiben die evcc-Felder
+    schlicht unavailable, identisch zum bisherigen "evcc_intg nicht
+    installiert"-Fall (evcc war schon vorher optional)."""
+    if entry.version == 1:
+        new_data = {k: v for k, v in entry.data.items() if k not in _LEGACY_EVCC_ENTITY_KEYS}
+        new_options = {k: v for k, v in entry.options.items() if k not in _LEGACY_EVCC_ENTITY_KEYS}
+        hass.config_entries.async_update_entry(entry, data=new_data, options=new_options, version=2)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Backfill fuer Entries von vor Einfuehrung der unique_id (siehe
     # EvAssistantConfigFlow.async_step_fahrzeug) -- ohne das wuerde der
@@ -373,6 +396,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     _register_services(hass)
+    domain_data = hass.data.setdefault(DOMAIN, {})
+    if not domain_data.get(_WEBSOCKET_REGISTERED):
+        ev_websocket_api.async_register(hass)
+        domain_data[_WEBSOCKET_REGISTERED] = True
     await _async_register_panel(hass, entry)
     return True
 

@@ -11,6 +11,7 @@ from typing import Callable, Optional
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change, async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.template import Template
@@ -27,11 +28,8 @@ from .const import (
     CONF_CO2_PER_KWH,
     CONF_DROP_ENDS,
     CONF_EFFICIENCY,
-    CONF_EVCC_SESSION_ENERGY,
-    CONF_EVCC_SESSION_PRICE,
-    CONF_EVCC_SESSION_SOLAR_PCT,
-    CONF_EVCC_STAT_AVG_PRICE,
-    CONF_EVCC_STAT_TOTAL_KWH,
+    CONF_EVCC_HOST,
+    CONF_EVCC_LOADPOINT_TITLE,
     CONF_EVCC_VEHICLE_NAME,
     CONF_GPS_ENTITY,
     CONF_HOME_ENTITY,
@@ -148,6 +146,7 @@ from .engine import (
     TripDetector,
     TripSample,
     ac_dc_breakdown_from_totals,
+    aggregate_sessions_by_vehicle,
     anbieter_breakdown_from_totals,
     apply_ac_dc_delta,
     apply_anbieter_delta,
@@ -186,11 +185,18 @@ from .engine import (
     wartung_uebersicht,
     weekday_usage_profile_from_totals,
 )
+from .evcc_client import EvccClient
 
 _LOGGER = logging.getLogger(__name__)
 
 _HOME_TRUE = ("on", "true", "1", "yes", "charging", "charge")
 _INVALID = ("unknown", "unavailable", "none", "", None)
+# evcc-Live-State-Polling -- entspricht in etwa der frueheren evcc_intg-
+# scan_interval, damit das Panel spuerbar nicht langsamer wird als vorher.
+_EVCC_POLL_INTERVAL_S = 15
+# Ladelogbuch (/api/sessions) aendert sich nur, wenn eine Session endet --
+# muss daher nicht im selben Takt wie der Live-State neu geholt werden.
+_EVCC_SESSIONS_CACHE_S = 300
 # Ab dieser Leistung (kW) gilt eine Power-Entitaet als "laedt". Der
 # Home-Entitaet-Picker im Config Flow filtert auf device_class: power (z.B.
 # eine Wallbox-Ladeleistung von evcc/Warp), daher muss ein numerischer Wert
@@ -461,6 +467,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Zwecke sollen sich nicht gegenseitig beeinflussen.
         self._capacity_anchor_soc: Optional[float] = None
         self._capacity_anchor_wallbox_kwh: Optional[float] = None
+        # Direkter evcc-Addon-Zugriff (siehe evcc_client.py) -- bleibt None
+        # ohne konfigurierten CONF_EVCC_HOST, alle evcc-abgeleiteten Felder
+        # sind dann einfach unavailable (identisches Verhalten zum
+        # frueheren "evcc_intg nicht installiert"-Fall). _evcc_session_sums
+        # (aus engine.aggregate_sessions_by_vehicle()) wird asynchron in
+        # _refresh_evcc_sessions() neu berechnet -- _home_kwh()/_home_cost()
+        # lesen daraus nur noch synchron, wie ueberall sonst im Coordinator.
+        self._evcc_client: Optional[EvccClient] = None
+        self._evcc_state: Optional[dict] = None
+        self._evcc_session_sums: dict = {}
         self.data = _empty_data()
 
     def _opt(self, key, default=None):
@@ -516,6 +532,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._build_detector()
         self._build_trip_detector()
         await self._setup_sources()
+        self._setup_evcc_client()
         # Seedet die Kosten-/kWh-Perioden-Baselines sofort statt erst beim
         # naechsten taeglichen Rollover (siehe _daily_cost_period_rollover()/
         # _daily_kwh_period_rollover()) -- sonst waeren "Kosten/kWh
@@ -610,6 +627,125 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._wire_gps()
         self._wire_motor()
         self._wire_outside_temp()
+
+    def _setup_evcc_client(self) -> None:
+        """evcc-Addon direkt per REST ansprechen (siehe evcc_client.py) --
+        ersetzt die fruehere evcc_intg-Entity-Discovery. Ohne konfigurierten
+        CONF_EVCC_HOST bleibt self._evcc_client None, alle evcc-
+        abgeleiteten Felder (Live-Werte, Statistiken, Sessions-Aggregation)
+        sind dann schlicht unavailable -- evcc war schon vorher optional."""
+        host = self._opt(CONF_EVCC_HOST)
+        if not host:
+            return
+        self._evcc_client = EvccClient(host, async_get_clientsession(self.hass))
+        self.hass.async_create_task(self._refresh_evcc_state())
+        self.hass.async_create_task(self._refresh_evcc_sessions())
+        self._unsub.append(
+            async_track_time_interval(
+                self.hass, self._refresh_evcc_state, timedelta(seconds=_EVCC_POLL_INTERVAL_S)
+            )
+        )
+        self._unsub.append(
+            async_track_time_interval(
+                self.hass, self._refresh_evcc_sessions, timedelta(seconds=_EVCC_SESSIONS_CACHE_S)
+            )
+        )
+
+    async def _refresh_evcc_state(self, _now=None) -> None:
+        if self._evcc_client is not None:
+            self._evcc_state = await self._evcc_client.async_get_state()
+
+    async def _refresh_evcc_sessions(self, _now=None) -> None:
+        """evccs Ladelogbuch neu holen und je Fahrzeug aufsummieren (siehe
+        engine.aggregate_sessions_by_vehicle()) -- _home_kwh()/_home_cost()
+        lesen nur noch synchron aus self._evcc_session_sums. Periodisch
+        (alle _EVCC_SESSIONS_CACHE_S) UND sofort nach Ende einer
+        Heim-Session (siehe _set_home())."""
+        if self._evcc_client is None:
+            return
+        sessions = await self._evcc_client.async_get_sessions()
+        self._evcc_session_sums = aggregate_sessions_by_vehicle(sessions)
+
+    def _current_loadpoint(self) -> Optional[dict]:
+        """Der fuer dieses Fahrzeug zustaendige evcc-Loadpoint aus dem
+        zuletzt gepollten /api/state (siehe _refresh_evcc_state()) -- per
+        CONF_EVCC_LOADPOINT_TITLE gewaehlt, falls evcc mehr als einen hat
+        (siehe config_flow.py::async_step_evcc_loadpoint()), sonst der
+        einzige. None ohne evcc-Client oder ohne konfigurierte Loadpoints."""
+        if self._evcc_state is None:
+            return None
+        loadpoints = self._evcc_state.get("loadpoints") or []
+        if not loadpoints:
+            return None
+        title = self._opt(CONF_EVCC_LOADPOINT_TITLE)
+        if title:
+            for lp in loadpoints:
+                if lp.get("title") == title:
+                    return lp
+            return None
+        return loadpoints[0]
+
+    def _evcc_session_value(self, json_key: str) -> Optional[float]:
+        """Einzelnen Live-Wert der aktuellen evcc-Session lesen
+        (json_key z.B. "sessionEnergy"/"sessionSolarPercentage"/
+        "sessionPrice", siehe evcc's Loadpoint-Schema). None ohne
+        identifizierten Loadpoint oder ohne gueltigen Wert (kein Fehler --
+        das Feld wird dann in _set_home() einfach weggelassen)."""
+        loadpoint = self._current_loadpoint()
+        if loadpoint is None:
+            return None
+        value = loadpoint.get(json_key)
+        if not isinstance(value, (int, float)):
+            return None
+        return float(value)
+
+    async def async_get_evcc_sessions(self) -> list:
+        """evccs komplettes Ladelogbuch, direkt vom Addon geholt -- fuer das
+        Panel-Websocket-Kommando ev_assistant/evcc_sessions (siehe
+        websocket_api.py). Ungecacht (nur bei Panel-Tab-Oeffnen aufgerufen),
+        anders als _refresh_evcc_sessions() fuers periodische Aggregat in
+        self._evcc_session_sums."""
+        if self._evcc_client is None:
+            return []
+        return await self._evcc_client.async_get_sessions()
+
+    def evcc_live_attrs(self) -> dict:
+        """Live-evcc-Werte fuers Panel (Uebersicht-Tab), gesammelt aus dem
+        zuletzt gepollten /api/state (siehe _refresh_evcc_state()) --
+        ersetzt die fruehere Entity-fuer-Entity-Zuordnung ueber evcc_intg
+        (das Panel-JS liest diese Felder direkt aus den Attributen der
+        HomeKwhSensor-Entity statt aus separaten evcc_intg-Entities, siehe
+        sensor.py::HomeKwhSensor). Leeres Dict ohne evcc-Client oder ohne
+        bereits vorliegenden State."""
+        if self._evcc_state is None:
+            return {}
+        site = self._evcc_state
+        loadpoint = self._current_loadpoint() or {}
+        statistics = (site.get("statistics") or {}).get("total") or {}
+        return {
+            "charge_power": loadpoint.get("chargePower"),
+            "charging": loadpoint.get("charging"),
+            "mode": loadpoint.get("mode"),
+            "phases_active": loadpoint.get("phasesActive"),
+            "vehicle_soc": loadpoint.get("vehicleSoc"),
+            "limit_soc": loadpoint.get("limitSoc"),
+            "session_energy": loadpoint.get("sessionEnergy"),
+            "session_price": loadpoint.get("sessionPrice"),
+            "session_solar_pct": loadpoint.get("sessionSolarPercentage"),
+            "charge_duration": loadpoint.get("chargeDuration"),
+            "tariff_grid": site.get("tariffGrid"),
+            "tariff_feedin": site.get("tariffFeedIn"),
+            "pv_power": site.get("pvPower"),
+            # gridPower/batteryPower waren in aelteren evcc-Versionen flache
+            # Top-Level-Felder, evcc >= 0.313 hat sie unter grid.power/
+            # battery.power verschachtelt -- beide Formen abdecken, flach
+            # zuerst versuchen (evcc_intg-Kompatibilitaet), sonst verschachtelt.
+            "grid_power": site.get("gridPower", (site.get("grid") or {}).get("power")),
+            "battery_power": site.get("batteryPower", (site.get("battery") or {}).get("power")),
+            "stat_total_kwh": statistics.get("chargedKWh"),
+            "stat_solar_pct": statistics.get("solarPercentage"),
+            "stat_avg_price": statistics.get("avgPrice"),
+        }
 
     def _wire_home_price(self) -> None:
         """Heimstrompreis: optionale Live-Entitaet (z.B. ein dynamischer
@@ -917,46 +1053,30 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 self.hass.async_create_task(self._record_home_capacity_sample(cap_sample))
             # evcc-Session-Kennzahlen (Solaranteil, Gesamtkosten) fuer
             # home_session_stats()/engine.home_session_solar_and_cost().
-            # CONF_EVCC_SESSION_ENERGY ist evccs eigener Session-kWh-Wert --
-            # unabhaengig von CONF_WALLBOX_ENERGY_ENTITY verfuegbar, dient
-            # hier als Gewichtungsbasis. Ohne ihn kein Record (keine
+            # "sessionEnergy" ist evccs eigener Session-kWh-Wert -- dient
+            # hier als Gewichtungsbasis, ohne ihn kein Record (keine
             # Gewichtungsbasis, siehe engine-Docstring). solar_pct/kosten
-            # je einzeln optional -- fehlt die Entity oder ist der Wert
-            # ungueltig, wird das Feld einfach weggelassen.
-            # WICHTIG: evccs "sessionPrice" (CONF_EVCC_SESSION_PRICE) ist
-            # die GESAMTKOSTEN der Session in Waehrung, KEIN Preis/kWh --
-            # verifiziert im evcc_intg-Quellcode: Tag.SESSIONPRICE hat
-            # native_unit_of_measurement "@@@" (Waehrung), das getrennte
-            # Tag.SESSIONPRICEPERKWH hat "@@@/kWh". Deshalb bei der
+            # je einzeln optional -- ohne identifizierten Loadpoint oder bei
+            # ungueltigem Wert wird das Feld einfach weggelassen.
+            # WICHTIG: evccs "sessionPrice" ist die GESAMTKOSTEN der Session
+            # in Waehrung, KEIN Preis/kWh -- das getrennte
+            # "sessionPricePerKWh" waere Waehrung/kWh. Deshalb bei der
             # Aggregation nur aufsummieren, nicht mit kWh multiplizieren.
-            session_kwh = self._read_evcc_session_value(CONF_EVCC_SESSION_ENERGY)
+            session_kwh = self._evcc_session_value("sessionEnergy")
             if session_kwh is not None and session_kwh > 0:
                 session_rec: dict = {"ts": time.time(), "kwh": round(session_kwh, 2)}
-                solar_pct = self._read_evcc_session_value(CONF_EVCC_SESSION_SOLAR_PCT)
+                solar_pct = self._evcc_session_value("sessionSolarPercentage")
                 if solar_pct is not None:
                     session_rec["solar_pct"] = round(solar_pct, 1)
-                kosten = self._read_evcc_session_value(CONF_EVCC_SESSION_PRICE)
+                kosten = self._evcc_session_value("sessionPrice")
                 if kosten is not None:
                     session_rec["kosten"] = round(kosten, 2)
                 self.hass.async_create_task(self._record_home_session(session_rec))
-
-    def _read_evcc_session_value(self, conf_key: str) -> Optional[float]:
-        """Einzelnen evcc-Session-Wert lesen (CONF_EVCC_SESSION_ENERGY/
-        _SOLAR_PCT/_PRICE) -- exakt das Muster von _home_price() fuer
-        CONF_EVCC_STAT_AVG_PRICE: Entity ueber self._opt() aufloesen, State
-        lesen, _INVALID abfangen. None ohne konfigurierte Entity oder ohne
-        gueltigen Wert (kein Fehler -- das Feld wird dann in _set_home()
-        einfach weggelassen)."""
-        entity_id = self._opt(conf_key)
-        if not entity_id:
-            return None
-        state = self.hass.states.get(entity_id)
-        if state is None or state.state in _INVALID:
-            return None
-        try:
-            return float(state.state)
-        except (ValueError, TypeError):
-            return None
+            # Die gerade beendete Session ist jetzt Teil von evccs
+            # /api/sessions -- sofort neu aggregieren statt bis zum
+            # naechsten periodischen _refresh_evcc_sessions() zu warten,
+            # damit _home_kwh()/_home_cost() sie ohne Verzoegerung sehen.
+            self.hass.async_create_task(self._refresh_evcc_sessions())
 
     @callback
     def _set_power(self, raw) -> None:
@@ -3380,27 +3500,29 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     def _evcc_vehicle_key(self) -> Optional[str]:
         """Fahrzeugname in evcc: aus Konfiguration oder via Auto-Erkennung
-        anhand von Hersteller/Modell (z.B. 'VW ID4' -> 'id4') -- dieselbe
-        Berechnung wie der Geraetename (siehe entity.py/__init__.py), NICHT
-        aus entry.title geparst: dessen Format war nicht immer
-        "EV Assistant (Hersteller Modell)" (aeltere Eintraege wurden ohne
-        Klammern angelegt), ein Parsen dort ist daher fragil."""
+        anhand von Hersteller/Modell (z.B. 'VW ID4' -> 'id4') gegen die
+        Fahrzeug-Titel aus evccs /api/state (`vehicles{}`, siehe
+        _refresh_evcc_state()) -- dieselbe Berechnung wie der Geraetename
+        (siehe entity.py/__init__.py), NICHT aus entry.title geparst:
+        dessen Format war nicht immer "EV Assistant (Hersteller Modell)"
+        (aeltere Eintraege wurden ohne Klammern angelegt), ein Parsen dort
+        ist daher fragil."""
         configured = self._opt(CONF_EVCC_VEHICLE_NAME)
         if configured:
             return configured
-        state = self.hass.states.get("sensor.evcc_charging_sessions_vehicles")
-        if not state:
+        if self._evcc_state is None:
             return None
+        vehicles = self._evcc_state.get("vehicles") or {}
         hersteller = self._opt(CONF_VEHICLE_HERSTELLER) or ""
         modell = self._opt(CONF_VEHICLE_MODELL) or ""
         label = f"{hersteller} {modell}".strip().lower()
-        _skip = {"state_class", "icon", "friendly_name", "unit_of_measurement", "device_class"}
-        for key, val in state.attributes.items():
-            if key in _skip or not isinstance(val, dict):
+        for veh in vehicles.values():
+            title = veh.get("title")
+            if not title:
                 continue
-            k = key.lower()
+            k = title.lower()
             if label.find(k) != -1 or all(w in label for w in k.split()):
-                return key
+                return title
         return None
 
     def _since_setup(self, value: float, start_key: str) -> float:
@@ -3422,63 +3544,46 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return round(max(0.0, value - start), 2)
 
     def _home_kwh(self) -> Optional[float]:
-        """Heimladen kWh seit Einrichtung. Prioritaet: (1) evccs eigene
-        Fahrzeug-Session-Statistik (praezise, aber erfordert evccs
-        "Erweiterte Fahrzeugdaten" und ist daher meist unavailable), (2)
-        evccs standortweite Gesamt-Ladeenergie-Statistik
-        (CONF_EVCC_STAT_TOTAL_KWH) -- NUR wenn ein Wallbox-Energiezaehler
-        fuer dieses Fahrzeug konfiguriert ist, da diese Statistik
-        standortweit (nicht pro Fahrzeug) ist und sonst bei mehreren
-        EV-Assistant-Instanzen faelschlich auch einem Fahrzeug zugerechnet
-        wuerde, das gar nicht zuhause laedt, (3) Differenz des Wallbox-
-        Energiezaehlers seit Einrichtung. (1) und (2) sind evccs eigene,
-        kumulative Statistiken -- werden ungekuerzt uebernommen, da evcc
-        die praeziseste Quelle ist. Fuer Savings/kWh100km gibt
+        """Heimladen kWh seit Einrichtung. Prioritaet: (1) aus evccs
+        eigenem Ladelogbuch je Fahrzeug aufsummiert (siehe
+        _refresh_evcc_sessions()/engine.aggregate_sessions_by_vehicle()),
+        (2) evccs standortweite Gesamt-Ladeenergie-Statistik
+        (`statistics.total.chargedKWh` aus /api/state) -- NUR wenn ein
+        Wallbox-Energiezaehler fuer dieses Fahrzeug konfiguriert ist, da
+        diese Statistik standortweit (nicht pro Fahrzeug) ist und sonst bei
+        mehreren EV-Assistant-Instanzen faelschlich auch einem Fahrzeug
+        zugerechnet wuerde, das gar nicht zuhause laedt, (3) Differenz des
+        Wallbox-Energiezaehlers seit Einrichtung. (1) und (2) sind evccs
+        eigene, kumulative Statistiken -- werden ungekuerzt uebernommen, da
+        evcc die praeziseste Quelle ist. Fuer Savings/kWh100km gibt
         _home_kwh_since_setup() das Delta seit ev_assistant-Einrichtung."""
         veh = self._evcc_vehicle_key()
         if veh:
-            state = self.hass.states.get("sensor.evcc_charging_sessions_vehicles")
-            if state:
-                veh_data = state.attributes.get(veh)
-                if isinstance(veh_data, dict):
-                    energy = veh_data.get("chargedEnergy")
-                    if energy is not None:
-                        return round(float(energy), 2)
-        if self._opt(CONF_WALLBOX_ENERGY_ENTITY):
-            kwh_entity = self._opt(CONF_EVCC_STAT_TOTAL_KWH)
-            if kwh_entity:
-                state = self.hass.states.get(kwh_entity)
-                if state is not None and state.state not in _INVALID:
-                    try:
-                        value = float(state.state)
-                    except (ValueError, TypeError):
-                        value = None
-                    if value is not None:
-                        return round(value, 2)
+            veh_data = self._evcc_session_sums.get(veh)
+            if veh_data:
+                return round(veh_data["chargedEnergy"], 2)
+        if self._opt(CONF_WALLBOX_ENERGY_ENTITY) and self._evcc_state is not None:
+            statistics = self._evcc_state.get("statistics") or {}
+            value = (statistics.get("total") or {}).get("chargedKWh")
+            if isinstance(value, (int, float)):
+                return round(value, 2)
         start = self.data.get("wallbox_energy_start")
         if self._wallbox_energy is None or start is None:
             return None
         return round(self._wallbox_energy - start, 2)
 
     def _home_cost(self) -> Optional[float]:
-        """Heimladen-Kosten direkt aus evccs Fahrzeug-Session-Statistik,
-        falls verfuegbar -- praeziser als home_kwh * home_price, da evcc
-        pro Session mit dem tatsaechlichen Tarif rechnet statt mit dem
+        """Heimladen-Kosten direkt aus evccs Ladelogbuch je Fahrzeug
+        aufsummiert -- praeziser als home_kwh * home_price, da evcc pro
+        Session mit dem tatsaechlichen Tarif rechnet statt mit dem
         standortweiten Durchschnittspreis. Wie bei _home_kwh() wird der
-        kumulative evcc-Wert ungekuerzt uebernommen; das Delta seit
+        kumulative Wert ungekuerzt uebernommen; das Delta seit
         ev_assistant-Einrichtung liefert _home_cost_since_setup()."""
         veh = self._evcc_vehicle_key()
         if veh:
-            state = self.hass.states.get("sensor.evcc_charging_sessions_vehicles")
-            if state:
-                veh_data = state.attributes.get(veh)
-                if isinstance(veh_data, dict):
-                    cost = veh_data.get("cost")
-                    if cost is not None:
-                        try:
-                            return round(float(cost), 2)
-                        except (ValueError, TypeError):
-                            pass
+            veh_data = self._evcc_session_sums.get(veh)
+            if veh_data:
+                return round(veh_data["cost"], 2)
         return None
 
     def _home_kwh_since_setup(self) -> Optional[float]:
@@ -3512,22 +3617,18 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     def _home_price(self) -> Optional[float]:
         """Heimstrompreis. Prioritaet: (1) evccs standortweite
-        Durchschnittspreis-Statistik (CONF_EVCC_STAT_AVG_PRICE) -- NUR wenn
-        ein Wallbox-Energiezaehler fuer dieses Fahrzeug konfiguriert ist
-        (siehe _home_kwh() fuer die Begruendung; evcc gewichtet dabei
-        bereits selbst nach tatsaechlich geladener Energie), (2) der
-        kWh-gewichtete Durchschnitt der eigenen Live-Entitaet (falls
-        konfiguriert und ein gueltiger Wert vorliegt, siehe
-        _home_price_average()), (3) der feste Konfigurationswert."""
-        if self._opt(CONF_WALLBOX_ENERGY_ENTITY):
-            price_entity = self._opt(CONF_EVCC_STAT_AVG_PRICE)
-            if price_entity:
-                state = self.hass.states.get(price_entity)
-                if state is not None and state.state not in _INVALID:
-                    try:
-                        return round(float(state.state), 4)
-                    except (ValueError, TypeError):
-                        pass
+        Durchschnittspreis-Statistik (`statistics.total.avgPrice` aus
+        /api/state) -- NUR wenn ein Wallbox-Energiezaehler fuer dieses
+        Fahrzeug konfiguriert ist (siehe _home_kwh() fuer die Begruendung;
+        evcc gewichtet dabei bereits selbst nach tatsaechlich geladener
+        Energie), (2) der kWh-gewichtete Durchschnitt der eigenen
+        Live-Entitaet (falls konfiguriert und ein gueltiger Wert vorliegt,
+        siehe _home_price_average()), (3) der feste Konfigurationswert."""
+        if self._opt(CONF_WALLBOX_ENERGY_ENTITY) and self._evcc_state is not None:
+            statistics = self._evcc_state.get("statistics") or {}
+            value = (statistics.get("total") or {}).get("avgPrice")
+            if isinstance(value, (int, float)):
+                return round(value, 4)
         if self._home_price_live is not None:
             avg = self._home_price_average(self._home_price_live)
             if avg is not None:

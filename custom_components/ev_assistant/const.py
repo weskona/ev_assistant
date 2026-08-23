@@ -235,39 +235,21 @@ CONF_CO2_PER_KWH = "co2_per_kwh_g"
 
 # Evcc-Fahrzeugname (String, kein Entity — muss dem "vehicle"-Feld in evcc's
 # Ladelogbuch entsprechen), zum Filtern der Heimladen-Historie bei mehreren
-# Fahrzeugen in evcc. Bewusst NICHT in EVCC_CONF_KEYS (das ist nur fuer
-# Entity-ID-Felder, die 1:1 ins Panel-"entities"-Mapping kopiert werden).
+# Fahrzeugen in evcc.
 CONF_EVCC_VEHICLE_NAME      = "evcc_vehicle_name"
 
-# Evcc/Wallbox-Entitäten für das Dashboard-Panel (Übersicht-Tab)
-CONF_EVCC_CHARGE_POWER      = "evcc_charge_power"
-CONF_EVCC_CHARGE_STATUS     = "evcc_charge_status"
-CONF_EVCC_MODE              = "evcc_mode"
-CONF_EVCC_PHASES_ACTIVE     = "evcc_phases_active"
-CONF_EVCC_VEHICLE_SOC       = "evcc_vehicle_soc"
-CONF_EVCC_LIMIT_SOC         = "evcc_limit_soc"
-CONF_EVCC_SESSION_ENERGY    = "evcc_session_energy"
-CONF_EVCC_SESSION_SOLAR_PCT = "evcc_session_solar_pct"
-CONF_EVCC_SESSION_PRICE     = "evcc_session_price"
-CONF_EVCC_CHARGE_DURATION   = "evcc_charge_duration"
-CONF_EVCC_TARIFF_GRID       = "evcc_tariff_grid"
-CONF_EVCC_TARIFF_FEEDIN     = "evcc_tariff_feedin"
-CONF_EVCC_STAT_TOTAL_KWH    = "evcc_stat_total_kwh"
-CONF_EVCC_STAT_SOLAR_PCT    = "evcc_stat_solar_pct"
-CONF_EVCC_STAT_AVG_PRICE    = "evcc_stat_avg_price"
-# Site-level power (Watts) — used for the flow diagram
-CONF_EVCC_PV_POWER          = "evcc_pv_power"
-CONF_EVCC_GRID_POWER        = "evcc_grid_power"
-CONF_EVCC_BATTERY_POWER     = "evcc_battery_power"
-
-EVCC_CONF_KEYS = [
-    CONF_EVCC_CHARGE_POWER, CONF_EVCC_CHARGE_STATUS, CONF_EVCC_MODE,
-    CONF_EVCC_PHASES_ACTIVE, CONF_EVCC_VEHICLE_SOC, CONF_EVCC_LIMIT_SOC,
-    CONF_EVCC_SESSION_ENERGY, CONF_EVCC_SESSION_SOLAR_PCT, CONF_EVCC_SESSION_PRICE,
-    CONF_EVCC_CHARGE_DURATION, CONF_EVCC_TARIFF_GRID, CONF_EVCC_TARIFF_FEEDIN,
-    CONF_EVCC_STAT_TOTAL_KWH, CONF_EVCC_STAT_SOLAR_PCT, CONF_EVCC_STAT_AVG_PRICE,
-    CONF_EVCC_PV_POWER, CONF_EVCC_GRID_POWER, CONF_EVCC_BATTERY_POWER,
-]
+# Direkter evcc-Addon-Zugriff (REST-API, siehe evcc_client.py) statt der
+# frueheren evcc_intg-Entity-Discovery: CONF_EVCC_HOST ist optional (evcc
+# war schon vorher nur eine Anreicherung, kein Hard-Requirement fuer
+# Heimladen -- siehe CONF_HOME_ENTITY), ohne ihn bleiben alle evcc-
+# abgeleiteten Felder schlicht unavailable. Gesetzt sind alle Live-/
+# Statistik-Felder (Ladeleistung, Modus, Tarife, PV/Netz/Batterie-Leistung,
+# ...) feste JSON-Pfade in /api/state, keine konfigurierbaren Entity-IDs
+# mehr. CONF_EVCC_LOADPOINT_TITLE waehlt den Loadpoint nur, wenn
+# evcc mehr als einen konfiguriert hat (sonst wird der einzige automatisch
+# verwendet) -- siehe coordinator.py::_current_loadpoint().
+CONF_EVCC_HOST              = "evcc_host"
+CONF_EVCC_LOADPOINT_TITLE   = "evcc_loadpoint_title"
 
 DEFAULT_TEMPLATE = "{{ value }}"
 DEFAULT_USABLE_KWH = 45.0

@@ -1305,6 +1305,43 @@ def home_session_solar_and_cost(sessions: list) -> dict:
     return result
 
 
+def aggregate_sessions_by_vehicle(sessions: list) -> dict:
+    """Summiert evccs eigenes Ladelogbuch (`GET /api/sessions`, siehe
+    evcc_client.py) je Fahrzeugname -- evcc selbst liefert diese Summen
+    nicht fertig aggregiert, das musste bisher die evcc_intg-Integration
+    client-seitig berechnen (siehe deren `calculate_session_sums()`); hier
+    dieselbe Rechnung fuer den direkten evcc-Zugriff nachgebaut.
+
+    Erwartete Felder je Session (fehlende/ungueltige werden als 0
+    gewertet, wie bei evcc_intg): "vehicle" (Name, Gruppierungs-
+    schluessel), "chargedEnergy" (kWh), "price" (Gesamtkosten in
+    Waehrung, KEIN Preis/kWh), "chargeDuration" (Nanosekunden).
+
+    Rueckgabe: {vehicle_name: {"chargedEnergy": kWh, "cost": Waehrung,
+    "chargeDuration": Sekunden}}. Sessions ohne (oder mit leerem)
+    "vehicle"-Feld werden ausgelassen -- ohne Fahrzeugnamen liesse sich
+    kein Eintrag zuordnen."""
+    sums: dict = {}
+    for session in sessions:
+        vehicle = session.get("vehicle")
+        if not vehicle:
+            continue
+        energy = session.get("chargedEnergy", 0)
+        if not isinstance(energy, (int, float)):
+            energy = 0
+        cost = session.get("price", 0)
+        if not isinstance(cost, (int, float)):
+            cost = 0
+        duration_ns = session.get("chargeDuration", 0)
+        duration_s = duration_ns / 1_000_000_000 if isinstance(duration_ns, (int, float)) and duration_ns > 0 else 0
+
+        entry = sums.setdefault(vehicle, {"chargedEnergy": 0.0, "cost": 0.0, "chargeDuration": 0.0})
+        entry["chargedEnergy"] += energy
+        entry["cost"] += cost
+        entry["chargeDuration"] += duration_s
+    return sums
+
+
 def charging_location_breakdown(
     home_kwh: Optional[float],
     home_cost: Optional[float],

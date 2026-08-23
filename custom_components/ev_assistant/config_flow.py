@@ -17,25 +17,9 @@ from .const import (
     CONF_DROP_ENDS,
     CONF_EFFICIENCY,
     CONF_ERSTZULASSUNG,
-    CONF_EVCC_BATTERY_POWER,
-    CONF_EVCC_CHARGE_DURATION,
-    CONF_EVCC_CHARGE_POWER,
-    CONF_EVCC_CHARGE_STATUS,
-    CONF_EVCC_GRID_POWER,
-    CONF_EVCC_LIMIT_SOC,
-    CONF_EVCC_MODE,
-    CONF_EVCC_PHASES_ACTIVE,
-    CONF_EVCC_PV_POWER,
-    CONF_EVCC_SESSION_ENERGY,
-    CONF_EVCC_SESSION_PRICE,
-    CONF_EVCC_SESSION_SOLAR_PCT,
-    CONF_EVCC_STAT_AVG_PRICE,
-    CONF_EVCC_STAT_SOLAR_PCT,
-    CONF_EVCC_STAT_TOTAL_KWH,
-    CONF_EVCC_TARIFF_FEEDIN,
-    CONF_EVCC_TARIFF_GRID,
+    CONF_EVCC_HOST,
+    CONF_EVCC_LOADPOINT_TITLE,
     CONF_EVCC_VEHICLE_NAME,
-    CONF_EVCC_VEHICLE_SOC,
     CONF_GPS_ENTITY,
     CONF_HOME_ENTITY,
     CONF_HOME_PRICE_ENTITY,
@@ -93,7 +77,6 @@ from .const import (
     DEFAULT_USABLE_KWH,
     DEFAULT_USAGE_PROFILE_BUFFER_PCT,
     DOMAIN,
-    EVCC_CONF_KEYS,
     LADE_MODUS_GEMISCHT,
     LADE_MODUS_NUR_AUSWAERTS,
     LADE_MODUS_NUR_ZUHAUSE,
@@ -155,6 +138,9 @@ _TANKERKOENIG_FUEL_TYPE = selector.SelectSelector(
 _EVCC_VEHICLE_NAME = selector.TextSelector(
     selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
 )
+_EVCC_HOST = selector.TextSelector(
+    selector.TextSelectorConfig(type=selector.TextSelectorType.URL)
+)
 _LADE_MODUS = selector.SelectSelector(
     selector.SelectSelectorConfig(
         options=[LADE_MODUS_NUR_ZUHAUSE, LADE_MODUS_GEMISCHT, LADE_MODUS_NUR_AUSWAERTS],
@@ -182,73 +168,19 @@ _SOC_THRESHOLDS = selector.SelectSelector(
 )
 
 
-async def _discover_evcc_entities(hass) -> dict:
-    """Evcc-Entities aus evcc_intg automatisch ermitteln und auf CONF_EVCC_*-Keys mappen."""
-    from homeassistant.helpers import entity_registry as er
+async def _fetch_evcc_loadpoint_titles(hass, host: str) -> list[str] | None:
+    """Verbindung zum evcc-Host testen und die Titel der konfigurierten
+    Loadpoints liefern (leere Liste, falls evcc noch keinen hat). `None`
+    bei Verbindungsfehler."""
+    from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-    ent_reg = er.async_get(hass)
-    evcc_ids: set[str] = set()
-    for entry in hass.config_entries.async_entries("evcc_intg"):
-        for e in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
-            if not e.disabled_by:
-                evcc_ids.add(e.entity_id)
-    if not evcc_ids:
-        return {}
+    from .evcc_client import EvccClient
 
-    def pick(*candidates: str) -> str | None:
-        for c in candidates:
-            if c in evcc_ids:
-                return c
+    client = EvccClient(host, async_get_clientsession(hass))
+    state = await client.async_get_state()
+    if state is None:
         return None
-
-    lp = next(
-        (eid[len("sensor."):-len("_charge_power")]
-         for eid in sorted(evcc_ids)
-         if eid.startswith("sensor.evcc_") and eid.endswith("_charge_power")),
-        None,
-    )
-    # Manche evcc_intg-Versionen/Konfigurationen exponieren Fahrzeugdaten nicht
-    # ueber den Ladepunkt-Praefix (sensor.{lp}_vehicle_soc), sondern ueber einen
-    # eigenen "configvehicle"-Namensraum (sensor.evcc_{vehicle}_configvehicle_soc,
-    # z.B. wenn evcc_intg das Fahrzeug getrennt vom Ladepunkt fuehrt).
-    vk = next(
-        (eid[len("sensor.evcc_"):-len("_configvehicle_soc")]
-         for eid in sorted(evcc_ids)
-         if eid.startswith("sensor.evcc_") and eid.endswith("_configvehicle_soc")),
-        None,
-    )
-
-    discovered: dict = {
-        CONF_EVCC_PV_POWER:       pick("sensor.evcc_pv_power"),
-        CONF_EVCC_GRID_POWER:     pick("sensor.evcc_grid_power"),
-        CONF_EVCC_BATTERY_POWER:  pick("sensor.evcc_battery_power"),
-        CONF_EVCC_TARIFF_GRID:    pick("sensor.evcc_tariff_grid"),
-        CONF_EVCC_TARIFF_FEEDIN:  pick("sensor.evcc_tariff_feed_in"),
-        CONF_EVCC_STAT_TOTAL_KWH: pick("sensor.evcc_stat_total_charged_kwh"),
-        CONF_EVCC_STAT_SOLAR_PCT: pick("sensor.evcc_stat_total_solar_percentage"),
-        CONF_EVCC_STAT_AVG_PRICE: pick("sensor.evcc_stat_total_avg_price"),
-    }
-    if lp:
-        discovered.update({
-            CONF_EVCC_CHARGE_POWER:      pick(f"sensor.{lp}_charge_power"),
-            CONF_EVCC_CHARGE_STATUS:     pick(f"binary_sensor.{lp}_charging"),
-            CONF_EVCC_MODE:              pick(f"select.{lp}_mode"),
-            CONF_EVCC_PHASES_ACTIVE:     pick(f"sensor.{lp}_phases_active"),
-            CONF_EVCC_VEHICLE_SOC:       pick(f"sensor.{lp}_vehicle_soc"),
-            CONF_EVCC_LIMIT_SOC:         pick(f"select.{lp}_limit_soc", f"number.{lp}_limit_soc"),
-            CONF_EVCC_SESSION_ENERGY:    pick(f"sensor.{lp}_session_energy"),
-            CONF_EVCC_SESSION_SOLAR_PCT: pick(f"sensor.{lp}_session_solar_percentage"),
-            CONF_EVCC_SESSION_PRICE:     pick(f"sensor.{lp}_session_price"),
-            CONF_EVCC_CHARGE_DURATION:   pick(f"sensor.{lp}_charge_duration"),
-        })
-    if vk:
-        # setdefault greift nicht, wenn lp bereits einen (fehlgeschlagenen)
-        # Versuch mit Wert None eingetragen hat -- daher explizit pruefen.
-        if not discovered.get(CONF_EVCC_VEHICLE_SOC):
-            discovered[CONF_EVCC_VEHICLE_SOC] = pick(f"sensor.evcc_{vk}_configvehicle_soc")
-        if not discovered.get(CONF_EVCC_LIMIT_SOC):
-            discovered[CONF_EVCC_LIMIT_SOC] = pick(f"sensor.evcc_{vk}_configvehicle_limitsoc")
-    return {k: v for k, v in discovered.items() if v is not None}
+    return [lp["title"] for lp in state.get("loadpoints", []) if lp.get("title")]
 
 
 def _clean(user_input: dict) -> dict:
@@ -285,16 +217,27 @@ def build_modus_schema(cur: dict) -> vol.Schema:
 
 
 def build_evcc_schema(cur: dict) -> vol.Schema:
-    """Schritt 2: evcc-Fahrzeugname + Wallbox-Leistungsentität."""
+    """Schritt 2: evcc-Host (Addon-API direkt, optional), Fahrzeugname +
+    Wallbox-Leistungsentität."""
     def sv(key):
         return {"suggested_value": cur.get(key)}
 
     return vol.Schema({
-        vol.Optional(
-            CONF_EVCC_VEHICLE_NAME,
-            description={"suggested_value": cur.get(CONF_EVCC_VEHICLE_NAME)},
-        ): _EVCC_VEHICLE_NAME,
+        vol.Optional(CONF_EVCC_HOST, description=sv(CONF_EVCC_HOST)): _EVCC_HOST,
+        vol.Optional(CONF_EVCC_VEHICLE_NAME, description=sv(CONF_EVCC_VEHICLE_NAME)): _EVCC_VEHICLE_NAME,
         vol.Optional(CONF_HOME_ENTITY, description=sv(CONF_HOME_ENTITY)): _HOME_ENTITY,
+    })
+
+
+def build_evcc_loadpoint_schema(cur: dict, titles: list[str]) -> vol.Schema:
+    """Zusatzschritt, nur wenn evcc mehr als einen Loadpoint meldet."""
+    return vol.Schema({
+        vol.Optional(
+            CONF_EVCC_LOADPOINT_TITLE,
+            description={"suggested_value": cur.get(CONF_EVCC_LOADPOINT_TITLE)},
+        ): selector.SelectSelector(
+            selector.SelectSelectorConfig(options=titles, mode=selector.SelectSelectorMode.DROPDOWN)
+        ),
     })
 
 
@@ -463,7 +406,9 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
 
     1 fahrzeug:    Eckdaten, ODO, SoC-Entitaet, Akkugroesse.
     2 modus:       Lade-Modus (steuert nur Sichtbarkeit, siehe const.py).
-    3 evcc:        Fahrzeugname in evcc + Wallbox-Leistungsentitaet.
+    3 evcc:        evcc-Host (Addon-API direkt) + Fahrzeugname + Wallbox-
+                   Leistungsentitaet, ggf. gefolgt vom Zwischenschritt
+                   evcc_loadpoint (nur bei mehr als einem Loadpoint).
                    -- UEBERSPRUNGEN bei "nur_auswaerts".
     4 ladeleistung: Fahrzeug-Ladeleistung + Wallbox-Energiezaehler.
                    -- UEBERSPRUNGEN bei "nur_auswaerts".
@@ -471,13 +416,14 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
     6 erkennung:   ChargeDetector-Schwellwerte.
     7 fahrtenbuch: TripDetector + GPS.
     8 leasing:     Optionales Leasing-Kilometerbudget.
-    9 vergleich:   Kostenvergleich; legt Eintrag an (inkl. evcc-Discovery).
+    9 vergleich:   Kostenvergleich; legt Eintrag an.
     """
 
-    VERSION = 1
+    VERSION = 2
 
     def __init__(self) -> None:
         self._data: dict = {}
+        self._evcc_loadpoints: list[str] = []
 
     async def async_step_user(self, user_input=None) -> FlowResult:
         return await self.async_step_fahrzeug(user_input)
@@ -518,13 +464,38 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
     async def async_step_evcc(self, user_input=None) -> FlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            cleaned = _clean(user_input)
+            host = cleaned.get(CONF_EVCC_HOST)
+            titles: list[str] = []
+            if host:
+                found = await _fetch_evcc_loadpoint_titles(self.hass, host)
+                if found is None:
+                    errors["base"] = "cannot_connect"
+                else:
+                    titles = found
+            if not errors:
+                self._data = {**self._data, **cleaned}
+                if len(titles) > 1:
+                    self._evcc_loadpoints = titles
+                    return await self.async_step_evcc_loadpoint()
+                self._data.pop(CONF_EVCC_LOADPOINT_TITLE, None)
+                return await self.async_step_ladeleistung()
+
+        cur = user_input if user_input is not None else self._data
+        return self.async_show_form(
+            step_id="evcc", data_schema=build_evcc_schema(cur), errors=errors
+        )
+
+    async def async_step_evcc_loadpoint(self, user_input=None) -> FlowResult:
         if user_input is not None:
             self._data = {**self._data, **_clean(user_input)}
             return await self.async_step_ladeleistung()
 
-        cur = user_input if user_input is not None else self._data
         return self.async_show_form(
-            step_id="evcc", data_schema=build_evcc_schema(cur)
+            step_id="evcc_loadpoint",
+            data_schema=build_evcc_loadpoint_schema(self._data, self._evcc_loadpoints),
         )
 
     async def async_step_ladeleistung(self, user_input=None) -> FlowResult:
@@ -586,7 +557,6 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             cleaned = _clean(user_input)
             self._data = {**self._data, **cleaned}
-            self._data = {**self._data, **await _discover_evcc_entities(self.hass)}
             hersteller = self._data.get(CONF_VEHICLE_HERSTELLER)
             modell = self._data.get(CONF_VEHICLE_MODELL)
             fahrzeug = f"{hersteller} {modell}".strip() if (hersteller or modell) else None
@@ -613,6 +583,7 @@ class EvAssistantOptionsFlow(OptionsFlow):
     def __init__(self, config_entry: ConfigEntry) -> None:
         self._entry = config_entry
         self._data: dict = {}
+        self._evcc_loadpoints: list[str] = []
 
     def _current(self) -> dict:
         return {**self._entry.data, **self._entry.options, **self._data}
@@ -646,6 +617,8 @@ class EvAssistantOptionsFlow(OptionsFlow):
                 current = self._current()
                 self._data = _carry_forward(current, self._data, build_evcc_schema({}))
                 self._data = _carry_forward(current, self._data, build_power_schema({}))
+                if CONF_EVCC_LOADPOINT_TITLE not in self._data and CONF_EVCC_LOADPOINT_TITLE in current:
+                    self._data[CONF_EVCC_LOADPOINT_TITLE] = current[CONF_EVCC_LOADPOINT_TITLE]
                 return await self.async_step_ausgabe()
             return await self.async_step_evcc()
 
@@ -654,12 +627,37 @@ class EvAssistantOptionsFlow(OptionsFlow):
         )
 
     async def async_step_evcc(self, user_input=None) -> FlowResult:
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            cleaned = _clean(user_input)
+            host = cleaned.get(CONF_EVCC_HOST)
+            titles: list[str] = []
+            if host:
+                found = await _fetch_evcc_loadpoint_titles(self.hass, host)
+                if found is None:
+                    errors["base"] = "cannot_connect"
+                else:
+                    titles = found
+            if not errors:
+                self._data = {**self._data, **cleaned}
+                if len(titles) > 1:
+                    self._evcc_loadpoints = titles
+                    return await self.async_step_evcc_loadpoint()
+                self._data.pop(CONF_EVCC_LOADPOINT_TITLE, None)
+                return await self.async_step_ladeleistung()
+
+        return self.async_show_form(
+            step_id="evcc", data_schema=build_evcc_schema(self._current()), errors=errors
+        )
+
+    async def async_step_evcc_loadpoint(self, user_input=None) -> FlowResult:
         if user_input is not None:
             self._data = {**self._data, **_clean(user_input)}
             return await self.async_step_ladeleistung()
 
         return self.async_show_form(
-            step_id="evcc", data_schema=build_evcc_schema(self._current())
+            step_id="evcc_loadpoint",
+            data_schema=build_evcc_loadpoint_schema(self._current(), self._evcc_loadpoints),
         )
 
     async def async_step_ladeleistung(self, user_input=None) -> FlowResult:
@@ -716,8 +714,6 @@ class EvAssistantOptionsFlow(OptionsFlow):
         if user_input is not None:
             cleaned = _clean(user_input)
             self._data = {**self._data, **cleaned}
-            discovered = await _discover_evcc_entities(self.hass)
-            self._data = {**self._data, **discovered}
             # self._data ist an dieser Stelle bereits die vollstaendige,
             # ueber alle 7 Schritte neu aufgebaute Konfiguration (geleerte
             # Optionale fehlen absichtlich). Wuerde sie wie zuvor per
@@ -731,18 +727,13 @@ class EvAssistantOptionsFlow(OptionsFlow):
             # und entry.options leeren.
             step_keys = _all_step_schema_keys()
             preserved = {k: v for k, v in self._entry.data.items() if k not in step_keys}
-            if discovered:
-                # Evcc-Entitaeten, die diesmal nicht mehr gefunden wurden
-                # (z.B. Loadpoint in evcc umbenannt/entfernt), sollen
-                # verschwinden statt als Karteileiche aus einem frueheren
-                # Lauf in entry.data zu ueberleben -- aber nur, wenn evcc
-                # ueberhaupt etwas gefunden hat, sonst wuerde ein
-                # voruebergehender evcc_intg-Ausfall alle Panel-Entitaeten
-                # loeschen.
-                preserved = {
-                    k: v for k, v in preserved.items()
-                    if k not in EVCC_CONF_KEYS or k in discovered
-                }
+            # CONF_EVCC_LOADPOINT_TITLE gehoert zu keinem der 9 Basis-Schritte
+            # (eigener, bedingter Zwischenschritt async_step_evcc_loadpoint)
+            # -- self._data ist fuer diesen Lauf bereits die alleinige Quelle
+            # (gesetzt, explizit entfernt oder per _carry_forward
+            # uebernommen), ein stehengebliebener alter Wert aus entry.data
+            # soll nicht zurueckgemischt werden.
+            preserved.pop(CONF_EVCC_LOADPOINT_TITLE, None)
             new_data = {**preserved, **self._data}
             self.hass.config_entries.async_update_entry(self._entry, data=new_data)
             return self.async_create_entry(title="", data={})

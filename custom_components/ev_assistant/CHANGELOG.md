@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.74.0] - 2026-08-23
+
+### Changed
+
+- **evcc: direct addon access instead of the evcc_intg integration**: EV Assistant now talks to the evcc add-on's own REST API (`/api/state`, `/api/sessions`) directly instead of reading entities auto-discovered from the `evcc_intg` integration. This removes a fragile naming-guess heuristic (loadpoint-prefix/`configvehicle` entity-ID matching, which could silently break on a loadpoint rename or an evcc_intg version change) and drops the evcc_intg runtime dependency entirely — evcc_intg can now be removed without affecting EV Assistant. The evcc step in the config flow now asks for the evcc host (e.g. `http://192.168.178.1:7070`, optional — without it, evcc-derived fields simply stay unavailable, exactly as when evcc_intg wasn't installed before) instead of showing nothing and discovering ~18 entity IDs silently in the background; a new intermediate step appears only if evcc manages more than one charge point, to pick which one belongs to this vehicle. The panel's live overview values (charge power, mode, SoC, tariffs, PV/grid/battery power, session stats) now come from a single `evcc_live` attribute on the home-kWh sensor instead of ~18 separate evcc_intg entities, and the home-charging logbook is fetched through EV Assistant's own websocket command instead of evcc_intg's. As a side effect, the home-kWh/home-cost per-vehicle figures (previously evcc_intg's own "extended vehicle data" statistic, often unavailable) are now derived from evcc's session log directly and available whenever evcc has any charging history for the vehicle.
+- **Migration for existing installations**: on first load after updating, the old (now-unused) evcc_intg-discovered entity-ID config keys are removed automatically. No other settings are affected — existing installations keep working exactly as before evcc-wise (evcc fields simply stay unavailable, matching the "evcc_intg not installed" case that already existed). **Action required to keep evcc data flowing**: open the integration's Configure dialog (Settings → Devices & Services → EV Assistant → Configure) and go through to step 3/9, "EV Assistant - evcc & Wallbox" — enter the evcc add-on's host there (e.g. `http://192.168.178.1:7070`) and finish the wizard (the rest of the steps just keep your existing values). No entities to re-map, no data lost by skipping this — it's a one-time addition of a single field.
+
 ## [0.73.1] - 2026-08-22
 
 ### Changed

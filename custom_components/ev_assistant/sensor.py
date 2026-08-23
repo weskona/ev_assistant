@@ -602,6 +602,9 @@ class HomeKwhSensor(EvAssistantEntity, SensorEntity):
             attrs["evcc_kosten_gesamt"] = stats["kosten_gesamt"]
         if "preis_je_kwh" in stats:
             attrs["evcc_preis_je_kwh"] = stats["preis_je_kwh"]
+        evcc_live = self.coordinator.evcc_live_attrs()
+        if evcc_live:
+            attrs["evcc_live"] = evcc_live
         return attrs
 
 
