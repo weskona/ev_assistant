@@ -2186,7 +2186,7 @@ class EVAssistantPanel extends HTMLElement {
           </div>
         </div>
         <div class="profil-empty" id="wt-empty">
-          Noch kein Wartungspunkt angelegt — z.B. HU/TÜV oder Inspektion, fällig nach
+          Noch kein Wartungspunkt angelegt — z.B. HU oder Inspektion, fällig nach
           Kilometerstand, Zeit oder beidem ("je nachdem was zuerst kommt").
         </div>
         <div class="hidden" id="wt-content">
@@ -2231,7 +2231,7 @@ class EVAssistantPanel extends HTMLElement {
       kosten: form.querySelector(".wt-fld-kosten"),
     };
     const STANDARD_HINT = "Mindestens ein Kriterium angeben. Bei mehreren gilt, was zuerst eintritt.";
-    const HU_HINT = "Festes Fälligkeitsdatum und Intervall sind für HU/TÜV beide Pflicht.";
+    const HU_HINT = "Festes Fälligkeitsdatum und Intervall sind für HU beide Pflicht.";
 
     // Bei HU/TÜV (schema.pflicht gesetzt) muessen ALLE genannten Felder
     // gefuellt sein statt nur irgendeines -- strenger als die generische
@@ -2304,6 +2304,11 @@ class EVAssistantPanel extends HTMLElement {
       const zeit = parseInt(zeitInput.value, 10);
       if (!name || (isNaN(km) && isNaN(zeit) && !festInput.value)) return;
       const payload = { name };
+      // Muss mitgeschickt werden, damit der Backend-Punkt den "typ"-Marker
+      // bekommt (siehe coordinator.py::async_add_maintenance()) -- ohne
+      // diese Zeile wuerde die Vorlagenwahl nur lokal die Felder vorbefuellen,
+      // aber nie am gespeicherten Punkt ankommen (typ waere immer null).
+      if (presetSelect.value) payload.preset = presetSelect.value;
       if (!isNaN(km)) payload.km_intervall = km;
       if (!isNaN(zeit)) payload.zeit_intervall_monate = zeit;
       if (festInput.value) payload.festes_datum = this._wartungMonthToDate(festInput.value);
@@ -2442,7 +2447,7 @@ class EVAssistantPanel extends HTMLElement {
           <div class="wt-group">
             <div class="sub-head wt-group-title">Fälligkeit</div>
             <div class="dim wt-group-hint">Mindestens ein Kriterium angeben. Bei mehreren gilt, was zuerst eintritt.</div>
-            <label>Kilometer-Intervall (leer = kein Kriterium)<input type="text" inputmode="decimal" class="wte-km" value="${p.km_intervall ?? ""}"></label>
+            ${p.typ !== "tuev" ? `<label>Kilometer-Intervall (leer = kein Kriterium)<input type="text" inputmode="decimal" class="wte-km" value="${p.km_intervall ?? ""}"></label>` : ""}
             <label>Intervall in Monaten (leer = kein Kriterium)<input type="text" inputmode="decimal" class="wte-zeit" value="${p.zeit_intervall_monate ?? ""}"></label>
             <label>Festes Fälligkeitsdatum (leer = kein Kriterium)<input type="month" class="wte-fest" value="${this._wartungDateToMonth(p.festes_datum)}"></label>
           </div>
@@ -2479,9 +2484,9 @@ class EVAssistantPanel extends HTMLElement {
       // (async_edit_maintenance()), aber ohne clientseitige Sperre wuerde
       // ein Klick auf Speichern dabei stillschweigend nichts tun.
       const updateEditValidity = () => {
-        wteSave.disabled = !wteKm.value.trim() && !wteZeit.value.trim() && !wteFest.value;
+        wteSave.disabled = !(wteKm?.value.trim()) && !wteZeit.value.trim() && !wteFest.value;
       };
-      [wteKm, wteZeit].forEach((el) => el.addEventListener("input", updateEditValidity));
+      [wteKm, wteZeit].forEach((el) => el?.addEventListener("input", updateEditValidity));
       wteFest.addEventListener("change", updateEditValidity);
       updateEditValidity();
       row.querySelector(".wt-done").addEventListener("click", () => {
@@ -2496,12 +2501,18 @@ class EVAssistantPanel extends HTMLElement {
         const payload = { wartung_id: p.id };
         const name = row.querySelector(".wte-name").value.trim();
         if (name) payload.name = name;
-        const kmVal = row.querySelector(".wte-km").value.trim();
-        if (kmVal === "") {
-          payload.km_intervall = "";
-        } else {
-          const v = parseFloat(kmVal.replace(",", "."));
-          if (!isNaN(v)) payload.km_intervall = v;
+        // Kein wte-km bei HU-Punkten (siehe Template oben) -- Feld dann
+        // komplett aus dem Payload weglassen statt "" zu senden: ""
+        // loescht das Kriterium serverseitig explizit (async_edit_maintenance()),
+        // ein fehlender Key laesst den gespeicherten Wert dagegen unangetastet.
+        if (wteKm) {
+          const kmVal = wteKm.value.trim();
+          if (kmVal === "") {
+            payload.km_intervall = "";
+          } else {
+            const v = parseFloat(kmVal.replace(",", "."));
+            if (!isNaN(v)) payload.km_intervall = v;
+          }
         }
         const zeitVal = row.querySelector(".wte-zeit").value.trim();
         if (zeitVal === "") {

@@ -2,6 +2,19 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.74.2] - 2026-08-25
+
+### Fixed
+
+- **Savings vs. combustion vehicle drifted even while the car was parked**: the fuel-price average used for the comparison was time-weighted — the currently-active price kept accumulating weight for every second that passed, whether or not the car actually drove, so a fuel price change (or simply time passing) could shift the entire cost comparison retroactively even with zero new kilometers driven. Now weighted by kilometers driven instead (matching how the home electricity price already works, weighted by kWh charged) — the average, and therefore the savings estimate, only moves when the car actually drives. Existing installations get a one-time reset of the accumulator (the old time-weighted history can't be meaningfully converted to a km-weighted one), starting fresh from the current odometer reading; no other data is affected.
+
+## [0.74.1] - 2026-08-23
+
+### Changed
+
+- **Wartung: HU/TÜV edit form no longer shows a km field**: the add form was already preset-aware (HU/TÜV only shows due date + interval, no km field, since 0.73.0) — the edit form for an existing HU/TÜV entry still showed an (always-empty) km field under "Fälligkeit", inconsistent with how it was created. Editing an HU/TÜV entry now shows the same two-field structure as adding one. Internally, maintenance entries now carry a `typ` marker set at creation time (`"tuev"`/`"inspektion"`/`null` for free-form) so the edit form can tell them apart reliably — inferring it from which criteria happen to be set would misclassify a free-form entry that coincidentally has the same field combination. Existing HU/TÜV entries are migrated once, automatically, by exact name match ("HU/TÜV") — Inspektion and free-form entries are untouched and keep showing all fields as before. No data loss: hiding the km field for an HU/TÜV entry omits it from the save request entirely rather than sending an empty value, so a hidden field never clears a stored value (relevant for any HU/TÜV entry created before this update that happens to have a km value set).
+- **Wartung: preset shortened from "HU/TÜV" to "HU"**: the add form's preset dropdown, the auto-filled name, and the two in-panel hint texts (empty-state and the "both fields required" hint) now say just "HU" instead of "HU/TÜV". Existing entries created from that preset (name still literally "HU/TÜV") are renamed to "HU" automatically, once — but only entries recognized as HU via the `typ` marker above; a free-form entry that happens to be named "HU/TÜV" without being HU-preset-created, or an HU entry the user already renamed to something else themselves, are both left alone.
+
 ## [0.74.0] - 2026-08-23
 
 ### Changed

@@ -282,14 +282,18 @@ def _empty_data() -> dict:
         "motor_debounce_state": None,
         "verbrenner_price_last": None,
         "home_price_last": None,
-        # Zeitgewichtete Durchschnittsbildung fuer den schwankenden
-        # Kraftstoffpreis (siehe _price_average()/savings()): Summe(Preis *
-        # Dauer) und Gesamtdauer seit Einrichtung, plus wann der aktuell
-        # gueltige Wert zu gelten begann. Zeitgewichtung passt hier, weil
-        # Fahren nicht systematisch mit Preisschwankungen korreliert.
+        # Km-gewichtete Durchschnittsbildung fuer den schwankenden
+        # Kraftstoffpreis (siehe _verbrenner_price_average()/savings()):
+        # Summe(Preis * gefahrene km) und gefahrene km gesamt seit
+        # Einrichtung, plus der Kilometerstand, ab dem der aktuell gueltige
+        # Wert zu gelten begann. Km- statt Zeitgewichtung, analog
+        # _home_price_average() (dort kWh- statt zeitgewichtet): sonst
+        # wuerde der Durchschnitt -- und damit savings() -- allein durch
+        # verstreichende Zeit/neue Tankerkoenig-Preisticks wandern, auch
+        # waehrend das Fahrzeug steht.
         "verbrenner_price_weighted_sum": 0.0,
-        "verbrenner_price_weighted_seconds": 0.0,
-        "verbrenner_price_interval_start_ts": None,
+        "verbrenner_price_weighted_km": 0.0,
+        "verbrenner_price_interval_start_km": None,
         # kWh-gewichtete Durchschnittsbildung fuer den Heimstrompreis (siehe
         # _home_price_average()): Summe(Preis * geladene kWh) und geladene
         # Gesamt-kWh seit Einrichtung, plus Wallbox-Zaehlerstand, ab dem der
@@ -517,6 +521,22 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # _migrate_wartung_zeit_einheiten()). Ebenfalls sofort persistiert,
         # aus demselben Grund wie oben.
         if self._migrate_wartung_zeit_einheiten():
+            await self._save()
+        # Migration: HU/TUEV-Wartungspunkte von vor Einfuehrung des "typ"-
+        # Markers (siehe _migrate_wartung_hu_typ()). Ebenfalls sofort
+        # persistiert, aus demselben Grund wie oben.
+        if self._migrate_wartung_hu_typ():
+            await self._save()
+        # Umbenennung: HU-Punkte von "HU/TÜV" auf das kuerzere Preset "HU"
+        # (siehe _migrate_wartung_hu_name()) -- MUSS nach der typ-Migration
+        # oben laufen, damit ein gerade erst getaggter Punkt sofort mit
+        # umbenannt wird.
+        if self._migrate_wartung_hu_name():
+            await self._save()
+        # Migration: Kraftstoffpreis-Durchschnitt von zeit- auf km-gewichtet
+        # (siehe _migrate_verbrenner_price_weighting()). Ebenfalls sofort
+        # persistiert, aus demselben Grund wie oben.
+        if self._migrate_verbrenner_price_weighting():
             await self._save()
         # Letzter bekannter Kraftstoff-/Heimstrompreis der jeweiligen
         # Live-Entitaet als Fallback, bevor sich die Entitaet nach dem Start
@@ -795,8 +815,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         sind der Normalfall), ermittelt bei jeder Aenderung die guenstigste
         aktuell GEOEFFNETE Station (binary_sensor ..._status, device_class
         "door": "on" = offen) und speist das Ergebnis in _set_verbrenner_price()
-        ein -- inklusive der dort bereits vorhandenen zeitgewichteten
-        Durchschnittsbildung (siehe _price_average()). Sind alle bekannten
+        ein -- inklusive der dort bereits vorhandenen km-gewichteten
+        Durchschnittsbildung (siehe _verbrenner_price_average()). Sind alle bekannten
         Stationen geschlossen, wird trotzdem der guenstigste (wenn auch
         veraltete) Preis verwendet, statt ganz auszufallen."""
         fuel_type = self._opt(CONF_TANKERKOENIG_FUEL_TYPE)
@@ -1436,41 +1456,52 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return zone_state.attributes.get("friendly_name", raw)
         return raw
 
-    def _accumulate_price_interval(self, prefix: str, previous_value: Optional[float], now: float) -> None:
-        """Schliesst das Zeitintervall ab, in dem `previous_value` gegolten
-        hat, und addiert es zeitgewichtet zur laufenden Summe (siehe
-        _price_average()). `prefix` z.B. "verbrenner_price"/"home_price"."""
-        if previous_value is None:
+    def _accumulate_verbrenner_price_interval(self, previous_value: Optional[float], now_km: Optional[float]) -> None:
+        """Schliesst das km-Intervall ab, in dem `previous_value` als
+        Kraftstoffpreis gegolten hat, gewichtet nach der in diesem
+        Intervall tatsaechlich gefahrenen Strecke (NICHT nach verstrichener
+        Zeit) -- siehe _verbrenner_price_average(). `now_km` ist
+        _km_driven() (bereits einheitenkonvertiert, mi->km). Faellt aus,
+        solange kein Kilometerstand bekannt ist."""
+        if previous_value is None or now_km is None:
             return
-        start_ts = self.data.get(f"{prefix}_interval_start_ts")
-        if start_ts is None:
+        start_km = self.data.get("verbrenner_price_interval_start_km")
+        if start_km is None:
             return
-        elapsed = max(0.0, now - start_ts)
-        self.data[f"{prefix}_weighted_sum"] = self.data.get(f"{prefix}_weighted_sum", 0.0) + previous_value * elapsed
-        self.data[f"{prefix}_weighted_seconds"] = self.data.get(f"{prefix}_weighted_seconds", 0.0) + elapsed
+        delta = max(0.0, now_km - start_km)
+        self.data["verbrenner_price_weighted_sum"] = (
+            self.data.get("verbrenner_price_weighted_sum", 0.0) + previous_value * delta
+        )
+        self.data["verbrenner_price_weighted_km"] = self.data.get("verbrenner_price_weighted_km", 0.0) + delta
 
-    def _price_average(self, prefix: str, live_value: Optional[float]) -> Optional[float]:
-        """Zeitgewichteter Durchschnitt aller bisher beobachteten Werte einer
-        schwankenden Preis-Live-Entitaet (Kraftstoff/Heimstrom-Tarif) seit
-        Einrichtung -- verhindert, dass savings()/_home_price() nur den
+    def _verbrenner_price_average(self, live_value: Optional[float]) -> Optional[float]:
+        """Km-gewichteter Durchschnitt aller bisher beobachteten Kraftstoff-
+        Live-Preise seit Einrichtung -- verhindert, dass savings() nur den
         aktuellen Momentanwert auf die GESAMTE seit Einrichtung gefahrene
-        Strecke bzw. geladene Menge anwenden. Das noch offene Intervall (der
-        aktuell gueltige Wert) wird bis JETZT mitgezaehlt, sonst wuerde die
-        zuletzt gemeldete Aenderung nie einfliessen. Faellt auf den reinen
+        Strecke anwendet. Km- statt Zeitgewichtung (siehe
+        _accumulate_verbrenner_price_interval()): der Durchschnitt -- und
+        damit die Ersparnis-Schaetzung -- soll sich nur bewegen, wenn
+        tatsaechlich gefahren wird, nicht allein durch verstreichende Zeit
+        oder neue Tankerkoenig-Preisticks waehrend das Fahrzeug steht
+        (analog _home_price_average(), kWh- statt zeitgewichtet). Das noch
+        offene Intervall (der aktuell gueltige Preis) wird bis zum
+        aktuellen Kilometerstand mitgezaehlt, sonst wuerde die zuletzt
+        gemeldete Aenderung nie einfliessen. Faellt auf den reinen
         Live-Wert zurueck, solange noch kein Intervall abgeschlossen ist
-        (z.B. direkt nach der Ersteinrichtung)."""
+        oder kein Kilometerstand bekannt ist."""
         if live_value is None:
             return None
-        weighted_sum = self.data.get(f"{prefix}_weighted_sum", 0.0)
-        weighted_seconds = self.data.get(f"{prefix}_weighted_seconds", 0.0)
-        start_ts = self.data.get(f"{prefix}_interval_start_ts")
-        if start_ts is not None:
-            elapsed = max(0.0, time.time() - start_ts)
-            weighted_sum += live_value * elapsed
-            weighted_seconds += elapsed
-        if weighted_seconds <= 0:
+        weighted_sum = self.data.get("verbrenner_price_weighted_sum", 0.0)
+        weighted_km = self.data.get("verbrenner_price_weighted_km", 0.0)
+        start_km = self.data.get("verbrenner_price_interval_start_km")
+        current_km = self._km_driven()
+        if start_km is not None and current_km is not None:
+            delta = max(0.0, current_km - start_km)
+            weighted_sum += live_value * delta
+            weighted_km += delta
+        if weighted_km <= 0:
             return live_value
-        return round(weighted_sum / weighted_seconds, 4)
+        return round(weighted_sum / weighted_km, 4)
 
     def _accumulate_home_price_interval(self, previous_value: Optional[float], wallbox_energy: Optional[float]) -> None:
         """Schliesst das kWh-Intervall ab, in dem `previous_value` als
@@ -1516,10 +1547,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             new_value = float(raw)
         except (ValueError, TypeError):
             return
-        now = time.time()
-        self._accumulate_price_interval("verbrenner_price", self._verbrenner_price_live, now)
+        km = self._km_driven()
+        self._accumulate_verbrenner_price_interval(self._verbrenner_price_live, km)
         self._verbrenner_price_live = new_value
-        self.data["verbrenner_price_interval_start_ts"] = now
+        self.data["verbrenner_price_interval_start_km"] = km
         # Persistiert, damit ein Neustart nicht auf "unbekannt" zurueckfaellt,
         # bevor sich die Entitaet zum ersten Mal wieder meldet (siehe
         # async_setup(), das diesen Wert als Startwert wiederherstellt).
@@ -2174,6 +2205,75 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 punkt["zeit_intervall_monate"] = max(1, round(alte_tage / WARTUNG_TAGE_PRO_MONAT))
             geaendert = True
         return geaendert
+
+    def _migrate_wartung_hu_typ(self) -> bool:
+        """Einmalige Migration bestehender HU/TUEV-Wartungspunkte von vor
+        Einfuehrung des "typ"-Markers (siehe async_add_maintenance()) --
+        erkannt am WOERTLICHEN historischen Namen "HU/TÜV" (Presets wurden
+        vor diesem Feld nicht am Punkt gespeichert, nur beim Anlegen
+        gelesen). Bewusst der feste Alt-Name statt WARTUNG_PRESETS["tuev"]
+        ["name"] -- die Vorlage heisst inzwischen nur noch "HU" (siehe
+        _migrate_wartung_hu_name() unten), Bestandspunkte aus der Zeit davor
+        tragen aber noch woertlich "HU/TÜV". Bewusst nur HU/TUEV betroffen:
+        Inspektion/freie Punkte brauchen keinen Marker, da das Panel-
+        Bearbeiten-Formular "kein typ" identisch zu "nicht HU" behandelt
+        (alle Felder zeigen) -- also unveraendertes Verhalten fuer sie.
+        Idempotent OHNE eigenes Flag: nach dem ersten Lauf tragen migrierte
+        Punkte "typ", ein zweiter Lauf findet dort nichts mehr zu tun. Gibt
+        True zurueck, wenn mindestens ein Punkt migriert wurde (der
+        Aufrufer muss dann sofort speichern, siehe async_setup())."""
+        geaendert = False
+        for punkt in self.data.get("wartung") or []:
+            if "typ" not in punkt and punkt.get("name") == "HU/TÜV":
+                punkt["typ"] = "tuev"
+                geaendert = True
+        return geaendert
+
+    def _migrate_wartung_hu_name(self) -> bool:
+        """Einmalige Umbenennung bestehender HU-Punkte von "HU/TÜV" auf das
+        seitdem kuerzere Preset "HU" (siehe const.py::WARTUNG_PRESETS).
+        Laeuft NACH _migrate_wartung_hu_typ() (siehe async_setup()), damit
+        ein Punkt, der in genau diesem Setup-Durchlauf erst seinen "typ"-
+        Marker bekommen hat, hier sofort mit erfasst wird. Nur Punkte mit
+        typ == "tuev" UND dem woertlichen Alt-Namen -- ein frei benannter
+        Punkt, der zufaellig "HU/TÜV" heisst, aber kein HU-Preset-Punkt ist
+        (kein typ), bleibt unangetastet; ein HU-Punkt, den der Nutzer selbst
+        schon anders umbenannt hat, ebenso (dessen Name ist dann nicht mehr
+        der woertliche Alt-Name). Idempotent OHNE eigenes Flag: nach dem
+        ersten Lauf lautet der Name nicht mehr "HU/TÜV", ein zweiter Lauf
+        findet nichts mehr zu tun."""
+        geaendert = False
+        for punkt in self.data.get("wartung") or []:
+            if punkt.get("typ") == "tuev" and punkt.get("name") == "HU/TÜV":
+                punkt["name"] = WARTUNG_PRESETS["tuev"]["name"]
+                geaendert = True
+        return geaendert
+
+    def _migrate_verbrenner_price_weighting(self) -> bool:
+        """Einmalige Migration von zeitgewichteter auf km-gewichtete
+        Durchschnittsbildung des Kraftstoffpreises (siehe
+        _verbrenner_price_average()) -- der alte zeitgewichtete Akkumulator
+        liess die Ersparnis-Schaetzung auch bei stehendem Fahrzeug wandern,
+        weil das offene Preis-Intervall bis JETZT statt bis zur naechsten
+        tatsaechlichen Fahrt mitgezaehlt wurde. Die alte, zeitbasierte
+        Summe laesst sich nicht sinnvoll in eine km-basierte umrechnen
+        (dafuer fehlt die Historie "wie viel km je Preisintervall") -- der
+        Akkumulator startet daher einmalig bei null, mit dem aktuellen
+        Kilometerstand als neuem Intervall-Start. Idempotent OHNE eigenes
+        Flag: die alten Schluessel (verbrenner_price_weighted_seconds/
+        _interval_start_ts) werden entfernt, ein zweiter Lauf findet sie
+        also nicht mehr vor."""
+        if (
+            "verbrenner_price_weighted_seconds" not in self.data
+            and "verbrenner_price_interval_start_ts" not in self.data
+        ):
+            return False
+        self.data.pop("verbrenner_price_weighted_seconds", None)
+        self.data.pop("verbrenner_price_interval_start_ts", None)
+        self.data["verbrenner_price_weighted_sum"] = 0.0
+        self.data["verbrenner_price_weighted_km"] = 0.0
+        self.data["verbrenner_price_interval_start_km"] = self._km_driven()
+        return True
 
     def _finalize_trip_record(self, rec: dict) -> None:
         self.data.setdefault("fahrten", []).insert(0, rec)
@@ -2861,6 +2961,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         punkt = {
             "id": int(time.time() * 1000),
             "name": effektiver_name,
+            # Roher preset-Wert (z.B. "tuev"/"inspektion"), None ohne Preset --
+            # anders als vorlage/effektiv_* oben (nur transiente Default-
+            # Quelle) bleibt dieser Marker dauerhaft am Punkt erhalten, damit
+            # das Panel-Bearbeiten-Formular praesetabhaengige Felder (z.B.
+            # kein km bei HU) rendern kann, ohne aus den gesetzten Kriterien
+            # raten zu muessen (siehe _migrate_wartung_hu_typ() fuer
+            # Bestandseintraege von vor diesem Feld).
+            "typ": preset,
             "km_intervall": effektiv_km,
             "zeit_intervall_monate": effektiv_zeit,
             "festes_datum": effektiv_fest,
@@ -3669,8 +3777,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         festen Konfigurationswert -- ein schwankender Preis wird so ueber
         die gesamte Menge/Strecke seit Einrichtung gewichtet statt nur mit
         seinem aktuellen Momentanwert angewendet zu werden. Kraftstoffpreis:
-        zeitgewichtet (siehe _price_average()) -- Fahren korreliert nicht
-        systematisch mit Preisschwankungen. Heimstrompreis: kWh-gewichtet
+        km-gewichtet (siehe _verbrenner_price_average()) -- der Durchschnitt
+        (und damit die Ersparnis) soll sich nur bewegen, wenn tatsaechlich
+        gefahren wird, nicht allein durch verstreichende Zeit/neue
+        Tankerkoenig-Preisticks waehrend das Fahrzeug steht. Heimstrompreis: kWh-gewichtet
         (siehe _home_price_average()) -- Heimladen wird (z.B. per evcc)
         gezielt in Guenstigpreis-Fenster gelegt, eine Zeitgewichtung wuerde
         den effektiv gezahlten Preis dadurch systematisch ueberschaetzen.
@@ -3681,7 +3791,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         verbrenner_l = self._opt(CONF_VERBRENNER_L_100KM)
         verbrenner_price = self._opt(CONF_VERBRENNER_PRICE_PER_LITER)
         if self._verbrenner_price_live is not None:
-            avg = self._price_average("verbrenner_price", self._verbrenner_price_live)
+            avg = self._verbrenner_price_average(self._verbrenner_price_live)
             if avg is not None:
                 verbrenner_price = avg
         return calculate_savings(

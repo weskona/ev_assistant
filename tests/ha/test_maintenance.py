@@ -27,13 +27,22 @@ async def test_add_maintenance_mit_preset_fuellt_defaults(hass, coordinators):
 
     punkte = coordinator.data["wartung"]
     assert len(punkte) == 1
-    assert punkte[0]["name"] == "HU/TÜV"
+    assert punkte[0]["name"] == "HU"
     assert punkte[0]["zeit_intervall_monate"] == 24
     assert punkte[0]["km_intervall"] is None
     assert punkte[0]["aktiv"] is True
+    assert punkte[0]["typ"] == "tuev"
 
     stats = coordinator.wartung_stats()
     assert len(stats["punkte"]) == 1
+
+
+async def test_add_maintenance_ohne_preset_hat_typ_none(hass, coordinators):
+    coordinator = await _make_coordinator(hass, coordinators, "wart10")
+
+    wartung_id = await coordinator.async_add_maintenance(name="Reifenwechsel", km_intervall=1.0)
+    assert wartung_id is not None
+    assert coordinator.data["wartung"][0]["typ"] is None
 
 
 async def test_add_maintenance_ohne_name_und_kriterium_wird_abgelehnt(hass, coordinators):
@@ -118,6 +127,50 @@ async def test_migration_zeit_intervall_tage_auf_monate(hass, coordinators):
     # Idempotent: ein zweiter Lauf findet nichts mehr zu tun.
     assert coordinator._migrate_wartung_zeit_einheiten() is False
     assert coordinator.data["wartung"][0]["zeit_intervall_monate"] == 24
+
+
+async def test_migration_hu_typ_marker(hass, coordinators):
+    coordinator = await _make_coordinator(hass, coordinators, "wart11")
+    # Alt-Eintraege direkt injiziert (bypasst async_add_maintenance(), das
+    # den "typ"-Marker erst seit dieser Aenderung setzt) -- simuliert einen
+    # bestehenden HU-Punkt sowie einen andersnamigen Bestandspunkt aus einer
+    # Installation von vor Einfuehrung des Markers.
+    coordinator.data["wartung"] = [
+        {"id": 1, "name": "HU/TÜV", "zeit_intervall_monate": 24, "festes_datum": "2029-07-31", "aktiv": True},
+        {"id": 2, "name": "Sommerreifen", "zeit_intervall_monate": 6, "aktiv": True},
+    ]
+
+    geaendert = coordinator._migrate_wartung_hu_typ()
+    assert geaendert is True
+    assert coordinator.data["wartung"][0]["typ"] == "tuev"
+    # Andersnamiger Punkt bleibt unangetastet -- kein "typ"-Schluessel.
+    assert "typ" not in coordinator.data["wartung"][1]
+
+    # Idempotent: ein zweiter Lauf findet nichts mehr zu tun.
+    assert coordinator._migrate_wartung_hu_typ() is False
+    assert coordinator.data["wartung"][0]["typ"] == "tuev"
+
+
+async def test_migration_hu_name_umbenennung(hass, coordinators):
+    coordinator = await _make_coordinator(hass, coordinators, "wart12")
+    coordinator.data["wartung"] = [
+        # Bereits getaggter HU-Punkt mit dem woertlichen Alt-Namen.
+        {"id": 1, "name": "HU/TÜV", "typ": "tuev", "zeit_intervall_monate": 24, "aktiv": True},
+        # HU-Punkt, den der Nutzer selbst schon anders benannt hat -- bleibt unangetastet.
+        {"id": 2, "name": "TÜV Zweitwagen", "typ": "tuev", "zeit_intervall_monate": 24, "aktiv": True},
+        # Zufaellig gleicher Name, aber kein HU-Preset-Punkt (kein typ) -- bleibt unangetastet.
+        {"id": 3, "name": "HU/TÜV", "zeit_intervall_monate": 24, "aktiv": True},
+    ]
+
+    geaendert = coordinator._migrate_wartung_hu_name()
+    assert geaendert is True
+    assert coordinator.data["wartung"][0]["name"] == "HU"
+    assert coordinator.data["wartung"][1]["name"] == "TÜV Zweitwagen"
+    assert coordinator.data["wartung"][2]["name"] == "HU/TÜV"
+
+    # Idempotent: ein zweiter Lauf findet nichts mehr zu tun.
+    assert coordinator._migrate_wartung_hu_name() is False
+    assert coordinator.data["wartung"][0]["name"] == "HU"
 
 
 async def test_add_maintenance_reminder_monate_wird_zu_reminder_tage(hass, coordinators):

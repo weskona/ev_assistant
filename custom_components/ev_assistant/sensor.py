@@ -669,8 +669,8 @@ class SavingsSensor(EvAssistantEntity, SensorEntity):
 
 class VerbrennerPriceSelectedSensor(EvAssistantEntity, SensorEntity):
     """Der aktuell fuer den Verbrenner-Vergleich verwendete Kraftstoffpreis
-    (Rohwert, nicht der intern zeitgewichtete Durchschnitt aus
-    coordinator.py::_price_average() -- der bleibt ein reines Detail der
+    (Rohwert, nicht der intern km-gewichtete Durchschnitt aus
+    coordinator.py::_verbrenner_price_average() -- der bleibt ein reines Detail der
     savings()-Berechnung). state_class macht diesen Wert per Long-Term
     Statistics historisierbar, unabhaengig davon, welche der drei Quellen
     (Tankerkoenig-Auto-Erkennung > eigene Entitaet > fester Wert) aktiv ist."""

@@ -421,6 +421,6 @@ WARTUNG_TAGE_PRO_MONAT = 30.44
 # entfernten Preset bleiben unveraendert (Presets werden nur beim Anlegen
 # gelesen, nie danach referenziert).
 WARTUNG_PRESETS = {
-    "tuev": {"name": "HU/TÜV", "zeit_intervall_monate": 24},
+    "tuev": {"name": "HU", "zeit_intervall_monate": 24},
     "inspektion": {"name": "Inspektion", "km_intervall": 30000.0, "zeit_intervall_monate": 24},
 }
