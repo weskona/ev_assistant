@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="brand/logo.png" alt="EV Assistant logo" width="400">
+</p>
+
 # EV Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)

@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.74.3] - 2026-08-26
+
+### Added
+
+- **Logo**: added a horizontal logo (`brand/logo.png`, `logo@2x.png`) alongside the existing icon for HA brands/HACS display, and a refreshed higher-resolution icon (`icon@2x.png`). The logo now appears at the top of all three READMEs (English, German, integration-folder).
+
 ## [0.74.2] - 2026-08-25
 
 ### Fixed
