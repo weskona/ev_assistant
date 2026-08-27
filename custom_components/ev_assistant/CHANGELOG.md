@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.74.4] - 2026-08-27
+
+### Changed
+
+- **Panel branding: icon and accent color now match the logo**: the sidebar icon and the panel's own header logo changed from `mdi:car-electric` to `mdi:ev-station`; the panel's accent color (active tabs, primary buttons, SoC bars, chips, vehicle card border, etc. — everywhere the `--accent` CSS variable is used) changed from blue (`#3b82f6`) to the logo's actual green (`#8fbd39`, extracted from `brand/logo.png`). The "Fahrzeug" tab keeps `mdi:car-electric` (reverted after initial rollout). Semantic energy-flow colors (solar green, Fremdladung blue, trip teal) are unaffected — they're independent of the accent variable.
+
 ## [0.74.3] - 2026-08-26
 
 ### Added

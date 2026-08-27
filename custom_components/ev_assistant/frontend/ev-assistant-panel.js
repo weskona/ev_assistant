@@ -6,7 +6,7 @@
  * Fahrzeuge tab unchanged.
  */
 
-const ACCENT_H = 220;
+const ACCENT_H = 127;
 
 class EVAssistantPanel extends HTMLElement {
   constructor() {
@@ -211,7 +211,7 @@ class EVAssistantPanel extends HTMLElement {
     const brand = document.createElement("div");
     brand.className = "brand";
     brand.innerHTML = `
-      <div class="logo"><ha-icon icon="mdi:car-electric"></ha-icon></div>
+      <div class="logo"><ha-icon icon="mdi:ev-station"></ha-icon></div>
       <div class="btext">
         <div class="bt-name">EV Assistant</div>
       </div>`;
@@ -839,7 +839,7 @@ class EVAssistantPanel extends HTMLElement {
         <div class="veh-header">
           <div class="veh-name-block">
             <div class="card-head" style="margin-bottom:6px">
-              <span class="ic"><ha-icon icon="mdi:car-electric"></ha-icon></span><h2>Fahrzeug</h2>
+              <span class="ic"><ha-icon icon="mdi:ev-station"></ha-icon></span><h2>Fahrzeug</h2>
             </div>
             <div class="veh-name vh-veh-name">—</div>
           </div>
@@ -4348,7 +4348,7 @@ class EVAssistantPanel extends HTMLElement {
     el.textContent = `
       :host {
         display: block; height: 100%;
-        --accent: #3b82f6;
+        --accent: #8fbd39;
         --bg-0: var(--primary-background-color, #0f172a);
         --bg-1: var(--card-background-color, #1e293b);
         --bg-2: color-mix(in oklab, var(--bg-1) 60%, var(--bg-0));
