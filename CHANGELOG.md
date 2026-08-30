@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.74.6] - 2026-08-30
+
+### Fixed
+
+- **Touch scrolling on the panel could freeze mid-gesture on the Companion app (iOS confirmed, likely Android too), needing a new swipe to continue** — regressed by Home Assistant 2026.8, which started wrapping custom panels in its own safe-area padding by default (for notches/status bars). The panel's `:host{height:100%}` flex layout assumes it owns the full viewport itself, and the added wrapper conflicted with that. Panel registration now passes `handle_safe_area=True` (only on cores that support it — the parameter doesn't exist before 2026.8) to opt back out of the wrapper, matching the panel's pre-2026.8 behavior.
+
 ## [0.74.5] - 2026-08-30
 
 ### Added

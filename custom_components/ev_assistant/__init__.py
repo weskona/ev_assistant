@@ -1,6 +1,7 @@
 """ev_assistant — Fremdladung: Setup, Services, Unload."""
 from __future__ import annotations
 
+import inspect
 import logging
 from pathlib import Path
 
@@ -155,16 +156,25 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
         except Exception:
             pass
 
-        await panel_custom.async_register_panel(
-            hass,
-            frontend_url_path=_PANEL_URL_PATH,
-            webcomponent_name="ev-assistant-panel",
-            module_url=f"{_PANEL_STATIC_PATH}/ev-assistant-panel.js?v={cache_bust}",
-            sidebar_title=_PANEL_TITLE,
-            sidebar_icon=_PANEL_ICON,
-            require_admin=False,
-            config=panel_config,
-        )
+        register_kwargs = {
+            "frontend_url_path": _PANEL_URL_PATH,
+            "webcomponent_name": "ev-assistant-panel",
+            "module_url": f"{_PANEL_STATIC_PATH}/ev-assistant-panel.js?v={cache_bust}",
+            "sidebar_title": _PANEL_TITLE,
+            "sidebar_icon": _PANEL_ICON,
+            "require_admin": False,
+            "config": panel_config,
+        }
+        # HA 2026.8+ wraps custom panels in its own safe-area padding by
+        # default (notch/status-bar clearance) unless the panel opts out --
+        # our own :host{height:100%} flex layout already assumes it owns the
+        # full viewport, and the extra wrapper broke internal touch scrolling
+        # on some devices. `handle_safe_area` doesn't exist on older cores
+        # (HACS min version is 2024.1.0), so only pass it if supported.
+        if "handle_safe_area" in inspect.signature(panel_custom.async_register_panel).parameters:
+            register_kwargs["handle_safe_area"] = True
+
+        await panel_custom.async_register_panel(hass, **register_kwargs)
         domain_data[_PANEL_REGISTERED] = True
         _LOGGER.info("EV Assistant Panel registriert (v=%s, %d Fahrzeuge)", cache_bust, len(vehicles))
     except Exception as exc:  # noqa: BLE001
