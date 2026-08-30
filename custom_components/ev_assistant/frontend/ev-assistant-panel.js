@@ -201,8 +201,58 @@ class EVAssistantPanel extends HTMLElement {
     main.className = "main";
     app.appendChild(main);
     this._main = main;
+    app.appendChild(this._buildPendingModal());
     this.shadowRoot.appendChild(app);
     this._switchView(this._view);
+  }
+
+  // --- Popup: offene Fahrten/Fremdladungen bestaetigen -------------------------
+  //
+  // Unabhaengig vom Tab-Wechsel (ausserhalb von this._main aufgebaut, siehe
+  // _renderShell()), damit die blinkende Pill der Uebersicht (Beta) (siehe
+  // _buildUebersichtBeta()) es jederzeit oeffnen kann, ohne den Tab zu
+  // verlassen. Der Inhalt selbst ist keine neue Komponente, sondern
+  // dieselben _renderPendingCharges()/_renderPendingTrips()-Karten wie im
+  // "Laufende Erfassung"-Bereich des Fahrzeuge-Tabs, hier nur in eigene
+  // Container statt #est-ext-item/#est-trip-item gerendert.
+  _buildPendingModal() {
+    const overlay = document.createElement("div");
+    overlay.className = "pending-modal-overlay hidden";
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) this._closePendingModal();
+    });
+    const modal = document.createElement("div");
+    modal.className = "pending-modal";
+    modal.innerHTML = `
+      <div class="pending-modal-head">
+        <span class="ic"><ha-icon icon="mdi:motion-sensor"></ha-icon></span>
+        <h2>Offene Fahrten &amp; Fremdladungen</h2>
+        <button type="button" class="pending-modal-close" aria-label="Schließen"><ha-icon icon="mdi:close"></ha-icon></button>
+      </div>
+      <div class="pending-modal-body">
+        <div class="pend-list hidden" id="pending-modal-charges"></div>
+        <div class="pend-list hidden" id="pending-modal-trips"></div>
+      </div>`;
+    modal.querySelector(".pending-modal-close").addEventListener("click", () => this._closePendingModal());
+    overlay.appendChild(modal);
+    this._pendingModalEl = overlay;
+    this._pendingModalCharges = modal.querySelector("#pending-modal-charges");
+    this._pendingModalTrips = modal.querySelector("#pending-modal-trips");
+    return overlay;
+  }
+
+  // `focusSection` ("charges"/"trips") scrollt bei getrennten Ladung-/
+  // Fahrt-Pills (siehe _buildUebersichtBeta()) direkt zur gemeinten Liste,
+  // falls (selten) beide Arten gleichzeitig offen sind.
+  _openPendingModal(focusSection) {
+    if (!this._pendingModalEl) return;
+    this._pendingModalEl.classList.remove("hidden");
+    const target = focusSection === "trips" ? this._pendingModalTrips : focusSection === "charges" ? this._pendingModalCharges : null;
+    if (target && !target.classList.contains("hidden")) target.scrollIntoView({ block: "nearest" });
+  }
+
+  _closePendingModal() {
+    if (this._pendingModalEl) this._pendingModalEl.classList.add("hidden");
   }
 
   _buildAppbar() {
@@ -3080,8 +3130,7 @@ class EVAssistantPanel extends HTMLElement {
     return `<datalist id="${id}">${this._anbieterOptionsHtml()}</datalist>`;
   }
 
-  _renderPendingCharges(items) {
-    const el = this._r.estExtItem;
+  _renderPendingCharges(items, el = this._r.estExtItem) {
     if (!el) return;
     const sig = items.map((p) => p.start_ts).join(",");
     if (sig === this._pendChargeSig && el.dataset.built === "1") return;
@@ -3172,8 +3221,7 @@ class EVAssistantPanel extends HTMLElement {
     });
   }
 
-  _renderPendingTrips(items) {
-    const el = this._r.estTripItem;
+  _renderPendingTrips(items, el = this._r.estTripItem) {
     if (!el) return;
     const sig = items.map((p) => p.start_ts).join(",");
     if (sig === this._pendTripSig && el.dataset.built === "1") return;
@@ -3961,6 +4009,25 @@ class EVAssistantPanel extends HTMLElement {
     const modus = this._ladeModus();
     const wrap = document.createElement("div");
     wrap.className = "tab-wrap";
+
+    const pillRow = div("beta-pending-row");
+    const chargePill = document.createElement("button");
+    chargePill.type = "button";
+    chargePill.className = "beta-pending-pill beta-pending-pill-charge hidden";
+    chargePill.innerHTML = `<ha-icon icon="mdi:ev-station"></ha-icon><span class="beta-pending-pill-text">—</span>`;
+    chargePill.addEventListener("click", () => this._openPendingModal("charges"));
+    const tripPill = document.createElement("button");
+    tripPill.type = "button";
+    tripPill.className = "beta-pending-pill beta-pending-pill-trip hidden";
+    tripPill.innerHTML = `<ha-icon icon="mdi:road-variant"></ha-icon><span class="beta-pending-pill-text">—</span>`;
+    tripPill.addEventListener("click", () => this._openPendingModal("trips"));
+    pillRow.append(chargePill, tripPill);
+    wrap.appendChild(pillRow);
+    this._r.betaPendingChargePill = chargePill;
+    this._r.betaPendingChargePillText = chargePill.querySelector(".beta-pending-pill-text");
+    this._r.betaPendingTripPill = tripPill;
+    this._r.betaPendingTripPillText = tripPill.querySelector(".beta-pending-pill-text");
+
     const grid = div("beta-grid");
 
     const heroRow = div("beta-hero-row");
@@ -4162,6 +4229,29 @@ class EVAssistantPanel extends HTMLElement {
     const r = this._r;
     if (!r.betaHeroCost) return;
     const modus = this._ladeModus();
+
+    // Getrennte blinkende Pills fuer offene Fremdladungen/Fahrten -- oeffnen
+    // dieselben Bestaetigen/Verwerfen-Karten wie #est-card (Fahrzeuge-Tab),
+    // siehe _buildPendingModal()/_renderPendingCharges()/_renderPendingTrips().
+    const pendingCharges = this._pendingList("pending", "offene_ladungen");
+    const pendingTrips = this._pendingList("trip_pending", "offene_fahrten");
+    r.betaPendingChargePill.classList.toggle("hidden", pendingCharges.length === 0);
+    if (pendingCharges.length > 0) {
+      r.betaPendingChargePillText.textContent = pendingCharges.length === 1
+        ? "1 offene Fremdladung"
+        : `${pendingCharges.length} offene Fremdladungen`;
+    }
+    r.betaPendingTripPill.classList.toggle("hidden", pendingTrips.length === 0);
+    if (pendingTrips.length > 0) {
+      r.betaPendingTripPillText.textContent = pendingTrips.length === 1
+        ? "1 offene Fahrt"
+        : `${pendingTrips.length} offene Fahrten`;
+    }
+    if (pendingCharges.length === 0 && pendingTrips.length === 0) this._closePendingModal();
+    this._pendingModalCharges.classList.toggle("hidden", pendingCharges.length === 0);
+    this._pendingModalTrips.classList.toggle("hidden", pendingTrips.length === 0);
+    this._renderPendingCharges(pendingCharges, this._pendingModalCharges);
+    this._renderPendingTrips(pendingTrips, this._pendingModalTrips);
 
     r.betaHeroCost.textContent = this._num("cost_month", 2);
 
@@ -4413,7 +4503,7 @@ class EVAssistantPanel extends HTMLElement {
       .vt-bar-scroll::-webkit-scrollbar { display: none; }
 
       /* Main scroll area */
-      .main { flex: 1; overflow-y: auto; padding: 24px 28px 40px; overscroll-behavior: contain; }
+      .main { flex: 1; overflow-y: auto; padding: 24px 28px 40px; }
       .main::-webkit-scrollbar { width: 8px; }
       .main::-webkit-scrollbar-thumb {
         background: var(--line-s); border-radius: 8px;
@@ -4918,6 +5008,60 @@ class EVAssistantPanel extends HTMLElement {
       .hist-delete-text { font-size: 12px; color: var(--ink-mid); }
 
       /* Uebersicht (Beta) -- Konzept A */
+      .beta-pending-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+      .beta-pending-pill {
+        display: inline-flex; align-items: center; gap: 6px;
+        padding: 6px 14px; border-radius: 9999px;
+        font-size: 0.78rem; font-weight: 700; cursor: pointer; --mdc-icon-size: 15px;
+        animation: pending-pill-blink 1.6s ease-in-out infinite;
+      }
+      .beta-pending-pill:hover { filter: brightness(1.12); }
+      /* Farben = dieselben --c-ext/--c-trip-Variablen wie ueberall sonst
+         fuer "Fremdladung"/"Fahrt" (card-ext/card-trip, cleg-dot, siehe
+         :host-Definition weiter unten) -- statt eigener Ad-hoc-Farben. */
+      .beta-pending-pill-charge {
+        --pending-color: var(--c-ext);
+        border: 1px solid color-mix(in oklab, var(--c-ext) 55%, transparent);
+        background: color-mix(in oklab, var(--c-ext) 18%, var(--bg-1));
+        color: var(--c-ext);
+      }
+      .beta-pending-pill-trip {
+        --pending-color: var(--c-trip);
+        border: 1px solid color-mix(in oklab, var(--c-trip) 55%, transparent);
+        background: color-mix(in oklab, var(--c-trip) 18%, var(--bg-1));
+        color: var(--c-trip);
+      }
+      @keyframes pending-pill-blink {
+        0%, 100% { box-shadow: 0 0 0 0 color-mix(in oklab, var(--pending-color) 55%, transparent); }
+        50% { box-shadow: 0 0 0 6px color-mix(in oklab, var(--pending-color) 0%, transparent); }
+      }
+      @media (prefers-reduced-motion: reduce) { .beta-pending-pill { animation: none; } }
+      .pending-modal-overlay {
+        position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.55);
+        display: flex; align-items: center; justify-content: center; padding: 16px;
+      }
+      .pending-modal-overlay.hidden { display: none; }
+      .pending-modal {
+        background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius);
+        max-width: 520px; width: 100%; max-height: 85vh; overflow-y: auto; padding: 0 0 16px;
+      }
+      .pending-modal-head {
+        display: flex; align-items: center; gap: 9px; padding: 14px var(--pad);
+        position: sticky; top: 0; background: var(--bg-1); border-bottom: 1px solid var(--line);
+        --mdc-icon-size: 17px;
+      }
+      .pending-modal-head .ic { color: var(--ink-dim); display: grid; place-items: center; }
+      .pending-modal-head h2 { flex: 1; margin: 0; font-size: 0.95rem; color: var(--ink); }
+      .pending-modal-close {
+        border: none; background: none; color: var(--ink-mid); cursor: pointer;
+        display: flex; align-items: center; padding: 4px; --mdc-icon-size: 18px;
+      }
+      .pending-modal-close:hover { color: var(--ink); }
+      .pending-modal-body { padding: 14px var(--pad) 0; display: flex; flex-direction: column; gap: 14px; }
+      @media (max-width: 500px) {
+        .pending-modal-overlay { padding: 0; align-items: flex-end; }
+        .pending-modal { max-width: none; max-height: 88vh; border-radius: var(--radius) var(--radius) 0 0; }
+      }
       .beta-grid { display: flex; flex-direction: column; gap: var(--gap); }
       .beta-hero-row { display: grid; grid-template-columns: 1.6fr 1fr; gap: var(--gap); align-items: stretch; }
       .beta-bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); align-items: start; }

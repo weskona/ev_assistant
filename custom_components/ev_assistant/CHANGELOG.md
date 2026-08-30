@@ -2,6 +2,16 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.74.5] - 2026-08-30
+
+### Added
+
+- **Pending charge/trip pill + popup on the Overview (Beta) tab**: when a charge or trip is awaiting confirmation, a blinking pill now appears at the top of the tab ("1 offene Fremdladung" / "N offene Fahrten", separately for charges and trips). Clicking it opens a popup with the same confirm/discard cards as the Vehicle tab's "Laufende Erfassung" card, so a pending item can be resolved without leaving the Beta tab.
+
+### Fixed
+
+- **Mouse-wheel / touch scrolling didn't work on any tab's main content area** — only right over the panel's own (thin) scrollbar, or in a narrow strip above the tab content, would actually scroll; the content area itself just sat there. Cross-platform (desktop Chrome, Android Companion App couldn't scroll at all; iOS was unaffected). Root cause: `overscroll-behavior: contain` on the panel's main scroll container (`.main`), added in 0.21.2 to stop an expanded history list's scroll-chaining from bouncing the outer page on mobile — under certain layouts it instead suppressed the container's own wheel/touch scrolling entirely. Removed from `.main`; kept on the expanded history list itself where the original fix still applies.
+
 ## [0.74.4] - 2026-08-27
 
 ### Changed

@@ -198,6 +198,8 @@ Im [Lademodus](#lademodus) **Nur auswärts** sieht dieser Tab anders aus: statt 
 
 Ein experimentelles, paralleles Dashboard-Layout, das neben dem klassischen Übersicht-Tab oben angezeigt wird, zum Vergleich, bevor es diesen irgendwann ablöst — der klassische Tab bleibt unangetastet und ist weiterhin der Standard. Vollständig aus bereits vorhandenen Sensoren/Attributen aufgebaut (keine neuen Berechnungen): eine Hero-Karte für die Kosten diesen Monat, drei KPI-Kacheln (EUR/100 km, Ersparnis ggü. Verbrenner, CO2 gespart), ein Balkendiagramm der Ausgaben über Zeit (Tag/Woche/Monat/Jahr), eine Kosten-/CO2-Vergleichskarte sowie die Ladeort-Aufschlüsselung. Modus-adaptiv wie der klassische Tab: im Modus **Nur auswärts** zeigt die Statuskarte die letzte bestätigte Ladung statt eines Live-Wallbox-Status, und die Ladeort-Aufschlüsselung wird durch eine reine AC/DC-Aufteilung der Fremdladung ersetzt (als Schätzung gekennzeichnet — siehe Sensor `charging_location_breakdown` oben). Karten/Zeilen für nicht zutreffende Werte werden komplett weggelassen statt leer oder als 0 angezeigt.
 
+Wartet eine Ladung oder Fahrt auf Bestätigung, erscheint oben in diesem Tab eine blinkende Pille ("1 offene Fremdladung" / "N offene Fahrten") — ein Klick öffnet ein Popup mit denselben Bestätigen/Verwerfen-Karten wie die "Laufende Erfassung"-Karte im Fahrzeug-Tab, ohne den Tab wechseln zu müssen.
+
 ### Tab „Fahrzeug"
 
 Fahrzeugspezifisches Dashboard in einem Drei-Spalten-Layout:

@@ -198,6 +198,8 @@ In **Away only** [charging mode](#charging-mode), this tab looks different: inst
 
 An experimental, parallel dashboard layout shown side by side with the classic Overview tab above, for comparison before it eventually replaces it — the classic tab is untouched and remains the default. Built entirely from already-existing sensors/attributes (no new calculations): a hero card for this month's cost, three KPI tiles (EUR/100 km, savings vs. combustion, CO2 saved), a bar chart of spending over time (day/week/month/year), a cost/CO2 comparison card, and a charging-location breakdown. Mode-adaptive like the classic tab: in **Away only** mode the status card shows the last confirmed charge instead of a live wallbox status, and the location breakdown is replaced by an AC/DC split of external charging only (marked as an estimate — see the `charging_location_breakdown` sensor above). Cards/rows for values that don't apply are omitted entirely rather than shown empty or as 0.
 
+When a charge or trip is awaiting confirmation, a blinking pill appears at the top of this tab ("1 offene Fremdladung" / "N offene Fahrten") — clicking it opens a popup with the same confirm/discard cards as the Vehicle tab's "Laufende Erfassung" card, without having to switch tabs.
+
 ### Vehicle tab
 
 Per-vehicle dashboard in a three-column layout:
