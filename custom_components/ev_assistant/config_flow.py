@@ -13,14 +13,17 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_BATTERY_CHARGE_ENTITY,
     CONF_CO2_PER_KWH,
     CONF_DROP_ENDS,
     CONF_EFFICIENCY,
     CONF_ERSTZULASSUNG,
     CONF_EVCC_HOST,
     CONF_EVCC_LOADPOINT_TITLE,
+    CONF_EVCC_MODE_CONTROL_ENABLED,
     CONF_EVCC_VEHICLE_NAME,
     CONF_GPS_ENTITY,
+    CONF_HOME_CONSUMPTION_ENTITY,
     CONF_HOME_ENTITY,
     CONF_HOME_PRICE_ENTITY,
     CONF_HOME_PRICE_KWH,
@@ -44,6 +47,7 @@ from .const import (
     CONF_POWER_ENTITY,
     CONF_POWER_IS_AC,
     CONF_PV_FORECAST_ENTITY,
+    CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
     CONF_SOC_ENTITY,
     CONF_SOC_THRESHOLDS,
     CONF_START_DELTA,
@@ -62,6 +66,7 @@ from .const import (
     DEFAULT_CO2_PER_KWH_G,
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY,
+    DEFAULT_EVCC_MODE_CONTROL_ENABLED,
     DEFAULT_IDLE_TIMEOUT,
     DEFAULT_LADE_MODUS,
     DEFAULT_MOTOR_DEBOUNCE,
@@ -115,6 +120,15 @@ _MOTOR_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="binary_sensor")
 )
 _PV_FORECAST_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="sensor")
+)
+# Kein device_class-Filter, analog _PV_FORECAST_ENTITY/_HOME_PRICE_ENTITY --
+# Energiezaehler-Integrationen sind zu uneinheitlich (device_class="energy"
+# waere hier zu eng, manche liefern nur "measurement" statt "total_increasing").
+_HOME_CONSUMPTION_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="sensor")
+)
+_BATTERY_CHARGE_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor")
 )
 _OUTSIDE_TEMP_ENTITY = selector.EntitySelector(
@@ -218,7 +232,11 @@ def build_modus_schema(cur: dict) -> vol.Schema:
 
 def build_evcc_schema(cur: dict) -> vol.Schema:
     """Schritt 2: evcc-Host (Addon-API direkt, optional), Fahrzeugname +
-    Wallbox-Leistungsentität."""
+    Wallbox-Leistungsentität. Zusätzlich (rein additiv, alle optional): die
+    automatische evcc-Modus-/SoC-Steuerung (siehe coordinator.py::
+    _async_apply_evcc_mode_control(), Default aus) sowie deren optionales
+    Haus-Nutzungsprofil (PV-Restprognose heute, Hausverbrauch, Speicher-
+    ladung)."""
     def sv(key):
         return {"suggested_value": cur.get(key)}
 
@@ -226,6 +244,15 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
         vol.Optional(CONF_EVCC_HOST, description=sv(CONF_EVCC_HOST)): _EVCC_HOST,
         vol.Optional(CONF_EVCC_VEHICLE_NAME, description=sv(CONF_EVCC_VEHICLE_NAME)): _EVCC_VEHICLE_NAME,
         vol.Optional(CONF_HOME_ENTITY, description=sv(CONF_HOME_ENTITY)): _HOME_ENTITY,
+        vol.Optional(
+            CONF_EVCC_MODE_CONTROL_ENABLED,
+            default=cur.get(CONF_EVCC_MODE_CONTROL_ENABLED, DEFAULT_EVCC_MODE_CONTROL_ENABLED),
+        ): bool,
+        vol.Optional(
+            CONF_PV_FORECAST_TODAY_REMAINING_ENTITY, description=sv(CONF_PV_FORECAST_TODAY_REMAINING_ENTITY)
+        ): _PV_FORECAST_ENTITY,
+        vol.Optional(CONF_HOME_CONSUMPTION_ENTITY, description=sv(CONF_HOME_CONSUMPTION_ENTITY)): _HOME_CONSUMPTION_ENTITY,
+        vol.Optional(CONF_BATTERY_CHARGE_ENTITY, description=sv(CONF_BATTERY_CHARGE_ENTITY)): _BATTERY_CHARGE_ENTITY,
     })
 
 

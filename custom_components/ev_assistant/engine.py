@@ -905,6 +905,107 @@ def charge_before_pv_decision(
     return (available_kwh + pv_forecast_kwh) < needed_kwh
 
 
+def remaining_today_kwh(weekday_avg_kwh: float, kwh_used_today: float) -> float:
+    """Rest-Bedarf fuer den heutigen Tag: der Wochentags-Durchschnitt fuer
+    HEUTE (siehe weekday_usage_profile_from_totals()) abzueglich der bereits
+    heute gefahrenen kWh -- wie viel vom TYPISCHEN Tagesbedarf noch vor einem
+    liegt, nicht was heute insgesamt gebraucht wird (das bereits Gefahrene
+    ist schon im aktuellen SoC-Verbrauch eingepreist, siehe available_kwh()).
+    Nie negativ -- ein Tag, an dem schon mehr als der Schnitt gefahren wurde,
+    braucht rechnerisch keinen weiteren Rest (0.0), nicht einen negativen
+    "Ueberschuss" (der wuerde in der Summe mit morgen/uebermorgen faelschlich
+    den Gesamtbedarf senken)."""
+    return round(max(0.0, weekday_avg_kwh - kwh_used_today), 2)
+
+
+def net_need_after_pv_kwh(need_kwh: float, pv_forecast_kwh: float) -> float:
+    """Reduziert einen Bedarfswert (hier: remaining_today_kwh()) um eine
+    erwartete PV-Erzeugung (hier: Rest-Prognose fuer heute) -- generische,
+    kleine Funktion, unabhaengig von "heute" oder "morgen", da dieselbe
+    Rechnung (Bedarf minus erwartete PV, nie negativ) schon in
+    charge_before_pv_decision() implizit steckt, dort aber inline statt als
+    wiederverwendbare Funktion. Nie negativ -- mehr erwartete PV als Bedarf
+    bedeutet 0 kWh Netzbedarf, nicht einen negativen "Ueberschuss" (der
+    wuerde den Gesamtbedarf in einer Summe faelschlich senken)."""
+    return round(max(0.0, need_kwh - pv_forecast_kwh), 2)
+
+
+def weekday_usage_profile_window_kwh(
+    profile: dict, start_weekday: int, num_days: int
+) -> float:
+    """Summe des Wochentags-Bedarfs (siehe weekday_usage_profile_from_totals())
+    ueber `num_days` aufeinanderfolgende Tage ab `start_weekday` (0=Montag),
+    mit Wraparound ueber die Wochengrenze. Fehlt ein Wochentag im Profil
+    (sollte bei vollstaendigem 7-Tage-Profil nicht vorkommen), traegt er 0 bei
+    statt zu werfen -- konsistent mit dem "fehlender Tag = 0 kWh"-Verhalten
+    von weekday_usage_profile()."""
+    total = 0.0
+    for i in range(num_days):
+        wd = (start_weekday + i) % 7
+        total += profile.get(wd, 0.0)
+    return round(total, 2)
+
+
+def determine_evcc_mode(available_kwh: float, min_kwh: float, target_kwh: float) -> str:
+    """3-Stufen-Dringlichkeit fuer den evcc-Lademodus, aus dem Vergleich der
+    aktuell verfuegbaren Batteriekapazitaet mit dem Nutzungsprofil-basierten
+    Mindest- (Rest heute + naechster Tag) und Ziel-Bedarf (Rest heute +
+    naechste N Tage, siehe weekday_usage_profile_window_kwh()):
+
+    - available_kwh >= target_kwh -> "pv"    (genug Puffer, reine Solarladung)
+    - min_kwh <= available_kwh < target_kwh  -> "minpv" (Mindestleistung + PV)
+    - available_kwh < min_kwh -> "now"        (Netzladen erzwingen)
+
+    Erwartet min_kwh <= target_kwh (target deckt einen laengeren Zeitraum ab
+    als min per Definition -- siehe coordinator.py::_evcc_mode_targets(), wo
+    beide aus demselben monoton nicht-negativen Wochentagsprofil aufsummiert
+    werden). Bei Verletzung dieser Annahme (z.B. inkonsistente manuelle
+    Werte) gewinnt sicherheitshalber der strengere Fall: ist available_kwh
+    < min(min_kwh, target_kwh), ist das Ergebnis immer "now"."""
+    lower = min(min_kwh, target_kwh)
+    if available_kwh < lower:
+        return "now"
+    if available_kwh < target_kwh:
+        return "minpv"
+    return "pv"
+
+
+def kwh_to_soc_percent(kwh: float, usable_kwh: float) -> Optional[int]:
+    """Rechnet einen kWh-Wert in einen ganzzahligen SoC-Prozentsatz um (evcc
+    erwartet Min-/Ziel-SoC in Prozent, nicht kWh) -- gerundet, auf 0..100
+    geklemmt. None bei usable_kwh <= 0 (Konfigurationsfehler, nicht durch
+    Validierung im Config-Flow abgedeckt -- CONF_USABLE_KWH ist dort
+    vol.Coerce(float) ohne Untergrenze)."""
+    if usable_kwh <= 0:
+        return None
+    pct = round(kwh / usable_kwh * 100.0)
+    return max(0, min(100, pct))
+
+
+def house_weekday_usage_profile(weekday_kwh_totals: dict, weekday_day_counts: dict) -> Optional[dict]:
+    """Durchschnittlicher Haus-Verbrauch (inkl. optionaler Speicherladung, je
+    nachdem was in weekday_kwh_totals einfliesst -- siehe coordinator.py::
+    _update_house_usage_profile()) je Wochentag (0=Montag..6=Sonntag), aus
+    den seit Aktivierung gesammelten Tages-Totalen. Deutlich einfacher als
+    weekday_usage_profile_from_totals() (Fahrzeug): kein exact/estimate-
+    Split, da ein einzelner kombinierter kumulativer Zaehler die einzige
+    Quelle ist. Anders als beim Fahrzeug-Pendant wird ein noch nie
+    beobachteter Wochentag NICHT als 0 kWh angenommen, sondern fehlt im
+    Ergebnis-dict -- "noch keine Daten" ist etwas anderes als "kein
+    Verbrauch". None, wenn ueberhaupt noch kein einziger Wochentag
+    beobachtet wurde (z.B. am Tag der Aktivierung, vor dem ersten
+    taeglichen Rollover)."""
+    if not weekday_day_counts:
+        return None
+    result = {}
+    for wd in range(7):
+        key = str(wd)
+        count = weekday_day_counts.get(key, 0)
+        if count > 0:
+            result[wd] = round(weekday_kwh_totals.get(key, 0.0) / count, 2)
+    return result or None
+
+
 def rolling_consumption_kwh_per_100km(
     fahrten: list, now_ts: float, window_days: float, min_km: float,
 ) -> Optional[float]:

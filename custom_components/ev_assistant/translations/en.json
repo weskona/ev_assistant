@@ -154,15 +154,23 @@
       },
       "evcc": {
         "title": "EV Assistant - evcc & Wallbox",
-        "description": "Step 3/9: the evcc host is queried directly over REST (wallbox/site values are then picked up from there automatically).",
+        "description": "Step 3/9: the evcc host is queried directly over REST (wallbox/site values are then picked up from there automatically). Automatic charge-mode/SoC control and the optional home usage profile are configured separately below.",
         "data": {
           "evcc_host": "evcc address (e.g. http://192.168.178.1:7070)",
           "evcc_vehicle_name": "Vehicle name in evcc",
-          "home_entity": "Wallbox charge power"
+          "home_entity": "Wallbox charge power",
+          "evcc_mode_control_enabled": "Automatically control evcc's charge mode/SoC from the usage profile",
+          "pv_forecast_today_remaining_entity": "PV forecast remaining today (optional, any sensor entity, e.g. Solcast \"Forecast Remaining Today\")",
+          "home_consumption_entity": "Home consumption (excluding vehicle/battery)",
+          "battery_charge_entity": "Battery charging (optional, if not already included in home consumption)"
         },
         "data_description": {
           "evcc_host": "Optional — without it, charge power/mode/tariffs/PV in the panel simply stay empty; everything else keeps working as before.",
-          "home_entity": "Just a yes/no threshold (>0.1 kW = 'currently charging at home') — not an energy value, and only reports anything while the vehicle is plugged into this wallbox."
+          "home_entity": "Just a yes/no threshold (>0.1 kW = 'currently charging at home') — not an energy value, and only reports anything while the vehicle is plugged into this wallbox.",
+          "evcc_mode_control_enabled": "Off by default: only the existing display recommendations (Usage Profile tab, \"Charge Before Solar Recommended\") stay unchanged. On: evcc additionally gets an actual charge mode (pv/minpv/now) and min/target SoC written from the usage profile — only on an actual change, so a manual override in the evcc UI stays in place until the next real recommendation change.",
+          "pv_forecast_today_remaining_entity": "Optional, independent of the tomorrow PV forecast (step 7) — only relevant while the evcc control above is enabled.",
+          "home_consumption_entity": "Optional, cumulative energy meter (kWh) — only relevant while the evcc control above is enabled. Without it, the PV forecast would incorrectly be credited entirely to the vehicle.",
+          "battery_charge_entity": "Optional, in addition to home consumption — only if a home battery exists AND its charging energy isn't already included in the home consumption meter."
         }
       },
       "evcc_loadpoint": {
@@ -435,11 +443,17 @@
       "usage_profile": {
         "name": "Usage Profile"
       },
+      "house_usage_profile": {
+        "name": "House Usage Profile"
+      },
       "usage_profile_tomorrow": {
         "name": "Usage Profile (Needed Tomorrow)"
       },
       "available_kwh": {
         "name": "Available kWh"
+      },
+      "evcc_mode_control": {
+        "name": "evcc Mode Control"
       }
     },
     "binary_sensor": {
@@ -494,6 +508,10 @@
     "entity_unavailable_verbrenner_price_entity": {
       "title": "Fuel price entity unavailable",
       "description": "The configured entity `{entity_id}` has been unavailable/unknown or removed from Home Assistant for at least {minuten} minutes. The fuel price falls back to the last known or fixed value in the meantime (unless a Tankerkönig fuel type is configured, which takes priority anyway)."
+    },
+    "evcc_soc_scope_failed": {
+      "title": "evcc SoC control not set up",
+      "description": "Could not set up evcc vehicle/loadpoint SoC control (host: {host}) — the charge mode is still being set automatically, but min/target SoC is not. Check the evcc version or report an issue on GitHub."
     }
   }
 }

@@ -25,13 +25,16 @@ from .const import (
     BATTERY_CAPACITY_MIN_SAMPLES,
     BATTERY_CAPACITY_MIN_SOC_DELTA,
     CO2_PER_LITER_KG,
+    CONF_BATTERY_CHARGE_ENTITY,
     CONF_CO2_PER_KWH,
     CONF_DROP_ENDS,
     CONF_EFFICIENCY,
     CONF_EVCC_HOST,
     CONF_EVCC_LOADPOINT_TITLE,
+    CONF_EVCC_MODE_CONTROL_ENABLED,
     CONF_EVCC_VEHICLE_NAME,
     CONF_GPS_ENTITY,
+    CONF_HOME_CONSUMPTION_ENTITY,
     CONF_HOME_ENTITY,
     CONF_HOME_PRICE_ENTITY,
     CONF_HOME_PRICE_KWH,
@@ -57,6 +60,7 @@ from .const import (
     CONF_POWER_IS_AC,
     CONF_POWER_TEMPLATE,
     CONF_PV_FORECAST_ENTITY,
+    CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
     CONF_SOC_ENTITY,
     CONF_SOC_TEMPLATE,
     CONF_SOC_THRESHOLDS,
@@ -78,6 +82,7 @@ from .const import (
     DEFAULT_CO2_PER_LITER_KG,
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY,
+    DEFAULT_EVCC_MODE_CONTROL_ENABLED,
     DEFAULT_IDLE_TIMEOUT,
     DEFAULT_MOTOR_DEBOUNCE,
     DEFAULT_NOISE,
@@ -98,6 +103,7 @@ from .const import (
     EFF_MIN_EFFICIENCY,
     EFF_MIN_SAMPLES,
     EFF_MIN_SOC_DELTA,
+    EVCC_MODE_TARGET_DAYS,
     EVENT_DELETED,
     EVENT_EDITED,
     EVENT_LOGGED,
@@ -161,16 +167,21 @@ from .engine import (
     charge_pct_of_history_entry,
     charging_location_breakdown,
     consumption_by_temp_bucket_from_totals,
+    determine_evcc_mode,
     equivalent_full_cycles_from_totals,
     estimate_battery_capacity_kwh,
     home_capacity_sample,
     home_session_solar_and_cost,
+    house_weekday_usage_profile,
     is_plausible_trip_consumption,
+    kwh_to_soc_percent,
     ladekarte_legacy_gebuehren,
     ladekarten_summary,
     leasing_status,
     merge_pending,
+    net_need_after_pv_kwh,
     pop_pending,
+    remaining_today_kwh,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
     split_by_age,
@@ -184,6 +195,7 @@ from .engine import (
     wartung_festes_datum_fortschreiben,
     wartung_uebersicht,
     weekday_usage_profile_from_totals,
+    weekday_usage_profile_window_kwh,
 )
 from .evcc_client import EvccClient
 
@@ -345,6 +357,32 @@ def _empty_data() -> dict:
         "weekday_kwh_exact_totals": {},
         "weekday_km_est_totals": {},
         "lifetime_baselines_migrated": False,
+        # Haus-Nutzungsprofil (siehe _update_house_usage_profile()) fuer die
+        # evcc-Modus-/SoC-Steuerung -- bewusst einfach gehalten, analog
+        # odo_periods/kwh_periods (nur die "day"-Periode wird gebraucht) bzw.
+        # weekday_kwh_exact_totals/weekday_km_est_totals (Fahrzeug-Pendant,
+        # hier ohne exact/estimate-Split, siehe engine.house_weekday_usage_
+        # profile()). Bleibt fuer immer kompakt (max. 7 Wochentags-Eintraege,
+        # keine Archivierung/Kuerzung noetig).
+        "house_periods": {},
+        "house_weekday_kwh_totals": {},
+        "house_weekday_day_counts": {},
+        # Zuletzt tatsaechlich nach evcc geschriebener Steuerzustand (siehe
+        # _async_apply_evcc_mode_control()) -- verhindert periodisches
+        # Ueberschreiben, solange sich die berechnete Empfehlung nicht
+        # aendert. None, solange noch nie geschrieben wurde.
+        "evcc_mode_control": None,
+        # "evcc_min_soc_scope"/"evcc_limit_soc_scope" ABSICHTLICH NICHT hier
+        # vorbelegt (siehe _evcc_scope()/_async_apply_evcc_mode_control()):
+        # der Schluessel selbst muss fehlen koennen, um "noch nie geprobt"
+        # von "geprobt, aber fehlgeschlagen (Wert None)" zu unterscheiden --
+        # beides mit demselben Wert None vorzubelegen wuerde die Probe bei
+        # jedem Zyklus wiederholen bzw. sie bei der ersten Aktivierung
+        # faelschlich ueberspringen. Getrennte Schluessel statt eines
+        # gemeinsamen "evcc_soc_scope": neuere evcc-Versionen (Stand
+        # 0.314.5) setzen minSoc nur noch ueber das Fahrzeug, limitSoc aber
+        # weiterhin wahlweise ueber Loadpoint oder Fahrzeug -- ein
+        # gemeinsamer Scope fuer beide waere falsch.
     }
 
 
@@ -481,6 +519,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._evcc_client: Optional[EvccClient] = None
         self._evcc_state: Optional[dict] = None
         self._evcc_session_sums: dict = {}
+        # Ob gerade ein Repair-Issue fuer eine fehlgeschlagene SoC-Scope-
+        # Probe aktiv ist (siehe _update_soc_scope_issue()) -- rein im
+        # Arbeitsspeicher, analog _entity_issue_active: ein Neustart faengt
+        # frisch mit "noch kein Issue angelegt" an, die naechste Probe legt
+        # es bei erneutem Fehlschlag ohnehin wieder an.
+        self._soc_scope_issue_active: bool = False
         self.data = _empty_data()
 
     def _opt(self, key, default=None):
@@ -1271,6 +1315,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.hass.async_create_task(self._daily_odo_period_rollover())
         self.hass.async_create_task(self._daily_cost_period_rollover())
         self.hass.async_create_task(self._daily_kwh_period_rollover())
+        self.hass.async_create_task(self._async_daily_house_period_rollover())
         self.hass.async_create_task(self._async_truncate_lifetime_lists())
         # Zusaetzlich zu _set_odo() (das nur bei neuer Kilometerstand-Meldung
         # feuert, siehe dort): ein rein zeitbasiertes Wartungskriterium kann
@@ -1372,6 +1417,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         _update_kwh_periods()) taeglich -- analog
         _daily_cost_period_rollover(), aus demselben Grund."""
         self._update_kwh_periods()
+        self.async_set_updated_data(self.data)
+        self._save_soon()
+
+    async def _async_daily_house_period_rollover(self) -> None:
+        """Rollt die Haus-Nutzungsprofil-Tages-Baseline (siehe
+        _update_house_usage_profile()) taeglich -- analog
+        _daily_kwh_period_rollover(), aus demselben Grund (der
+        Hausverbrauch-Zaehlerstand allein loest sonst keinen Rollover aus,
+        da er nicht ueber einen HA-State-Change-Listener beobachtet wird)."""
+        self._update_house_usage_profile()
         self.async_set_updated_data(self.data)
         self._save_soon()
 
@@ -1640,6 +1695,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._run_detection()
         await self._run_trip_detection()
         self._check_entity_health()
+        await self._async_apply_evcc_mode_control()
 
     def _check_entity_health(self) -> None:
         """Repair-Issue anlegen/entfernen fuer konfigurierte Quell-Entitaeten,
@@ -3633,6 +3689,38 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 return title
         return None
 
+    def _evcc_vehicle_api_key(self) -> Optional[str]:
+        """Interner evcc-Schluessel des Fahrzeugs (z.B. "db:8") fuer die
+        vehicle-scoped Schreib-Endpunkte der evcc-Modus-/SoC-Steuerung
+        (/api/vehicles/{key}/..., siehe _async_apply_evcc_mode_control()).
+        ANDERS als _evcc_vehicle_key() oben (liefert den Anzeige-Titel, z.B.
+        "eRifter", fuer den Sessions-basierten Home-kWh/-Kosten-Abgleich, wo
+        evccs eigenes Ladelogbuch ebenfalls mit dem Titel arbeitet): evccs
+        Schreib-API braucht den internen dict-Schluessel aus /api/state
+        (`vehicles{}`) selbst, nicht den Titel -- ein Schreibversuch mit dem
+        Titel schlaegt fehl (HTTP 400). Matched wie _evcc_vehicle_key() gegen
+        CONF_EVCC_VEHICLE_NAME (dort als Titel einzugeben, wie im evcc-UI
+        sichtbar) bzw. Hersteller/Modell -- anders als dort aber IMMER gegen
+        die Fahrzeug-Titel aufgeloest statt eine explizite Konfiguration
+        direkt zurueckzugeben, da hier in jedem Fall der Schluessel und
+        nicht der eingegebene Titel gebraucht wird. None ohne evcc-Zustand
+        oder ohne Treffer."""
+        if self._evcc_state is None:
+            return None
+        vehicles = self._evcc_state.get("vehicles") or {}
+        configured = self._opt(CONF_EVCC_VEHICLE_NAME)
+        hersteller = self._opt(CONF_VEHICLE_HERSTELLER) or ""
+        modell = self._opt(CONF_VEHICLE_MODELL) or ""
+        label = (configured or f"{hersteller} {modell}").strip().lower()
+        for key, veh in vehicles.items():
+            title = veh.get("title")
+            if not title:
+                continue
+            k = title.lower()
+            if label.find(k) != -1 or all(w in label for w in k.split()):
+                return key
+        return None
+
     def _since_setup(self, value: float, start_key: str) -> float:
         """Zieht vom absoluten/kumulativen Zaehlerwert `value` den beim
         ersten Aufruf gespeicherten Referenzwert ab (persistiert unter
@@ -3941,6 +4029,368 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if pv_forecast is not None:
             result["pv_prognose_morgen_kwh"] = round(pv_forecast, 2)
         return result
+
+    # ----- evcc-Modus-/SoC-Steuerung (siehe CONF_EVCC_MODE_CONTROL_ENABLED) --
+    #
+    # Nutzt dasselbe usage_profile() wie usage_profile_tomorrow()/
+    # charge_before_pv_recommended() oben (BEIDE bleiben unveraendert
+    # bestehen -- eine parallele, unabhaengige Anzeige-Empfehlung), rechnet
+    # daraus aber eine eigene, staerker vorausschauende Mindest-/Ziel-SoC-
+    # Schwelle (siehe engine.py::determine_evcc_mode()) und schreibt das
+    # Ergebnis tatsaechlich nach evcc zurueck (siehe
+    # _async_apply_evcc_mode_control()).
+
+    def _kwh_used_today(self) -> Optional[float]:
+        """kWh, die seit Tagesbeginn bereits verbraucht wurden -- aus dem
+        Kilometerstand-Delta seit Tagesbeginn (dieselbe Baseline wie
+        sensor.py::OdoDayKmSensor -- self.data["odo_periods"]["day"]) mal
+        aktuellem Lebenszeit-Durchschnittsverbrauch. None ohne Kilometerstand-
+        Tracking, ohne gesetzte Tages-Baseline oder ohne bekannten
+        Durchschnittsverbrauch -- der Aufrufer (_evcc_mode_targets())
+        behandelt "heute" dann konservativ als 0 kWh bereits verbraucht
+        (voller Restbedarf, sicherer Fehlschlag als "zu wenig Rest
+        angenommen")."""
+        odo_km = self._odo_km()
+        day_entry = (self.data.get("odo_periods") or {}).get("day")
+        avg = self._vehicle_avg_consumption_kwh_per_100km()
+        if odo_km is None or not day_entry or avg is None:
+            return None
+        km_today = odo_km - day_entry["odo_km"]
+        if km_today < 0:
+            # Kilometerstand ist seit der Tages-Baseline gesunken (z.B.
+            # Sensor-Ausfall/-Reset) -- kein plausibler Rueckwaertsverbrauch,
+            # konservativ als "unbekannt" statt eines negativen Werts.
+            return None
+        return round(km_today * avg / 100.0, 2)
+
+    def _pv_forecast_today_remaining_kwh(self) -> Optional[float]:
+        """Liest die optionale CONF_PV_FORECAST_TODAY_REMAINING_ENTITY roh
+        aus -- eine beliebige Sensor-Entitaet mit der noch ausstehenden
+        PV-Ertragsprognose fuer den REST des heutigen Tages (z.B. Solcast
+        "Forecast Remaining Today" o.ae.). ANDERS als das bestehende
+        _pv_forecast_tomorrow_kwh() (dort: kompletter MORGEN-Tag,
+        ausschliesslich fuer die unveraenderte charge_before_pv_recommended()-
+        Empfehlung) -- bewusst getrennte Entitaet/Methode, kein Umbau der
+        bestehenden Funktion. Rechnet Wh automatisch in kWh um, identisches
+        Muster wie dort. None ohne konfigurierte Entitaet oder bei unknown/
+        unavailable/nicht-numerischem Zustand -- der Aufrufer
+        (_evcc_mode_targets()) behandelt das dann konservativ als 0 kWh
+        Bonus (kein Rabatt auf den Bedarf), identisch zum Verhalten vor
+        dieser Erweiterung."""
+        entity_id = self._opt(CONF_PV_FORECAST_TODAY_REMAINING_ENTITY)
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in (None, "unknown", "unavailable"):
+            return None
+        try:
+            value = float(state.state)
+        except (TypeError, ValueError):
+            return None
+        if state.attributes.get("unit_of_measurement") == "Wh":
+            value /= 1000.0
+        return value
+
+    def _house_combined_reading_kwh(self) -> Optional[float]:
+        """Kombinierter kumulativer Zaehlerstand (Hausverbrauch + optionale
+        Speicherladung) -- eine Quelle fuer sowohl die Tages-Baseline (siehe
+        _update_house_usage_profile()) als auch den aktuellen Verbrauch seit
+        Tagesbeginn (_house_kwh_used_today()). None ohne konfigurierten
+        Hausverbrauchszaehler (Pflichtquelle) oder bei unknown/unavailable/
+        nicht-numerischem Zustand. Ein defekter/fehlender Speicherwert
+        (falls konfiguriert) wird stillschweigend ignoriert -- lieber nur
+        Hausverbrauch zaehlen als gar nichts."""
+        home_id = self._opt(CONF_HOME_CONSUMPTION_ENTITY)
+        if not home_id:
+            return None
+        home_state = self.hass.states.get(home_id)
+        if home_state is None or home_state.state in (None, "unknown", "unavailable"):
+            return None
+        try:
+            total = float(home_state.state)
+        except (TypeError, ValueError):
+            return None
+        battery_id = self._opt(CONF_BATTERY_CHARGE_ENTITY)
+        if battery_id:
+            battery_state = self.hass.states.get(battery_id)
+            if battery_state is not None and battery_state.state not in (None, "unknown", "unavailable"):
+                try:
+                    total += float(battery_state.state)
+                except (TypeError, ValueError):
+                    pass  # Speicherwert defekt -- lieber nur Hausverbrauch als gar nichts
+        return total
+
+    def _update_house_usage_profile(self) -> None:
+        """Taeglicher Rollover-Hook (aufgerufen aus _daily_lts_refresh(),
+        analog _daily_kwh_period_rollover()) fuers Haus-Nutzungsprofil. Nutzt
+        dieselbe update_period_baseline()-Mechanik wie die bestehenden
+        Perioden (eigenes Feld "house_periods", nur die "day"-Periode wird
+        gebraucht), schreibt aber zusaetzlich bei jedem ECHTEN Rollover
+        (erkennbar am neu erscheinenden "prev") den abgeschlossenen
+        GESTERN-Wert in einen Wochentags-Eimer fort. No-op ohne
+        konfigurierten Hausverbrauchszaehler."""
+        value = self._house_combined_reading_kwh()
+        if value is None:
+            return
+        periods = self.data.get("house_periods") or {}
+        old_entry = periods.get("day")
+        key = self._period_keys()["day"]
+        new_periods = update_period_baseline(periods, {"day": key}, value, "kwh")
+        self.data["house_periods"] = new_periods
+        new_entry = new_periods["day"]
+        if old_entry is not None and old_entry.get("key") != key and "prev" in new_entry:
+            yesterday_wd = (dt_util.now().date() - timedelta(days=1)).weekday()
+            totals = dict(self.data.get("house_weekday_kwh_totals") or {})
+            counts = dict(self.data.get("house_weekday_day_counts") or {})
+            wd_key = str(yesterday_wd)
+            totals[wd_key] = round(totals.get(wd_key, 0.0) + new_entry["prev"], 2)
+            counts[wd_key] = counts.get(wd_key, 0) + 1
+            self.data["house_weekday_kwh_totals"] = totals
+            self.data["house_weekday_day_counts"] = counts
+
+    def _house_kwh_used_today(self) -> Optional[float]:
+        """Kombinierter Verbrauch (Haus + optionale Speicherladung) seit
+        Tagesbeginn -- aktueller Zaehlerstand minus Tages-Baseline aus
+        self.data["house_periods"]["day"]. None ohne konfigurierten
+        Hausverbrauchszaehler oder ohne gesetzte Baseline (z.B. direkt nach
+        Aktivierung, vor dem ersten taeglichen Rollover)."""
+        value = self._house_combined_reading_kwh()
+        day_entry = (self.data.get("house_periods") or {}).get("day")
+        if value is None or not day_entry:
+            return None
+        used = value - day_entry["kwh"]
+        return round(used, 2) if used >= 0 else None
+
+    def house_usage_profile(self) -> Optional[dict]:
+        """Oeffentliches Pendant zu usage_profile(), fuers Haus statt
+        Fahrzeug (siehe engine.py::house_weekday_usage_profile()) -- fuer
+        HouseUsageProfileSensor (Panel: Nutzungsprofil-Tab, Karte
+        "Hausnutzungsprofil", analog zur Fahrzeug-Karte darueber) sowie
+        intern fuer _house_remaining_today_kwh(). None ohne konfigurierten
+        Hausverbrauchszaehler oder ohne einen einzigen beobachteten
+        Wochentag (z.B. direkt nach Aktivierung, vor dem ersten taeglichen
+        Rollover)."""
+        return house_weekday_usage_profile(
+            self.data.get("house_weekday_kwh_totals") or {},
+            self.data.get("house_weekday_day_counts") or {},
+        )
+
+    def house_usage_profile_includes_battery(self) -> bool:
+        """Ob das Hausnutzungsprofil Speicherladung mit einschliesst (siehe
+        CONF_BATTERY_CHARGE_ENTITY) -- rein informativ fuers Panel (Label
+        "inkl. Speicherladung"), keine Rechenlogik."""
+        return bool(self._opt(CONF_BATTERY_CHARGE_ENTITY))
+
+    def _house_remaining_today_kwh(self) -> Optional[float]:
+        """Erwarteter PV-konkurrierender Rest-Bedarf des Hauses (inkl.
+        Speicherladung) fuer den Rest des heutigen Tages -- wiederverwendet
+        remaining_today_kwh() (identische Rechnung wie beim Fahrzeug), nur
+        mit dem Haus- statt Fahrzeugprofil. None ohne Hausprofil oder ohne
+        Daten fuer den heutigen Wochentag -- der Aufrufer
+        (_evcc_mode_targets()) behandelt das dann konservativ als 0 kWh
+        Haus-Bedarf."""
+        profile = self.house_usage_profile()
+        if profile is None:
+            return None
+        today_wd = dt_util.now().date().weekday()
+        avg_today = profile.get(today_wd)
+        if avg_today is None:
+            return None
+        used_today = self._house_kwh_used_today() or 0.0
+        return remaining_today_kwh(avg_today, used_today)
+
+    def _evcc_mode_targets(self) -> Optional[dict]:
+        """Berechnet Ziel-Modus + Min-/Ziel-SoC fuer die evcc-Schreib-
+        steuerung (siehe _async_apply_evcc_mode_control()). None, wenn
+        usage_profile()/available_kwh() fehlt (identische Vorbedingung wie
+        charge_before_pv_recommended())."""
+        profile = self.usage_profile()
+        available = self.available_kwh()
+        if profile is None or available is None:
+            return None
+        today_wd = dt_util.now().date().weekday()
+        tomorrow_wd = (dt_util.now().date() + timedelta(days=1)).weekday()
+        used_today = self._kwh_used_today() or 0.0
+        rest_heute_roh = remaining_today_kwh(profile.get(today_wd, 0.0), used_today)
+        pv_rest_heute_roh = self._pv_forecast_today_remaining_kwh() or 0.0
+        # Die Haus-/Speicher-PV-Konkurrenz wird ZUERST von der PV-Prognose
+        # abgezogen, nicht vom Fahrzeug-Restbedarf -- die rohe PV-Prognose
+        # ist fuer das GESAMTE Haus, nicht fuers Auto allein (siehe
+        # CONF_HOME_CONSUMPTION_ENTITY-Kommentar in const.py).
+        haus_rest_heute = self._house_remaining_today_kwh() or 0.0
+        pv_fuer_auto = net_need_after_pv_kwh(pv_rest_heute_roh, haus_rest_heute)
+        rest_heute = net_need_after_pv_kwh(rest_heute_roh, pv_fuer_auto)
+        buffer_pct = float(self._opt(CONF_USAGE_PROFILE_BUFFER_PCT, DEFAULT_USAGE_PROFILE_BUFFER_PCT))
+        min_raw = rest_heute + profile.get(tomorrow_wd, 0.0)
+        min_kwh = round(min_raw * (1.0 + buffer_pct / 100.0), 2)
+        target_raw = rest_heute + weekday_usage_profile_window_kwh(profile, tomorrow_wd, EVCC_MODE_TARGET_DAYS)
+        target_kwh = round(target_raw * (1.0 + buffer_pct / 100.0), 2)
+        usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+        mode = determine_evcc_mode(available, min_kwh, target_kwh)
+        return {
+            "modus": mode,
+            "min_kwh": min_kwh,
+            "target_kwh": target_kwh,
+            "min_soc": kwh_to_soc_percent(min_kwh, usable_kwh),
+            "target_soc": kwh_to_soc_percent(target_kwh, usable_kwh),
+            "verfuegbare_kwh": available,
+            "rest_heute_kwh": rest_heute,
+            "rest_heute_roh_kwh": rest_heute_roh,
+            "pv_rest_heute_roh_kwh": pv_rest_heute_roh,
+            "haus_rest_heute_kwh": haus_rest_heute,
+            "pv_fuer_auto_kwh": pv_fuer_auto,
+        }
+
+    def _current_loadpoint_index(self) -> Optional[int]:
+        """Wie _current_loadpoint(), liefert aber den 1-basierten evcc-API-
+        Index statt des Loadpoint-Objekts -- fuer Schreibzugriffe (Modus/
+        SoC)."""
+        if self._evcc_state is None:
+            return None
+        loadpoints = self._evcc_state.get("loadpoints") or []
+        title = self._opt(CONF_EVCC_LOADPOINT_TITLE)
+        if title:
+            for i, lp in enumerate(loadpoints, start=1):
+                if lp.get("title") == title:
+                    return i
+            return None
+        return 1 if loadpoints else None
+
+    def _update_soc_scope_issue(self, min_scope: Optional[str], limit_scope: Optional[str]) -> None:
+        """Repair-Issue (Einstellungen -> System -> Repariere) fuer eine
+        fehlgeschlagene Min- und/oder Ziel-SoC-Scope-Probe -- analog
+        _check_entity_health(). Feuert schon, wenn NUR eine der beiden
+        Eigenschaften fehlschlaegt (z.B. reale evcc-0.314.5-Situation:
+        limitSoc-Scope gefunden, minSoc-Scope nicht) -- die Steuerung ist
+        dann nur teilweise wirksam. Modus-Steuerung laeuft in jedem Fall
+        weiter (siehe _async_apply_evcc_mode_control()), daher aktiv
+        sichtbar statt nur im Log."""
+        issue_id = f"{self.entry.entry_id}_evcc_soc_scope_failed"
+        if min_scope is not None and limit_scope is not None:
+            if self._soc_scope_issue_active:
+                self._soc_scope_issue_active = False
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            return
+        if not self._soc_scope_issue_active:
+            self._soc_scope_issue_active = True
+            ir.async_create_issue(
+                self.hass, DOMAIN, issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="evcc_soc_scope_failed",
+                translation_placeholders={"host": self._opt(CONF_EVCC_HOST) or ""},
+            )
+
+    async def _evcc_scope(
+        self, key: str, loadpoint_id: int, vehicle_name: Optional[str], prop: str, state_field: str
+    ) -> Optional[str]:
+        """Liefert den gecachten Scope fuer eine Steuer-Eigenschaft (siehe
+        evcc_client.py::async_probe_scope()) unter `key` in self.data,
+        probt einmalig bei fehlendem Cache-Eintrag. Schluessel-Existenz
+        statt "is None" pruefen: eine fehlgeschlagene Probe (scope=None)
+        muss von "noch nie geprobt" unterscheidbar bleiben, sonst wuerde sie
+        bei JEDEM Zyklus wiederholt (siehe _empty_data()-Kommentar)."""
+        if key in self.data:
+            return self.data[key]
+        scope = await self._evcc_client.async_probe_scope(loadpoint_id, vehicle_name, prop, state_field)
+        self.data[key] = scope  # auch None wird gecacht -> keine Probe jeden Zyklus
+        await self._store.async_save(self.data)
+        return scope
+
+    async def _evcc_reprobe_scope(
+        self, key: str, loadpoint_id: int, vehicle_name: Optional[str], prop: str, state_field: str
+    ) -> Optional[str]:
+        """Erzwingt eine neue Probe (z.B. nach einem gescheiterten
+        Schreibversuch mit dem gecachten Scope -- die evcc-Version koennte
+        sich geaendert haben) und cached das Ergebnis neu. Kein eigener
+        Store-Save hier (wie im urspruenglichen Single-Scope-Code): ein
+        Erfolg am Ende von _async_apply_evcc_mode_control() speichert
+        self.data ohnehin als Ganzes, ein Fehlschlag verwirft den
+        Re-Probe-Stand fuer die naechste Session bewusst wieder (kein
+        Sonderfall noetig)."""
+        scope = await self._evcc_client.async_probe_scope(loadpoint_id, vehicle_name, prop, state_field)
+        self.data[key] = scope
+        return scope
+
+    async def _async_apply_evcc_mode_control(self) -> None:
+        """Schreibt Lademodus + Min-/Ziel-SoC nach evcc, aber NUR wenn sich
+        die eigene berechnete Empfehlung seit dem letzten Schreibvorgang
+        geaendert hat -- kein periodisches Ueberschreiben, damit ein
+        manueller evcc-Eingriff (z.B. Nutzer stellt in der evcc-UI selbst
+        "now" ein) bis zur naechsten tatsaechlichen Empfehlungsaenderung
+        bestehen bleibt. Deaktiviert per Default
+        (CONF_EVCC_MODE_CONTROL_ENABLED); no-op ohne evcc-Client.
+
+        Min- und Ziel-SoC werden UNABHAENGIG voneinander geprobt/geschrieben
+        (siehe _evcc_scope()/evcc_client.py::async_probe_scope()) -- neuere
+        evcc-Versionen (Stand 0.314.5) setzen minSoc nur noch ueber das
+        Fahrzeug, limitSoc aber weiterhin wahlweise ueber Loadpoint oder
+        Fahrzeug, ein gemeinsamer Scope waere also falsch."""
+        if not self._opt(CONF_EVCC_MODE_CONTROL_ENABLED, DEFAULT_EVCC_MODE_CONTROL_ENABLED):
+            return
+        if self._evcc_client is None:
+            return
+        targets = self._evcc_mode_targets()
+        if targets is None:
+            return
+        last = self.data.get("evcc_mode_control") or {}
+        new_state = {
+            "modus": targets["modus"],
+            "min_soc": targets["min_soc"],
+            "target_soc": targets["target_soc"],
+        }
+        if all(last.get(k) == new_state[k] for k in new_state):
+            return  # keine Aenderung -- nichts schreiben, manueller Eingriff bleibt bestehen
+        loadpoint_id = self._current_loadpoint_index()
+        if loadpoint_id is None:
+            _LOGGER.warning("evcc_mode_control: kein Loadpoint gefunden, ueberspringe Schreibvorgang")
+            return
+        # _evcc_vehicle_api_key() statt CONF_EVCC_VEHICLE_NAME direkt oder
+        # _evcc_vehicle_key(): die evcc-Schreib-API braucht den internen
+        # evcc-Fahrzeugschluessel (z.B. "db:8"), nicht den Anzeige-Titel --
+        # siehe dortigen Docstring.
+        vehicle_name = self._evcc_vehicle_api_key()
+        min_scope = await self._evcc_scope("evcc_min_soc_scope", loadpoint_id, vehicle_name, "minsoc", "minSoc")
+        limit_scope = await self._evcc_scope("evcc_limit_soc_scope", loadpoint_id, vehicle_name, "limitsoc", "limitSoc")
+        self._update_soc_scope_issue(min_scope, limit_scope)
+        ok = True
+        if new_state["target_soc"] is not None:
+            if limit_scope is not None:
+                soc_ok = await self._evcc_client.async_set_limit_soc(
+                    loadpoint_id, vehicle_name, limit_scope, new_state["target_soc"]
+                )
+                if not soc_ok:  # einmaliger Re-Probe: evcc-Version koennte sich geaendert haben
+                    limit_scope = await self._evcc_reprobe_scope(
+                        "evcc_limit_soc_scope", loadpoint_id, vehicle_name, "limitsoc", "limitSoc"
+                    )
+                    soc_ok = limit_scope is not None and await self._evcc_client.async_set_limit_soc(
+                        loadpoint_id, vehicle_name, limit_scope, new_state["target_soc"]
+                    )
+                ok &= soc_ok
+            else:
+                _LOGGER.warning("evcc_mode_control: Ziel-SoC-Scope nicht ermittelbar, ueberspringe Ziel-SoC")
+        if new_state["min_soc"] is not None:
+            if min_scope is not None:
+                soc_ok = await self._evcc_client.async_set_min_soc(
+                    loadpoint_id, vehicle_name, min_scope, new_state["min_soc"]
+                )
+                if not soc_ok:
+                    min_scope = await self._evcc_reprobe_scope(
+                        "evcc_min_soc_scope", loadpoint_id, vehicle_name, "minsoc", "minSoc"
+                    )
+                    soc_ok = min_scope is not None and await self._evcc_client.async_set_min_soc(
+                        loadpoint_id, vehicle_name, min_scope, new_state["min_soc"]
+                    )
+                ok &= soc_ok
+            else:
+                _LOGGER.warning("evcc_mode_control: Min-SoC-Scope nicht ermittelbar, ueberspringe Min-SoC")
+        self._update_soc_scope_issue(min_scope, limit_scope)  # nach evtl. Re-Probe erneut abgleichen
+        ok &= await self._evcc_client.async_set_mode(loadpoint_id, new_state["modus"])
+        if not ok:
+            _LOGGER.warning("evcc_mode_control: Schreibvorgang teilweise/ganz fehlgeschlagen: %s", new_state)
+            return  # bei Fehler NICHT als "geschrieben" vermerken -> naechster Zyklus versucht erneut
+        self.data["evcc_mode_control"] = {**new_state, "geschrieben_ts": dt_util.utcnow().timestamp()}
+        await self._store.async_save(self.data)
 
     async def _dismiss(self) -> None:
         try:

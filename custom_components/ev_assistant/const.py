@@ -20,6 +20,17 @@ CONF_POWER_ENTITY = "power_entity"
 CONF_POWER_TEMPLATE = "power_template"
 CONF_WALLBOX_ENERGY_ENTITY = "wallbox_energy_entity"
 CONF_WALLBOX_ENERGY_TEMPLATE = "wallbox_energy_template"
+# Optional, nur fuer das Haus-Nutzungsprofil der evcc-Modus-/SoC-Steuerung
+# (siehe coordinator.py::_update_house_usage_profile()/_evcc_mode_targets()):
+# kumulative Energiezaehler (kWh, state_class: total_increasing), analog
+# CONF_WALLBOX_ENERGY_ENTITY. CONF_HOME_CONSUMPTION_ENTITY = Hausverbrauch
+# OHNE Auto und OHNE Speicherladung (Pflicht, damit das Haus-Nutzungsprofil
+# ueberhaupt aufgebaut wird). CONF_BATTERY_CHARGE_ENTITY = zusaetzlich, NUR
+# falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie NICHT bereits
+# im Hausverbrauchszaehler enthalten ist (typischer Fall -- der Speicher
+# haengt direkt am PV-/Netz-Pfad) -- rein additiv-optional.
+CONF_HOME_CONSUMPTION_ENTITY = "home_consumption_entity"
+CONF_BATTERY_CHARGE_ENTITY = "battery_charge_entity"
 # Push-Benachrichtigungen: Zielgeraete (notify.*-Entitaeten der modernen,
 # entity-basierten Notify-Plattform statt der alten "notify.<service>"-
 # Aufrufe per Freitext) + welche Ereignisse ueberhaupt einen Push ausloesen
@@ -177,6 +188,14 @@ CONF_USAGE_PROFILE_BUFFER_PCT = "usage_profile_buffer_pct"
 # morgigen Bedarf; mit ihr darf die morgen erwartete PV-Erzeugung eine
 # Luecke schliessen, auch wenn der Akku allein nicht reicht.
 CONF_PV_FORECAST_ENTITY = "pv_forecast_entity"
+# Eigene, unabhaengige Entitaet fuer die evcc-Modus-/SoC-Steuerung (siehe
+# coordinator.py::_pv_forecast_today_remaining_kwh()/_evcc_mode_targets()) --
+# bewusst GETRENNT von CONF_PV_FORECAST_ENTITY: jenes liefert die Prognose
+# fuer MORGEN (fuer die unveraenderte charge_before_pv_recommended()-
+# Empfehlung), dieses hier die Rest-Prognose fuer HEUTE (z.B. Solcast
+# "Forecast Remaining Today"). Unterschiedliche Zeitraeume, unterschiedliche
+# Werte, nicht austauschbar.
+CONF_PV_FORECAST_TODAY_REMAINING_ENTITY = "pv_forecast_today_remaining_entity"
 
 # Optionale Aussentemperatur-Entitaet (Wetter-Integration oder beliebiger
 # Temperatursensor) fuer temperaturabhaengige Verbrauchs-/Reichweiten-
@@ -250,6 +269,13 @@ CONF_EVCC_VEHICLE_NAME      = "evcc_vehicle_name"
 # verwendet) -- siehe coordinator.py::_current_loadpoint().
 CONF_EVCC_HOST              = "evcc_host"
 CONF_EVCC_LOADPOINT_TITLE   = "evcc_loadpoint_title"
+# Optional, Default aus (siehe DEFAULT_EVCC_MODE_CONTROL_ENABLED): schaltet
+# die automatische Steuerung von evccs Lademodus (pv/minpv/now) sowie Min-/
+# Ziel-SoC anhand des Nutzungsprofils frei (siehe coordinator.py::
+# _async_apply_evcc_mode_control()/_evcc_mode_targets()) -- rein additiv,
+# ohne sie aendert sich am bisherigen Verhalten (nur Lese-/Anzeige-
+# Empfehlungen wie charge_before_pv_recommended()) nichts.
+CONF_EVCC_MODE_CONTROL_ENABLED = "evcc_mode_control_enabled"
 
 DEFAULT_TEMPLATE = "{{ value }}"
 DEFAULT_USABLE_KWH = 45.0
@@ -326,6 +352,15 @@ DEFAULT_USAGE_PROFILE_BUFFER_PCT = 20.0
 # gezeigt wird (siehe engine.py::weekday_usage_profile()) -- 7 Tage
 # garantieren, dass jeder Wochentag mindestens einmal vorkommt.
 MIN_USAGE_PROFILE_DAYS = 7
+# Feature komplett deaktiviert, bis aktiv per CONF_EVCC_MODE_CONTROL_ENABLED
+# freigeschaltet (siehe coordinator.py::_async_apply_evcc_mode_control()).
+DEFAULT_EVCC_MODE_CONTROL_ENABLED = False
+# Wie viele Tage (ab dem Tag NACH heute) der evcc-Ziel-SoC abdeckt (siehe
+# engine.py::determine_evcc_mode()/coordinator.py::_evcc_mode_targets()) --
+# der Mindest-SoC deckt dagegen nur den naechsten einzelnen Tag ab. 2 Tage
+# Puffer verhindern, dass ein einzelner ungewoehnlich verbrauchsstarker Tag
+# nach dem naechsten sofort wieder Netzladen erzwingt.
+EVCC_MODE_TARGET_DAYS = 2
 # Deutscher Strommix-Durchschnitt (grobe Schaetzung, schwankt je nach Jahr/
 # Versorger/Tarif) -- Nutzer mit einer praeziseren Quelle (z.B. Oekostrom-
 # Vertrag) sollten den Wert anpassen.

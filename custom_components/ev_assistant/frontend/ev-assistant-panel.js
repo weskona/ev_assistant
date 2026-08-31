@@ -1331,6 +1331,16 @@ class EVAssistantPanel extends HTMLElement {
           <div class="sub-head">Ø kWh-Bedarf pro Wochentag</div>
           <div class="weekday-chart" id="profil-weekday-chart"></div>
         </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:home-clock"></ha-icon></span><h2>Hausnutzungsprofil</h2>
+        </div>
+        <div class="profil-empty hidden" id="house-profil-empty">—</div>
+        <div class="hidden" id="house-profil-content">
+          <div class="sub-head" id="house-profil-subhead">Ø kWh-Verbrauch pro Wochentag</div>
+          <div class="weekday-chart" id="house-profil-weekday-chart"></div>
+        </div>
       </div>`;
 
     const q = (s) => wrap.querySelector(s);
@@ -1345,6 +1355,10 @@ class EVAssistantPanel extends HTMLElement {
       profilPvForecastKpi: q("#profil-pv-forecast-kpi"),
       profilPvForecast:    q("#profil-pv-forecast"),
       profilWeekdayChart:  q("#profil-weekday-chart"),
+      houseProfilEmpty:        q("#house-profil-empty"),
+      houseProfilContent:      q("#house-profil-content"),
+      houseProfilSubhead:      q("#house-profil-subhead"),
+      houseProfilWeekdayChart: q("#house-profil-weekday-chart"),
     };
     return wrap;
   }
@@ -1560,6 +1574,65 @@ class EVAssistantPanel extends HTMLElement {
       r.profilRecommendText.parentElement.classList.add("rec-no");
       r.profilRecommendText.parentElement.classList.remove("rec-yes");
     }
+
+    this._updateHouseProfil();
+  }
+
+  // Haus-Nutzungsprofil (siehe coordinator.py::house_usage_profile(), fuer
+  // die evcc-Modus-/SoC-Steuerung) -- eigene Karte unter dem Fahrzeugprofil
+  // oben, bewusst ohne KPI-Zeile/Empfehlung (keine Verfuegbare-kWh- oder
+  // PV-Entsprechung fuers Haus als Ganzes), nur der Wochentags-Chart.
+  // Anders als beim Fahrzeug-Profil koennen einzelne Wochentage fehlen
+  // (house_usage_profile() liefert nur tatsaechlich beobachtete Tage) --
+  // "noch keine Daten" wird als eigener Balken-Zustand dargestellt statt
+  // faelschlich als 0 kWh.
+  _updateHouseProfil() {
+    const r = this._r;
+    if (!r.houseProfilEmpty) return;
+    const eid = this._eid("house_usage_profile");
+    const state = eid ? this._hass.states[eid] : null;
+    const attrs = state ? state.attributes || {} : {};
+    const WEEKDAYS = [
+      ["montag", "Mo"], ["dienstag", "Di"], ["mittwoch", "Mi"], ["donnerstag", "Do"],
+      ["freitag", "Fr"], ["samstag", "Sa"], ["sonntag", "So"],
+    ];
+    const konfiguriert = attrs.konfiguriert === true;
+    const hasAnyDay = WEEKDAYS.some(([key]) => attrs[key] !== undefined);
+
+    if (!konfiguriert || !hasAnyDay) {
+      r.houseProfilEmpty.textContent = !konfiguriert
+        ? "Kein Hausverbrauchszähler konfiguriert (Einstellungen → evcc & Wallbox → evcc-Modus-/SoC-Steuerung) — optional, fürs Hausnutzungsprofil und die evcc-Steuerung."
+        : "Noch keine Tage gesammelt. Das Profil füllt sich automatisch über die nächsten Tage.";
+      r.houseProfilEmpty.classList.remove("hidden");
+      r.houseProfilContent.classList.add("hidden");
+      return;
+    }
+    r.houseProfilEmpty.classList.add("hidden");
+    r.houseProfilContent.classList.remove("hidden");
+
+    r.houseProfilSubhead.textContent = attrs.speicher_enthalten
+      ? "Ø kWh-Verbrauch pro Wochentag (inkl. Speicherladung)"
+      : "Ø kWh-Verbrauch pro Wochentag";
+
+    const values = WEEKDAYS.map(([key]) => (attrs[key] !== undefined ? parseFloat(attrs[key]) : null));
+    const maxVal = Math.max(...values.filter((v) => v !== null), 0.1);
+    const todayWd = new Date().getDay();
+    const todayIdx = todayWd === 0 ? 6 : todayWd - 1;
+    const tomorrowIdx = (todayIdx + 1) % 7;
+
+    r.houseProfilWeekdayChart.innerHTML = WEEKDAYS.map(([, label], i) => {
+      const v = values[i];
+      const noData = v === null;
+      const pct = noData ? 2 : Math.max(2, Math.round((v / maxVal) * 100));
+      let cls = noData ? "wd-bar no-data" : "wd-bar";
+      if (!noData) cls += i === tomorrowIdx ? " tomorrow" : (i === todayIdx ? " today" : "");
+      return `
+        <div class="wd-col">
+          <div class="wd-val">${noData ? "–" : this._fmtNum(v, 1)}</div>
+          <div class="wd-bar-track"><div class="${cls}" style="height:${pct}%"></div></div>
+          <div class="wd-label">${label}</div>
+        </div>`;
+    }).join("");
   }
 
   _updateAnalyse() {
@@ -4743,6 +4816,7 @@ class EVAssistantPanel extends HTMLElement {
       .wd-bar { width: 100%; border-radius: 5px 5px 0 0; background: var(--line-s); transition: height 0.4s ease; }
       .wd-bar.today    { background: var(--accent); }
       .wd-bar.tomorrow { background: #4ade80; }
+      .wd-bar.no-data  { background: transparent; border: 1px dashed var(--line-s); }
       .wd-label { font-size: 0.7rem; color: var(--ink-dim); margin-top: 6px; font-weight: 600; }
 
       /* Farbige Summary-Cards — HA Energiedashboard-Farben */

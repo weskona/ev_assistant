@@ -14,10 +14,13 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONF_EFFICIENCY,
     CONF_ERSTZULASSUNG,
+    CONF_EVCC_MODE_CONTROL_ENABLED,
+    CONF_HOME_CONSUMPTION_ENTITY,
     CONF_TANKERKOENIG_FUEL_TYPE,
     CONF_VERBRENNER_PRICE_ENTITY,
     CONF_VERBRENNER_PRICE_PER_LITER,
     DEFAULT_EFFICIENCY,
+    DEFAULT_EVCC_MODE_CONTROL_ENABLED,
     DOMAIN,
     EFF_MIN_SAMPLES,
     WARTUNG_PRESETS,
@@ -80,7 +83,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         KwhYearSensor(coordinator, entry),
         UsageProfileSensor(coordinator, entry),
         UsageProfileTomorrowSensor(coordinator, entry),
+        HouseUsageProfileSensor(coordinator, entry),
         AvailableKwhSensor(coordinator, entry),
+        EvccModeControlSensor(coordinator, entry),
         WartungSensor(coordinator, entry),
     ])
 
@@ -1402,6 +1407,42 @@ class UsageProfileTomorrowSensor(EvAssistantEntity, SensorEntity):
         return dict(need) if need else {}
 
 
+class HouseUsageProfileSensor(EvAssistantEntity, SensorEntity):
+    """Durchschnittlicher Haus-kWh-Verbrauch pro Wochentag (inkl. optionaler
+    Speicherladung, siehe coordinator.py::house_usage_profile()/engine.py::
+    house_weekday_usage_profile()) -- Haus-Pendant zu UsageProfileSensor,
+    fuer die "Hausnutzungsprofil"-Karte im Nutzungsprofil-Tab (siehe
+    coordinator.py::_evcc_mode_targets() fuer die Verwendung in der evcc-
+    Modus-/SoC-Steuerung). unknown ohne konfigurierten Hausverbrauchszaehler
+    oder solange noch kein einziger Wochentag beobachtet wurde."""
+
+    _attr_translation_key = "house_usage_profile"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:home-clock"
+
+    _WEEKDAY_KEYS = ["montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag"]
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "house_usage_profile")
+
+    @property
+    def native_value(self):
+        profile = self.coordinator.house_usage_profile()
+        if not profile:
+            return None
+        today_wd = dt_util.now().weekday()
+        return profile.get(today_wd)
+
+    @property
+    def extra_state_attributes(self):
+        profile = self.coordinator.house_usage_profile()
+        attrs = {wd_key: profile[wd] for wd, wd_key in enumerate(self._WEEKDAY_KEYS) if profile and wd in profile}
+        attrs["konfiguriert"] = bool(self.coordinator._opt(CONF_HOME_CONSUMPTION_ENTITY))
+        attrs["speicher_enthalten"] = self.coordinator.house_usage_profile_includes_battery()
+        return attrs
+
+
 class AvailableKwhSensor(EvAssistantEntity, SensorEntity):
     """Aktuell verfuegbare Batteriekapazitaet in kWh (siehe
     coordinator.py::available_kwh()) -- SoC% * nutzbare Kapazitaet."""
@@ -1417,3 +1458,59 @@ class AvailableKwhSensor(EvAssistantEntity, SensorEntity):
     @property
     def native_value(self):
         return self.coordinator.available_kwh()
+
+
+class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
+    """Diagnose-Sensor fuer die automatische evcc-Modus-/SoC-Steuerung
+    (siehe coordinator.py::_async_apply_evcc_mode_control()/
+    _evcc_mode_targets()) -- eigenstaendig statt in ChargeBeforePvBinarySensor
+    integriert, da eine andere Frage beantwortet wird: nicht "waere jetzt
+    Nachladen empfehlenswert" (reine, unveraenderte Anzeige-Empfehlung),
+    sondern "was steuert ev_assistant gerade tatsaechlich an evcc". unknown,
+    solange CONF_EVCC_MODE_CONTROL_ENABLED aus ist (Default) oder
+    _evcc_mode_targets() mangels usage_profile()/available_kwh() nichts
+    liefert."""
+
+    _attr_translation_key = "evcc_mode_control"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:ev-station"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "evcc_mode_control")
+
+    def _enabled(self) -> bool:
+        return bool(self.coordinator._opt(CONF_EVCC_MODE_CONTROL_ENABLED, DEFAULT_EVCC_MODE_CONTROL_ENABLED))
+
+    @property
+    def native_value(self):
+        if not self._enabled():
+            return None
+        targets = self.coordinator._evcc_mode_targets()
+        return targets["modus"] if targets else None
+
+    @property
+    def extra_state_attributes(self):
+        if not self._enabled():
+            return {}
+        targets = self.coordinator._evcc_mode_targets()
+        if not targets:
+            return {}
+        attrs = {
+            "min_soc": targets["min_soc"],
+            "target_soc": targets["target_soc"],
+            "verfuegbare_kwh": targets["verfuegbare_kwh"],
+            "min_kwh": targets["min_kwh"],
+            "target_kwh": targets["target_kwh"],
+            "rest_heute_kwh": targets["rest_heute_kwh"],
+            "rest_heute_roh_kwh": targets["rest_heute_roh_kwh"],
+            "pv_rest_heute_roh_kwh": targets["pv_rest_heute_roh_kwh"],
+            "haus_rest_heute_kwh": targets["haus_rest_heute_kwh"],
+            "pv_fuer_auto_kwh": targets["pv_fuer_auto_kwh"],
+            "aktiv": True,
+            "min_soc_scope": self.coordinator.data.get("evcc_min_soc_scope"),
+            "limit_soc_scope": self.coordinator.data.get("evcc_limit_soc_scope"),
+        }
+        written = self.coordinator.data.get("evcc_mode_control")
+        if written and "geschrieben_ts" in written:
+            attrs["zuletzt_geschrieben"] = written["geschrieben_ts"]
+        return attrs

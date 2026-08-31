@@ -32,19 +32,24 @@ from engine import (
     charging_location_breakdown,
     consumption_by_temp_bucket,
     consumption_by_temp_bucket_from_totals,
+    determine_evcc_mode,
     equivalent_full_cycles,
     equivalent_full_cycles_from_totals,
     estimate_battery_capacity_kwh,
     home_capacity_sample,
     home_session_solar_and_cost,
+    house_weekday_usage_profile,
     is_plausible_trip_consumption,
+    kwh_to_soc_percent,
     ladekarte_accrued_cost,
     ladekarte_current_fee,
     ladekarten_summary,
     leasing_status,
     merge_pending,
+    net_need_after_pv_kwh,
     normalize_anbieter,
     pop_pending,
+    remaining_today_kwh,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
     split_by_age,
@@ -60,6 +65,7 @@ from engine import (
     wartung_uebersicht,
     weekday_usage_profile,
     weekday_usage_profile_from_totals,
+    weekday_usage_profile_window_kwh,
 )
 
 
@@ -866,6 +872,138 @@ def test_charge_before_pv_decision_mit_prognose_schliesst_luecke():
 def test_charge_before_pv_decision_mit_prognose_luecke_bleibt():
     # PV-Prognose reicht nicht aus, um die Luecke zu schliessen.
     assert charge_before_pv_decision(available_kwh=10.0, needed_kwh=15.0, pv_forecast_kwh=2.0) is True
+
+
+# ----- remaining_today_kwh: Rest-Bedarf fuer heute -------------------------
+
+def test_remaining_today_kwh_normalfall():
+    assert remaining_today_kwh(weekday_avg_kwh=10.0, kwh_used_today=4.0) == 6.0
+
+
+def test_remaining_today_kwh_bereits_mehr_gefahren_als_schnitt_clamped_auf_null():
+    assert remaining_today_kwh(weekday_avg_kwh=10.0, kwh_used_today=15.0) == 0.0
+
+
+def test_remaining_today_kwh_noch_nichts_gefahren():
+    assert remaining_today_kwh(weekday_avg_kwh=10.0, kwh_used_today=0.0) == 10.0
+
+
+# ----- net_need_after_pv_kwh: Bedarf abzueglich erwarteter PV --------------
+
+def test_net_need_after_pv_kwh_normalfall():
+    assert net_need_after_pv_kwh(need_kwh=10.0, pv_forecast_kwh=4.0) == 6.0
+
+
+def test_net_need_after_pv_kwh_pv_deckt_mehr_als_bedarf_clamped_auf_null():
+    assert net_need_after_pv_kwh(need_kwh=10.0, pv_forecast_kwh=15.0) == 0.0
+
+
+def test_net_need_after_pv_kwh_ohne_pv_bedarf_unveraendert():
+    assert net_need_after_pv_kwh(need_kwh=10.0, pv_forecast_kwh=0.0) == 10.0
+
+
+# ----- weekday_usage_profile_window_kwh: Fenster-Summe ueber Wochentage ----
+
+def test_weekday_usage_profile_window_kwh_ein_tag_entspricht_rohwert():
+    # Regressionscheck gegen usage_profile_tomorrow(): num_days=1 muss exakt
+    # dem rohen Wochentagswert entsprechen.
+    profile = {0: 5.0, 1: 6.0, 2: 7.0, 3: 8.0, 4: 9.0, 5: 3.0, 6: 2.0}
+    assert weekday_usage_profile_window_kwh(profile, start_weekday=3, num_days=1) == 8.0
+
+
+def test_weekday_usage_profile_window_kwh_wraparound_sonntag_montag():
+    profile = {0: 5.0, 1: 6.0, 2: 7.0, 3: 8.0, 4: 9.0, 5: 3.0, 6: 2.0}
+    # Start Samstag (5), 3 Tage: Samstag(3.0) + Sonntag(2.0) + Montag(5.0).
+    assert weekday_usage_profile_window_kwh(profile, start_weekday=5, num_days=3) == 10.0
+
+
+def test_weekday_usage_profile_window_kwh_unvollstaendiges_profil():
+    profile = {0: 5.0, 1: 6.0}
+    # Start Sonntag (6, fehlt im Profil -> 0.0) + Montag (0, Wraparound, 5.0).
+    assert weekday_usage_profile_window_kwh(profile, start_weekday=6, num_days=2) == 5.0
+
+
+# ----- determine_evcc_mode: 3-Stufen-Dringlichkeit -------------------------
+
+def test_determine_evcc_mode_genug_puffer_gibt_pv():
+    assert determine_evcc_mode(available_kwh=20.0, min_kwh=5.0, target_kwh=15.0) == "pv"
+
+
+def test_determine_evcc_mode_zwischen_min_und_target_gibt_minpv():
+    assert determine_evcc_mode(available_kwh=10.0, min_kwh=5.0, target_kwh=15.0) == "minpv"
+
+
+def test_determine_evcc_mode_unter_min_gibt_now():
+    assert determine_evcc_mode(available_kwh=3.0, min_kwh=5.0, target_kwh=15.0) == "now"
+
+
+def test_determine_evcc_mode_gleichstand_an_target_schwelle_gibt_pv():
+    assert determine_evcc_mode(available_kwh=15.0, min_kwh=5.0, target_kwh=15.0) == "pv"
+
+
+def test_determine_evcc_mode_gleichstand_an_min_schwelle_gibt_minpv():
+    assert determine_evcc_mode(available_kwh=5.0, min_kwh=5.0, target_kwh=15.0) == "minpv"
+
+
+def test_determine_evcc_mode_inkonsistente_werte_min_groesser_target_faellt_auf_now_zurueck():
+    # min_kwh > target_kwh (Annahme verletzt) -- verfuegbar liegt unter beiden.
+    assert determine_evcc_mode(available_kwh=3.0, min_kwh=15.0, target_kwh=5.0) == "now"
+
+
+def test_determine_evcc_mode_nullwerte():
+    assert determine_evcc_mode(available_kwh=0.0, min_kwh=0.0, target_kwh=0.0) == "pv"
+
+
+# ----- kwh_to_soc_percent: kWh -> SoC% -------------------------------------
+
+def test_kwh_to_soc_percent_normale_umrechnung():
+    assert kwh_to_soc_percent(kwh=22.5, usable_kwh=45.0) == 50
+
+
+def test_kwh_to_soc_percent_rundung():
+    assert kwh_to_soc_percent(kwh=15.2, usable_kwh=45.0) == 34  # 33.77... -> 34
+
+
+def test_kwh_to_soc_percent_clamped_ueber_100():
+    assert kwh_to_soc_percent(kwh=60.0, usable_kwh=45.0) == 100
+
+
+def test_kwh_to_soc_percent_clamped_unter_0():
+    assert kwh_to_soc_percent(kwh=-5.0, usable_kwh=45.0) == 0
+
+
+def test_kwh_to_soc_percent_usable_kwh_null_gibt_none():
+    assert kwh_to_soc_percent(kwh=10.0, usable_kwh=0.0) is None
+
+
+def test_kwh_to_soc_percent_usable_kwh_negativ_gibt_none():
+    assert kwh_to_soc_percent(kwh=10.0, usable_kwh=-5.0) is None
+
+
+# ----- house_weekday_usage_profile: einfaches Haus-Nutzungsprofil ----------
+
+def test_house_weekday_usage_profile_normale_durchschnittsbildung():
+    totals = {"0": 20.0, "1": 30.0}
+    counts = {"0": 2, "1": 3}
+    result = house_weekday_usage_profile(totals, counts)
+    assert result == {0: 10.0, 1: 10.0}
+
+
+def test_house_weekday_usage_profile_leere_eingabe_gibt_none():
+    assert house_weekday_usage_profile({}, {}) is None
+
+
+def test_house_weekday_usage_profile_none_eingabe_gibt_none():
+    assert house_weekday_usage_profile(None, None) is None
+
+
+def test_house_weekday_usage_profile_unbeobachtete_wochentage_fehlen_statt_null():
+    totals = {"0": 20.0}
+    counts = {"0": 2}
+    result = house_weekday_usage_profile(totals, counts)
+    assert result == {0: 10.0}
+    assert 1 not in result
+    assert 6 not in result
 
 
 # ----- charge_cost: Fremdladungs-Gesamtkosten inkl. Start-/Blockiergebuehr --
