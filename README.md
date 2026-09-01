@@ -8,6 +8,8 @@
 [![GitHub Release](https://img.shields.io/github/v/release/weskona/ev_assistant)](https://github.com/weskona/ev_assistant/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![HA min version](https://img.shields.io/badge/Home%20Assistant-2024.1%2B-blue)](https://www.home-assistant.io)
+[![Validate](https://github.com/weskona/ev_assistant/actions/workflows/validate.yml/badge.svg)](https://github.com/weskona/ev_assistant/actions/workflows/validate.yml)
+[![Downloads](https://img.shields.io/github/downloads/weskona/ev_assistant/total)](https://github.com/weskona/ev_assistant/releases)
 
 [🇩🇪 Deutsche Version](README.de.md)
 
@@ -43,6 +45,17 @@ A comprehensive **EV monitoring integration for Home Assistant**. EV Assistant c
 
 1. Copy `custom_components/ev_assistant/` into your `config/custom_components/` directory.
 2. Restart Home Assistant.
+
+---
+
+## Screenshots
+
+Placeholders below, pending real screenshots being added to this repo.
+
+<!-- Screenshot: sidebar panel, Overview tab -->
+<!-- Screenshot: sidebar panel, Vehicle tab -->
+<!-- Screenshot: sidebar panel, Usage Profile tab -->
+<!-- Screenshot: config flow, step 1 (Vehicle) -->
 
 ---
 
@@ -292,6 +305,39 @@ All services require `config_entry_id` to target a specific vehicle when multipl
 
 ---
 
+## Examples
+
+**Automation: notify when forced grid charging kicks in.** If you rely on solar and have the [automatic evcc mode/SoC control](#automatic-evcc-mode--soc-control) enabled, this fires whenever the computed mode drops all the way to `now` — the usage profile decided your current battery plus expected solar won't cover the next couple of days, so grid charging is being forced. The exact `entity_id` below depends on your vehicle's device name.
+
+```yaml
+automation:
+  - alias: "EV Assistant: forced grid charging"
+    trigger:
+      - platform: state
+        entity_id: sensor.your_vehicle_evcc_mode_control
+        to: "now"
+    action:
+      - service: notify.notify
+        data:
+          title: "EV charging forced from the grid"
+          message: >
+            evcc mode switched to "now" — {{ state_attr('sensor.your_vehicle_evcc_mode_control', 'rest_heute_kwh') }} kWh still needed today, not enough solar/battery to cover it.
+```
+
+**Lovelace: a handful of key sensors on an existing dashboard.** The [sidebar panel](#panel--dashboard) already covers all of this in far more depth — this is just for pinning a few values onto a dashboard you already have. Replace `your_vehicle` with your device's actual entity_id slug.
+
+```yaml
+type: entities
+title: EV Assistant
+entities:
+  - entity: sensor.your_vehicle_available_kwh
+  - entity: sensor.your_vehicle_usage_profile_tomorrow
+  - entity: binary_sensor.your_vehicle_charge_before_solar_recommended
+  - entity: sensor.your_vehicle_evcc_mode_control
+```
+
+---
+
 ## How External Charge Detection Works
 
 EV Assistant needs no GPS, no manufacturer API, and no list of charging stations. The principle in one sentence: **if the battery SoC rises while the home-charging signal is off, the car must be charging elsewhere**.
@@ -351,12 +397,42 @@ pytest tests -q  # runs both suites together, see tests/ha/conftest.py for how t
 
 ---
 
+## Troubleshooting / FAQ
+
+Enable debug logging for more detail than the panel/sensors show:
+
+```yaml
+logger:
+  logs:
+    custom_components.ev_assistant: debug
+```
+
+**Every SoC increase gets detected as an external charge, even when charging at home.** The wallbox charge-power entity (step 3) is missing or not reporting correctly — without it, EV Assistant has no way to tell home charging from external charging. See [Configuration](#configuration), step 3.
+
+**The Usage Profile tab / `usage_profile` sensor stays `unknown` or empty.** It needs at least 7 days of trip-log history before it shows anything, so every weekday has been observed at least once — see [Usage Profile](#usage-profile). Keep confirming (or manually logging) trips and it fills in on its own.
+
+**`evcc_mode_control` sets the charge mode but not min-/target-SoC, or an `evcc_soc_scope_failed` repair issue appears.** evcc couldn't be probed for its SoC scope (loadpoint-level vs. vehicle-level — this varies by evcc version, and the two can even differ from each other, see [Automatic evcc Mode / SoC Control](#automatic-evcc-mode--soc-control)). The mode keeps getting set regardless; only the affected SoC limit is skipped until the next successful probe.
+
+**All the energy estimates look off by a consistent factor.** Double-check the usable battery capacity entered in step 1 — it's the *net* usable kWh your car can actually charge to/from, not the larger gross/factory figure some manufacturers advertise. Every SoC-based kWh estimate in the integration scales directly off this one number.
+
+---
+
+## Contributing
+
+Found a bug or have a feature request? Please [open a GitHub Issue](https://github.com/weskona/ev_assistant/issues) — include your Home Assistant version and, if relevant, a debug log (see Troubleshooting above). Pull requests are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) before opening one.
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
 
-## Credits
+## Credits & Support
+
+Created and maintained by [@weskona](https://github.com/weskona).
 
 The app icon is based on the "ev-station" glyph from Material Design Icons
 (https://pictogrammers.com/library/mdi/), © Pictogrammers, licensed under
 Apache License 2.0. The glyph was placed on a custom hexagon tile.
+
+Questions or support requests: please use [GitHub Issues](https://github.com/weskona/ev_assistant/issues) rather than direct messages.

@@ -8,6 +8,8 @@
 [![GitHub Release](https://img.shields.io/github/v/release/weskona/ev_assistant)](https://github.com/weskona/ev_assistant/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![HA min version](https://img.shields.io/badge/Home%20Assistant-2024.1%2B-blue)](https://www.home-assistant.io)
+[![Validate](https://github.com/weskona/ev_assistant/actions/workflows/validate.yml/badge.svg)](https://github.com/weskona/ev_assistant/actions/workflows/validate.yml)
+[![Downloads](https://img.shields.io/github/downloads/weskona/ev_assistant/total)](https://github.com/weskona/ev_assistant/releases)
 
 [English](README.md)
 
@@ -43,6 +45,17 @@ Eine umfassende **EV-Monitoring-Integration für Home Assistant**. EV Assistant 
 
 1. `custom_components/ev_assistant/` in das Verzeichnis `config/custom_components/` kopieren.
 2. Home Assistant neu starten.
+
+---
+
+## Screenshots
+
+Platzhalter unten, bis echte Screenshots ins Repo eingefügt werden.
+
+<!-- Screenshot: Seitenleisten-Panel, Übersicht-Tab -->
+<!-- Screenshot: Seitenleisten-Panel, Fahrzeug-Tab -->
+<!-- Screenshot: Seitenleisten-Panel, Nutzungsprofil-Tab -->
+<!-- Screenshot: Config-Flow, Schritt 1 (Fahrzeug) -->
 
 ---
 
@@ -292,6 +305,39 @@ Alle Dienste benötigen `config_entry_id`, um bei mehreren konfigurierten Eintr�
 
 ---
 
+## Beispiele
+
+**Automatisierung: Benachrichtigung bei erzwungenem Netzladen.** Wenn du auf Solar setzt und die [automatische evcc-Modus-/SoC-Steuerung](#automatische-evcc-modus-soc-steuerung) aktiviert hast, feuert das, sobald der berechnete Modus ganz auf `now` fällt — das Nutzungsprofil hat also entschieden, dass der aktuelle Akkustand plus erwartete Solarerzeugung die nächsten Tage nicht abdeckt, und Netzladen wird erzwungen. Die genaue `entity_id` unten hängt vom Gerätenamen deines Fahrzeugs ab.
+
+```yaml
+automation:
+  - alias: "EV Assistant: Netzladen erzwungen"
+    trigger:
+      - platform: state
+        entity_id: sensor.dein_fahrzeug_evcc_modus_steuerung
+        to: "now"
+    action:
+      - service: notify.notify
+        data:
+          title: "Laden wird aus dem Netz erzwungen"
+          message: >
+            evcc-Modus auf "now" gewechselt — {{ state_attr('sensor.dein_fahrzeug_evcc_modus_steuerung', 'rest_heute_kwh') }} kWh heute noch nötig, Solar/Akku reichen nicht aus.
+```
+
+**Lovelace: ein paar Kern-Sensoren auf einem bestehenden Dashboard.** Das [Seitenleisten-Panel](#panel--dashboard) deckt das bereits ausführlich ab — hier geht es nur darum, ein paar Werte auf ein Dashboard zu heften, das du schon hast. `dein_fahrzeug` durch die tatsächliche Entity-ID deines Geräts ersetzen.
+
+```yaml
+type: entities
+title: EV Assistant
+entities:
+  - entity: sensor.dein_fahrzeug_verfuegbare_kwh
+  - entity: sensor.dein_fahrzeug_nutzungsprofil_morgen_benoetigt
+  - entity: binary_sensor.dein_fahrzeug_laden_vor_pv_empfehlenswert
+  - entity: sensor.dein_fahrzeug_evcc_modus_steuerung
+```
+
+---
+
 ## Wie die Fremdladungserkennung funktioniert
 
 EV Assistant benötigt kein GPS, keine Hersteller-API und keine Ladesäulenliste. Das Prinzip in einem Satz: **Steigt der Batterie-SoC, während das Heimlade-Signal inaktiv ist, muss das Auto woanders laden**.
@@ -351,12 +397,42 @@ pytest tests -q  # laesst beide Suiten zusammen laufen, siehe tests/ha/conftest.
 
 ---
 
+## Fehlerbehebung / FAQ
+
+Debug-Logging für mehr Detail als Panel/Sensoren zeigen aktivieren:
+
+```yaml
+logger:
+  logs:
+    custom_components.ev_assistant: debug
+```
+
+**Jeder SoC-Anstieg wird als Fremdladung erkannt, auch beim Heimladen.** Die Wallbox-Ladeleistungs-Entität (Schritt 3) fehlt oder liefert keine korrekten Werte — ohne sie kann EV Assistant Heimladen nicht von Fremdladung unterscheiden. Siehe [Konfiguration](#konfiguration), Schritt 3.
+
+**Der Nutzungsprofil-Tab bzw. der Sensor `usage_profile` bleibt `unknown` oder leer.** Er braucht mindestens 7 Tage Fahrtenbuch-Historie, bevor überhaupt etwas angezeigt wird, damit jeder Wochentag mindestens einmal beobachtet wurde — siehe [Nutzungsprofil](#nutzungsprofil). Weiter Fahrten bestätigen (oder manuell erfassen), dann füllt es sich von selbst.
+
+**`evcc_mode_control` setzt den Lademodus, aber nicht Min-/Ziel-SoC, oder ein Reparieren-Hinweis `evcc_soc_scope_failed` erscheint.** evccs SoC-Geltungsbereich (Loadpoint- oder Fahrzeug-Ebene — abhängig von der evcc-Version, und beide können sich sogar unterscheiden, siehe [Automatische evcc-Modus-/SoC-Steuerung](#automatische-evcc-modus-soc-steuerung)) konnte nicht ermittelt werden. Der Modus wird trotzdem weiterhin gesetzt, nur die betroffene SoC-Grenze wird bis zur nächsten erfolgreichen Probe ausgelassen.
+
+**Alle Energie-Schätzungen wirken durchgängig um einen Faktor daneben.** Die in Schritt 1 eingetragene nutzbare Akkukapazität prüfen — das ist der *netto* nutzbare kWh-Wert, den das Auto tatsächlich laden/entladen kann, nicht die oft größere Brutto-/Werksangabe mancher Hersteller. Jede SoC-basierte kWh-Schätzung der Integration skaliert direkt mit dieser einen Zahl.
+
+---
+
+## Mitwirken
+
+Einen Bug gefunden oder einen Feature-Wunsch? Bitte [ein GitHub Issue eröffnen](https://github.com/weskona/ev_assistant/issues) — mit Home-Assistant-Version und, falls relevant, einem Debug-Log (siehe Fehlerbehebung oben). Pull Requests sind willkommen; vor dem Öffnen bitte [CONTRIBUTING.md](CONTRIBUTING.md) lesen (Englisch).
+
+---
+
 ## Lizenz
 
 MIT — siehe [LICENSE](LICENSE).
 
-## Danksagung
+## Danksagung & Support
+
+Erstellt und gepflegt von [@weskona](https://github.com/weskona).
 
 Das App-Icon basiert auf dem „ev-station"-Glyph der Material Design Icons
 (https://pictogrammers.com/library/mdi/), © Pictogrammers, lizenziert unter
 Apache License 2.0. Der Glyph wurde auf eine eigene Sechseck-Kachel gesetzt.
+
+Fragen oder Support-Anfragen bitte über [GitHub Issues](https://github.com/weskona/ev_assistant/issues), nicht per Direktnachricht.
