@@ -7,10 +7,20 @@ Liegt in tests/ha/ statt tests/test_engine.py: evcc_client.py ist Teil der
 HA-Verdrahtungsschicht (aiohttp, kein reines engine.py), braucht aber fuer
 diese Tests kein echtes hass -- die async-Tests laufen trotzdem nur zuver-
 laessig mit dem pytest-asyncio, das ueber pytest-homeassistant-custom-
-component (siehe requirements_test.txt) bereitgestellt wird."""
-import aiohttp
+component (siehe requirements_test.txt) bereitgestellt wird.
 
-from custom_components.ev_assistant.evcc_client import EvccClient
+Import bewusst NICHT als `custom_components.ev_assistant.evcc_client`
+(so wie die uebrigen tests/ha/*.py-Dateien es innerhalb von Funktionen tun,
+NACH dem hass-Fixture, das custom_components erst importierbar macht --
+siehe tests/ha/conftest.py::hass_config_dir()): da diese Datei explizit
+KEIN hass braucht, wuerde ein hass-Fixture nur fuer den Import zu
+erzwingen unnoetigen Aufwand bedeuten. Stattdessen wie tests/test_engine.py
+via tests/conftest.py's sys.path-Eintrag (custom_components/ev_assistant
+direkt, ohne HA drumherum) als eigenstaendiges Modul importiert -- das
+funktioniert, weil evcc_client.py selbst keine relativen HA-Package-Importe
+hat (nur aiohttp/logging)."""
+import aiohttp
+from evcc_client import EvccClient
 
 
 class _FakeCtx:

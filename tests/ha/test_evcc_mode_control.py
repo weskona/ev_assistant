@@ -12,21 +12,11 @@ from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.ev_assistant.const import (
-    CONF_BATTERY_CHARGE_ENTITY,
-    CONF_EVCC_MODE_CONTROL_ENABLED,
-    CONF_EVCC_VEHICLE_NAME,
-    CONF_HOME_CONSUMPTION_ENTITY,
-    CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
-    CONF_USABLE_KWH,
-    CONF_VEHICLE_HERSTELLER,
-    CONF_VEHICLE_MODELL,
-    DOMAIN,
-)
-from custom_components.ev_assistant.coordinator import EvAssistantCoordinator
-
 
 async def _make_coordinator(hass, coordinators, entry_id="evcc_mc", options=None):
+    from custom_components.ev_assistant.const import DOMAIN
+    from custom_components.ev_assistant.coordinator import EvAssistantCoordinator
+
     entry = MockConfigEntry(domain=DOMAIN, data={}, options=options or {}, entry_id=entry_id)
     entry.add_to_hass(hass)
     coordinator = EvAssistantCoordinator(hass, entry)
@@ -105,6 +95,8 @@ async def test_kwh_used_today_negatives_delta_gibt_none(hass, coordinators):
 # ----- _pv_forecast_today_remaining_kwh -------------------------------------
 
 async def test_pv_forecast_today_remaining_kwh_normalfall(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_PV_FORECAST_TODAY_REMAINING_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "pvr1", options={CONF_PV_FORECAST_TODAY_REMAINING_ENTITY: "sensor.pv_rest"},
     )
@@ -113,6 +105,8 @@ async def test_pv_forecast_today_remaining_kwh_normalfall(hass, coordinators):
 
 
 async def test_pv_forecast_today_remaining_kwh_wh_wird_zu_kwh(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_PV_FORECAST_TODAY_REMAINING_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "pvr2", options={CONF_PV_FORECAST_TODAY_REMAINING_ENTITY: "sensor.pv_rest"},
     )
@@ -126,6 +120,8 @@ async def test_pv_forecast_today_remaining_kwh_ohne_entitaet_gibt_none(hass, coo
 
 
 async def test_pv_forecast_today_remaining_kwh_unavailable_gibt_none(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_PV_FORECAST_TODAY_REMAINING_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "pvr4", options={CONF_PV_FORECAST_TODAY_REMAINING_ENTITY: "sensor.pv_rest"},
     )
@@ -134,6 +130,8 @@ async def test_pv_forecast_today_remaining_kwh_unavailable_gibt_none(hass, coord
 
 
 async def test_pv_forecast_today_remaining_kwh_nicht_numerisch_gibt_none(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_PV_FORECAST_TODAY_REMAINING_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "pvr5", options={CONF_PV_FORECAST_TODAY_REMAINING_ENTITY: "sensor.pv_rest"},
     )
@@ -144,6 +142,8 @@ async def test_pv_forecast_today_remaining_kwh_nicht_numerisch_gibt_none(hass, c
 # ----- _house_combined_reading_kwh ------------------------------------------
 
 async def test_house_combined_reading_kwh_nur_hausverbrauch(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_CONSUMPTION_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hcr1", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
@@ -152,6 +152,11 @@ async def test_house_combined_reading_kwh_nur_hausverbrauch(hass, coordinators):
 
 
 async def test_house_combined_reading_kwh_mit_speicher_addiert(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_BATTERY_CHARGE_ENTITY,
+        CONF_HOME_CONSUMPTION_ENTITY,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hcr2",
         options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus", CONF_BATTERY_CHARGE_ENTITY: "sensor.speicher"},
@@ -162,6 +167,11 @@ async def test_house_combined_reading_kwh_mit_speicher_addiert(hass, coordinator
 
 
 async def test_house_combined_reading_kwh_defekter_speicherwert_wird_ignoriert(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_BATTERY_CHARGE_ENTITY,
+        CONF_HOME_CONSUMPTION_ENTITY,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hcr3",
         options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus", CONF_BATTERY_CHARGE_ENTITY: "sensor.speicher"},
@@ -179,6 +189,8 @@ async def test_house_combined_reading_kwh_ohne_hausverbrauchszaehler_gibt_none(h
 # ----- _update_house_usage_profile -------------------------------------------
 
 async def test_update_house_usage_profile_erster_aufruf_setzt_nur_baseline(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_CONSUMPTION_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "huup1", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
@@ -190,6 +202,8 @@ async def test_update_house_usage_profile_erster_aufruf_setzt_nur_baseline(hass,
 
 
 async def test_update_house_usage_profile_rollover_fuellt_genau_einen_wochentags_eimer(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_CONSUMPTION_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "huup2", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
@@ -205,6 +219,8 @@ async def test_update_house_usage_profile_rollover_fuellt_genau_einen_wochentags
 
 
 async def test_update_house_usage_profile_unveraenderter_schluessel_aendert_eimer_nicht(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_CONSUMPTION_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "huup3", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
@@ -220,6 +236,8 @@ async def test_update_house_usage_profile_unveraenderter_schluessel_aendert_eime
 # ----- _house_kwh_used_today -------------------------------------------------
 
 async def test_house_kwh_used_today_normalfall(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_CONSUMPTION_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hkut1", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
@@ -229,6 +247,8 @@ async def test_house_kwh_used_today_normalfall(hass, coordinators):
 
 
 async def test_house_kwh_used_today_ohne_baseline_gibt_none(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_CONSUMPTION_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hkut2", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
@@ -237,6 +257,8 @@ async def test_house_kwh_used_today_ohne_baseline_gibt_none(hass, coordinators):
 
 
 async def test_house_kwh_used_today_negatives_delta_gibt_none(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_CONSUMPTION_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hkut3", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
@@ -248,6 +270,8 @@ async def test_house_kwh_used_today_negatives_delta_gibt_none(hass, coordinators
 # ----- _house_remaining_today_kwh --------------------------------------------
 
 async def test_house_remaining_today_kwh_mit_vollstaendigem_profil(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_CONSUMPTION_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hrt1", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
@@ -260,6 +284,8 @@ async def test_house_remaining_today_kwh_mit_vollstaendigem_profil(hass, coordin
 
 
 async def test_house_remaining_today_kwh_ohne_profil_gibt_none(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_CONSUMPTION_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hrt2", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
@@ -267,6 +293,8 @@ async def test_house_remaining_today_kwh_ohne_profil_gibt_none(hass, coordinator
 
 
 async def test_house_remaining_today_kwh_heutiger_wochentag_fehlt_gibt_none(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_CONSUMPTION_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hrt3", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
@@ -280,6 +308,8 @@ async def test_house_remaining_today_kwh_heutiger_wochentag_fehlt_gibt_none(hass
 # ----- house_usage_profile / house_usage_profile_includes_battery -----------
 
 async def test_house_usage_profile_oeffentliche_methode_liefert_dasselbe_wie_intern_genutzt(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_CONSUMPTION_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hup1", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
@@ -291,6 +321,8 @@ async def test_house_usage_profile_oeffentliche_methode_liefert_dasselbe_wie_int
 
 
 async def test_house_usage_profile_ohne_beobachteten_tag_gibt_none(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_CONSUMPTION_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hup2", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
@@ -298,6 +330,11 @@ async def test_house_usage_profile_ohne_beobachteten_tag_gibt_none(hass, coordin
 
 
 async def test_house_usage_profile_includes_battery_mit_speicherentitaet(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_BATTERY_CHARGE_ENTITY,
+        CONF_HOME_CONSUMPTION_ENTITY,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hib1",
         options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus", CONF_BATTERY_CHARGE_ENTITY: "sensor.speicher"},
@@ -306,6 +343,8 @@ async def test_house_usage_profile_includes_battery_mit_speicherentitaet(hass, c
 
 
 async def test_house_usage_profile_includes_battery_ohne_speicherentitaet(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_CONSUMPTION_ENTITY
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hib2", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
@@ -315,6 +354,8 @@ async def test_house_usage_profile_includes_battery_ohne_speicherentitaet(hass, 
 # ----- _evcc_mode_targets ----------------------------------------------------
 
 async def test_evcc_mode_targets_ohne_jede_entitaet_roh_und_netto_identisch(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
     coordinator, _ = await _make_coordinator(hass, coordinators, "emt1", options={CONF_USABLE_KWH: 50.0})
     _seed_usage_profile(coordinator, weekday_kwh=10.0)
     coordinator._soc = 50.0
@@ -326,6 +367,11 @@ async def test_evcc_mode_targets_ohne_jede_entitaet_roh_und_netto_identisch(hass
 
 
 async def test_evcc_mode_targets_mit_pv_rest_reduziert_netto_bedarf(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
+        CONF_USABLE_KWH,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "emt2",
         options={CONF_USABLE_KWH: 50.0, CONF_PV_FORECAST_TODAY_REMAINING_ENTITY: "sensor.pv_rest"},
@@ -339,6 +385,12 @@ async def test_evcc_mode_targets_mit_pv_rest_reduziert_netto_bedarf(hass, coordi
 
 
 async def test_evcc_mode_targets_mit_hausverbrauch_reduziert_pv_fuer_auto(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_HOME_CONSUMPTION_ENTITY,
+        CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
+        CONF_USABLE_KWH,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "emt3",
         options={
@@ -380,6 +432,11 @@ async def test_apply_evcc_mode_control_option_aus_ist_no_op(hass, coordinators):
 
 
 async def test_apply_evcc_mode_control_erste_aktivierung_schreibt_modus_und_beide_soc_werte(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "aemc2", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
     )
@@ -402,6 +459,11 @@ async def test_apply_evcc_mode_control_erste_aktivierung_schreibt_modus_und_beid
 
 
 async def test_apply_evcc_mode_control_unveraenderte_empfehlung_schreibt_kein_zweites_mal(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "aemc3", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
     )
@@ -418,6 +480,11 @@ async def test_apply_evcc_mode_control_unveraenderte_empfehlung_schreibt_kein_zw
 
 
 async def test_apply_evcc_mode_control_schreibfehler_laesst_evcc_mode_control_unveraendert(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "aemc4", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
     )
@@ -432,6 +499,11 @@ async def test_apply_evcc_mode_control_schreibfehler_laesst_evcc_mode_control_un
 
 
 async def test_apply_evcc_mode_control_kein_loadpoint_loggt_warning_ohne_crash(hass, coordinators, caplog):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "aemc5", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
     )
@@ -448,6 +520,8 @@ async def test_apply_evcc_mode_control_kein_loadpoint_loggt_warning_ohne_crash(h
 
 
 async def test_apply_evcc_mode_control_ohne_usage_profile_ist_no_op(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_MODE_CONTROL_ENABLED
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "aemc6", options={CONF_EVCC_MODE_CONTROL_ENABLED: True},
     )
@@ -461,6 +535,11 @@ async def test_apply_evcc_mode_control_ohne_usage_profile_ist_no_op(hass, coordi
 
 
 async def test_apply_evcc_mode_control_zweiter_zyklus_nutzt_gecachten_scope(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "aemc7", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
     )
@@ -482,6 +561,12 @@ async def test_apply_evcc_mode_control_zweiter_zyklus_nutzt_gecachten_scope(hass
 async def test_apply_evcc_mode_control_probe_schlaegt_fehl_modus_wird_trotzdem_gesetzt_und_issue_angelegt(
     hass, coordinators,
 ):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+        DOMAIN,
+    )
+
     coordinator, entry = await _make_coordinator(
         hass, coordinators, "aemc8", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
     )
@@ -500,6 +585,12 @@ async def test_apply_evcc_mode_control_probe_schlaegt_fehl_modus_wird_trotzdem_g
 
 
 async def test_apply_evcc_mode_control_repair_issue_verschwindet_nach_erfolgreichem_re_probe(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+        DOMAIN,
+    )
+
     coordinator, entry = await _make_coordinator(
         hass, coordinators, "aemc9", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
     )
@@ -523,6 +614,11 @@ async def test_apply_evcc_mode_control_repair_issue_verschwindet_nach_erfolgreic
 
 
 async def test_apply_evcc_mode_control_soc_schreibfehler_mit_gecachtem_scope_re_probt_genau_einmal(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "aemc10", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
     )
@@ -545,6 +641,12 @@ async def test_apply_evcc_mode_control_min_und_limit_soc_koennen_unterschiedlich
     evcc_client.py::async_probe_scope()): limitSoc bleibt ueber den
     Loadpoint schreibbar, minSoc nur noch ueber das Fahrzeug -- beide
     Schreibversuche muessen trotzdem in einem Zyklus erfolgreich sein."""
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+        DOMAIN,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "aemc11", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
     )
@@ -566,6 +668,11 @@ async def test_apply_evcc_mode_control_min_und_limit_soc_koennen_unterschiedlich
 # ----- _evcc_vehicle_api_key --------------------------------------------------
 
 async def test_evcc_vehicle_api_key_matched_gegen_hersteller_modell(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_VEHICLE_HERSTELLER,
+        CONF_VEHICLE_MODELL,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "evak1",
         options={CONF_VEHICLE_HERSTELLER: "Peugeot", CONF_VEHICLE_MODELL: "eRifter"},
@@ -579,6 +686,8 @@ async def test_evcc_vehicle_api_key_matched_gegen_explizit_konfigurierten_titel(
     sichtbar), nicht den internen Schluessel -- muss trotzdem gegen
     vehicles{} aufgeloest werden, um den Schluessel zu liefern (anders als
     _evcc_vehicle_key(), das den konfigurierten Titel direkt zurueckgibt)."""
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "evak2", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
     )
@@ -589,6 +698,8 @@ async def test_evcc_vehicle_api_key_matched_gegen_explizit_konfigurierten_titel(
 async def test_evcc_vehicle_api_key_liefert_schluessel_nicht_titel(hass, coordinators):
     """Direkter Unterschied zu _evcc_vehicle_key(): dieselbe Konfiguration,
     aber der interne Schluessel statt des Titels."""
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "evak3", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
     )
@@ -598,6 +709,11 @@ async def test_evcc_vehicle_api_key_liefert_schluessel_nicht_titel(hass, coordin
 
 
 async def test_evcc_vehicle_api_key_ohne_treffer_gibt_none(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_VEHICLE_HERSTELLER,
+        CONF_VEHICLE_MODELL,
+    )
+
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "evak4",
         options={CONF_VEHICLE_HERSTELLER: "Tesla", CONF_VEHICLE_MODELL: "Model 3"},
