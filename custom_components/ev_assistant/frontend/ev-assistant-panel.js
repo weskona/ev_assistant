@@ -4118,6 +4118,7 @@ class EVAssistantPanel extends HTMLElement {
       modus === "nur_auswaerts" ? this._buildBetaAcDcCard() : this._buildBetaLadeortCard()
     );
     grid.appendChild(bottomRow);
+    grid.appendChild(this._buildBetaEvccModeCard());
 
     wrap.appendChild(grid);
     return wrap;
@@ -4298,6 +4299,50 @@ class EVAssistantPanel extends HTMLElement {
     return card;
   }
 
+  // Sichtbarmachung der automatischen evcc-Modus-/SoC-Steuerung (separat
+  // entwickeltes Feature, siehe coordinator.py::EvccModeControlSensor) --
+  // eigene volle-Breite Karte statt in heroRow/bottomRow, da relativ
+  // zeilenreich. Standardmaessig per "hidden" versteckt (siehe
+  // _updateBetaEvccMode()), da die Steuerung selbst standardmaessig aus ist.
+  _buildBetaEvccModeCard() {
+    const { card, head } = this._card("Automatische Ladesteuerung", "mdi:tune-variant");
+    head.querySelector("h2").title =
+      "Setzt evccs Lademodus sowie Min-/Ziel-SoC automatisch anhand des Nutzungsprofils " +
+      "(Fahrzeug + optional Haus/Speicher). Schreibt nur bei Änderung der Empfehlung -- " +
+      "ein manueller evcc-Eingriff bleibt bis zur nächsten Änderung bestehen.";
+    card.classList.add("beta-status-card", "beta-evcc-card", "hidden");
+
+    const badge = document.createElement("div");
+    badge.className = "beta-evcc-badge";
+    badge.innerHTML = `<span class="beta-evcc-dot"></span><span id="beta-evcc-mode-label">—</span>`;
+    card.appendChild(badge);
+
+    const list = document.createElement("div");
+    list.className = "beta-status-list";
+    list.innerHTML = `
+      <div class="beta-status-row"><span class="bl">Min-SoC</span><span class="bv" id="beta-evcc-min-soc">—</span></div>
+      <div class="beta-status-row"><span class="bl">Ziel-SoC</span><span class="bv" id="beta-evcc-target-soc">—</span></div>
+      <div class="beta-status-row"><span class="bl">Rest-Bedarf heute</span><span class="bv" id="beta-evcc-rest-heute">—</span></div>
+      <div class="beta-status-row"><span class="bl">PV fürs Auto</span><span class="bv" id="beta-evcc-pv-fuer-auto">—</span></div>
+      <div class="beta-status-row"><span class="bl">Zuletzt geschrieben</span><span class="bv" id="beta-evcc-last-written">—</span></div>
+      <div class="beta-status-row hidden" id="beta-evcc-scope-warn-row">
+        <span class="bl">SoC-Steuerung</span><span class="bv beta-evcc-warn">nicht verfügbar — siehe Repariere</span>
+      </div>
+    `;
+    card.appendChild(list);
+    const q = (s) => list.querySelector(s);
+    this._r.betaEvccCard        = card;
+    this._r.betaEvccModeLabel   = badge.querySelector("#beta-evcc-mode-label");
+    this._r.betaEvccDot         = badge.querySelector(".beta-evcc-dot");
+    this._r.betaEvccMinSoc      = q("#beta-evcc-min-soc");
+    this._r.betaEvccTargetSoc   = q("#beta-evcc-target-soc");
+    this._r.betaEvccRestHeute   = q("#beta-evcc-rest-heute");
+    this._r.betaEvccPvFuerAuto  = q("#beta-evcc-pv-fuer-auto");
+    this._r.betaEvccLastWritten = q("#beta-evcc-last-written");
+    this._r.betaEvccScopeWarnRow = q("#beta-evcc-scope-warn-row");
+    return card;
+  }
+
   _updateUebersichtBeta() {
     const r = this._r;
     if (!r.betaHeroCost) return;
@@ -4406,6 +4451,56 @@ class EVAssistantPanel extends HTMLElement {
       this._updateBetaLiveStatus();
       this._updateBetaLadeort(locAttrs);
     }
+
+    this._updateBetaEvccMode();
+  }
+
+  // Orthogonal zum Heim-/Fremdlade-Modus (evcc-Steuerung betrifft nur
+  // Heimladen, laeuft aber unabhaengig vom obigen if/else), daher ausserhalb
+  // davon und immer aufgerufen.
+  _updateBetaEvccMode() {
+    const r = this._r;
+    if (!r.betaEvccCard) return;
+    const eid = this._eid("evcc_mode_control");
+    const s = eid ? this._hass.states[eid] : null;
+    const attrs = (s && s.attributes) || {};
+    const active = !!attrs.aktiv && s.state && s.state !== "unknown" && s.state !== "unavailable";
+    r.betaEvccCard.classList.toggle("hidden", !active);
+    if (!active) return;
+
+    const MODE_LABELS = { pv: "Nur Solar (PV)", minpv: "Mindestleistung + PV", now: "Netzladen (jetzt)" };
+    const MODE_COLORS = { pv: "#4ade80", minpv: "#f97316", now: "#ef4444" };
+    r.betaEvccModeLabel.textContent = MODE_LABELS[s.state] || s.state;
+    r.betaEvccDot.style.background = MODE_COLORS[s.state] || "var(--ink-dim)";
+
+    const pct = (v) => (typeof v === "number" ? `${Math.round(v)} %` : "—");
+    const kwh = (v) => (typeof v === "number" ? `${this._fmtNum(v, 1)} kWh` : "—");
+    r.betaEvccMinSoc.textContent      = pct(attrs.min_soc);
+    r.betaEvccTargetSoc.textContent   = pct(attrs.target_soc);
+    r.betaEvccPvFuerAuto.textContent  = kwh(attrs.pv_fuer_auto_kwh);
+    r.betaEvccLastWritten.textContent = this._fmtDate(attrs.zuletzt_geschrieben);
+
+    // Rest-Bedarf heute: Endwert direkt sichtbar, komplette Rechenkette als
+    // Tooltip -- analog dem Erklaerungs-Muster am Kartentitel in
+    // _buildBetaAcDcCard(), hier aber pro Zeile, da die Kette sich auf
+    // GENAU diesen Wert bezieht.
+    r.betaEvccRestHeute.textContent = kwh(attrs.rest_heute_kwh);
+    const chainParts = [];
+    if (typeof attrs.rest_heute_roh_kwh === "number") chainParts.push(`Fahrzeug-Bedarf ${this._fmtNum(attrs.rest_heute_roh_kwh, 1)} kWh`);
+    if (typeof attrs.pv_rest_heute_roh_kwh === "number") chainParts.push(`PV-Prognose ${this._fmtNum(attrs.pv_rest_heute_roh_kwh, 1)} kWh`);
+    if (typeof attrs.haus_rest_heute_kwh === "number" && attrs.haus_rest_heute_kwh > 0) chainParts.push(`abzüglich Haus/Speicher ${this._fmtNum(attrs.haus_rest_heute_kwh, 1)} kWh`);
+    r.betaEvccRestHeute.title = chainParts.length ? chainParts.join(" · ") : "";
+
+    // Fehlende SoC-Steuerung (siehe Repair-Issue evcc_soc_scope_failed)
+    // sichtbar machen statt nur im Log/unter Einstellungen -> System ->
+    // Repariere zu verstecken -- Modus wird trotzdem gesetzt (siehe
+    // coordinator.py::_async_apply_evcc_mode_control()), daher kein
+    // Blockieren der ganzen Karte, nur ein Hinweis. Min- und Ziel-SoC haben
+    // eigene, unabhaengig geprobte Scopes (min_soc_scope/limit_soc_scope,
+    // siehe dort) statt eines gemeinsamen "soc_scope" -- der Hinweis feuert,
+    // sobald mindestens einer davon fehlt.
+    const scopeOk = attrs.min_soc_scope != null && attrs.limit_soc_scope != null;
+    r.betaEvccScopeWarnRow.classList.toggle("hidden", scopeOk);
   }
 
   _updateBetaLiveStatus() {
@@ -5147,6 +5242,13 @@ class EVAssistantPanel extends HTMLElement {
       .beta-status-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 0.85rem; }
       .beta-status-row .bl { color: var(--ink-mid); }
       .beta-status-row .bv { font-weight: 600; }
+      .beta-evcc-badge {
+        display: flex; align-items: center; gap: 8px; margin: 2px 0 12px; font-weight: 700; font-size: 0.95rem;
+      }
+      .beta-evcc-dot {
+        width: 10px; height: 10px; border-radius: 50%; background: var(--ink-dim); flex-shrink: 0;
+      }
+      .beta-evcc-warn { color: #f97316; font-weight: 600; }
       @media (max-width: 900px) {
         .beta-hero-row { grid-template-columns: 1fr; }
         .beta-bottom-row { grid-template-columns: 1fr; }

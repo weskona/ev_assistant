@@ -229,6 +229,8 @@ Ein experimentelles, paralleles Dashboard-Layout, das neben dem klassischen Übe
 
 Wartet eine Ladung oder Fahrt auf Bestätigung, erscheint oben in diesem Tab eine blinkende Pille ("1 offene Fremdladung" / "N offene Fahrten") — ein Klick öffnet ein Popup mit denselben Bestätigen/Verwerfen-Karten wie die "Laufende Erfassung"-Karte im Fahrzeug-Tab, ohne den Tab wechseln zu müssen.
 
+Ist die [automatische evcc-Modus-/SoC-Steuerung](#automatische-evcc-modus-soc-steuerung) aktiviert, zeigt eine zusätzliche Karte "Automatische Ladesteuerung" den gerade angesteuerten Modus, Min-/Ziel-SoC, den heutigen Rest-Bedarf (Tooltip zeigt die komplette PV-/Haus-Rechenkette), wie viel der PV-Prognose fürs Auto übrig bleibt, sowie den Zeitpunkt der letzten tatsächlichen Schreibung — bei deaktivierter Funktion komplett ausgeblendet.
+
 ### Tab „Fahrzeug"
 
 Fahrzeugspezifisches Dashboard in einem Drei-Spalten-Layout:

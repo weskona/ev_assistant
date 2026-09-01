@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.75.1] - 2026-09-01
+
+### Added
+
+- **Automatic evcc mode/SoC control surfaced on the Overview (Beta) tab**: a new "Automatische Ladesteuerung" card (hidden unless the feature — see `evcc_mode_control_enabled`, 0.75.0 — is actually on) shows the currently steered mode (`pv`/`minpv`/`now`, color-coded), min-/target-SoC, remaining today's need with the full PV/house calculation chain as a tooltip, how much of the PV forecast is left over for the car, and when evcc was last actually written. A separate warning row appears if either the min-SoC or target-SoC evcc scope couldn't be determined (see the `evcc_soc_scope_failed` repair issue), without hiding the rest of the card — the mode keeps getting set either way.
+
 ## [0.75.0] - 2026-08-31
 
 ### Added

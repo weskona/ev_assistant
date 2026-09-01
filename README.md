@@ -229,6 +229,8 @@ An experimental, parallel dashboard layout shown side by side with the classic O
 
 When a charge or trip is awaiting confirmation, a blinking pill appears at the top of this tab ("1 offene Fremdladung" / "N offene Fahrten") — clicking it opens a popup with the same confirm/discard cards as the Vehicle tab's "Laufende Erfassung" card, without having to switch tabs.
 
+If [automatic evcc mode/SoC control](#automatic-evcc-mode--soc-control) is enabled, an additional "Automatische Ladesteuerung" card shows the currently steered mode, min-/target-SoC, today's remaining need (hover for the full PV/house calculation chain), how much forecasted PV is left over for the car, and when evcc was last actually written — hidden entirely while the feature is off.
+
 ### Vehicle tab
 
 Per-vehicle dashboard in a three-column layout:
