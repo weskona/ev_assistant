@@ -809,10 +809,26 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return {
             "charge_power": loadpoint.get("chargePower"),
             "charging": loadpoint.get("charging"),
+            # "connected" ist eine ANDERE Frage als "charging": ein Fahrzeug
+            # kann angesteckt UND verbunden sein, ohne gerade Leistung zu
+            # ziehen (z.B. Modus "off"/pausiert, oder Ziel-SoC bereits
+            # erreicht) -- fuers Panel (Uebersicht-Beta) die Grundlage fuer
+            # die 3-Stufen-Unterscheidung Laedt/Verbunden/Nicht verbunden.
+            "connected": loadpoint.get("connected"),
             "mode": loadpoint.get("mode"),
             "phases_active": loadpoint.get("phasesActive"),
             "vehicle_soc": loadpoint.get("vehicleSoc"),
-            "limit_soc": loadpoint.get("limitSoc"),
+            # "effectiveLimitSoc"/"effectiveMinSoc" statt der rohen
+            # "limitSoc"/"minSoc"-Felder: evcc kann Min-/Ziel-SoC je nach
+            # Version entweder auf Loadpoint- ODER Fahrzeug-Ebene fuehren
+            # (siehe evcc_client.py::async_probe_scope()) -- bei
+            # Fahrzeug-Scope bleibt das rohe Loadpoint-Feld auf 0/unbelegt
+            # stehen, waehrend "effective*" von evcc SELBST bereits den
+            # tatsaechlich wirksamen Wert unabhaengig vom Scope aufloest.
+            # Fallback auf das rohe Feld nur fuer aeltere evcc-Versionen
+            # ohne "effective*"-Felder.
+            "min_soc": loadpoint.get("effectiveMinSoc", loadpoint.get("minSoc")),
+            "limit_soc": loadpoint.get("effectiveLimitSoc", loadpoint.get("limitSoc")),
             "session_energy": loadpoint.get("sessionEnergy"),
             "session_price": loadpoint.get("sessionPrice"),
             "session_solar_pct": loadpoint.get("sessionSolarPercentage"),

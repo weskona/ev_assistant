@@ -105,6 +105,28 @@ class EVAssistantPanel extends HTMLElement {
     return (s && s.attributes && s.attributes.lade_modus) || "gemischt";
   }
 
+  // Gemeinsames Label/Farbe fuer einen evcc-Lademodus-String -- verwendet
+  // fuer den LIVE-Modus (evcc_live_attrs().mode, direkt von evccs Loadpoint,
+  // kann zusaetzlich "off" sein wenn nichts angesteckt ist) UND fuer den
+  // von ev_assistant EMPFOHLENEN Modus (_evcc_mode_targets().modus, siehe
+  // EvccModeControlSensor -- nie "off", da die Steuerung selbst nur
+  // pv/minpv/now schreibt). EINE Quelle statt zweier Kopien, damit beide
+  // Anzeigen (Wallbox-Karte Aufgabe 3.3, evcc-Steuerung-Karte Aufgabe 3.7)
+  // konsistent beschriften.
+  _evccModeLabel(mode) {
+    const LABELS = {
+      pv: "Nur Solar (PV)", minpv: "Min+PV", now: "Sofort (Netz)", off: "Aus",
+    };
+    return LABELS[mode] || mode || "—";
+  }
+
+  _evccModeColor(mode) {
+    const COLORS = {
+      pv: "#4ade80", minpv: "#f97316", now: "#ef4444", off: "var(--ink-dim)",
+    };
+    return COLORS[mode] || "var(--ink-dim)";
+  }
+
   _state(key) {
     const eid = this._eid(key);
     if (!eid || !this._hass) return null;
@@ -3669,6 +3691,7 @@ class EVAssistantPanel extends HTMLElement {
       // versucht wird, sobald z. B. die Entity-Registry nachträglich verfügbar ist.
       this._homeSessionsFetching = false;
       this._renderHomeHistory();
+      this._refreshBetaWallboxIfActive();
       return;
     }
     try {
@@ -3679,7 +3702,17 @@ class EVAssistantPanel extends HTMLElement {
     } finally {
       this._homeSessionsFetching = false;
       this._renderHomeHistory();
+      this._refreshBetaWallboxIfActive();
     }
+  }
+
+  // _fetchHomeSessions() ist ein WS-Abruf (keine reaktive hass.states-
+  // Aktualisierung), der Vehicle-Tab-eigene Aufrufer oben stoesst dort nur
+  // _renderHomeHistory() an -- die Wallbox-Karte im Uebersicht-Beta-Tab
+  // (siehe _updateBetaWallbox()) braucht denselben "Fetch fertig"-Trigger,
+  // unabhaengig davon, welcher Tab den Abruf ausgeloest hat.
+  _refreshBetaWallboxIfActive() {
+    if (this._view === "uebersicht_beta" && this._r.betaWallboxCard) this._updateBetaWallbox();
   }
 
   _renderHomeHistory() {
@@ -4103,19 +4136,37 @@ class EVAssistantPanel extends HTMLElement {
 
     const grid = div("beta-grid");
 
+    // Hero+SoC nebeneinander (gemischt/nur_zuhause) -- "nur_auswaerts"
+    // behaelt bewusst den bisherigen zweiten Hero-Slot (letzte Fremdladung
+    // statt Fahrzeug-SoC/Wallbox, die dort strukturell nicht zutreffen).
     const heroRow = div("beta-hero-row");
-    heroRow.append(
-      this._buildBetaHeroCard(),
-      modus === "nur_auswaerts" ? this._buildBetaLastChargeCard() : this._buildBetaLiveStatusCard()
-    );
+    if (modus === "nur_auswaerts") {
+      heroRow.append(this._buildBetaHeroCard(), this._buildBetaLastChargeCard());
+    } else {
+      heroRow.append(this._buildBetaHeroCard(), this._buildBetaSocCard());
+    }
     grid.appendChild(heroRow);
+
+    // Wallbox-Karte nur wo ueberhaupt eine eigene Wallbox relevant ist --
+    // in "nur_auswaerts" komplett weggelassen statt leer/mit Nur-Nullen
+    // gerendert (siehe Kartenkopf-Kommentar dort).
+    if (modus !== "nur_auswaerts") {
+      grid.appendChild(this._buildBetaWallboxCard());
+    }
+
     grid.appendChild(this._buildBetaKpiCard());
-    grid.appendChild(this._buildBetaExpenseChartCard());
+
+    // "Ausgaben ueber die letzten Monate" (echte Monatshistorie) bewusst
+    // NICHT gebaut -- cost_periods traegt nur die aktuelle Periode plus
+    // GENAU einen Vormonatswert (siehe _buildBetaHeroCard()), keine
+    // Mehrmonats-Reihe. Ohne neue Aggregation aus den Rohdaten (history/
+    // evcc-Sessions) waere das nur erfunden -- offener Punkt fuer einen
+    // Folge-Prompt, siehe CHANGELOG.
 
     const bottomRow = div("beta-bottom-row");
     bottomRow.append(
-      this._buildIceComparisonCard(),
-      modus === "nur_auswaerts" ? this._buildBetaAcDcCard() : this._buildBetaLadeortCard()
+      this._buildBetaComparisonBarsCard(),
+      modus === "nur_auswaerts" ? this._buildBetaAcDcCard() : this._buildBetaLadeortBarsCard()
     );
     grid.appendChild(bottomRow);
     grid.appendChild(this._buildBetaEvccModeCard());
@@ -4125,11 +4176,11 @@ class EVAssistantPanel extends HTMLElement {
   }
 
   _buildBetaHeroCard() {
-    const { card } = this._card("Kosten diesen Monat", "mdi:cash-multiple");
+    const { card } = this._card("Diesen Monat, bisher", "mdi:cash-multiple");
     card.classList.add("hero-card");
     const val = document.createElement("div");
     val.className = "hero-value";
-    val.innerHTML = `<span id="beta-hero-cost">—</span><span class="hero-unit">EUR</span>`;
+    val.innerHTML = `<span id="beta-hero-cost" class="mono">—</span><span class="hero-unit">EUR</span>`;
     card.appendChild(val);
     const sub = document.createElement("div");
     sub.className = "hero-sub hidden";
@@ -4144,9 +4195,9 @@ class EVAssistantPanel extends HTMLElement {
     const kpis = document.createElement("div");
     kpis.className = "kpi-row";
     kpis.innerHTML = `
-      <div class="kpi"><div class="kv" id="beta-kpi-eur100">—</div><div class="kl">EUR/100km</div></div>
-      <div class="kpi"><div class="kv green" id="beta-kpi-savings">—</div><div class="kl">EUR Ersparnis ggü. Verbrenner</div></div>
-      <div class="kpi"><div class="kv green" id="beta-kpi-co2">—</div><div class="kl">kg CO2 gespart</div></div>
+      <div class="kpi"><div class="kv mono" id="beta-kpi-eur100">—</div><div class="kl">EUR/100km</div></div>
+      <div class="kpi"><div class="kv mono beta-accent" id="beta-kpi-savings">—</div><div class="kl">EUR Ersparnis ggü. Verbrenner</div></div>
+      <div class="kpi"><div class="kv mono beta-accent" id="beta-kpi-co2">—</div><div class="kl">kg CO2 gespart</div></div>
     `;
     card.appendChild(kpis);
     this._r.betaKpiEur100  = kpis.querySelector("#beta-kpi-eur100");
@@ -4155,43 +4206,92 @@ class EVAssistantPanel extends HTMLElement {
     return card;
   }
 
-  // Balken aus den bereits vorhandenen Perioden-Kosten-Sensoren (cost_day/
-  // week/month/year, siehe sensor.py::_CostPeriodSensor) -- ein kWh-Pendant
-  // dafuer existiert nicht (cost_periods trackt nur eine Kosten-, keine
-  // kWh-Baseline je Periode, siehe coordinator.py::_update_cost_periods()),
-  // daher hier bewusst nur Ausgaben statt "Ausgaben/kWh". Wiederverwendet
-  // die wd-*-Klassen des Wochentag-Balkendiagramms (Profil-/Analyse-Tab).
-  _buildBetaExpenseChartCard() {
-    const { card } = this._card("Ausgaben über Zeit", "mdi:chart-bar");
-    const chart = document.createElement("div");
-    chart.className = "weekday-chart";
-    card.appendChild(chart);
-    this._r.betaExpenseChart = chart;
+  // Fahrzeug-SoC als eigene, kompakte Karte neben dem Hero -- bewusst ohne
+  // eigenen Karten-Header/Icon (siehe _card()), da nur eine einzelne
+  // Kennzahl-Zeile gezeigt wird. Quelle: dieselbe SoC-Entitaet wie
+  // Fahrzeug-Tab (_eid("soc_entity"), Schritt 1) -- NICHT
+  // evcc_live_attrs().vehicle_soc (evccs eigene, ggf. abweichende Sicht).
+  _buildBetaSocCard() {
+    const card = document.createElement("div");
+    card.className = "card beta-soc-card";
+    card.innerHTML = `
+      <div class="beta-soc-row">
+        <span class="bl">Fahrzeug-SoC</span>
+        <span class="bv mono" id="beta-soc-val">—</span>
+      </div>
+      <div class="veh-soc-bar-wrap beta-soc-bar-wrap"><div class="veh-soc-bar-fill" id="beta-soc-fill" style="background:var(--accent-2)"></div></div>
+    `;
+    this._r.betaSocVal = card.querySelector("#beta-soc-val");
+    this._r.betaSocFill = card.querySelector("#beta-soc-fill");
     return card;
   }
 
-  _buildBetaLiveStatusCard() {
-    const { card } = this._card("Ladestatus", "mdi:ev-station");
-    card.classList.add("beta-status-card");
-    const list = document.createElement("div");
-    list.className = "beta-status-list";
-    list.innerHTML = `
-      <div class="beta-status-row" id="beta-status-charging-row"><span class="bl">Status</span><span class="bv" id="beta-status-text">—</span></div>
-      <div class="beta-status-row" id="beta-status-power-row"><span class="bl">Leistung</span><span class="bv" id="beta-status-power">—</span></div>
-      <div class="beta-status-row" id="beta-status-soc-row"><span class="bl">Fahrzeug-SoC</span><span class="bv" id="beta-status-soc">—</span></div>
-      <div class="beta-status-row" id="beta-status-solar-row"><span class="bl">Solaranteil</span><span class="bv" id="beta-status-solar">—</span></div>
+  // Wallbox-Karte -- nur gemischt/nur_zuhause (siehe _buildUebersichtBeta()).
+  // HARTES Kriterium: identische Struktur/Hoehe in allen 3 Zustaenden
+  // (laedt/verbunden/nicht verbunden), siehe _updateBetaWallbox() -- kein
+  // Zustand darf Zeilen ein-/ausblenden, nur deren INHALT wechselt.
+  // Ring wiederverwendet das SVG-Zeichenmuster aus _buildStatusCard()
+  // (dort Live-kW-Solar/Netz-Split, hier Solar-%/Netz-%-Split einer
+  // Ladesession) -- eigene, kleinere Instanz statt Aenderung dort.
+  _buildBetaWallboxCard() {
+    const card = document.createElement("div");
+    card.className = "card beta-wallbox-card";
+
+    const size = 88, stroke = 10, pad = 6;
+    const rv = (size - stroke) / 2 - pad;
+    const circ = +(2 * Math.PI * rv).toFixed(2);
+    const cx = size / 2, cy = size / 2;
+
+    card.innerHTML = `
+      <div class="beta-wallbox-head">
+        <div class="beta-wallbox-status">
+          <span class="beta-wb-icon" id="beta-wb-icon"><ha-icon icon="mdi:ev-station"></ha-icon></span>
+          <span id="beta-wb-status-text">—</span>
+        </div>
+        <span class="beta-mode-pill" id="beta-wb-mode-pill">—</span>
+      </div>
+      <div class="beta-wallbox-limits" id="beta-wb-limits">Min-Limit —% · Ladelimit —%</div>
+      <div class="beta-wallbox-caption" id="beta-wb-caption">—</div>
+      <div class="beta-wallbox-body">
+        <div class="beta-wallbox-ring-wrap" id="beta-wb-ring-wrap">
+          <div class="ring" style="width:${size}px;height:${size}px">
+            <svg width="${size}" height="${size}" overflow="visible" style="transform:rotate(-90deg)">
+              <circle cx="${cx}" cy="${cy}" r="${rv}" fill="none" stroke="var(--bg-0)" stroke-width="${stroke}"/>
+              <circle class="beta-wb-ring-solar" cx="${cx}" cy="${cy}" r="${rv}" fill="none" stroke="var(--accent)"
+                stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="0 ${circ}"/>
+              <circle class="beta-wb-ring-grid" cx="${cx}" cy="${cy}" r="${rv}" fill="none" stroke="var(--ink-dim)"
+                stroke-width="${stroke}" stroke-linecap="round" stroke-dasharray="0 ${circ}"/>
+            </svg>
+          </div>
+          <div class="beta-wallbox-legend">
+            <span class="cleg"><span class="cleg-dot" style="background:var(--accent)"></span>Solar</span>
+            <span class="cleg"><span class="cleg-dot" style="background:var(--ink-dim)"></span>Netz</span>
+          </div>
+        </div>
+        <div class="beta-wallbox-stats">
+          <div class="statblock"><div class="statval mono" id="beta-wb-stat1-val">—</div><div class="dim" id="beta-wb-stat1-label">—</div></div>
+          <div class="statblock"><div class="statval mono" id="beta-wb-stat2-val">—</div><div class="dim" id="beta-wb-stat2-label">—</div></div>
+          <div class="statblock"><div class="statval mono" id="beta-wb-stat3-val">—</div><div class="dim" id="beta-wb-stat3-label">—</div></div>
+        </div>
+      </div>
     `;
-    card.appendChild(list);
-    const q = (s) => list.querySelector(s);
-    this._r.betaStatusCard        = card;
-    this._r.betaStatusChargingRow = q("#beta-status-charging-row");
-    this._r.betaStatusText        = q("#beta-status-text");
-    this._r.betaStatusPowerRow    = q("#beta-status-power-row");
-    this._r.betaStatusPower       = q("#beta-status-power");
-    this._r.betaStatusSocRow      = q("#beta-status-soc-row");
-    this._r.betaStatusSoc         = q("#beta-status-soc");
-    this._r.betaStatusSolarRow    = q("#beta-status-solar-row");
-    this._r.betaStatusSolar       = q("#beta-status-solar");
+    const q = (s) => card.querySelector(s);
+    this._r.betaWallboxCard   = card;
+    this._r.betaWbIcon        = q("#beta-wb-icon");
+    this._r.betaWbStatusText  = q("#beta-wb-status-text");
+    this._r.betaWbModePill    = q("#beta-wb-mode-pill");
+    this._r.betaWbLimits      = q("#beta-wb-limits");
+    this._r.betaWbCaption     = q("#beta-wb-caption");
+    this._r.betaWbRingWrap    = q("#beta-wb-ring-wrap");
+    this._r.betaWbRingSolar   = q(".beta-wb-ring-solar");
+    this._r.betaWbRingGrid    = q(".beta-wb-ring-grid");
+    this._r.betaWbRingCirc    = circ;
+    this._r.betaWbStat1Val    = q("#beta-wb-stat1-val");
+    this._r.betaWbStat1Label  = q("#beta-wb-stat1-label");
+    this._r.betaWbStat2Val    = q("#beta-wb-stat2-val");
+    this._r.betaWbStat2Label  = q("#beta-wb-stat2-label");
+    this._r.betaWbStat3Val    = q("#beta-wb-stat3-val");
+    this._r.betaWbStat3Label  = q("#beta-wb-stat3-label");
     return card;
   }
 
@@ -4226,38 +4326,57 @@ class EVAssistantPanel extends HTMLElement {
     return card;
   }
 
-  // "gemischt"/"nur_zuhause": volle Ladeort-Aufschlüsselung (Heim/Fremd),
-  // kompaktere Fassung derselben charging_location_breakdown-Attribute wie
-  // im Analyse-Tab (siehe dort) -- eigene, neue Karte statt Wiederverwendung,
-  // um _buildAnalyse() nicht anzufassen.
-  _buildBetaLadeortCard() {
-    const { card } = this._card("Ladeort-Aufschlüsselung", "mdi:chart-donut");
-    const grid = document.createElement("div");
-    grid.className = "km-grid";
-    grid.innerHTML = `
-      <div class="km-col hidden" id="beta-loc-home-col">
-        <div class="sub-head">Heim</div>
-        <div class="km-item"><span class="km-label">kWh</span><span class="km-val" id="beta-loc-home-kwh">—</span><span class="km-unit">kWh</span></div>
-        <div class="km-item"><span class="km-label">Kosten</span><span class="km-val" id="beta-loc-home-cost">—</span><span class="km-unit">EUR</span></div>
-        <div class="km-item"><span class="km-label">Anteil</span><span class="km-val" id="beta-loc-home-pct">—</span><span class="km-unit">%</span></div>
+  // Vergleich zum Verbrenner als zwei horizontale Proportionsbalken statt
+  // der Zahlen-Tabelle aus _buildIceComparisonCard() (bleibt fuer die
+  // klassische Uebersicht unveraendert, siehe dort) -- gleiche Datenquelle
+  // (savings()-Sensor), nur neu visualisiert. Eigene Funktion statt
+  // Aenderung dort, um _buildOverview() nicht anzufassen.
+  _buildBetaComparisonBarsCard() {
+    const { card } = this._card("Vergleich zum Verbrenner", "mdi:gas-station-off");
+    const body = document.createElement("div");
+    body.innerHTML = `
+      <div class="beta-bar-row">
+        <div class="beta-bar-label"><span>EV</span><span class="mono" id="beta-cmp-ev-val">—</span></div>
+        <div class="beta-bar-track"><div class="beta-bar-fill" id="beta-cmp-ev-fill" style="background:var(--accent-2)"></div></div>
       </div>
-      <div class="km-col hidden" id="beta-loc-ext-col">
-        <div class="sub-head">Fremd</div>
-        <div class="km-item"><span class="km-label">kWh</span><span class="km-val" id="beta-loc-ext-kwh">—</span><span class="km-unit">kWh</span></div>
-        <div class="km-item"><span class="km-label">Kosten</span><span class="km-val" id="beta-loc-ext-cost">—</span><span class="km-unit">EUR</span></div>
-        <div class="km-item"><span class="km-label">Anteil</span><span class="km-val" id="beta-loc-ext-pct">—</span><span class="km-unit">%</span></div>
+      <div class="beta-bar-row">
+        <div class="beta-bar-label"><span>Verbrenner</span><span class="mono" id="beta-cmp-verb-val">—</span></div>
+        <div class="beta-bar-track"><div class="beta-bar-fill" id="beta-cmp-verb-fill" style="background:var(--ink-dim)"></div></div>
       </div>
     `;
-    card.appendChild(grid);
-    const q = (s) => grid.querySelector(s);
-    this._r.betaLocHomeCol  = q("#beta-loc-home-col");
-    this._r.betaLocHomeKwh  = q("#beta-loc-home-kwh");
-    this._r.betaLocHomeCost = q("#beta-loc-home-cost");
-    this._r.betaLocHomePct  = q("#beta-loc-home-pct");
-    this._r.betaLocExtCol   = q("#beta-loc-ext-col");
-    this._r.betaLocExtKwh   = q("#beta-loc-ext-kwh");
-    this._r.betaLocExtCost  = q("#beta-loc-ext-cost");
-    this._r.betaLocExtPct   = q("#beta-loc-ext-pct");
+    card.appendChild(body);
+    const q = (s) => body.querySelector(s);
+    this._r.betaCmpEvVal    = q("#beta-cmp-ev-val");
+    this._r.betaCmpEvFill   = q("#beta-cmp-ev-fill");
+    this._r.betaCmpVerbVal  = q("#beta-cmp-verb-val");
+    this._r.betaCmpVerbFill = q("#beta-cmp-verb-fill");
+    return card;
+  }
+
+  // "gemischt"/"nur_zuhause": Ladeort-Aufschluesselung (Heim/Fremd) als
+  // segmentierter Proportionsbalken statt Zahlen-Tabelle -- dieselben
+  // charging_location_breakdown-Attribute wie die alte Karte/der
+  // Analyse-Tab (siehe dort), nur neu visualisiert.
+  _buildBetaLadeortBarsCard() {
+    const { card } = this._card("Ladeort-Aufschlüsselung", "mdi:chart-donut");
+    const body = document.createElement("div");
+    body.innerHTML = `
+      <div class="beta-bar-track beta-bar-track-split" id="beta-loc-track">
+        <div class="beta-bar-fill" id="beta-loc-home-fill" style="background:var(--accent)"></div>
+        <div class="beta-bar-fill" id="beta-loc-ext-fill" style="background:var(--accent-2)"></div>
+      </div>
+      <div class="beta-wallbox-legend beta-loc-legend">
+        <span class="cleg"><span class="cleg-dot" style="background:var(--accent)"></span>Heim <span class="mono" id="beta-loc-home-val">—</span></span>
+        <span class="cleg"><span class="cleg-dot" style="background:var(--accent-2)"></span>Fremd <span class="mono" id="beta-loc-ext-val">—</span></span>
+      </div>
+    `;
+    card.appendChild(body);
+    const q = (s) => body.querySelector(s);
+    this._r.betaLocCard     = card;
+    this._r.betaLocHomeFill = q("#beta-loc-home-fill");
+    this._r.betaLocExtFill  = q("#beta-loc-ext-fill");
+    this._r.betaLocHomeVal  = q("#beta-loc-home-val");
+    this._r.betaLocExtVal   = q("#beta-loc-ext-val");
     return card;
   }
 
@@ -4373,26 +4492,27 @@ class EVAssistantPanel extends HTMLElement {
 
     r.betaHeroCost.textContent = this._num("cost_month", 2);
 
-    // Hero-Untertitel: kWh diesen Monat (kwh_month) und, falls vorhanden,
-    // die Kosten-Aenderung ggue. dem Vormonat (differenz_vorperiode-Attribut
-    // von cost_month, siehe coordinator.py::_update_cost_periods()) --
-    // beides einzeln optional, fehlende Teile werden weggelassen statt als
-    // 0/n.a. gezeigt (siehe _CostPeriodSensor/_KwhPeriodSensor-Docstrings:
-    // "prev" fehlt bewusst bei der allerersten Periode nach Einrichtung).
-    const kwhEid = this._eid("kwh_month");
-    const kwhState = kwhEid ? this._hass.states[kwhEid] : null;
-    const hasKwhMonth = !!kwhState && kwhState.state !== "unavailable" && kwhState.state !== "unknown";
+    // Hero-Untertitel: NUR "Vormonat X EUR". "differenz_vorperiode" ist,
+    // trotz des Namens, KEINE Differenz zwischen den Monaten, sondern
+    // bereits der komplette Vormonats-Betrag selbst -- siehe sensor.py::
+    // _CostPeriodSensor.native_value() (cost - baseline = Verbrauch seit
+    // Periodenbeginn) vs. engine.update_period_baseline()'s "prev"
+    // (= Baseline-Differenz zum ROLLOVER-Zeitpunkt = exakt der Verbrauch
+    // der GESAMTEN abgeschlossenen Vorperiode, dieselbe Formel nur fuer
+    // die alte statt die laufende Periode ausgewertet). KEIN "Ø"-Wert:
+    // dafuer braeuchte es eine echte Mehrmonats-Reihe, die es (noch) nicht
+    // gibt -- siehe Kommentar in _buildUebersichtBeta() zur
+    // zurueckgestellten Monatshistorie. Fehlt der Vormonats-Datenpunkt
+    // (allererster Monat seit Einrichtung), entfaellt die Zeile komplett
+    // statt einen Fantasiewert zu zeigen.
     const costEid = this._eid("cost_month");
     const costState = costEid ? this._hass.states[costEid] : null;
-    const deltaCost = costState && costState.attributes ? costState.attributes.differenz_vorperiode : null;
-    const subParts = [];
-    if (hasKwhMonth) subParts.push(`${this._num("kwh_month", 1)} kWh diesen Monat`);
-    if (typeof deltaCost === "number") {
-      const sign = deltaCost >= 0 ? "+" : "";
-      subParts.push(`Δ ${sign}${this._fmtNum(deltaCost, 2)} EUR vs. Vormonat`);
+    const vormonat = costState && costState.attributes ? costState.attributes.differenz_vorperiode : null;
+    const hasVormonat = typeof vormonat === "number";
+    r.betaHeroSub.classList.toggle("hidden", !hasVormonat);
+    if (hasVormonat) {
+      r.betaHeroSub.innerHTML = `Vormonat <span class="mono">${this._fmtNum(vormonat, 2)}</span> €`;
     }
-    r.betaHeroSub.classList.toggle("hidden", subParts.length === 0);
-    if (subParts.length) r.betaHeroSub.textContent = subParts.join(" · ");
 
     const locEid = this._eid("charging_location_breakdown");
     const locState = locEid ? this._hass.states[locEid] : null;
@@ -4403,56 +4523,68 @@ class EVAssistantPanel extends HTMLElement {
     r.betaKpiSavings.textContent = this._num("savings", 2);
     r.betaKpiCo2.textContent     = this._num("co2_savings", 1);
 
-    const periods = [
-      ["Tag",   parseFloat(this._state("cost_day"))],
-      ["Woche", parseFloat(this._state("cost_week"))],
-      ["Monat", parseFloat(this._state("cost_month"))],
-      ["Jahr",  parseFloat(this._state("cost_year"))],
-    ];
-    const values = periods.map(([, v]) => (isNaN(v) ? 0 : v));
-    const maxVal = Math.max(...values, 0.1);
-    r.betaExpenseChart.innerHTML = periods.map(([label, v], i) => {
-      const pct = Math.max(2, Math.round(values[i] / maxVal * 100));
-      return `
-        <div class="wd-col">
-          <div class="wd-val">${isNaN(v) ? "—" : this._fmtNum(v, 0)}</div>
-          <div class="wd-bar-track"><div class="wd-bar" style="height:${pct}%"></div></div>
-          <div class="wd-label">${label}</div>
-        </div>`;
-    }).join("");
-
-    // Kosten-/CO2-Vergleich: dieselben Werte/Formeln wie
-    // _updateOverviewAuswaerts() fuer denselben (dort unveraendert
-    // wiederverwendeten) Kartenbau _buildIceComparisonCard() -- hier
-    // bewusst dupliziert statt jene Methode aufzurufen, da sie zusaetzlich
-    // auf die dortige (hier nicht gebaute) Ausgaben-Karte angewiesen ist
-    // und sonst fruehzeitig zurueckkehren wuerde (siehe deren Guard-Klausel).
-    const savEid = this._eid("savings");
-    const savState = savEid ? this._hass.states[savEid] : null;
-    const savAttr = savState ? (savState.attributes || {}) : {};
-    const ersparnis  = parseFloat(savState ? savState.state : NaN);
-    const evCost     = parseFloat(savAttr.kosten_ev_gesamt);
-    const verbCost   = parseFloat(savAttr.kosten_verbrenner_geschaetzt);
-    const gefahrenKm = parseFloat(savAttr.gefahrene_km);
-    const fmt2 = (v) => (isNaN(v) ? "—" : this._fmtNum(v, 2));
-    const per100 = (cost) => (!isNaN(cost) && !isNaN(gefahrenKm) && gefahrenKm > 0)
-      ? this._fmtNum(cost / gefahrenKm * 100, 2) : "—";
-    r.ovSavings.textContent    = fmt2(ersparnis);
-    r.ovCo2Savings.textContent = this._num("co2_savings", 1);
-    r.ovEvCost.textContent     = fmt2(evCost);
-    r.ovEvPer100.textContent   = per100(evCost);
-    r.ovVerbCost.textContent   = fmt2(verbCost);
-    r.ovVerbPer100.textContent = per100(verbCost);
+    this._updateBetaComparisonBars();
 
     if (modus === "nur_auswaerts") {
       this._updateBetaLastCharge();
       this._updateBetaAcDc(locAttrs);
     } else {
-      this._updateBetaLiveStatus();
-      this._updateBetaLadeort(locAttrs);
+      this._updateBetaSoc();
+      this._updateBetaWallbox();
+      this._updateBetaLadeortBars(locAttrs);
     }
 
     this._updateBetaEvccMode();
+  }
+
+  // Fahrzeug-SoC-Zeile (Aufgabe 3.2) -- Quelle wie Fahrzeug-Tab
+  // (_eid("soc_entity")), NICHT evcc_live_attrs().vehicle_soc.
+  _updateBetaSoc() {
+    const r = this._r;
+    if (!r.betaSocVal) return;
+    const socEid = this._eid("soc_entity");
+    const soc = socEid ? parseFloat(this._raw(socEid) ?? NaN) : NaN;
+    r.betaSocVal.innerHTML = isNaN(soc) ? "—" : `${Math.round(soc)}<small>%</small>`;
+    if (!isNaN(soc)) r.betaSocFill.style.width = `${Math.max(0, Math.min(100, soc))}%`;
+  }
+
+  // Vergleich zum Verbrenner (Proportionsbalken) -- dieselben Werte/Formeln
+  // wie _updateOverviewAuswaerts() fuer denselben (dort unveraendert
+  // wiederverwendeten) Kartenbau _buildIceComparisonCard() -- hier bewusst
+  // dupliziert statt jene Methode aufzurufen, da sie zusaetzlich auf die
+  // dortige (hier nicht gebaute) Ausgaben-Karte angewiesen ist und sonst
+  // fruehzeitig zurueckkehren wuerde (siehe deren Guard-Klausel).
+  _updateBetaComparisonBars() {
+    const r = this._r;
+    if (!r.betaCmpEvVal) return;
+    const savEid = this._eid("savings");
+    const savState = savEid ? this._hass.states[savEid] : null;
+    const savAttr = savState ? (savState.attributes || {}) : {};
+    const evCost   = parseFloat(savAttr.kosten_ev_gesamt);
+    const verbCost = parseFloat(savAttr.kosten_verbrenner_geschaetzt);
+    const fmt2 = (v) => (isNaN(v) ? "—" : this._fmtNum(v, 2));
+    r.betaCmpEvVal.textContent   = fmt2(evCost) + (isNaN(evCost) ? "" : " €");
+    r.betaCmpVerbVal.textContent = fmt2(verbCost) + (isNaN(verbCost) ? "" : " €");
+    const maxCost = Math.max(isNaN(evCost) ? 0 : evCost, isNaN(verbCost) ? 0 : verbCost, 0.01);
+    r.betaCmpEvFill.style.width   = isNaN(evCost) ? "0%" : `${Math.max(2, Math.round(evCost / maxCost * 100))}%`;
+    r.betaCmpVerbFill.style.width = isNaN(verbCost) ? "0%" : `${Math.max(2, Math.round(verbCost / maxCost * 100))}%`;
+  }
+
+  // Ladeort-Aufschluesselung (Proportionsbalken) -- ersetzt
+  // _updateBetaLadeort() (alte Zahlen-Tabelle) fuer gemischt/nur_zuhause.
+  _updateBetaLadeortBars(locAttrs) {
+    const r = this._r;
+    if (!r.betaLocCard) return;
+    const fmt = (v, decimals = 1) => (typeof v === "number" ? this._fmtNum(v, decimals) : "—");
+    const heim = locAttrs.heim;
+    const fremd = locAttrs.fremd;
+    r.betaLocCard.classList.toggle("hidden", !heim && !fremd);
+    const homePct = heim && typeof heim.kwh_anteil_pct === "number" ? heim.kwh_anteil_pct : 0;
+    const extPct  = fremd && typeof fremd.kwh_anteil_pct === "number" ? fremd.kwh_anteil_pct : 0;
+    r.betaLocHomeFill.style.width = `${homePct}%`;
+    r.betaLocExtFill.style.width  = `${extPct}%`;
+    r.betaLocHomeVal.textContent = heim ? `${fmt(heim.kwh, 1)} kWh` : "—";
+    r.betaLocExtVal.textContent  = fremd ? `${fmt(fremd.kwh, 1)} kWh` : "—";
   }
 
   // Orthogonal zum Heim-/Fremdlade-Modus (evcc-Steuerung betrifft nur
@@ -4468,10 +4600,8 @@ class EVAssistantPanel extends HTMLElement {
     r.betaEvccCard.classList.toggle("hidden", !active);
     if (!active) return;
 
-    const MODE_LABELS = { pv: "Nur Solar (PV)", minpv: "Mindestleistung + PV", now: "Netzladen (jetzt)" };
-    const MODE_COLORS = { pv: "#4ade80", minpv: "#f97316", now: "#ef4444" };
-    r.betaEvccModeLabel.textContent = MODE_LABELS[s.state] || s.state;
-    r.betaEvccDot.style.background = MODE_COLORS[s.state] || "var(--ink-dim)";
+    r.betaEvccModeLabel.textContent = this._evccModeLabel(s.state);
+    r.betaEvccDot.style.background = this._evccModeColor(s.state);
 
     const pct = (v) => (typeof v === "number" ? `${Math.round(v)} %` : "—");
     const kwh = (v) => (typeof v === "number" ? `${this._fmtNum(v, 1)} kWh` : "—");
@@ -4503,33 +4633,88 @@ class EVAssistantPanel extends HTMLElement {
     r.betaEvccScopeWarnRow.classList.toggle("hidden", scopeOk);
   }
 
-  _updateBetaLiveStatus() {
+  // Wallbox-Karte (Aufgabe 3.3) -- IMMER dieselbe Struktur, nur der
+  // INHALT wechselt je Zustand (laedt/verbunden/nicht verbunden). Die
+  // Karte selbst wird nur ausgeblendet, wenn ueberhaupt kein evcc-State
+  // vorliegt (kein evcc_host konfiguriert/erreichbar) -- "nicht verbunden"
+  // ist dagegen ein regulaerer, sichtbarer Zustand (Fahrzeug einfach nicht
+  // angesteckt).
+  _updateBetaWallbox() {
     const r = this._r;
-    if (!r.betaStatusText) return;
+    if (!r.betaWbStatusText) return;
     const live = this._evccLive();
     const ev = (key) => (live[key] === undefined || live[key] === null) ? null : live[key];
-    const power   = parseFloat(ev("charge_power") ?? NaN);
-    const rawConn = ev("charging");
-    const isCharging = !isNaN(power) && power > 0.05;
-    const statusText = rawConn == null ? null : (rawConn === true ? (isCharging ? "Lädt" : "Verbunden") : "Nicht verbunden");
-    r.betaStatusChargingRow.classList.toggle("hidden", statusText == null);
-    if (statusText != null) r.betaStatusText.textContent = statusText;
+    const connected = ev("connected");
+    r.betaWallboxCard.classList.toggle("hidden", connected == null);
+    if (connected == null) return;
 
-    const hasPower = !isNaN(power) && power > 0;
-    r.betaStatusPowerRow.classList.toggle("hidden", !hasPower);
-    if (hasPower) r.betaStatusPower.textContent = this._fmtNum(power, 1) + " kW";
+    const charging = ev("charging");
+    const power = parseFloat(ev("charge_power") ?? NaN);
+    const isCharging = charging === true && !isNaN(power) && power > 0.05;
+    const state = !connected ? "disconnected" : (isCharging ? "charging" : "connected");
 
-    const socEid = this._eid("soc_entity");
-    const soc = socEid ? parseFloat(this._raw(socEid) ?? NaN) : NaN;
-    r.betaStatusSocRow.classList.toggle("hidden", isNaN(soc));
-    if (!isNaN(soc)) r.betaStatusSoc.textContent = this._fmtNum(soc, 0) + " %";
+    const STATUS_TEXT = { charging: "Lädt", connected: "Verbunden", disconnected: "Nicht verbunden" };
+    r.betaWbStatusText.textContent = STATUS_TEXT[state];
+    r.betaWbIcon.classList.toggle("beta-wb-icon-active", state !== "disconnected");
 
-    const solarPct = parseFloat(ev("session_solar_pct") ?? NaN);
-    r.betaStatusSolarRow.classList.toggle("hidden", isNaN(solarPct));
-    if (!isNaN(solarPct)) r.betaStatusSolar.textContent = this._fmtNum(solarPct, 0) + " %";
+    // Modus-Pill: LIVE-Modus von evcc (kann "off" sein, wenn nichts
+    // angesteckt ist) -- NICHT der von ev_assistant empfohlene Modus
+    // (siehe _updateBetaEvccMode() fuer Letzteren, eigene Karte).
+    const liveMode = ev("mode");
+    r.betaWbModePill.textContent = this._evccModeLabel(liveMode);
+    r.betaWbModePill.style.setProperty("--pill-color", this._evccModeColor(liveMode));
+    r.betaWbModePill.classList.toggle("beta-mode-pill-pulse", state === "charging");
 
-    const anyVisible = statusText != null || hasPower || !isNaN(soc) || !isNaN(solarPct);
-    r.betaStatusCard.classList.toggle("hidden", !anyVisible);
+    // Min-Limit/Ladelimit -- IMMER sichtbar (auch nicht verbunden), aus
+    // den live "effective*"-evcc-Feldern (siehe coordinator.py::
+    // evcc_live_attrs(), korrigiert fuer Fahrzeug-Scope).
+    const fmtPct = (v) => (typeof v === "number" ? `${Math.round(v)}%` : "—");
+    r.betaWbLimits.textContent = `Min-Limit ${fmtPct(ev("min_soc"))} · Ladelimit ${fmtPct(ev("limit_soc"))}`;
+
+    // Letzte Heimladung -- dieselbe Quelle wie Fahrzeug-Tab (_homeSessions/
+    // _homeSessionsFiltered(), siehe _fetchHomeSessions()). 5-Minuten-
+    // Cache gemeinsam mit dem Fahrzeug-Tab genutzt/aufgefrischt.
+    if (this._homeSessions === null || Date.now() - this._homeSessionsFetchedAt > 300000) {
+      this._fetchHomeSessions();
+    }
+    const lastHome = this._homeSessionsFiltered()[0] || null;
+
+    r.betaWbCaption.textContent = state === "charging"
+      ? "Aktuelle Ladung"
+      : `Letzte Ladung${lastHome && lastHome.startTs != null ? " · " + this._fmtDate(lastHome.startTs) : ""}`;
+
+    // Ring (Solar/Netz): live waehrend des Ladens, sonst Solaranteil der
+    // letzten Session -- bei verbunden/nicht-verbunden gedimmt (~55%).
+    const solarPct = state === "charging"
+      ? parseFloat(ev("session_solar_pct") ?? NaN)
+      : (lastHome && lastHome.solarPct != null ? lastHome.solarPct : NaN);
+    const frac = isNaN(solarPct) ? 0 : Math.max(0, Math.min(100, solarPct)) / 100;
+    const circ = r.betaWbRingCirc;
+    const solarLen = +(circ * frac).toFixed(2);
+    r.betaWbRingSolar.setAttribute("stroke-dasharray", `${solarLen} ${circ}`);
+    r.betaWbRingGrid.setAttribute("stroke-dasharray", `${+(circ - solarLen).toFixed(2)} ${circ}`);
+    r.betaWbRingGrid.setAttribute("stroke-dashoffset", `${-solarLen}`);
+    r.betaWbRingWrap.style.opacity = state === "charging" ? "1" : "0.55";
+
+    // Drei Statfelder -- je Zustand unterschiedlicher Inhalt, aber IMMER
+    // drei Felder befuellt (siehe Kartenkopf-Kommentar: feste Struktur).
+    if (state === "charging") {
+      const phases = parseInt(ev("phases_active") ?? "3", 10) || 3;
+      const durSec = parseFloat(ev("charge_duration") ?? NaN);
+      r.betaWbStat1Val.textContent   = !isNaN(power) ? this._fmtNum(power, 1) : "—";
+      r.betaWbStat1Label.textContent = "kW";
+      r.betaWbStat2Val.textContent   = String(phases);
+      r.betaWbStat2Label.textContent = "Phasen";
+      r.betaWbStat3Val.textContent   = (!isNaN(durSec) && durSec > 0) ? this._fmtDuration(Math.round(durSec / 60)) : "—";
+      r.betaWbStat3Label.textContent = "Dauer";
+    } else {
+      r.betaWbStat1Val.textContent   = lastHome && lastHome.kwh != null ? this._fmtNum(lastHome.kwh, 2) : "—";
+      r.betaWbStat1Label.textContent = "kWh";
+      r.betaWbStat2Val.textContent   = lastHome && lastHome.durMin != null ? this._fmtDuration(lastHome.durMin) : "—";
+      r.betaWbStat2Label.textContent = "Dauer";
+      r.betaWbStat3Val.textContent   = lastHome && lastHome.pricePerKwh != null ? this._fmtNum(lastHome.pricePerKwh, 3) + " €/kWh" : "—";
+      r.betaWbStat3Label.textContent = "Preis";
+    }
   }
 
   _updateBetaLastCharge() {
@@ -4561,26 +4746,6 @@ class EVAssistantPanel extends HTMLElement {
     r.betaLastChargeCard.classList.toggle("hidden", !hasAny);
   }
 
-  _updateBetaLadeort(locAttrs) {
-    const r = this._r;
-    if (!r.betaLocHomeCol) return;
-    const fmt = (v, decimals = 1) => (typeof v === "number" ? this._fmtNum(v, decimals) : "—");
-    const heim = locAttrs.heim;
-    r.betaLocHomeCol.classList.toggle("hidden", !heim);
-    if (heim) {
-      r.betaLocHomeKwh.textContent  = fmt(heim.kwh, 1);
-      r.betaLocHomeCost.textContent = fmt(heim.kosten, 2);
-      r.betaLocHomePct.textContent  = fmt(heim.kwh_anteil_pct, 1);
-    }
-    const fremd = locAttrs.fremd;
-    r.betaLocExtCol.classList.toggle("hidden", !fremd);
-    if (fremd) {
-      r.betaLocExtKwh.textContent  = fmt(fremd.kwh, 1);
-      r.betaLocExtCost.textContent = fmt(fremd.kosten, 2);
-      r.betaLocExtPct.textContent  = fmt(fremd.kwh_anteil_pct, 1);
-    }
-  }
-
   _updateBetaAcDc(locAttrs) {
     const r = this._r;
     if (!r.betaAcdcAcCol) return;
@@ -4607,6 +4772,13 @@ class EVAssistantPanel extends HTMLElement {
       :host {
         display: block; height: 100%;
         --accent: #8fbd39;
+        /* Zweiter Akzent (Petrol/Cyan) fuer Fahrzeug-/Ladezustand (SoC,
+           Wallbox-Status, siehe Uebersicht-Beta) -- bewusst blauer als das
+           bestehende --c-trip (Teal #14b8a6, an "Fahrt" gebunden, siehe
+           weiter unten), damit --accent (Lime) fuer Ersparnis/CO2/Solar
+           reserviert bleibt statt dekorativ auf jede positive Zahl
+           gestreut zu werden. */
+        --accent-2: #0891b2;
         --bg-0: var(--primary-background-color, #0f172a);
         --bg-1: var(--card-background-color, #1e293b);
         --bg-2: color-mix(in oklab, var(--bg-1) 60%, var(--bg-0));
@@ -4617,6 +4789,9 @@ class EVAssistantPanel extends HTMLElement {
         --line-s: rgba(255,255,255,0.13);
         --radius: 14px; --pad: 20px; --gap: 14px;
         font-family: var(--paper-font-body1_-_font-family, Roboto, sans-serif);
+        /* Lokaler Mono-Stack fuer Zahlen-Readouts -- bewusst kein
+           Web-Font-Import (siehe font-family oben), nur System-Monospace. */
+        --font-mono: ui-monospace, SFMono-Regular, Consolas, monospace;
         color: var(--ink); background: var(--bg-0);
       }
       .app {
@@ -5235,9 +5410,71 @@ class EVAssistantPanel extends HTMLElement {
       .beta-hero-row { display: grid; grid-template-columns: 1.6fr 1fr; gap: var(--gap); align-items: stretch; }
       .beta-bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); align-items: start; }
       .hero-card { display: flex; flex-direction: column; justify-content: center; }
-      .hero-value { font-size: 2.6rem; font-weight: 800; line-height: 1.1; margin-top: 6px; color: #4ade80; }
+      .hero-value { font-size: 2.6rem; font-weight: 800; line-height: 1.1; margin-top: 6px; color: var(--ink); }
       .hero-value .hero-unit { font-size: 1.1rem; font-weight: 600; margin-left: 6px; color: var(--ink-mid); }
       .hero-sub { font-size: 0.85rem; color: var(--ink-mid); margin-top: 6px; }
+
+      /* Zahlen-Readout-Utility (Aufgabe 2: --font-mono) -- ueberall im
+         redesignten Uebersicht-Beta-Tab fuer Kennzahlen verwendet. */
+      .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+      .beta-accent { color: var(--accent); }
+
+      /* Redesignte Uebersicht-Beta-Karten-Header: normale Gross-/Klein-
+         schreibung statt der sonst ueberall im Panel genutzten
+         Grossbuchstaben-Eyebrow-Optik (.card-head h2, siehe dort) --
+         bewusst nur fuer diesen Tab gescoped, alle anderen Tabs
+         unveraendert. */
+      .beta-grid .card-head h2 { text-transform: none; letter-spacing: normal; }
+
+      /* Fahrzeug-SoC-Karte (Aufgabe 3.2) -- kompakte Einzeiler-Karte neben
+         dem Hero, kein eigener Kartenkopf/Icon. */
+      .beta-soc-card { display: flex; flex-direction: column; justify-content: center; gap: 10px; }
+      .beta-soc-row { display: flex; align-items: baseline; justify-content: space-between; }
+      .beta-soc-row .bl { color: var(--ink-mid); font-size: 0.85rem; }
+      .beta-soc-row .bv { font-size: 1.6rem; font-weight: 800; }
+      .beta-soc-bar-wrap { width: 100%; }
+
+      /* Wallbox-Karte (Aufgabe 3.3) -- feste Struktur/Hoehe in allen drei
+         Zustaenden (laedt/verbunden/nicht verbunden), siehe
+         _updateBetaWallbox(): kein Zustand darf Zeilen ein-/ausblenden. */
+      .beta-wallbox-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+      .beta-wallbox-status { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 0.95rem; --mdc-icon-size: 20px; }
+      .beta-wb-icon { display: flex; color: var(--ink-dim); transition: color 0.2s ease; }
+      .beta-wb-icon.beta-wb-icon-active { color: var(--accent-2); }
+      .beta-mode-pill {
+        --pill-color: var(--ink-dim);
+        display: inline-flex; align-items: center; padding: 4px 12px; border-radius: 9999px;
+        font-size: 0.72rem; font-weight: 700; color: var(--pill-color);
+        border: 1px solid color-mix(in oklab, var(--pill-color) 45%, transparent);
+        background: color-mix(in oklab, var(--pill-color) 12%, transparent);
+      }
+      .beta-mode-pill.beta-mode-pill-pulse { animation: beta-pill-pulse 1.8s ease-in-out infinite; }
+      @keyframes beta-pill-pulse {
+        0%, 100% { border-color: color-mix(in oklab, var(--pill-color) 45%, transparent); }
+        50% { border-color: color-mix(in oklab, var(--pill-color) 90%, transparent); }
+      }
+      @media (prefers-reduced-motion: reduce) { .beta-mode-pill.beta-mode-pill-pulse { animation: none; } }
+      .beta-wallbox-limits { font-size: 0.78rem; color: var(--ink-mid); margin-top: 10px; }
+      .beta-wallbox-caption { font-size: 0.78rem; color: var(--ink-dim); margin-top: 2px; }
+      .beta-wallbox-body { display: flex; align-items: center; gap: 20px; margin-top: 14px; }
+      .beta-wallbox-ring-wrap { display: flex; flex-direction: column; align-items: center; gap: 8px; flex-shrink: 0; transition: opacity 0.3s ease; }
+      .beta-wb-ring-solar, .beta-wb-ring-grid { transition: stroke-dasharray 0.5s ease, stroke-dashoffset 0.5s ease; }
+      .beta-wallbox-legend { display: flex; gap: 12px; flex-wrap: wrap; }
+      .beta-wallbox-stats { flex: 1; display: flex; justify-content: space-around; gap: 10px; min-width: 0; }
+      .statval { font-size: 1.15rem; font-weight: 700; line-height: 1.1; }
+      .statlabel { font-size: 0.7rem; color: var(--ink-mid); margin-top: 3px; }
+
+      /* Proportionsbalken (Aufgabe 3.6: Vergleich zum Verbrenner,
+         Ladeort-Aufschluesselung) -- ersetzen die frueheren Zahlen-Tabellen. */
+      .beta-bar-row + .beta-bar-row { margin-top: 14px; }
+      .beta-bar-label { display: flex; justify-content: space-between; font-size: 0.85rem; margin-bottom: 5px; }
+      .beta-bar-track { height: 10px; border-radius: 9999px; background: var(--bg-0); overflow: hidden; }
+      .beta-bar-fill { height: 100%; border-radius: 9999px; transition: width 0.5s ease; }
+      .beta-bar-track-split { display: flex; }
+      .beta-bar-track-split .beta-bar-fill { border-radius: 0; transition: width 0.5s ease; }
+      .beta-bar-track-split .beta-bar-fill:first-child { border-radius: 9999px 0 0 9999px; }
+      .beta-bar-track-split .beta-bar-fill:last-child { border-radius: 0 9999px 9999px 0; }
+      .beta-loc-legend { margin-top: 10px; }
       .beta-status-list { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
       .beta-status-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 0.85rem; }
       .beta-status-row .bl { color: var(--ink-mid); }

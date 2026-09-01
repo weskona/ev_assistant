@@ -2,6 +2,14 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.77.0] - 2026-09-02
+
+### Changed
+
+- **Overview (Beta) tab redesigned** (`_buildUebersichtBeta()` — the classic Overview tab is untouched): hero card (this month's cost so far, plus last month's total once known) next to a vehicle SoC row; a wallbox status card that always keeps the same layout regardless of state (charging/connected/not connected — no more swapping rows in/out), showing live-or-last-session solar/grid split, the live evcc mode, and min-/target-SoC limits; KPI row; and, as horizontal proportion bars instead of number tables, a combustion-car comparison and the home/external charging-location breakdown. All in **Away only** mode: the wallbox card and SoC row are replaced by the last confirmed external charge (unchanged from before), the location breakdown stays an AC/DC split (unchanged). Two new design tokens: `--accent-2` (a cyan/petrol accent for vehicle/charging state, kept distinct from the existing `--c-trip` teal and from `--accent`, which stays reserved for savings/CO2/solar) and `--font-mono` (a local monospace stack, no web-font import) for the new number readouts.
+- **`evcc_live_attrs()` corrected for vehicle-scoped SoC limits**: `limit_soc` now reads evcc's `effectiveLimitSoc` (falling back to the raw `limitSoc` on older evcc versions), and a new `min_soc` field reads `effectiveMinSoc` — the raw `limitSoc`/`minSoc` loadpoint fields stay at 0/unset whenever evcc manages that particular limit on the vehicle instead of the loadpoint (see 0.75.0/0.76.0's `min_soc_scope`/`limit_soc_scope`), so the old `limit_soc` mapping silently showed 0 in that case regardless of the actually-configured limit. Also adds `connected` (distinct from `charging` — a vehicle can be plugged in without currently drawing power, e.g. paused or already at its target SoC), needed for the new wallbox card's charging/connected/not-connected distinction.
+- **Note on scope, for transparency**: a real multi-month spending history (the "Ausgaben über die letzten Monate" bar chart from the original design) was intentionally **not** built in this pass — `cost_periods` only ever tracks the current period plus exactly one completed-previous-period value, no full series. The raw data to derive one exists (external-charge history up to 24 months plus an unbounded archive, evcc's own home-session log) and could be aggregated on the fly without new storage, but that's real new aggregation logic, not something to build silently as a side effect of a visual redesign — left as a follow-up.
+
 ## [0.76.1] - 2026-09-01
 
 ### Changed
