@@ -351,6 +351,134 @@ async def test_house_usage_profile_includes_battery_ohne_speicherentitaet(hass, 
     assert coordinator.house_usage_profile_includes_battery() is False
 
 
+# ----- _update_vehicle_discharge (Live-SoC-Ratchet) --------------------------
+
+async def test_update_vehicle_discharge_erster_aufruf_initialisiert_ohne_buchung(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "uvd1", options={CONF_USABLE_KWH: 50.0})
+    coordinator._update_vehicle_discharge(84.0)
+    assert coordinator.data["vehicle_discharge_reference_soc"] == 84.0
+    assert coordinator.data["vehicle_discharge_kwh_total"] == 0.0
+
+
+async def test_update_vehicle_discharge_rueckgang_bucht_kwh(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "uvd2", options={CONF_USABLE_KWH: 50.0})
+    coordinator._update_vehicle_discharge(84.0)
+    coordinator._update_vehicle_discharge(82.0)
+    assert coordinator.data["vehicle_discharge_reference_soc"] == 82.0
+    assert coordinator.data["vehicle_discharge_kwh_total"] == 1.0  # 2% von 50 kWh
+
+
+async def test_update_vehicle_discharge_standby_zwischen_kurzfahrten_wird_erfasst(hass, coordinators):
+    """Regression fuer den Ausloeser dieses Features: mehrere kurze Fahrten
+    ohne SoC-Delta (grob meldender Sensor), aber ein echter Rueckgang WAEHREND
+    der Standzeit dazwischen -- muss trotzdem im Akkumulator landen, auch
+    wenn er in keiner einzelnen Fahrt als delta_soc auftaucht."""
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "uvd3", options={CONF_USABLE_KWH: 50.0})
+    coordinator._update_vehicle_discharge(86.0)  # Fahrt 1 Start
+    coordinator._update_vehicle_discharge(85.0)  # Fahrt 1 Ende (0.5 kWh gebucht)
+    coordinator._update_vehicle_discharge(84.0)  # Standby-Rueckgang (weitere 0.5 kWh)
+    coordinator._update_vehicle_discharge(84.0)  # Fahrt 2 Start/Ende (kein Delta)
+    assert coordinator.data["vehicle_discharge_kwh_total"] == 1.0
+
+
+async def test_update_vehicle_discharge_anstieg_setzt_referenz_ohne_buchung(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "uvd4", options={CONF_USABLE_KWH: 50.0})
+    coordinator._update_vehicle_discharge(82.0)
+    coordinator._update_vehicle_discharge(90.0)
+    assert coordinator.data["vehicle_discharge_reference_soc"] == 90.0
+    assert coordinator.data["vehicle_discharge_kwh_total"] == 0.0
+
+
+# ----- _update_vehicle_discharge_profile / vehicle_discharge_usage_profile ---
+
+async def test_update_vehicle_discharge_profile_erster_aufruf_setzt_nur_baseline(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "uvdp1")
+    coordinator.data["vehicle_discharge_kwh_total"] = 5.0
+    coordinator._update_vehicle_discharge_profile()
+    assert coordinator.data["vehicle_discharge_periods"]["day"]["kwh"] == 5.0
+    assert coordinator.data["vehicle_discharge_weekday_kwh_totals"] == {}
+    assert coordinator.data["vehicle_discharge_weekday_day_counts"] == {}
+
+
+async def test_update_vehicle_discharge_profile_rollover_fuellt_genau_einen_wochentags_eimer(hass, coordinators):
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "uvdp2")
+    coordinator.data["vehicle_discharge_kwh_total"] = 5.0
+    coordinator._update_vehicle_discharge_profile()
+    yesterday_wd = (dt_util.now().date() - timedelta(days=1)).weekday()
+    coordinator.data["vehicle_discharge_periods"]["day"]["key"] = "ein-anderer-tag"
+    coordinator.data["vehicle_discharge_kwh_total"] = 6.5
+    coordinator._update_vehicle_discharge_profile()
+    assert coordinator.data["vehicle_discharge_weekday_kwh_totals"] == {str(yesterday_wd): 1.5}
+    assert coordinator.data["vehicle_discharge_weekday_day_counts"] == {str(yesterday_wd): 1}
+
+
+async def test_vehicle_discharge_usage_profile_ohne_beobachteten_tag_gibt_none(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "vdup1")
+    assert coordinator.vehicle_discharge_usage_profile() is None
+
+
+async def test_vehicle_discharge_usage_profile_normale_durchschnittsbildung(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "vdup2")
+    coordinator.data["vehicle_discharge_weekday_kwh_totals"] = {"2": 4.0}
+    coordinator.data["vehicle_discharge_weekday_day_counts"] = {"2": 2}
+    assert coordinator.vehicle_discharge_usage_profile() == {2: 2.0}
+
+
+# ----- _vehicle_discharge_kwh_used_today --------------------------------------
+
+async def test_vehicle_discharge_kwh_used_today_normalfall(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "vdkut1")
+    coordinator.data["vehicle_discharge_periods"] = {"day": {"key": "x", "kwh": 5.0}}
+    coordinator.data["vehicle_discharge_kwh_total"] = 6.5
+    assert coordinator._vehicle_discharge_kwh_used_today() == 1.5
+
+
+async def test_vehicle_discharge_kwh_used_today_ohne_baseline_gibt_none(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "vdkut2")
+    coordinator.data["vehicle_discharge_kwh_total"] = 6.5
+    assert coordinator._vehicle_discharge_kwh_used_today() is None
+
+
+# ----- _effective_vehicle_usage_profile ---------------------------------------
+
+async def test_effective_vehicle_usage_profile_bevorzugt_discharge_profil(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "evup1")
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)  # jeder Wochentag = 10.0 kWh (Fahrtenbuch)
+    today_wd = dt_util.now().date().weekday()
+    coordinator.data["vehicle_discharge_weekday_kwh_totals"] = {str(today_wd): 3.0}
+    coordinator.data["vehicle_discharge_weekday_day_counts"] = {str(today_wd): 1}
+    profile = coordinator._effective_vehicle_usage_profile()
+    assert profile[today_wd] == 3.0  # Live-SoC-Wert gewinnt fuer heute
+    other_wd = (today_wd + 1) % 7
+    assert profile[other_wd] == 10.0  # Fahrtenbuch-Fallback fuer noch nicht beobachtete Tage
+
+
+async def test_effective_vehicle_usage_profile_ohne_discharge_faellt_komplett_auf_fahrtenbuch_zurueck(
+    hass, coordinators,
+):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "evup2")
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    profile = coordinator._effective_vehicle_usage_profile()
+    assert all(v == 10.0 for v in profile.values())
+
+
+async def test_effective_vehicle_usage_profile_ohne_beide_quellen_gibt_none(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "evup3")
+    assert coordinator._effective_vehicle_usage_profile() is None
+
+
 # ----- _evcc_mode_targets ----------------------------------------------------
 
 async def test_evcc_mode_targets_ohne_jede_entitaet_roh_und_netto_identisch(hass, coordinators):
@@ -410,6 +538,22 @@ async def test_evcc_mode_targets_mit_hausverbrauch_reduziert_pv_fuer_auto(hass, 
     targets = coordinator._evcc_mode_targets()
     assert targets["haus_rest_heute_kwh"] == 3.0
     assert targets["pv_fuer_auto_kwh"] < targets["pv_rest_heute_roh_kwh"]
+
+
+async def test_evcc_mode_targets_bevorzugt_discharge_basiertes_used_today(hass, coordinators):
+    """Kernszenario dieses Features: die Fahrtenbuch-basierte
+    _kwh_used_today() wuerde hier 0.0 liefern (kein Odometer-Tracking
+    gesetzt), obwohl der Live-SoC-Tracker bereits 2.0 kWh Verbrauch fuer
+    heute kennt -- _evcc_mode_targets() muss den praeziseren Wert nutzen."""
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "emt_disc1", options={CONF_USABLE_KWH: 50.0})
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator.data["vehicle_discharge_periods"] = {"day": {"key": "x", "kwh": 5.0}}
+    coordinator.data["vehicle_discharge_kwh_total"] = 7.0  # 2.0 kWh heute schon verbraucht
+    targets = coordinator._evcc_mode_targets()
+    assert targets["rest_heute_roh_kwh"] == 8.0  # 10.0 - 2.0, nicht 10.0 - 0.0
 
 
 async def test_evcc_mode_targets_ohne_usage_profile_gibt_none(hass, coordinators):

@@ -982,6 +982,61 @@ def kwh_to_soc_percent(kwh: float, usable_kwh: float) -> Optional[int]:
     return max(0, min(100, pct))
 
 
+def vehicle_discharge_update(
+    reference_soc: Optional[float], new_soc: float, usable_kwh: float, noise_pct: float,
+) -> tuple:
+    """Ratchet-Verfolgung des GESAMTEN Netto-Verbrauchs aus dem Live-SoC-
+    Verlauf -- Fahren UND Standby-/Vampire-Drain zaehlen gleichermassen mit,
+    anders als die Fahrtenbuch-basierte weekday_usage_profile_from_totals()
+    (dort NUR der wahrend einer erkannten Fahrt gemessene delta_soc, siehe
+    dortigen Docstring). Grund: mehrere kurze Fahrten hintereinander zeigen
+    bei nur grob/verzoegert meldendem SoC (z.B. 1%-Schritte) oft 0% Delta je
+    einzelner Fahrt, waehrend der Rueckgang tatsaechlich zeitversetzt
+    zwischen den Fahrten (im Stand) gemeldet wird -- dort landet er weder in
+    einer Fahrt noch sonstwo, geht also komplett verloren. Fuers
+    Nutzungsprofil/die evcc-Steuerung (siehe coordinator.py::
+    _evcc_mode_targets()) zaehlt aber nur "wie viel wird die Batterie bis
+    zur naechsten Ladung insgesamt verlieren", unabhaengig von der Ursache
+    -- ein separater, direkt aus jedem SoC-Messwert gespeister Akkumulator
+    erfasst das vollstaendig, ohne die einzelnen Fahrtenbuch-Eintraege (dort
+    bewusst NUR Fahranteil, siehe deren eigene Verwendung z.B. fuer den
+    Fahrverbrauchs-Schnitt) zu verfaelschen.
+
+    Symmetrische Rauschtoleranz wie ChargeDetector._peak_soc-Tracking
+    (bewusst derselbe `noise`-Wert, siehe CONF_NOISE): `reference_soc` ist
+    der zuletzt BESTAETIGTE Pegel. Ein neuer Wert innerhalb `noise_pct`
+    darum wird ignoriert (weder Verbrauch gebucht noch reference bewegt) --
+    mehrere kleine Rauschschritte in dieselbe Richtung summieren sich daher
+    trotzdem korrekt auf, sobald sie zusammen `noise_pct` uebersteigen,
+    statt bei jedem einzelnen Tick einzeln verworfen zu werden. Ein
+    bestaetigter ANSTIEG (> reference_soc + noise_pct, jede Ladung
+    unabhaengig vom Ort) hebt die reference sofort an, ohne Verbrauch zu
+    buchen. Ein bestaetigter RUECKGANG (< reference_soc - noise_pct) bucht
+    die volle Differenz zur alten reference als Verbrauch und senkt die
+    reference auf den neuen Wert ab.
+
+    `reference_soc=None` (allererster Aufruf, z.B. nach Einrichtung/Neustart
+    ohne persistierten Zustand) initialisiert nur, ohne etwas zu buchen --
+    ohne Referenzpunkt gibt es nichts zu vergleichen.
+
+    Liefert (neue reference_soc, in diesem Schritt gebuchte kWh). Bewusst
+    OHNE Schutz gegen einzelne unplausible SoC-Ausreisser (z.B. ein
+    kurzzeitiger Sensor-Glitch auf einen viel zu niedrigen Wert) -- anders
+    als ChargeDetector._update_idle() fuer Ladungsstart-Erkennung gibt es
+    hier keine Plausibilitaets-Gegenprobe; ein Ausreisser wuerde einmalig
+    als (falscher) Verbrauch gebucht und beim naechsten normalen Messwert
+    als (ebenso falscher) Anstieg wieder ausgeglichen -- kein dauerhafter
+    Schaden, aber ein kurzzeitig verzerrter Tageswert ist moeglich."""
+    if reference_soc is None:
+        return new_soc, 0.0
+    if new_soc > reference_soc + noise_pct:
+        return new_soc, 0.0
+    if new_soc < reference_soc - noise_pct:
+        drop = reference_soc - new_soc
+        return new_soc, round(drop / 100.0 * usable_kwh, 4)
+    return reference_soc, 0.0
+
+
 def house_weekday_usage_profile(weekday_kwh_totals: dict, weekday_day_counts: dict) -> Optional[dict]:
     """Durchschnittlicher Haus-Verbrauch (inkl. optionaler Speicherladung, je
     nachdem was in weekday_kwh_totals einfliesst -- siehe coordinator.py::

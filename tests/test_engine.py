@@ -60,6 +60,7 @@ from engine import (
     trip_discharge_pct,
     trip_weekday_kwh_parts,
     update_period_baseline,
+    vehicle_discharge_update,
     wartung_festes_datum_fortschreiben,
     wartung_status,
     wartung_uebersicht,
@@ -1004,6 +1005,52 @@ def test_house_weekday_usage_profile_unbeobachtete_wochentage_fehlen_statt_null(
     assert result == {0: 10.0}
     assert 1 not in result
     assert 6 not in result
+
+
+# ----- vehicle_discharge_update: Live-SoC-Ratchet fuer Gesamt-Netto-Verbrauch --
+
+def test_vehicle_discharge_update_erster_aufruf_initialisiert_ohne_buchung():
+    new_ref, kwh = vehicle_discharge_update(None, 84.0, usable_kwh=50.0, noise_pct=0.5)
+    assert new_ref == 84.0
+    assert kwh == 0.0
+
+
+def test_vehicle_discharge_update_bestaetigter_rueckgang_bucht_differenz():
+    new_ref, kwh = vehicle_discharge_update(84.0, 82.0, usable_kwh=50.0, noise_pct=0.5)
+    assert new_ref == 82.0
+    assert kwh == 1.0  # 2% von 50 kWh
+
+
+def test_vehicle_discharge_update_bestaetigter_anstieg_hebt_referenz_ohne_buchung():
+    new_ref, kwh = vehicle_discharge_update(82.0, 90.0, usable_kwh=50.0, noise_pct=0.5)
+    assert new_ref == 90.0
+    assert kwh == 0.0
+
+
+def test_vehicle_discharge_update_innerhalb_rauschtoleranz_bleibt_referenz_unveraendert():
+    new_ref, kwh = vehicle_discharge_update(84.0, 83.7, usable_kwh=50.0, noise_pct=0.5)
+    assert new_ref == 84.0
+    assert kwh == 0.0
+
+
+def test_vehicle_discharge_update_kleine_schritte_summieren_sich_ueber_rauschschwelle():
+    """Mehrere Schritte je innerhalb der Rauschtoleranz duerfen sich NICHT
+    gegenseitig 'verlieren' -- die Referenz bleibt beim urspruenglichen
+    Hochpunkt stehen, bis die kumulierte Differenz noise_pct uebersteigt."""
+    ref, kwh1 = vehicle_discharge_update(84.0, 83.7, usable_kwh=50.0, noise_pct=0.5)
+    assert kwh1 == 0.0
+    ref, kwh2 = vehicle_discharge_update(ref, 83.6, usable_kwh=50.0, noise_pct=0.5)
+    assert kwh2 == 0.0
+    assert ref == 84.0  # weiterhin unveraendert, da 83.6 noch innerhalb 84 - 0.5
+    ref, kwh3 = vehicle_discharge_update(ref, 83.4, usable_kwh=50.0, noise_pct=0.5)
+    assert ref == 83.4
+    assert kwh3 == round(0.6 / 100.0 * 50.0, 4)  # volle 0,6% seit der alten Referenz 84.0
+
+
+def test_vehicle_discharge_update_genau_an_der_rauschschwelle_bucht_nicht():
+    new_ref, kwh = vehicle_discharge_update(84.0, 83.5, usable_kwh=50.0, noise_pct=0.5)
+    assert new_ref == 84.0
+    assert kwh == 0.0
 
 
 # ----- charge_cost: Fremdladungs-Gesamtkosten inkl. Start-/Blockiergebuehr --

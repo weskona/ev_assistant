@@ -192,6 +192,7 @@ from .engine import (
     trip_discharge_pct,
     trip_weekday_kwh_parts,
     update_period_baseline,
+    vehicle_discharge_update,
     wartung_festes_datum_fortschreiben,
     wartung_uebersicht,
     weekday_usage_profile_from_totals,
@@ -383,6 +384,25 @@ def _empty_data() -> dict:
         # 0.314.5) setzen minSoc nur noch ueber das Fahrzeug, limitSoc aber
         # weiterhin wahlweise ueber Loadpoint oder Fahrzeug -- ein
         # gemeinsamer Scope fuer beide waere falsch.
+        #
+        # Live-SoC-Ratchet fuer den GESAMTEN Netto-Verbrauch (Fahren +
+        # Standby-Drain, siehe engine.vehicle_discharge_update()) -- eigene,
+        # von den Fahrtenbuch-Baselines unabhaengige Quelle fuers Nutzungs-
+        # profil der evcc-Steuerung (siehe _effective_vehicle_usage_
+        # profile()), da mehrere kurze Fahrten mit grob/verzoegert
+        # meldendem SoC sonst faelschlich 0 kWh Verbrauch zeigen (die
+        # tatsaechliche Aenderung wird oft erst zeitversetzt IM STAND
+        # gemeldet -- dort landet sie bei rein Fahrtenbuch-basierter
+        # Berechnung nirgends). "vehicle_discharge_reference_soc" bewusst
+        # NICHT vorbelegt: None bedeutet hier "noch nie initialisiert"
+        # (identisch zum Verhalten von vehicle_discharge_update() selbst),
+        # waehrend ein spaeter tatsaechlich erreichter SoC-Wert von None
+        # unterscheidbar bleiben muss.
+        "vehicle_discharge_reference_soc": None,
+        "vehicle_discharge_kwh_total": 0.0,
+        "vehicle_discharge_periods": {},
+        "vehicle_discharge_weekday_kwh_totals": {},
+        "vehicle_discharge_weekday_day_counts": {},
     }
 
 
@@ -1074,7 +1094,32 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self._soc = float(raw)
         except (ValueError, TypeError):
             return
+        self._update_vehicle_discharge(self._soc)
         self.hass.async_create_task(self._run_detection())
+
+    def _update_vehicle_discharge(self, new_soc: float) -> None:
+        """Fuettert JEDEN neuen SoC-Messwert in den Live-Ratchet (siehe
+        engine.vehicle_discharge_update()) -- bewusst bei jeder Aenderung,
+        nicht nur periodisch, damit auch kurze Standby-Rueckgaenge zwischen
+        zwei Fahrten erfasst werden (siehe dortigen Docstring). Nutzt
+        denselben CONF_NOISE-Wert wie ChargeDetector, da beide dieselbe
+        Sensor-Rauschcharakteristik ausgleichen. _save_soon() statt
+        sofortigem Speichern -- diese Methode kann bei manchen Fahrzeugen
+        sehr haeufig feuern, ein Speichern bei jedem einzelnen Tick waere
+        unnoetiger IO (ein Neustart zwischen zwei Speicherpunkten verliert
+        im schlimmsten Fall einen kleinen, bereits verworfenen
+        Rausch-Zwischenstand, nie gebuchte kWh -- die stehen erst NACH
+        einem erfolgreichen Update in self.data, siehe unten)."""
+        usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+        noise = float(self._opt(CONF_NOISE, DEFAULT_NOISE))
+        reference = self.data.get("vehicle_discharge_reference_soc")
+        new_reference, kwh = vehicle_discharge_update(reference, new_soc, usable_kwh, noise)
+        self.data["vehicle_discharge_reference_soc"] = new_reference
+        if kwh > 0:
+            self.data["vehicle_discharge_kwh_total"] = round(
+                self.data.get("vehicle_discharge_kwh_total", 0.0) + kwh, 4
+            )
+        self._save_soon()
 
     @callback
     def _set_home(self, raw) -> None:
@@ -1316,6 +1361,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.hass.async_create_task(self._daily_cost_period_rollover())
         self.hass.async_create_task(self._daily_kwh_period_rollover())
         self.hass.async_create_task(self._async_daily_house_period_rollover())
+        self.hass.async_create_task(self._async_daily_vehicle_discharge_period_rollover())
         self.hass.async_create_task(self._async_truncate_lifetime_lists())
         # Zusaetzlich zu _set_odo() (das nur bei neuer Kilometerstand-Meldung
         # feuert, siehe dort): ein rein zeitbasiertes Wartungskriterium kann
@@ -1427,6 +1473,18 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Hausverbrauch-Zaehlerstand allein loest sonst keinen Rollover aus,
         da er nicht ueber einen HA-State-Change-Listener beobachtet wird)."""
         self._update_house_usage_profile()
+        self.async_set_updated_data(self.data)
+        self._save_soon()
+
+    async def _async_daily_vehicle_discharge_period_rollover(self) -> None:
+        """Rollt die Live-SoC-Nutzungsprofil-Tages-Baseline (siehe
+        _update_vehicle_discharge_profile()) taeglich -- analog
+        _async_daily_house_period_rollover(). Anders als dort loest der
+        zugrundeliegende Zaehler (vehicle_discharge_kwh_total) zwar bereits
+        bei jedem SoC-Tick aus (siehe _update_vehicle_discharge()), aber nur
+        dieser taegliche Rollover schreibt den abgeschlossenen Vortag
+        tatsaechlich in die Wochentags-Eimer fort."""
+        self._update_vehicle_discharge_profile()
         self.async_set_updated_data(self.data)
         self._save_soon()
 
@@ -4199,18 +4257,103 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         used_today = self._house_kwh_used_today() or 0.0
         return remaining_today_kwh(avg_today, used_today)
 
+    def _update_vehicle_discharge_profile(self) -> None:
+        """Taeglicher Rollover-Hook (aufgerufen aus _daily_lts_refresh(),
+        analog _update_house_usage_profile()) fuers Live-SoC-Nutzungsprofil
+        (siehe _update_vehicle_discharge()/engine.vehicle_discharge_update()).
+        Nutzt dieselbe update_period_baseline()-Mechanik wie house_periods --
+        eigenes Feld "vehicle_discharge_periods", nur die "day"-Periode wird
+        gebraucht. Anders als beim Haus-Pendant gibt es hier KEINEN
+        "Zaehler nicht konfiguriert"-Fall (vehicle_discharge_kwh_total wird
+        immer gefuehrt, sobald ueberhaupt ein SoC-Sensor konfiguriert ist --
+        das ist ohnehin Pflicht, siehe Schritt 1), daher kein fruehes
+        return."""
+        value = self.data.get("vehicle_discharge_kwh_total", 0.0)
+        periods = self.data.get("vehicle_discharge_periods") or {}
+        old_entry = periods.get("day")
+        key = self._period_keys()["day"]
+        new_periods = update_period_baseline(periods, {"day": key}, value, "kwh")
+        self.data["vehicle_discharge_periods"] = new_periods
+        new_entry = new_periods["day"]
+        if old_entry is not None and old_entry.get("key") != key and "prev" in new_entry:
+            yesterday_wd = (dt_util.now().date() - timedelta(days=1)).weekday()
+            totals = dict(self.data.get("vehicle_discharge_weekday_kwh_totals") or {})
+            counts = dict(self.data.get("vehicle_discharge_weekday_day_counts") or {})
+            wd_key = str(yesterday_wd)
+            totals[wd_key] = round(totals.get(wd_key, 0.0) + new_entry["prev"], 2)
+            counts[wd_key] = counts.get(wd_key, 0) + 1
+            self.data["vehicle_discharge_weekday_kwh_totals"] = totals
+            self.data["vehicle_discharge_weekday_day_counts"] = counts
+
+    def _vehicle_discharge_kwh_used_today(self) -> Optional[float]:
+        """Analog _house_kwh_used_today(), fuers Fahrzeug: aktueller
+        vehicle_discharge_kwh_total-Stand minus Tages-Baseline. None ohne
+        gesetzte Baseline (z.B. direkt nach dem Update auf diese Version,
+        vor dem ersten taeglichen Rollover) -- der Aufrufer
+        (_evcc_mode_targets()) faellt dann auf die aeltere, Fahrtenbuch-
+        basierte _kwh_used_today() zurueck."""
+        day_entry = (self.data.get("vehicle_discharge_periods") or {}).get("day")
+        if not day_entry:
+            return None
+        used = self.data.get("vehicle_discharge_kwh_total", 0.0) - day_entry["kwh"]
+        return round(used, 2) if used >= 0 else None
+
+    def vehicle_discharge_usage_profile(self) -> Optional[dict]:
+        """Oeffentliches Pendant zu usage_profile()/house_usage_profile(),
+        aus dem Live-SoC-Ratchet statt dem Fahrtenbuch (siehe
+        engine.vehicle_discharge_update()) -- erfasst Fahr- UND
+        Standby-Verbrauch gemeinsam, im Gegensatz zu usage_profile() (nur
+        waehrend erkannter Fahrten). Wird in _effective_vehicle_usage_
+        profile() mit usage_profile() zusammengefuehrt (siehe dort); nicht
+        direkt in _evcc_mode_targets() verwendet. None ohne einen einzigen
+        beobachteten Wochentag (z.B. direkt nach dem Update auf diese
+        Version)."""
+        return house_weekday_usage_profile(
+            self.data.get("vehicle_discharge_weekday_kwh_totals") or {},
+            self.data.get("vehicle_discharge_weekday_day_counts") or {},
+        )
+
+    def _effective_vehicle_usage_profile(self) -> Optional[dict]:
+        """Nutzungsprofil fuer _evcc_mode_targets(): je Wochentag bevorzugt
+        vehicle_discharge_usage_profile() (vollstaendiger, siehe dort), faellt
+        aber je Wochentag EINZELN auf usage_profile() (Fahrtenbuch-basiert)
+        zurueck, solange fuer diesen Wochentag noch keine Live-SoC-Daten
+        vorliegen -- ohne diesen Fallback wuerde die evcc-Steuerung direkt
+        nach dem Update auf diese Version fuer JEDEN Wochentag 0 kWh Bedarf
+        annehmen (das neue Profil startet leer, siehe dortigen Docstring),
+        bis sich der Live-Tracker ueber die naechsten 1-2 Wochen wieder
+        vollstaendig aufgebaut hat -- eine sonst gefaehrliche Uebergangs-
+        Regression fuer bereits aktive Installationen. None nur, wenn
+        BEIDE Quellen nichts liefern."""
+        trip_profile = self.usage_profile()
+        discharge_profile = self.vehicle_discharge_usage_profile()
+        if trip_profile is None and discharge_profile is None:
+            return None
+        merged = dict(trip_profile or {})
+        merged.update(discharge_profile or {})
+        return merged
+
     def _evcc_mode_targets(self) -> Optional[dict]:
         """Berechnet Ziel-Modus + Min-/Ziel-SoC fuer die evcc-Schreib-
-        steuerung (siehe _async_apply_evcc_mode_control()). None, wenn
-        usage_profile()/available_kwh() fehlt (identische Vorbedingung wie
-        charge_before_pv_recommended())."""
-        profile = self.usage_profile()
+        steuerung (siehe _async_apply_evcc_mode_control()). Nutzt
+        _effective_vehicle_usage_profile() statt usage_profile() direkt --
+        siehe dort fuer die Bevorzugung des Live-SoC-basierten Profils (auch
+        Standby-Verbrauch) gegenueber dem reinen Fahrtenbuch-Profil, samt
+        Uebergangs-Fallback. Ebenso bevorzugt _vehicle_discharge_kwh_used_
+        today() gegenueber der aelteren, Odometer-basierten
+        _kwh_used_today(), aus demselben Grund. None, wenn kein Profil
+        (weder Live-SoC noch Fahrtenbuch) oder available_kwh() fehlt
+        (identische Vorbedingung wie charge_before_pv_recommended() fuer
+        Letzteres)."""
+        profile = self._effective_vehicle_usage_profile()
         available = self.available_kwh()
         if profile is None or available is None:
             return None
         today_wd = dt_util.now().date().weekday()
         tomorrow_wd = (dt_util.now().date() + timedelta(days=1)).weekday()
-        used_today = self._kwh_used_today() or 0.0
+        used_today = self._vehicle_discharge_kwh_used_today()
+        if used_today is None:
+            used_today = self._kwh_used_today() or 0.0
         rest_heute_roh = remaining_today_kwh(profile.get(today_wd, 0.0), used_today)
         pv_rest_heute_roh = self._pv_forecast_today_remaining_kwh() or 0.0
         # Die Haus-/Speicher-PV-Konkurrenz wird ZUERST von der PV-Prognose

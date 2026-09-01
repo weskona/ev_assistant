@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.76.0] - 2026-09-01
+
+### Added
+
+- **Live-SoC-based net discharge tracking for the automatic evcc mode/SoC control**: the usage profile feeding `evcc_mode_control` (see 0.75.0) previously derived its weekday kWh averages purely from confirmed trip-log entries — each trip's own `delta_soc`. For vehicles that only report SoC in coarse whole-percent steps, several short trips in a row often show 0% delta each (too little real discharge to cross a full percentage point within one trip), while the eventual real drop gets reported later, while the car is parked between trips — landing in no trip record at all and silently disappearing from the profile entirely. A new live SoC ratchet (`vehicle_discharge_update()`, same noise tolerance as the existing charge-detection state machine, reusing `noise` from step 5) tracks the vehicle's total net discharge continuously — driving *and* standby drain alike — independent of individual trip records, so nothing gets lost between them. Trip-log entries and their own consumption figures (e.g. `Trip Log Avg Consumption`) are untouched — this only feeds the evcc control's own profile, per weekday, preferring the new live-tracked figure once available and falling back to the existing trip-based one meanwhile (no regression for the very first 1-2 weeks after upgrading, while the new tracker builds up its own history from scratch — it can't be backfilled, no historical SoC log exists to reconstruct from).
+
 ## [0.75.1] - 2026-09-01
 
 ### Added
