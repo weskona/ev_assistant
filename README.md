@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="custom_components/ev_assistant/brand/logo.png" alt="EV Assistant logo" width="400">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/custom_components/ev_assistant/brand/logo.png" alt="EV Assistant logo" width="400">
 </p>
 
 # EV Assistant

@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.76.1] - 2026-09-01
+
+### Changed
+
+- **Docs**: README logo switched from a relative path to the repo's absolute raw-GitHub URL — HACS and some embedded README viewers render outside the GitHub repo context, where the relative path (`custom_components/ev_assistant/brand/logo.png`) resolved to nothing and the image was simply missing. The absolute URL renders everywhere.
+
 ## [0.76.0] - 2026-09-01
 
 ### Added
