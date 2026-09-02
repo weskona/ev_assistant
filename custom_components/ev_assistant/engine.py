@@ -1061,6 +1061,45 @@ def house_weekday_usage_profile(weekday_kwh_totals: dict, weekday_day_counts: di
     return result or None
 
 
+def clamp_weekday_contribution(
+    kind: str,
+    value: float,
+    avg_kwh_for_weekday: Optional[float],
+    factor: float,
+    kwh_per_100km: Optional[float],
+) -> float:
+    """Automatische Ausreisser-Daempfung (siehe const.py::
+    OUTLIER_DAMPING_FACTOR) fuer EINEN Beitrag zu einem Wochentags-Profil-
+    Total -- daempft `value` auf hoechstens `factor * avg_kwh_for_weekday`
+    kWh-Aequivalent, damit ein einzelner extremer Tag/einzelne extreme
+    Fahrt den Wochentags-Schnitt nicht wochenlang verzerrt. Ohne
+    bestehenden Schnitt (None oder 0 -- Anlaufphase oder dieser Wochentag
+    noch nie beobachtet) KEIN Daempfen, `value` unveraendert -- es gibt
+    noch nichts, wogegen "extrem" beurteilt werden koennte.
+
+    `kind` ist "exact" (value bereits kWh) oder "est_km" (value roh km,
+    siehe trip_weekday_kwh_parts()) -- fuer den Schwellenvergleich wird
+    km ueber `kwh_per_100km` in ein kWh-Aequivalent umgerechnet;
+    ueberschreitet dieses die Schwelle, wird NUR der zurueckgegebene,
+    kind-native Wert proportional herunterskaliert -- die Einheit bleibt
+    unveraendert, der Aufrufer schreibt ihn unveraendert in sein
+    Total-Dict weiter. Ohne kwh_per_100km im "est_km"-Fall (noch keine
+    Fahrt mit beiden Werten fuer eine Umrechnung) KEIN Daempfen moeglich."""
+    if not avg_kwh_for_weekday:
+        return value
+    if kind == "exact":
+        equiv_kwh = value
+    else:
+        if not kwh_per_100km:
+            return value
+        equiv_kwh = value / 100.0 * kwh_per_100km
+    threshold_kwh = factor * avg_kwh_for_weekday
+    if equiv_kwh <= 0 or equiv_kwh <= threshold_kwh:
+        return value
+    scale = threshold_kwh / equiv_kwh
+    return round(value * scale, 4)
+
+
 def rolling_consumption_kwh_per_100km(
     fahrten: list, now_ts: float, window_days: float, min_km: float,
 ) -> Optional[float]:

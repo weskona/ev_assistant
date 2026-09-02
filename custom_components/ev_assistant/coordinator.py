@@ -69,6 +69,7 @@ from .const import (
     CONF_TRIP_AUTO_CONFIRM,
     CONF_TRIP_IDLE_TIMEOUT,
     CONF_TRIP_MIN_KM,
+    CONF_URLAUB_ENTITY,
     CONF_USABLE_KWH,
     CONF_USAGE_PROFILE_BUFFER_PCT,
     CONF_VEHICLE_HERSTELLER,
@@ -130,6 +131,7 @@ from .const import (
     NOTIFY_EVENT_TANKERKOENIG,
     NOTIFY_EVENT_WARTUNG,
     NOTIFY_TAG,
+    OUTLIER_DAMPING_FACTOR,
     STORAGE_KEY,
     STORAGE_VERSION,
     TEMP_BUCKET_BOUNDARIES,
@@ -166,6 +168,7 @@ from .engine import (
     charge_cost,
     charge_pct_of_history_entry,
     charging_location_breakdown,
+    clamp_weekday_contribution,
     consumption_by_temp_bucket_from_totals,
     determine_evcc_mode,
     equivalent_full_cycles_from_totals,
@@ -2272,12 +2275,45 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         ts = rec.get("start_ts")
         weekday_parts = trip_weekday_kwh_parts(rec)
         if weekday_parts is not None and ts is not None:
-            kind, value = weekday_parts
             weekday = dt_util.as_local(dt_util.utc_from_timestamp(ts)).date().weekday()
-            weekday_field = "weekday_kwh_exact_totals" if kind == "exact" else "weekday_km_est_totals"
-            weekday_totals = self.data.setdefault(weekday_field, {})
-            key = str(weekday)
-            weekday_totals[key] = round(weekday_totals.get(key, 0.0) + sign * value, 4)
+            # "weekday_applied" wird EINMALIG bei sign>0 (Buchung/Erst-
+            # Bestaetigung) ermittelt und auf dem Record eingefroren -- kind
+            # +Wert wie tatsaechlich verbucht (nach Urlaubsausschluss/
+            # Ausreisser-Daempfung, siehe _urlaub_aktiv()/
+            # clamp_weekday_contribution()). sign<0 (Loeschen/Edit-Rueck-
+            # nahme) liest diesen eingefrorenen Stand zurueck statt live neu
+            # zu ermitteln -- beide haengen von aktuell-veraenderlichem
+            # Zustand (Urlaubsschalter, aktueller Wochentags-Schnitt) ab,
+            # ohne das Einfrieren waere eine Ruecknahme nicht mehr exakt zu
+            # dem, was urspruenglich gebucht wurde. Records von VOR
+            # Einfuehrung dieses Felds (kein "weekday_applied"-Key) fallen
+            # bei sign<0 auf den rohen weekday_parts-Wert zurueck -- exakt
+            # das, was fuer sie damals unbedingt gebucht wurde.
+            if sign > 0:
+                urlaub = self._urlaub_aktiv()
+                rec["urlaub"] = urlaub
+                if urlaub:
+                    applied = None
+                else:
+                    kind, raw_value = weekday_parts
+                    avg_kwh = (self.usage_profile() or {}).get(weekday)
+                    applied_value = clamp_weekday_contribution(
+                        kind, raw_value, avg_kwh, OUTLIER_DAMPING_FACTOR,
+                        self._vehicle_avg_consumption_kwh_per_100km(),
+                    )
+                    applied = [kind, applied_value]
+                rec["weekday_applied"] = applied
+                effective = applied
+            elif "weekday_applied" in rec:
+                effective = rec.get("weekday_applied")
+            else:
+                effective = list(weekday_parts)
+            if effective is not None:
+                kind, value = effective
+                weekday_field = "weekday_kwh_exact_totals" if kind == "exact" else "weekday_km_est_totals"
+                weekday_totals = self.data.setdefault(weekday_field, {})
+                key = str(weekday)
+                weekday_totals[key] = round(weekday_totals.get(key, 0.0) + sign * value, 4)
         if sign > 0 and ts is not None:
             first_ts = self.data.get("fahrtenbuch_first_ts")
             if first_ts is None or ts < first_ts:
@@ -4165,6 +4201,22 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             value /= 1000.0
         return value
 
+    def _urlaub_aktiv(self) -> bool:
+        """Ob die optionale Urlaubs-Entitaet (CONF_URLAUB_ENTITY) gerade
+        "an" ist -- siehe const.py-Kommentar dort fuer die Wirkung
+        (Wochentags-Nutzungsprofile schliessen betroffene Tage aus, evcc-
+        Schreibsteuerung pausiert). Direktlesung wie _house_combined_
+        reading_kwh(), kein Listener noetig (keine reaktive Verarbeitung).
+        False ohne konfigurierte Entitaet, sowie bei unknown/unavailable/
+        fehlendem State (fail-safe: im Zweifel normal buchen/steuern)."""
+        entity_id = self._opt(CONF_URLAUB_ENTITY)
+        if not entity_id:
+            return False
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in _INVALID:
+            return False
+        return state.state.lower() == "on"
+
     def _house_combined_reading_kwh(self) -> Optional[float]:
         """Kombinierter kumulativer Zaehlerstand (Hausverbrauch + optionale
         Speicherladung) -- eine Quelle fuer sowohl die Tages-Baseline (siehe
@@ -4213,11 +4265,24 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["house_periods"] = new_periods
         new_entry = new_periods["day"]
         if old_entry is not None and old_entry.get("key") != key and "prev" in new_entry:
+            # Bei aktivem Urlaub (siehe _urlaub_aktiv()) wird der abge-
+            # schlossene GESTERN-Tag GAR NICHT gebucht (weder Total noch
+            # Zaehler) statt als 0 kWh gezaehlt -- sonst wuerde ein
+            # Urlaubstag den Schnitt kuenstlich nach unten ziehen. Kein
+            # Retro-Abzug noetig: der Rollover-Moment IST der Buchungs-
+            # zeitpunkt fuer diesen Tag, es gibt hier (anders als beim
+            # Fahrtenbuch) keine spaetere Korrektur/Loeschung.
+            if self._urlaub_aktiv():
+                return
             yesterday_wd = (dt_util.now().date() - timedelta(days=1)).weekday()
             totals = dict(self.data.get("house_weekday_kwh_totals") or {})
             counts = dict(self.data.get("house_weekday_day_counts") or {})
             wd_key = str(yesterday_wd)
-            totals[wd_key] = round(totals.get(wd_key, 0.0) + new_entry["prev"], 2)
+            avg_kwh = (house_weekday_usage_profile(totals, counts) or {}).get(yesterday_wd)
+            applied_value = clamp_weekday_contribution(
+                "exact", new_entry["prev"], avg_kwh, OUTLIER_DAMPING_FACTOR, None
+            )
+            totals[wd_key] = round(totals.get(wd_key, 0.0) + applied_value, 2)
             counts[wd_key] = counts.get(wd_key, 0) + 1
             self.data["house_weekday_kwh_totals"] = totals
             self.data["house_weekday_day_counts"] = counts
@@ -4292,11 +4357,19 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["vehicle_discharge_periods"] = new_periods
         new_entry = new_periods["day"]
         if old_entry is not None and old_entry.get("key") != key and "prev" in new_entry:
+            # Urlaub/Ausreisser-Daempfung: siehe identischer Kommentar in
+            # _update_house_usage_profile().
+            if self._urlaub_aktiv():
+                return
             yesterday_wd = (dt_util.now().date() - timedelta(days=1)).weekday()
             totals = dict(self.data.get("vehicle_discharge_weekday_kwh_totals") or {})
             counts = dict(self.data.get("vehicle_discharge_weekday_day_counts") or {})
             wd_key = str(yesterday_wd)
-            totals[wd_key] = round(totals.get(wd_key, 0.0) + new_entry["prev"], 2)
+            avg_kwh = (house_weekday_usage_profile(totals, counts) or {}).get(yesterday_wd)
+            applied_value = clamp_weekday_contribution(
+                "exact", new_entry["prev"], avg_kwh, OUTLIER_DAMPING_FACTOR, None
+            )
+            totals[wd_key] = round(totals.get(wd_key, 0.0) + applied_value, 2)
             counts[wd_key] = counts.get(wd_key, 0) + 1
             self.data["vehicle_discharge_weekday_kwh_totals"] = totals
             self.data["vehicle_discharge_weekday_day_counts"] = counts
@@ -4488,6 +4561,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if not self._opt(CONF_EVCC_MODE_CONTROL_ENABLED, DEFAULT_EVCC_MODE_CONTROL_ENABLED):
             return
         if self._evcc_client is None:
+            return
+        if self._urlaub_aktiv():
+            # Steuerung pausiert waehrend Urlaub -- kein neues now/minpv
+            # erzwingen, bestehender evcc-/manueller Zustand bleibt
+            # unangetastet (siehe CONF_URLAUB_ENTITY-Kommentar in const.py).
             return
         targets = self._evcc_mode_targets()
         if targets is None:

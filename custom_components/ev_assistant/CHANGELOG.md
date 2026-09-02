@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.78.0] - 2026-09-02
+
+### Added
+
+- **Optional vacation mode (`urlaub_entity`)**: a new optional entity picker (`input_boolean`/`switch`/`binary_sensor`) in the evcc & Wallbox step (setup and options flow) that, while "on", excludes affected days entirely — not counted as zero — from all three weekday usage-profile sources: the trip-log-based profile, the live-SoC discharge profile (0.76.0), and the house usage profile (0.75.0). Exclusion happens at booking time and is frozen on the trip record for later delete/edit, so it can't drift depending on when the vacation switch is toggled afterwards. While active, the automatic evcc mode/SoC control (0.75.0) pauses entirely — no new `now`/`minpv` gets forced, whatever evcc or manual state was already in place stays untouched. The `evcc_mode_control` diagnostic sensor now always exposes an `urlaub_aktiv` attribute (independent of whether the control feature itself is enabled), and the Usage Profile tab shows a small "Urlaub" badge while active. Off by default (no entity configured) — existing behavior is unchanged.
+- **Automatic outlier damping for the weekday usage profiles**: a single unusually high day (a one-off long trip, extra home consumption from a visitor, ...) no longer skews a weekday's average for weeks afterwards. Any contribution exceeding 3x the current average for that weekday is clamped down to exactly that multiple, applied consistently at all three ingestion points above. No effect during the initial ramp-up (no average yet for that weekday), and no user-facing setting — purely internal. For trip-log entries, the applied (possibly clamped) value is now frozen on the record itself, so deleting or editing a trip later reverses exactly what was originally booked instead of recomputing against a since-changed average.
+
 ## [0.77.0] - 2026-09-02
 
 ### Changed

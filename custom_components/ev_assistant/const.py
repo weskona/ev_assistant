@@ -31,6 +31,17 @@ CONF_WALLBOX_ENERGY_TEMPLATE = "wallbox_energy_template"
 # haengt direkt am PV-/Netz-Pfad) -- rein additiv-optional.
 CONF_HOME_CONSUMPTION_ENTITY = "home_consumption_entity"
 CONF_BATTERY_CHARGE_ENTITY = "battery_charge_entity"
+# Optional: Entitaet (input_boolean/switch/binary_sensor), die "an" waehrend
+# Urlaub/laengerer Abwesenheit anzeigt (siehe coordinator.py::
+# _urlaub_aktiv()). Betrifft NUR die Wochentags-Nutzungsprofile (Fahrzeug
+# UND Haus) -- waehrend aktiv werden betroffene Tage GANZ ausgeschlossen
+# (nicht als 0 gezaehlt) statt den Schnitt zu verzerren, und die evcc-
+# Modus-/SoC-Schreibsteuerung pausiert (kein neues now/minpv erzwungen,
+# bestehender evcc-/manueller Zustand bleibt unangetastet). Leer (Default)
+# = Feature komplett inaktiv, heutiges Verhalten unveraendert. Unknown/
+# unavailable wird als "nicht im Urlaub" behandelt (fail-safe, normal
+# buchen) -- siehe _urlaub_aktiv().
+CONF_URLAUB_ENTITY = "urlaub_entity"
 # Push-Benachrichtigungen: Zielgeraete (notify.*-Entitaeten der modernen,
 # entity-basierten Notify-Plattform statt der alten "notify.<service>"-
 # Aufrufe per Freitext) + welche Ereignisse ueberhaupt einen Push ausloesen
@@ -361,6 +372,14 @@ DEFAULT_EVCC_MODE_CONTROL_ENABLED = False
 # Puffer verhindern, dass ein einzelner ungewoehnlich verbrauchsstarker Tag
 # nach dem naechsten sofort wieder Netzladen erzwingt.
 EVCC_MODE_TARGET_DAYS = 2
+# Automatische Ausreisser-Daempfung (siehe engine.py::
+# clamp_weekday_contribution()) fuer alle drei Wochentags-Profil-
+# Buchungsstellen (Fahrtenbuch, Haus, Live-SoC-Fahrzeug) -- ein Beitrag,
+# der mehr als das Faktor-fache des bisherigen Schnitts fuer diesen
+# Wochentag betraegt, wird auf genau dieses Vielfache gekappt, statt den
+# Schnitt fuer Wochen zu verzerren. Ohne bestehenden Schnitt (Anlaufphase)
+# kein Daempfen -- siehe dort. Nutzer-unsichtbar, keine Config-Option.
+OUTLIER_DAMPING_FACTOR = 3.0
 # Deutscher Strommix-Durchschnitt (grobe Schaetzung, schwankt je nach Jahr/
 # Versorger/Tarif) -- Nutzer mit einer praeziseren Quelle (z.B. Oekostrom-
 # Vertrag) sollten den Wert anpassen.

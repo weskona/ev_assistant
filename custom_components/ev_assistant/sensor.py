@@ -1469,7 +1469,10 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
     sondern "was steuert ev_assistant gerade tatsaechlich an evcc". unknown,
     solange CONF_EVCC_MODE_CONTROL_ENABLED aus ist (Default) oder
     _evcc_mode_targets() mangels usage_profile()/available_kwh() nichts
-    liefert."""
+    liefert. Attribut "urlaub_aktiv" zeigt IMMER (auch bei unknown-Value)
+    den Urlaubsmodus-Status -- waehrend aktiv liefert der Sensor weiterhin
+    die rechnerische Empfehlung, es wird aber NICHTS mehr tatsaechlich an
+    evcc geschrieben (siehe _async_apply_evcc_mode_control())."""
 
     _attr_translation_key = "evcc_mode_control"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -1490,12 +1493,20 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
+        # "urlaub_aktiv" bewusst UNABHAENGIG von _enabled() -- der
+        # Urlaubsausschluss der Wochentags-Nutzungsprofile selbst (siehe
+        # coordinator.py::_apply_trip_baselines()/_update_house_usage_
+        # profile()/_update_vehicle_discharge_profile()) greift unabhaengig
+        # von CONF_EVCC_MODE_CONTROL_ENABLED -- das Panel soll den Status
+        # also auch ohne aktive evcc-Steuerung anzeigen koennen.
+        urlaub_aktiv = self.coordinator._urlaub_aktiv()
         if not self._enabled():
-            return {}
+            return {"urlaub_aktiv": urlaub_aktiv}
         targets = self.coordinator._evcc_mode_targets()
         if not targets:
-            return {}
+            return {"urlaub_aktiv": urlaub_aktiv}
         attrs = {
+            "urlaub_aktiv": urlaub_aktiv,
             "min_soc": targets["min_soc"],
             "target_soc": targets["target_soc"],
             "verfuegbare_kwh": targets["verfuegbare_kwh"],

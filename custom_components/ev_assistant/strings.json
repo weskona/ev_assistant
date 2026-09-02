@@ -27,11 +27,13 @@
         "data": {
           "evcc_host": "evcc-Adresse (z.B. http://192.168.178.1:7070)",
           "evcc_vehicle_name": "Fahrzeugname in evcc",
-          "home_entity": "Wallbox Ladeleistung"
+          "home_entity": "Wallbox Ladeleistung",
+          "urlaub_entity": "Urlaubs-Entität (optional)"
         },
         "data_description": {
           "evcc_host": "Optional — ohne sie bleiben Ladeleistung/Modus/Tarife/PV im Panel einfach leer, alles andere funktioniert unverändert weiter.",
-          "home_entity": "Nur ein Ja/Nein-Schwellwert (>0,1 kW = \"lädt gerade zuhause\") — kein Energie-Messwert und liefert nur Werte, während das Fahrzeug an dieser Wallbox hängt."
+          "home_entity": "Nur ein Ja/Nein-Schwellwert (>0,1 kW = \"lädt gerade zuhause\") — kein Energie-Messwert und liefert nur Werte, während das Fahrzeug an dieser Wallbox hängt.",
+          "urlaub_entity": "Optional, z.B. ein input_boolean/switch/binary_sensor \"an\" während Urlaub — betroffene Tage werden dann aus den Wochentags-Nutzungsprofilen (Fahrzeug & Haus) ausgeschlossen statt den Schnitt zu verzerren, und die evcc-Modus-/SoC-Steuerung pausiert."
         }
       },
       "evcc_loadpoint": {
@@ -162,7 +164,8 @@
           "evcc_mode_control_enabled": "evcc-Lademodus/-SoC automatisch nach Nutzungsprofil steuern",
           "pv_forecast_today_remaining_entity": "PV-Restprognose für heute (optional, beliebige sensor-Entität, z.B. Solcast \"Forecast Remaining Today\")",
           "home_consumption_entity": "Hausverbrauch (ohne Auto/Speicher)",
-          "battery_charge_entity": "Speicherladung (optional, falls nicht bereits im Hausverbrauch enthalten)"
+          "battery_charge_entity": "Speicherladung (optional, falls nicht bereits im Hausverbrauch enthalten)",
+          "urlaub_entity": "Urlaubs-Entität (optional)"
         },
         "data_description": {
           "evcc_host": "Optional — ohne sie bleiben Ladeleistung/Modus/Tarife/PV im Panel einfach leer, alles andere funktioniert unverändert weiter.",
@@ -170,7 +173,8 @@
           "evcc_mode_control_enabled": "Deaktiviert (Default): nur die bisherigen Anzeige-Empfehlungen (Nutzungsprofil-Tab, „Laden vor PV empfehlenswert“) bleiben unverändert bestehen. Aktiviert: evcc bekommt zusätzlich tatsächlich einen Lademodus (pv/minpv/now) sowie Min-/Ziel-SoC nach dem Nutzungsprofil geschrieben — nur bei tatsächlicher Änderung, ein manueller Eingriff in der evcc-UI bleibt also bis zur nächsten echten Empfehlungsänderung bestehen.",
           "pv_forecast_today_remaining_entity": "Optional, unabhängig von der PV-Ertragsprognose für morgen (Schritt 7) — nur relevant, wenn die evcc-Steuerung oben aktiviert ist.",
           "home_consumption_entity": "Optional, kumulativer Energiezähler (kWh) — nur relevant, wenn die evcc-Steuerung oben aktiviert ist. Ohne ihn wird die PV-Restprognose fälschlich komplett dem Auto zugerechnet.",
-          "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt."
+          "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
+          "urlaub_entity": "Optional, z.B. ein input_boolean/switch/binary_sensor \"an\" während Urlaub — betroffene Tage werden dann aus den Wochentags-Nutzungsprofilen (Fahrzeug & Haus) ausgeschlossen statt den Schnitt zu verzerren, und die evcc-Modus-/SoC-Steuerung pausiert."
         }
       },
       "evcc_loadpoint": {

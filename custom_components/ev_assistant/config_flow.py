@@ -55,6 +55,7 @@ from .const import (
     CONF_TRIP_AUTO_CONFIRM,
     CONF_TRIP_IDLE_TIMEOUT,
     CONF_TRIP_MIN_KM,
+    CONF_URLAUB_ENTITY,
     CONF_USABLE_KWH,
     CONF_USAGE_PROFILE_BUFFER_PCT,
     CONF_VEHICLE_HERSTELLER,
@@ -130,6 +131,9 @@ _HOME_CONSUMPTION_ENTITY = selector.EntitySelector(
 )
 _BATTERY_CHARGE_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor")
+)
+_URLAUB_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain=["input_boolean", "switch", "binary_sensor"])
 )
 _OUTSIDE_TEMP_ENTITY = selector.EntitySelector(
     # Kein device_class-Filter: weather.*-Entitaeten setzen "device_class"
@@ -236,7 +240,9 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
     automatische evcc-Modus-/SoC-Steuerung (siehe coordinator.py::
     _async_apply_evcc_mode_control(), Default aus) sowie deren optionales
     Haus-Nutzungsprofil (PV-Restprognose heute, Hausverbrauch, Speicher-
-    ladung)."""
+    ladung) und eine optionale Urlaubs-Entität (siehe coordinator.py::
+    _urlaub_aktiv() -- pausiert die Steuerung und schließt betroffene Tage
+    aus den Wochentags-Nutzungsprofilen aus)."""
     def sv(key):
         return {"suggested_value": cur.get(key)}
 
@@ -253,6 +259,7 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
         ): _PV_FORECAST_ENTITY,
         vol.Optional(CONF_HOME_CONSUMPTION_ENTITY, description=sv(CONF_HOME_CONSUMPTION_ENTITY)): _HOME_CONSUMPTION_ENTITY,
         vol.Optional(CONF_BATTERY_CHARGE_ENTITY, description=sv(CONF_BATTERY_CHARGE_ENTITY)): _BATTERY_CHARGE_ENTITY,
+        vol.Optional(CONF_URLAUB_ENTITY, description=sv(CONF_URLAUB_ENTITY)): _URLAUB_ENTITY,
     })
 
 

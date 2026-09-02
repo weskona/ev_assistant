@@ -1333,6 +1333,9 @@ class EVAssistantPanel extends HTMLElement {
       <div class="card">
         <div class="card-head">
           <span class="ic"><ha-icon icon="mdi:calendar-week"></ha-icon></span><h2>Nutzungsprofil</h2>
+          <span class="badge badge-urlaub hidden" id="profil-urlaub-badge" title="Urlaubsmodus aktiv — betroffene Tage werden aus den Profilen ausgeschlossen, die evcc-Steuerung pausiert">
+            <ha-icon icon="mdi:bag-suitcase"></ha-icon>Urlaub
+          </span>
         </div>
         <div class="profil-empty hidden" id="profil-empty">
           Noch nicht genug Fahrtenbuch-Historie (mindestens 7 Tage) für ein aussagekräftiges Nutzungsprofil.
@@ -1369,6 +1372,7 @@ class EVAssistantPanel extends HTMLElement {
     this._r = {
       profilEmpty:        q("#profil-empty"),
       profilContent:       q("#profil-content"),
+      profilUrlaubBadge:  q("#profil-urlaub-badge"),
       profilRecommendIcon: q("#profil-recommend-icon"),
       profilRecommendText: q("#profil-recommend-text"),
       profilAvailable:     q("#profil-available"),
@@ -1531,6 +1535,11 @@ class EVAssistantPanel extends HTMLElement {
   _updateProfil() {
     const r = this._r;
     if (!r.profilRecommendText) return;
+
+    const modeCtrlEid = this._eid("evcc_mode_control");
+    const modeCtrlState = modeCtrlEid ? this._hass.states[modeCtrlEid] : null;
+    const urlaubAktiv = !!(modeCtrlState && modeCtrlState.attributes && modeCtrlState.attributes.urlaub_aktiv);
+    if (r.profilUrlaubBadge) r.profilUrlaubBadge.classList.toggle("hidden", !urlaubAktiv);
 
     const profile = this._eid("usage_profile") ? this._hass.states[this._eid("usage_profile")] : null;
     const hasProfile = !!(profile && profile.attributes && profile.attributes.montag !== undefined);
@@ -5057,6 +5066,7 @@ class EVAssistantPanel extends HTMLElement {
       .badge { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; font-weight: 700; padding: 5px 12px; border-radius: 9999px; --mdc-icon-size: 14px; }
       .badge-ext  { background: #7c2d12; color: #fed7aa; border: 1px solid #9a3412; }
       .badge-trip { background: #1e3a5f; color: #bfdbfe; border: 1px solid #1d4ed8; }
+      .badge-urlaub { margin-left: auto; background: var(--bg-0); color: var(--ink-dim); border: 1px solid var(--line); }
       .kpi-row { display: flex; flex-wrap: wrap; gap: 12px 0; }
       .kpi     { flex: 1; min-width: 60px; text-align: center; }
       .kv      { font-size: 1.55rem; font-weight: 700; line-height: 1.1; }

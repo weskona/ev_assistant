@@ -30,6 +30,7 @@ from engine import (
     charge_cost,
     charge_pct_of_history_entry,
     charging_location_breakdown,
+    clamp_weekday_contribution,
     consumption_by_temp_bucket,
     consumption_by_temp_bucket_from_totals,
     determine_evcc_mode,
@@ -1051,6 +1052,48 @@ def test_vehicle_discharge_update_genau_an_der_rauschschwelle_bucht_nicht():
     new_ref, kwh = vehicle_discharge_update(84.0, 83.5, usable_kwh=50.0, noise_pct=0.5)
     assert new_ref == 84.0
     assert kwh == 0.0
+
+
+# ----- clamp_weekday_contribution: automatische Ausreisser-Daempfung ------
+
+def test_clamp_weekday_contribution_ohne_schnitt_kein_clamping():
+    assert clamp_weekday_contribution("exact", 100.0, None, factor=3.0, kwh_per_100km=None) == 100.0
+
+
+def test_clamp_weekday_contribution_schnitt_null_kein_clamping():
+    assert clamp_weekday_contribution("exact", 100.0, 0.0, factor=3.0, kwh_per_100km=None) == 100.0
+
+
+def test_clamp_weekday_contribution_exact_unter_schwelle_unveraendert():
+    result = clamp_weekday_contribution("exact", 20.0, avg_kwh_for_weekday=10.0, factor=3.0, kwh_per_100km=None)
+    assert result == 20.0
+
+
+def test_clamp_weekday_contribution_exact_genau_an_schwelle_kein_clamping():
+    result = clamp_weekday_contribution("exact", 30.0, avg_kwh_for_weekday=10.0, factor=3.0, kwh_per_100km=None)
+    assert result == 30.0
+
+
+def test_clamp_weekday_contribution_exact_ueber_schwelle_wird_gekappt():
+    result = clamp_weekday_contribution("exact", 60.0, avg_kwh_for_weekday=10.0, factor=3.0, kwh_per_100km=None)
+    assert result == 30.0  # 3x10 kWh Schwelle
+
+
+def test_clamp_weekday_contribution_est_km_unter_schwelle_unveraendert():
+    # 50 km * 20 kWh/100km = 10 kWh Aequivalent, Schwelle 3*10=30 kWh -> kein Clamp
+    result = clamp_weekday_contribution("est_km", 50.0, avg_kwh_for_weekday=10.0, factor=3.0, kwh_per_100km=20.0)
+    assert result == 50.0
+
+
+def test_clamp_weekday_contribution_est_km_ueber_schwelle_proportional_gekappt():
+    # 200 km * 20 kWh/100km = 40 kWh Aequivalent, Schwelle 3*10=30 kWh -> Faktor 30/40=0.75
+    result = clamp_weekday_contribution("est_km", 200.0, avg_kwh_for_weekday=10.0, factor=3.0, kwh_per_100km=20.0)
+    assert result == 150.0  # 200 * 0.75, Ergebnis bleibt in km, nicht kWh
+
+
+def test_clamp_weekday_contribution_est_km_ohne_kwh_per_100km_kein_clamping():
+    result = clamp_weekday_contribution("est_km", 500.0, avg_kwh_for_weekday=10.0, factor=3.0, kwh_per_100km=None)
+    assert result == 500.0
 
 
 # ----- charge_cost: Fremdladungs-Gesamtkosten inkl. Start-/Blockiergebuehr --
