@@ -450,6 +450,9 @@
       "house_usage_profile": {
         "name": "House Usage Profile"
       },
+      "vehicle_discharge_total": {
+        "name": "Live SoC Consumption Total"
+      },
       "usage_profile_tomorrow": {
         "name": "Usage Profile (Needed Tomorrow)"
       },

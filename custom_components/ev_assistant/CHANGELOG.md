@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.80.0] - 2026-09-07
+
+### Added
+
+- **New diagnostic sensor "Live SoC Consumption Total"** (`vehicle_discharge_total`): the live-SoC discharge tracker's lifetime accumulator (`vehicle_discharge_kwh_total`, see 0.76.0/0.79.0) was previously only visible by inspecting the integration's internal storage directly — no entity exposed it at all. Now surfaced as its own sensor, with the per-weekday averages (same data as the internal usage profile) plus the current reference SoC and any not-yet-confirmed drop candidate (`pending_soc`/`pending_since`, see 0.79.0's glitch-confirmation window) as attributes — useful to see live whether the tracker is currently holding back an unconfirmed reading instead of booking it.
+
 ## [0.79.0] - 2026-09-07
 
 ### Fixed

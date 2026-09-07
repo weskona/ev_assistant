@@ -84,6 +84,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         UsageProfileSensor(coordinator, entry),
         UsageProfileTomorrowSensor(coordinator, entry),
         HouseUsageProfileSensor(coordinator, entry),
+        VehicleDischargeSensor(coordinator, entry),
         AvailableKwhSensor(coordinator, entry),
         EvccModeControlSensor(coordinator, entry),
         WartungSensor(coordinator, entry),
@@ -1440,6 +1441,43 @@ class HouseUsageProfileSensor(EvAssistantEntity, SensorEntity):
         attrs = {wd_key: profile[wd] for wd, wd_key in enumerate(self._WEEKDAY_KEYS) if profile and wd in profile}
         attrs["konfiguriert"] = bool(self.coordinator._opt(CONF_HOME_CONSUMPTION_ENTITY))
         attrs["speicher_enthalten"] = self.coordinator.house_usage_profile_includes_battery()
+        return attrs
+
+
+class VehicleDischargeSensor(EvAssistantEntity, SensorEntity):
+    """Diagnose-Sensor fuer den Live-SoC-Ratchet (siehe engine.py::
+    vehicle_discharge_update()/coordinator.py::_update_vehicle_discharge())
+    -- macht den sonst rein internen Lebenszeit-Akkumulator
+    "vehicle_discharge_kwh_total" sowie den Bestaetigungsstatus eines noch
+    nicht gebuchten Rueckgangs-Kandidaten sichtbar (siehe
+    VEHICLE_DISCHARGE_CONFIRM_SECONDS -- Haertung gegen kurzzeitige,
+    stark abweichende SoC-Ausreisser, Produktionsvorfall 2026-09-02ff).
+    TOTAL statt TOTAL_INCREASING, da der Zaehler bei Bedarf manuell
+    zurueckgesetzt werden kann (analog EquivalentFullCyclesSensor)."""
+
+    _attr_translation_key = "vehicle_discharge_total"
+    _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:battery-clock"
+    _attr_suggested_display_precision = 2
+
+    _WEEKDAY_KEYS = ["montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag"]
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "vehicle_discharge_total")
+
+    @property
+    def native_value(self):
+        return self.coordinator.data.get("vehicle_discharge_kwh_total")
+
+    @property
+    def extra_state_attributes(self):
+        profile = self.coordinator.vehicle_discharge_usage_profile()
+        attrs = {wd_key: profile[wd] for wd, wd_key in enumerate(self._WEEKDAY_KEYS) if profile and wd in profile}
+        attrs["reference_soc"] = self.coordinator.data.get("vehicle_discharge_reference_soc")
+        attrs["pending_soc"] = self.coordinator.data.get("vehicle_discharge_pending_soc")
+        attrs["pending_since"] = self.coordinator.data.get("vehicle_discharge_pending_since")
         return attrs
 
 
