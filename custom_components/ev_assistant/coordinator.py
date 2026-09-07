@@ -1135,6 +1135,18 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Produktionsvorfall, der diese Haertung noetig gemacht hat) --
         "vehicle_discharge_pending_soc"/"_pending_since" muessen dafuer
         zwischen Aufrufen (und ueber Neustarts hinweg) persistieren.
+
+        Ein soeben bestaetigter Abfall wird SOFORT in den Wochentags-Eimer
+        gebucht (siehe _book_vehicle_discharge_weekday()) -- zugeordnet zum
+        Tag der ERSTEN Beobachtung (dem "pending_since" VOR diesem Aufruf,
+        siehe unten), nicht zum Tag der Bestaetigung. Grund: bei seltenen
+        Fahrzeug-Updates (z.B. Fahrzeug meldet sich stundenlang nicht) kann
+        die Bestaetigung tagelang verzoegert sein -- ohne diese Zuordnung
+        wuerde ein Montags-Abfall, der erst Donnerstag bestaetigt wird,
+        komplett dem Donnerstag zugeschlagen und das Wochentags-Profil waere
+        bedeutungslos (siehe _update_vehicle_discharge_profile(), das
+        seitdem NUR noch die Tageszaehler pflegt).
+
         _save_soon() statt sofortigem Speichern -- diese Methode kann bei
         manchen Fahrzeugen sehr haeufig feuern, ein Speichern bei jedem
         einzelnen Tick waere unnoetiger IO (ein Neustart zwischen zwei
@@ -1159,7 +1171,34 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self.data["vehicle_discharge_kwh_total"] = round(
                 self.data.get("vehicle_discharge_kwh_total", 0.0) + kwh, 4
             )
+            self._book_vehicle_discharge_weekday(kwh, pending_since)
         self._save_soon()
+
+    def _book_vehicle_discharge_weekday(self, kwh: float, observed_ts: float) -> None:
+        """Bucht eine soeben bestaetigte Live-SoC-kWh-Menge in den
+        Wochentags-Eimer des Tages, an dem der Abfall ZUERST beobachtet
+        wurde (`observed_ts`, siehe _update_vehicle_discharge()) -- nicht
+        des Tages der Bestaetigung. Urlaubsausschluss und Ausreisser-
+        Daempfung greifen HIER (am tatsaechlichen Buchungszeitpunkt),
+        analog _apply_trip_baselines(). Der Urlaubs-Check bezieht sich
+        bewusst auf den AKTUELLEN Zeitpunkt (keine historische Zustands-
+        abfrage moeglich, siehe _urlaub_aktiv()) -- in dem seltenen Fall,
+        dass der Urlaub erst NACH der ersten Beobachtung, aber VOR der
+        Bestaetigung beginnt, kann ein eigentlich normaler Tag faelschlich
+        ausgeschlossen werden; umgekehrt genauso. Kein Tages-Zaehler-
+        Inkrement hier -- das macht ausschliesslich der taegliche Rollover
+        (_update_vehicle_discharge_profile()), unabhaengig davon, ob/wann
+        an diesem Tag etwas bestaetigt wird."""
+        if self._urlaub_aktiv():
+            return
+        weekday = dt_util.as_local(dt_util.utc_from_timestamp(observed_ts)).date().weekday()
+        totals = dict(self.data.get("vehicle_discharge_weekday_kwh_totals") or {})
+        counts = self.data.get("vehicle_discharge_weekday_day_counts") or {}
+        wd_key = str(weekday)
+        avg_kwh = (house_weekday_usage_profile(totals, counts) or {}).get(weekday)
+        applied_value = clamp_weekday_contribution("exact", kwh, avg_kwh, OUTLIER_DAMPING_FACTOR, None)
+        totals[wd_key] = round(totals.get(wd_key, 0.0) + applied_value, 2)
+        self.data["vehicle_discharge_weekday_kwh_totals"] = totals
 
     @callback
     def _set_home(self, raw) -> None:
@@ -4365,11 +4404,23 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         (siehe _update_vehicle_discharge()/engine.vehicle_discharge_update()).
         Nutzt dieselbe update_period_baseline()-Mechanik wie house_periods --
         eigenes Feld "vehicle_discharge_periods", nur die "day"-Periode wird
-        gebraucht. Anders als beim Haus-Pendant gibt es hier KEINEN
+        gebraucht (bleibt Grundlage fuer _vehicle_discharge_kwh_used_
+        today()). Anders als beim Haus-Pendant gibt es hier KEINEN
         "Zaehler nicht konfiguriert"-Fall (vehicle_discharge_kwh_total wird
         immer gefuehrt, sobald ueberhaupt ein SoC-Sensor konfiguriert ist --
         das ist ohnehin Pflicht, siehe Schritt 1), daher kein fruehes
-        return."""
+        return.
+
+        Pflegt NUR NOCH den Tages-Zaehler je Wochentag (fuer den Mittelwert-
+        Nenner) -- die eigentliche kWh-Buchung passiert seit der
+        Bestaetigungs-Haertung (siehe VEHICLE_DISCHARGE_CONFIRM_SECONDS)
+        direkt bei _book_vehicle_discharge_weekday(), zugeordnet zum Tag
+        der ERSTEN Beobachtung statt zum Tag dieses Rollovers -- sonst
+        wuerde eine tagelang verzoegerte Bestaetigung dem falschen
+        Wochentag zugeschlagen (siehe dortiger Docstring). Der reine
+        Tageszaehler hier bleibt unabhaengig davon korrekt: "gestern" war
+        ein beobachteter Kalendertag, unabhaengig davon, ob/wann sein
+        Verbrauch bestaetigt wurde."""
         value = self.data.get("vehicle_discharge_kwh_total", 0.0)
         periods = self.data.get("vehicle_discharge_periods") or {}
         old_entry = periods.get("day")
@@ -4378,21 +4429,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["vehicle_discharge_periods"] = new_periods
         new_entry = new_periods["day"]
         if old_entry is not None and old_entry.get("key") != key and "prev" in new_entry:
-            # Urlaub/Ausreisser-Daempfung: siehe identischer Kommentar in
-            # _update_house_usage_profile().
+            # Urlaub: siehe identischer Kommentar in
+            # _update_house_usage_profile() -- ein Urlaubstag zaehlt gar
+            # nicht erst als beobachteter Tag, sonst wuerde er den Schnitt
+            # als "0 kWh Tag" trotzdem nach unten ziehen.
             if self._urlaub_aktiv():
                 return
             yesterday_wd = (dt_util.now().date() - timedelta(days=1)).weekday()
-            totals = dict(self.data.get("vehicle_discharge_weekday_kwh_totals") or {})
             counts = dict(self.data.get("vehicle_discharge_weekday_day_counts") or {})
             wd_key = str(yesterday_wd)
-            avg_kwh = (house_weekday_usage_profile(totals, counts) or {}).get(yesterday_wd)
-            applied_value = clamp_weekday_contribution(
-                "exact", new_entry["prev"], avg_kwh, OUTLIER_DAMPING_FACTOR, None
-            )
-            totals[wd_key] = round(totals.get(wd_key, 0.0) + applied_value, 2)
             counts[wd_key] = counts.get(wd_key, 0) + 1
-            self.data["vehicle_discharge_weekday_kwh_totals"] = totals
             self.data["vehicle_discharge_weekday_day_counts"] = counts
 
     def _vehicle_discharge_kwh_used_today(self) -> Optional[float]:

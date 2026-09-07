@@ -454,7 +454,12 @@ async def test_update_vehicle_discharge_profile_erster_aufruf_setzt_nur_baseline
     assert coordinator.data["vehicle_discharge_weekday_day_counts"] == {}
 
 
-async def test_update_vehicle_discharge_profile_rollover_fuellt_genau_einen_wochentags_eimer(hass, coordinators):
+async def test_update_vehicle_discharge_profile_rollover_zaehlt_nur_den_tag_keine_kwh(hass, coordinators):
+    """Seit der Bestaetigungs-Haertung (siehe VEHICLE_DISCHARGE_CONFIRM_
+    SECONDS) bucht der taegliche Rollover KEINE kWh mehr um -- das
+    passiert direkt bei Bestaetigung (siehe _book_vehicle_discharge_
+    weekday() in test_urlaub_ausreisser.py) -- sondern zaehlt nur noch
+    den beobachteten Kalendertag je Wochentag."""
     from datetime import timedelta
 
     from homeassistant.util import dt as dt_util
@@ -466,7 +471,7 @@ async def test_update_vehicle_discharge_profile_rollover_fuellt_genau_einen_woch
     coordinator.data["vehicle_discharge_periods"]["day"]["key"] = "ein-anderer-tag"
     coordinator.data["vehicle_discharge_kwh_total"] = 6.5
     coordinator._update_vehicle_discharge_profile()
-    assert coordinator.data["vehicle_discharge_weekday_kwh_totals"] == {str(yesterday_wd): 1.5}
+    assert coordinator.data["vehicle_discharge_weekday_kwh_totals"] == {}
     assert coordinator.data["vehicle_discharge_weekday_day_counts"] == {str(yesterday_wd): 1}
 
 

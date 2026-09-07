@@ -221,9 +221,16 @@ async def test_update_house_usage_profile_ausreisser_wird_gedaempft(hass, coordi
     assert coordinator.data["house_weekday_day_counts"][str(yesterday_wd)] == 3
 
 
-# ----- _update_vehicle_discharge_profile: analog, Urlaubsausschluss -------
+# ----- _update_vehicle_discharge_profile: nur noch Tageszaehler, Urlaub ---
+# Seit der Bestaetigungs-Haertung (VEHICLE_DISCHARGE_CONFIRM_SECONDS) bucht
+# der taegliche Rollover KEINE kWh mehr um -- das passiert direkt bei
+# Bestaetigung (siehe _book_vehicle_discharge_weekday() weiter unten),
+# zugeordnet zum Tag der ERSTEN Beobachtung statt zum Tag der Bestaetigung.
 
 async def test_update_vehicle_discharge_profile_urlaub_aktiv_schliesst_tag_aus(hass, coordinators):
+    """Der Tages-Zaehler (Nenner fuer den Schnitt) darf einen Urlaubstag
+    nicht mitzaehlen, sonst zoege er den Schnitt als "0 kWh Tag" trotzdem
+    nach unten."""
     from custom_components.ev_assistant.const import CONF_URLAUB_ENTITY
 
     coordinator, _ = await _make_coordinator(
@@ -236,8 +243,67 @@ async def test_update_vehicle_discharge_profile_urlaub_aktiv_schliesst_tag_aus(h
     hass.states.async_set("input_boolean.urlaub", "on")
     coordinator.data["vehicle_discharge_kwh_total"] = 115.0
     coordinator._update_vehicle_discharge_profile()
-    assert coordinator.data.get("vehicle_discharge_weekday_kwh_totals", {}) == {}
     assert coordinator.data.get("vehicle_discharge_weekday_day_counts", {}) == {}
+
+
+# ----- _book_vehicle_discharge_weekday: korrekte Zuordnung, Urlaub/Daempfung -
+
+async def test_book_vehicle_discharge_weekday_urlaub_aktiv_bucht_nicht(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_URLAUB_ENTITY
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "bvdw1", options={CONF_URLAUB_ENTITY: "input_boolean.urlaub"},
+    )
+    hass.states.async_set("input_boolean.urlaub", "on")
+    coordinator._book_vehicle_discharge_weekday(5.0, dt_util.now().timestamp())
+    assert coordinator.data.get("vehicle_discharge_weekday_kwh_totals", {}) == {}
+
+
+async def test_book_vehicle_discharge_weekday_ordnet_dem_tag_der_beobachtung_zu(hass, coordinators):
+    """Kernverhalten des Fixes: die Buchung muss dem Wochentag von
+    observed_ts folgen, nicht dem aktuellen (heutigen) Wochentag -- genau
+    das war vorher kaputt, wenn eine Bestaetigung tagelang verzoegert war
+    (siehe _update_vehicle_discharge()-Docstring)."""
+    coordinator, _ = await _make_coordinator(hass, coordinators, "bvdw2")
+    beobachtet_ts = dt_util.now().timestamp() - 3 * 86400  # garantiert ein anderer Wochentag
+    beobachtet_wd = dt_util.as_local(dt_util.utc_from_timestamp(beobachtet_ts)).date().weekday()
+    heute_wd = dt_util.now().date().weekday()
+    assert beobachtet_wd != heute_wd
+    coordinator._book_vehicle_discharge_weekday(5.0, beobachtet_ts)
+    assert coordinator.data["vehicle_discharge_weekday_kwh_totals"] == {str(beobachtet_wd): 5.0}
+
+
+async def test_book_vehicle_discharge_weekday_ausreisser_wird_gedaempft(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "bvdw3")
+    ts = dt_util.now().timestamp()
+    weekday = dt_util.now().date().weekday()
+    coordinator.data["vehicle_discharge_weekday_kwh_totals"] = {str(weekday): 20.0}
+    coordinator.data["vehicle_discharge_weekday_day_counts"] = {str(weekday): 2}
+    coordinator._book_vehicle_discharge_weekday(100.0, ts)  # 10x Schnitt (10 kWh)
+    assert coordinator.data["vehicle_discharge_weekday_kwh_totals"][str(weekday)] == 50.0  # 20 + 30 (gekappt)
+
+
+async def test_update_vehicle_discharge_end_to_end_verzoegerte_bestaetigung_landet_auf_richtigem_tag(hass, coordinators):
+    """Regressionstest fuer den eigentlichen Bug-Report: ein Abfall, der
+    an einem Tag beobachtet, aber erst Tage spaeter bestaetigt wird
+    (seltene Fahrzeug-Updates waehrend des Parkens), muss trotzdem dem
+    Wochentag der BEOBACHTUNG gutgeschrieben werden, nicht dem der
+    Bestaetigung."""
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "e2e1", options={CONF_USABLE_KWH: 50.0})
+    coordinator._update_vehicle_discharge(84.0)  # Referenz initialisieren
+    coordinator._update_vehicle_discharge(82.0)  # Abfall beobachtet (pending)
+    # Simuliert: der Abfall wurde vor 3 Tagen beobachtet, wird aber erst
+    # JETZT (jetziger Aufruf unten) bestaetigt.
+    coordinator.data["vehicle_discharge_pending_since"] -= 3 * 86400
+    beobachtet_ts = coordinator.data["vehicle_discharge_pending_since"]
+    beobachtet_wd = dt_util.as_local(dt_util.utc_from_timestamp(beobachtet_ts)).date().weekday()
+    heute_wd = dt_util.now().date().weekday()
+    assert beobachtet_wd != heute_wd  # Testvoraussetzung: 3 Tage verschieben den Wochentag garantiert
+    coordinator._update_vehicle_discharge(82.0)  # Bestaetigung "heute"
+    assert coordinator.data["vehicle_discharge_kwh_total"] == 1.0  # 2% von 50 kWh
+    assert coordinator.data["vehicle_discharge_weekday_kwh_totals"] == {str(beobachtet_wd): 1.0}
 
 
 # ----- _async_apply_evcc_mode_control: Urlaubs-Pause ------------------------

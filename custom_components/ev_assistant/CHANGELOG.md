@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.81.0] - 2026-09-07
+
+### Fixed
+
+- **Live-SoC discharge tracker could attribute a whole day's consumption to the wrong weekday**: the 0.79.0 confirmation-window fix (against sensor glitches) introduced a side effect — weekday attribution was still based on "what changed since the last daily rollover", but a confirmation can now be delayed for days (e.g. the vehicle simply not reporting while parked). A drop first observed on Monday but only confirmed on Thursday was being booked entirely onto Thursday, silently corrupting the whole point of a per-weekday profile. Booking now happens immediately at confirmation time, attributed to the weekday the drop was *first observed* (`pending_since`), not the weekday of the confirmation — mirroring how trip-log entries have always used their own start time rather than whenever they happen to get confirmed. The daily rollover itself now only maintains the per-weekday day-count (needed for the average's denominator); it no longer touches the kWh totals.
+
 ## [0.80.0] - 2026-09-07
 
 ### Added
