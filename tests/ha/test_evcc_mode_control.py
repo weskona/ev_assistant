@@ -362,27 +362,73 @@ async def test_update_vehicle_discharge_erster_aufruf_initialisiert_ohne_buchung
     assert coordinator.data["vehicle_discharge_kwh_total"] == 0.0
 
 
-async def test_update_vehicle_discharge_rueckgang_bucht_kwh(hass, coordinators):
+def _confirm_pending(coordinator, seconds=61.0):
+    """Testhilfe: laesst einen gerade gesetzten Rueckgangs-Kandidaten
+    (vehicle_discharge_pending_since) so weit in der Vergangenheit
+    erscheinen, dass der naechste _update_vehicle_discharge()-Aufruf mit
+    demselben Wert ihn als bestaetigt bucht -- ohne echte Wartezeit im
+    Test (siehe VEHICLE_DISCHARGE_CONFIRM_SECONDS)."""
+    coordinator.data["vehicle_discharge_pending_since"] -= seconds
+
+
+async def test_update_vehicle_discharge_einzelner_rueckgang_bucht_noch_nicht(hass, coordinators):
+    """Ein einzelner Rueckgang darf nicht sofort gebucht werden -- das ist
+    genau die Haertung gegen kurzzeitige SoC-Ausreisser."""
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "uvd2a", options={CONF_USABLE_KWH: 50.0})
+    coordinator._update_vehicle_discharge(84.0)
+    coordinator._update_vehicle_discharge(82.0)
+    assert coordinator.data["vehicle_discharge_reference_soc"] == 84.0
+    assert coordinator.data["vehicle_discharge_kwh_total"] == 0.0
+    assert coordinator.data["vehicle_discharge_pending_soc"] == 82.0
+
+
+async def test_update_vehicle_discharge_rueckgang_bucht_kwh_nach_bestaetigung(hass, coordinators):
     from custom_components.ev_assistant.const import CONF_USABLE_KWH
 
     coordinator, _ = await _make_coordinator(hass, coordinators, "uvd2", options={CONF_USABLE_KWH: 50.0})
     coordinator._update_vehicle_discharge(84.0)
     coordinator._update_vehicle_discharge(82.0)
+    _confirm_pending(coordinator)
+    coordinator._update_vehicle_discharge(82.0)
     assert coordinator.data["vehicle_discharge_reference_soc"] == 82.0
     assert coordinator.data["vehicle_discharge_kwh_total"] == 1.0  # 2% von 50 kWh
+    assert coordinator.data["vehicle_discharge_pending_soc"] is None
+
+
+async def test_update_vehicle_discharge_kurzer_ausreisser_wird_nicht_gebucht(hass, coordinators):
+    """Regressionstest fuer den Produktionsvorfall: ein SoC-Wert, der sich
+    im naechsten Messwert bereits wieder erholt hat, darf NIE gebucht
+    werden -- unabhaengig davon, wie lange spaeter der naechste Aufruf
+    kommt."""
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "uvd2b", options={CONF_USABLE_KWH: 50.0})
+    coordinator._update_vehicle_discharge(84.0)
+    coordinator._update_vehicle_discharge(37.0)  # kurzzeitiger Ausreisser
+    coordinator._update_vehicle_discharge(84.0)  # Erholung im naechsten Messwert
+    assert coordinator.data["vehicle_discharge_reference_soc"] == 84.0
+    assert coordinator.data["vehicle_discharge_kwh_total"] == 0.0
+    assert coordinator.data["vehicle_discharge_pending_soc"] is None
 
 
 async def test_update_vehicle_discharge_standby_zwischen_kurzfahrten_wird_erfasst(hass, coordinators):
     """Regression fuer den Ausloeser dieses Features: mehrere kurze Fahrten
     ohne SoC-Delta (grob meldender Sensor), aber ein echter Rueckgang WAEHREND
     der Standzeit dazwischen -- muss trotzdem im Akkumulator landen, auch
-    wenn er in keiner einzelnen Fahrt als delta_soc auftaucht."""
+    wenn er in keiner einzelnen Fahrt als delta_soc auftaucht (jeweils nach
+    Bestaetigung, siehe VEHICLE_DISCHARGE_CONFIRM_SECONDS)."""
     from custom_components.ev_assistant.const import CONF_USABLE_KWH
 
     coordinator, _ = await _make_coordinator(hass, coordinators, "uvd3", options={CONF_USABLE_KWH: 50.0})
     coordinator._update_vehicle_discharge(86.0)  # Fahrt 1 Start
-    coordinator._update_vehicle_discharge(85.0)  # Fahrt 1 Ende (0.5 kWh gebucht)
-    coordinator._update_vehicle_discharge(84.0)  # Standby-Rueckgang (weitere 0.5 kWh)
+    coordinator._update_vehicle_discharge(85.0)  # Fahrt 1 Ende (Kandidat)
+    _confirm_pending(coordinator)
+    coordinator._update_vehicle_discharge(85.0)  # bestaetigt: 0.5 kWh gebucht
+    coordinator._update_vehicle_discharge(84.0)  # Standby-Rueckgang (Kandidat)
+    _confirm_pending(coordinator)
+    coordinator._update_vehicle_discharge(84.0)  # bestaetigt: weitere 0.5 kWh
     coordinator._update_vehicle_discharge(84.0)  # Fahrt 2 Start/Ende (kein Delta)
     assert coordinator.data["vehicle_discharge_kwh_total"] == 1.0
 

@@ -1009,47 +1009,176 @@ def test_house_weekday_usage_profile_unbeobachtete_wochentage_fehlen_statt_null(
 
 
 # ----- vehicle_discharge_update: Live-SoC-Ratchet fuer Gesamt-Netto-Verbrauch --
+# Ein Rueckgang wird erst gebucht, wenn ein zweiter, naher Messwert nach
+# mindestens confirm_seconds folgt -- Schutz gegen kurzzeitige, stark
+# abweichende SoC-Ausreisser (siehe Docstring/Produktionsvorfall).
 
 def test_vehicle_discharge_update_erster_aufruf_initialisiert_ohne_buchung():
-    new_ref, kwh = vehicle_discharge_update(None, 84.0, usable_kwh=50.0, noise_pct=0.5)
+    new_ref, kwh, pending, pending_since = vehicle_discharge_update(
+        None, 84.0, usable_kwh=50.0, noise_pct=0.5, ts=0.0,
+        pending_soc=None, pending_since=None, confirm_seconds=60.0,
+    )
     assert new_ref == 84.0
     assert kwh == 0.0
+    assert pending is None
+    assert pending_since is None
 
 
-def test_vehicle_discharge_update_bestaetigter_rueckgang_bucht_differenz():
-    new_ref, kwh = vehicle_discharge_update(84.0, 82.0, usable_kwh=50.0, noise_pct=0.5)
-    assert new_ref == 82.0
-    assert kwh == 1.0  # 2% von 50 kWh
+def test_vehicle_discharge_update_einzelner_abfall_bucht_noch_nicht():
+    """Ein einzelner, noch unbestaetigter Abfall darf NICHT sofort gebucht
+    werden -- genau das war die Luecke, die kurze Sensor-Ausreisser (in der
+    Praxis beobachtet: ein SoC-Sprung 68% -> 37% fuer 2 Sekunden) dauerhaft
+    als echten Verbrauch einbrannte."""
+    new_ref, kwh, pending, pending_since = vehicle_discharge_update(
+        84.0, 82.0, usable_kwh=50.0, noise_pct=0.5, ts=100.0,
+        pending_soc=None, pending_since=None, confirm_seconds=60.0,
+    )
+    assert new_ref == 84.0  # Referenz bleibt unveraendert, bis bestaetigt
+    assert kwh == 0.0
+    assert pending == 82.0
+    assert pending_since == 100.0
+
+
+def test_vehicle_discharge_update_kurzer_ausreisser_erholt_sich_wird_verworfen():
+    """Der Sensor faellt kurz auf 82.0 (Kandidat), erholt sich aber im
+    naechsten Messwert wieder auf 84.0 -- der Kandidat wird verworfen,
+    nichts wird gebucht."""
+    ref, kwh1, pending, pending_since = vehicle_discharge_update(
+        84.0, 82.0, usable_kwh=50.0, noise_pct=0.5, ts=100.0,
+        pending_soc=None, pending_since=None, confirm_seconds=60.0,
+    )
+    assert kwh1 == 0.0
+    ref, kwh2, pending, pending_since = vehicle_discharge_update(
+        ref, 84.0, usable_kwh=50.0, noise_pct=0.5, ts=101.0,
+        pending_soc=pending, pending_since=pending_since, confirm_seconds=60.0,
+    )
+    assert ref == 84.0
+    assert kwh2 == 0.0
+    assert pending is None
+    assert pending_since is None
+
+
+def test_vehicle_discharge_update_bestaetigter_rueckgang_nach_confirm_seconds_bucht_differenz():
+    ref, kwh1, pending, pending_since = vehicle_discharge_update(
+        84.0, 82.0, usable_kwh=50.0, noise_pct=0.5, ts=0.0,
+        pending_soc=None, pending_since=None, confirm_seconds=60.0,
+    )
+    assert kwh1 == 0.0  # noch nicht bestaetigt
+    ref, kwh2, pending, pending_since = vehicle_discharge_update(
+        ref, 82.0, usable_kwh=50.0, noise_pct=0.5, ts=60.0,
+        pending_soc=pending, pending_since=pending_since, confirm_seconds=60.0,
+    )
+    assert ref == 82.0
+    assert kwh2 == 1.0  # 2% von 50 kWh
+    assert pending is None
+    assert pending_since is None
+
+
+def test_vehicle_discharge_update_bestaetigung_vor_confirm_seconds_bucht_noch_nicht():
+    ref, kwh1, pending, pending_since = vehicle_discharge_update(
+        84.0, 82.0, usable_kwh=50.0, noise_pct=0.5, ts=0.0,
+        pending_soc=None, pending_since=None, confirm_seconds=60.0,
+    )
+    ref, kwh2, pending, pending_since = vehicle_discharge_update(
+        ref, 82.0, usable_kwh=50.0, noise_pct=0.5, ts=30.0,
+        pending_soc=pending, pending_since=pending_since, confirm_seconds=60.0,
+    )
+    assert kwh2 == 0.0  # erst 30s vergangen, noch nicht bestaetigt
+    assert pending == 82.0
+    assert pending_since == 0.0  # Fenster laeuft weiter seit dem ERSTEN Auftreten
+
+
+def test_vehicle_discharge_update_neuer_abweichender_kandidat_startet_fenster_neu():
+    ref, kwh1, pending, pending_since = vehicle_discharge_update(
+        84.0, 82.0, usable_kwh=50.0, noise_pct=0.5, ts=0.0,
+        pending_soc=None, pending_since=None, confirm_seconds=60.0,
+    )
+    # Zweiter Messwert weicht selbst deutlich vom ERSTEN Kandidaten ab
+    # (kein Ausreisser-Rueckkehr zur Norm, sondern ein weiterer, anderer
+    # Rueckgang) -- das Bestaetigungsfenster startet fuer DIESEN neuen
+    # Kandidaten neu.
+    ref, kwh2, pending, pending_since = vehicle_discharge_update(
+        ref, 79.0, usable_kwh=50.0, noise_pct=0.5, ts=1.0,
+        pending_soc=pending, pending_since=pending_since, confirm_seconds=60.0,
+    )
+    assert kwh2 == 0.0
+    assert pending == 79.0
+    assert pending_since == 1.0
 
 
 def test_vehicle_discharge_update_bestaetigter_anstieg_hebt_referenz_ohne_buchung():
-    new_ref, kwh = vehicle_discharge_update(82.0, 90.0, usable_kwh=50.0, noise_pct=0.5)
+    new_ref, kwh, pending, pending_since = vehicle_discharge_update(
+        82.0, 90.0, usable_kwh=50.0, noise_pct=0.5, ts=0.0,
+        pending_soc=None, pending_since=None, confirm_seconds=60.0,
+    )
     assert new_ref == 90.0
     assert kwh == 0.0
+    assert pending is None
+    assert pending_since is None
+
+
+def test_vehicle_discharge_update_anstieg_verwirft_laufenden_pending_abfall():
+    ref, kwh1, pending, pending_since = vehicle_discharge_update(
+        84.0, 82.0, usable_kwh=50.0, noise_pct=0.5, ts=0.0,
+        pending_soc=None, pending_since=None, confirm_seconds=60.0,
+    )
+    assert pending == 82.0
+    ref, kwh2, pending, pending_since = vehicle_discharge_update(
+        ref, 90.0, usable_kwh=50.0, noise_pct=0.5, ts=1.0,
+        pending_soc=pending, pending_since=pending_since, confirm_seconds=60.0,
+    )
+    assert ref == 90.0
+    assert kwh2 == 0.0
+    assert pending is None
+    assert pending_since is None
 
 
 def test_vehicle_discharge_update_innerhalb_rauschtoleranz_bleibt_referenz_unveraendert():
-    new_ref, kwh = vehicle_discharge_update(84.0, 83.7, usable_kwh=50.0, noise_pct=0.5)
+    new_ref, kwh, pending, pending_since = vehicle_discharge_update(
+        84.0, 83.7, usable_kwh=50.0, noise_pct=0.5, ts=0.0,
+        pending_soc=None, pending_since=None, confirm_seconds=60.0,
+    )
     assert new_ref == 84.0
     assert kwh == 0.0
+    assert pending is None
 
 
 def test_vehicle_discharge_update_kleine_schritte_summieren_sich_ueber_rauschschwelle():
     """Mehrere Schritte je innerhalb der Rauschtoleranz duerfen sich NICHT
     gegenseitig 'verlieren' -- die Referenz bleibt beim urspruenglichen
-    Hochpunkt stehen, bis die kumulierte Differenz noise_pct uebersteigt."""
-    ref, kwh1 = vehicle_discharge_update(84.0, 83.7, usable_kwh=50.0, noise_pct=0.5)
+    Hochpunkt stehen, bis die kumulierte Differenz noise_pct uebersteigt
+    UND der resultierende Rueckgang ueber confirm_seconds bestaetigt ist."""
+    ref, kwh1, pending, pending_since = vehicle_discharge_update(
+        84.0, 83.7, usable_kwh=50.0, noise_pct=0.5, ts=0.0,
+        pending_soc=None, pending_since=None, confirm_seconds=60.0,
+    )
     assert kwh1 == 0.0
-    ref, kwh2 = vehicle_discharge_update(ref, 83.6, usable_kwh=50.0, noise_pct=0.5)
+    assert pending is None  # noch innerhalb Toleranz zu 84.0
+    ref, kwh2, pending, pending_since = vehicle_discharge_update(
+        ref, 83.6, usable_kwh=50.0, noise_pct=0.5, ts=10.0,
+        pending_soc=pending, pending_since=pending_since, confirm_seconds=60.0,
+    )
     assert kwh2 == 0.0
     assert ref == 84.0  # weiterhin unveraendert, da 83.6 noch innerhalb 84 - 0.5
-    ref, kwh3 = vehicle_discharge_update(ref, 83.4, usable_kwh=50.0, noise_pct=0.5)
+    ref, kwh3, pending, pending_since = vehicle_discharge_update(
+        ref, 83.4, usable_kwh=50.0, noise_pct=0.5, ts=20.0,
+        pending_soc=pending, pending_since=pending_since, confirm_seconds=60.0,
+    )
+    assert kwh3 == 0.0  # noch nicht bestaetigt
+    assert pending == 83.4
+    ref, kwh4, pending, pending_since = vehicle_discharge_update(
+        ref, 83.4, usable_kwh=50.0, noise_pct=0.5, ts=90.0,
+        pending_soc=pending, pending_since=pending_since, confirm_seconds=60.0,
+    )
     assert ref == 83.4
-    assert kwh3 == round(0.6 / 100.0 * 50.0, 4)  # volle 0,6% seit der alten Referenz 84.0
+    assert kwh4 == round(0.6 / 100.0 * 50.0, 4)  # volle 0,6% seit der alten Referenz 84.0
 
 
 def test_vehicle_discharge_update_genau_an_der_rauschschwelle_bucht_nicht():
-    new_ref, kwh = vehicle_discharge_update(84.0, 83.5, usable_kwh=50.0, noise_pct=0.5)
+    new_ref, kwh, pending, pending_since = vehicle_discharge_update(
+        84.0, 83.5, usable_kwh=50.0, noise_pct=0.5, ts=0.0,
+        pending_soc=None, pending_since=None, confirm_seconds=60.0,
+    )
     assert new_ref == 84.0
     assert kwh == 0.0
 

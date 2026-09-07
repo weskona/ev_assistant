@@ -983,7 +983,14 @@ def kwh_to_soc_percent(kwh: float, usable_kwh: float) -> Optional[int]:
 
 
 def vehicle_discharge_update(
-    reference_soc: Optional[float], new_soc: float, usable_kwh: float, noise_pct: float,
+    reference_soc: Optional[float],
+    new_soc: float,
+    usable_kwh: float,
+    noise_pct: float,
+    ts: float,
+    pending_soc: Optional[float],
+    pending_since: Optional[float],
+    confirm_seconds: float,
 ) -> tuple:
     """Ratchet-Verfolgung des GESAMTEN Netto-Verbrauchs aus dem Live-SoC-
     Verlauf -- Fahren UND Standby-/Vampire-Drain zaehlen gleichermassen mit,
@@ -1011,30 +1018,53 @@ def vehicle_discharge_update(
     statt bei jedem einzelnen Tick einzeln verworfen zu werden. Ein
     bestaetigter ANSTIEG (> reference_soc + noise_pct, jede Ladung
     unabhaengig vom Ort) hebt die reference sofort an, ohne Verbrauch zu
-    buchen. Ein bestaetigter RUECKGANG (< reference_soc - noise_pct) bucht
-    die volle Differenz zur alten reference als Verbrauch und senkt die
-    reference auf den neuen Wert ab.
+    buchen und verwirft einen etwaig laufenden Rueckgangs-Kandidaten
+    (siehe unten) -- ein Ausreisser, der sich nicht bestaetigt, hinterlaesst
+    so keine Spur.
 
     `reference_soc=None` (allererster Aufruf, z.B. nach Einrichtung/Neustart
     ohne persistierten Zustand) initialisiert nur, ohne etwas zu buchen --
     ohne Referenzpunkt gibt es nichts zu vergleichen.
 
-    Liefert (neue reference_soc, in diesem Schritt gebuchte kWh). Bewusst
-    OHNE Schutz gegen einzelne unplausible SoC-Ausreisser (z.B. ein
-    kurzzeitiger Sensor-Glitch auf einen viel zu niedrigen Wert) -- anders
-    als ChargeDetector._update_idle() fuer Ladungsstart-Erkennung gibt es
-    hier keine Plausibilitaets-Gegenprobe; ein Ausreisser wuerde einmalig
-    als (falscher) Verbrauch gebucht und beim naechsten normalen Messwert
-    als (ebenso falscher) Anstieg wieder ausgeglichen -- kein dauerhafter
-    Schaden, aber ein kurzzeitig verzerrter Tageswert ist moeglich."""
+    Ein bestaetigter RUECKGANG (< reference_soc - noise_pct) wird NICHT
+    mehr sofort gebucht, sondern erst als `pending_soc`/`pending_since`
+    vorgemerkt -- gebucht wird erst, wenn ein SPAETERER Messwert nahe
+    (innerhalb noise_pct) am Kandidaten liegt UND mindestens
+    `confirm_seconds` seit dessen erstem Auftreten vergangen sind. Weicht
+    ein Folgewert selbst wieder vom Kandidaten ab (aber immer noch ein
+    Rueckgang), startet das Bestaetigungsfenster fuer DIESEN neuen
+    Kandidaten neu.
+
+    Grund: manche Fahrzeug-APIs liefern kurzzeitige (Sekundenbruchteile bis
+    wenige Sekunden), stark abweichende SoC-Ausreisser (in der Praxis
+    beobachtet: z.B. 68% -> 37% fuer 2 Sekunden, danach sofortige Rueckkehr
+    auf den echten Wert). Die urspruengliche Annahme dieser Funktion (ein
+    solcher Ausreisser wuerde sich beim naechsten normalen Messwert von
+    selbst als gleich falscher ANSTIEG wieder ausgleichen, "kein
+    dauerhafter Schaden") war FALSCH: ein Anstieg hebt nur die reference
+    wieder an, bucht aber keine negative Korrektur -- der einmal gebuchte
+    Fantasie-Verbrauch blieb in vehicle_discharge_kwh_total dauerhaft
+    eingebrannt (siehe Produktionsvorfall 2026-09-02ff, dort teils Faktor
+    10-20x des tatsaechlichen Fahrtenbuch-Verbrauchs an betroffenen Tagen).
+    Das Bestaetigungsfenster verhindert das: ein isolierter Ausreisser, dem
+    keine zweite, nahe Messung folgt, wird nie gebucht.
+
+    Liefert (neue reference_soc, in diesem Schritt gebuchte kWh, neuer
+    pending_soc, neues pending_since) -- die letzten beiden muss der
+    Aufrufer bis zum naechsten Aufruf persistieren (siehe coordinator.py::
+    _update_vehicle_discharge())."""
     if reference_soc is None:
-        return new_soc, 0.0
+        return new_soc, 0.0, None, None
     if new_soc > reference_soc + noise_pct:
-        return new_soc, 0.0
-    if new_soc < reference_soc - noise_pct:
+        return new_soc, 0.0, None, None
+    if new_soc >= reference_soc - noise_pct:
+        return reference_soc, 0.0, None, None
+    if pending_soc is None or abs(new_soc - pending_soc) > noise_pct:
+        return reference_soc, 0.0, new_soc, ts
+    if ts - pending_since >= confirm_seconds:
         drop = reference_soc - new_soc
-        return new_soc, round(drop / 100.0 * usable_kwh, 4)
-    return reference_soc, 0.0
+        return new_soc, round(drop / 100.0 * usable_kwh, 4), None, None
+    return reference_soc, 0.0, pending_soc, pending_since
 
 
 def house_weekday_usage_profile(weekday_kwh_totals: dict, weekday_day_counts: dict) -> Optional[dict]:

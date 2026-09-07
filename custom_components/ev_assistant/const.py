@@ -294,6 +294,14 @@ DEFAULT_EFFICIENCY = 0.88
 DEFAULT_POWER_IS_AC = True
 DEFAULT_START_DELTA = 1.0
 DEFAULT_NOISE = 0.5
+# Bestaetigungsfenster fuer engine.vehicle_discharge_update() -- ein SoC-
+# Rueckgang wird erst gebucht, wenn ein zweiter, naher Messwert nach
+# mindestens dieser Zeitspanne folgt (Schutz gegen kurzzeitige, stark
+# abweichende SoC-Ausreisser mancher Fahrzeug-APIs, siehe dortigen
+# Docstring). Nutzer-unsichtbar, keine Config-Option -- 60s liegt deutlich
+# ueber den in der Praxis beobachteten Ausreissern (wenige Sekunden), aber
+# weit unter der Dauer eines echten Standby-Rueckgangs.
+VEHICLE_DISCHARGE_CONFIRM_SECONDS = 60.0
 DEFAULT_IDLE_TIMEOUT = 600.0
 DEFAULT_DROP_ENDS = 1.0
 

@@ -139,6 +139,7 @@ from .const import (
     TRIP_CONSUMPTION_CHECK_MIN_KM,
     TRIP_CONSUMPTION_MAX_KWH_100KM,
     TRIP_CONSUMPTION_MIN_KWH_100KM,
+    VEHICLE_DISCHARGE_CONFIRM_SECONDS,
     WARTUNG_BALD_FAELLIG_KM,
     WARTUNG_BALD_FAELLIG_TAGE,
     WARTUNG_PRESETS,
@@ -406,6 +407,12 @@ def _empty_data() -> dict:
         "vehicle_discharge_periods": {},
         "vehicle_discharge_weekday_kwh_totals": {},
         "vehicle_discharge_weekday_day_counts": {},
+        # Bestaetigungsfenster fuer einen noch nicht gebuchten SoC-Rueckgangs-
+        # Kandidaten (siehe engine.vehicle_discharge_update()) -- muss ueber
+        # Neustarts hinweg persistieren, sonst wuerde ein Rueckgang, der
+        # genau um einen Neustart herum bestaetigt werden sollte, verworfen.
+        "vehicle_discharge_pending_soc": None,
+        "vehicle_discharge_pending_since": None,
     }
 
 
@@ -1122,18 +1129,32 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         nicht nur periodisch, damit auch kurze Standby-Rueckgaenge zwischen
         zwei Fahrten erfasst werden (siehe dortigen Docstring). Nutzt
         denselben CONF_NOISE-Wert wie ChargeDetector, da beide dieselbe
-        Sensor-Rauschcharakteristik ausgleichen. _save_soon() statt
-        sofortigem Speichern -- diese Methode kann bei manchen Fahrzeugen
-        sehr haeufig feuern, ein Speichern bei jedem einzelnen Tick waere
-        unnoetiger IO (ein Neustart zwischen zwei Speicherpunkten verliert
-        im schlimmsten Fall einen kleinen, bereits verworfenen
-        Rausch-Zwischenstand, nie gebuchte kWh -- die stehen erst NACH
-        einem erfolgreichen Update in self.data, siehe unten)."""
+        Sensor-Rauschcharakteristik ausgleichen; VEHICLE_DISCHARGE_CONFIRM_
+        SECONDS zusaetzlich als Bestaetigungsfenster gegen kurzzeitige,
+        stark abweichende SoC-Ausreisser (siehe dortigen Docstring fuer den
+        Produktionsvorfall, der diese Haertung noetig gemacht hat) --
+        "vehicle_discharge_pending_soc"/"_pending_since" muessen dafuer
+        zwischen Aufrufen (und ueber Neustarts hinweg) persistieren.
+        _save_soon() statt sofortigem Speichern -- diese Methode kann bei
+        manchen Fahrzeugen sehr haeufig feuern, ein Speichern bei jedem
+        einzelnen Tick waere unnoetiger IO (ein Neustart zwischen zwei
+        Speicherpunkten verliert im schlimmsten Fall einen kleinen, bereits
+        verworfenen Rausch-/Bestaetigungs-Zwischenstand, nie gebuchte kWh --
+        die stehen erst NACH einem erfolgreichen Update in self.data, siehe
+        unten)."""
         usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
         noise = float(self._opt(CONF_NOISE, DEFAULT_NOISE))
         reference = self.data.get("vehicle_discharge_reference_soc")
-        new_reference, kwh = vehicle_discharge_update(reference, new_soc, usable_kwh, noise)
+        pending_soc = self.data.get("vehicle_discharge_pending_soc")
+        pending_since = self.data.get("vehicle_discharge_pending_since")
+        new_reference, kwh, new_pending_soc, new_pending_since = vehicle_discharge_update(
+            reference, new_soc, usable_kwh, noise,
+            dt_util.utcnow().timestamp(), pending_soc, pending_since,
+            VEHICLE_DISCHARGE_CONFIRM_SECONDS,
+        )
         self.data["vehicle_discharge_reference_soc"] = new_reference
+        self.data["vehicle_discharge_pending_soc"] = new_pending_soc
+        self.data["vehicle_discharge_pending_since"] = new_pending_since
         if kwh > 0:
             self.data["vehicle_discharge_kwh_total"] = round(
                 self.data.get("vehicle_discharge_kwh_total", 0.0) + kwh, 4

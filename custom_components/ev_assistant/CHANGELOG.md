@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.79.0] - 2026-09-07
+
+### Fixed
+
+- **Live-SoC discharge tracker (0.76.0) no longer permanently books brief sensor glitches as real consumption**: a confirmed production incident showed `vehicle_discharge_kwh_total` accumulating 5-15x the actual trip-log consumption on every single day since the feature launched — root cause was the vehicle's SoC sensor occasionally reporting a wildly wrong value for a few seconds (e.g. 68% → 37% → 68% within 2 seconds) before recovering on its own. The original design assumed such a glitch would "cancel itself out" (booked once as a fake drop, then reversed by an equally fake rise on recovery) — that assumption was wrong: a rise only lifts the reference point back up, it never subtracts the earlier bad booking, so every glitch left a permanent, one-way scar in the lifetime total. `vehicle_discharge_update()` now requires a drop to be confirmed by a second, close reading at least `VEHICLE_DISCHARGE_CONFIRM_SECONDS` (60s) after it first appears before booking anything — an isolated glitch that recovers on the very next reading is now discarded entirely, with no effect on genuine standby-drain detection (which by nature persists for minutes, not seconds).
+- **Note on existing data**: this fix only prevents *future* glitches from being booked — `vehicle_discharge_kwh_total` and the weekday averages derived from it already contain several days of inflated figures from before this fix. Not corrected automatically (no reliable way to know how much of a given day's booked total was real vs. glitch after the fact).
+
 ## [0.78.0] - 2026-09-02
 
 ### Added
