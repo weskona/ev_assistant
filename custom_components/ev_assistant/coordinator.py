@@ -1833,12 +1833,28 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         """Stoesst _run_detection()/_run_trip_detection() auch ohne neue
         SoC-/Kilometerstand-Messung an, damit idle_timeout_s bei einem
         laenger unveraenderten Wert trotzdem greift (siehe Kommentar in
-        async_setup)."""
+        async_setup).
+
+        Fuettert zusaetzlich den zuletzt bekannten SoC-Wert erneut in
+        _update_vehicle_discharge() -- ohne das koennte ein noch nicht
+        bestaetigter Rueckgangs-Kandidat (siehe VEHICLE_DISCHARGE_CONFIRM_
+        SECONDS) unbegrenzt in der Schwebe haengen bleiben, wenn das
+        Fahrzeug (z.B. im Stand) einfach keinen weiteren SoC-Wert meldet --
+        ein in der Praxis beobachteter Fall (Live-SoC-Sensor blieb
+        stundenlang bei einer einzelnen unbestaetigten Buchung stehen,
+        obwohl laengst genug Zeit vergangen war). Erneutes Einspeisen
+        DESSELBEN, zwischenzeitlich unveraenderten Werts bestaetigt den
+        Kandidaten dann -- mit dem ORIGINALEN pending_since (also dem
+        richtigen Wochentag, siehe dortigen Docstring), nicht dem
+        heutigen. Bei unveraendertem SoC ohne offenen Kandidaten ist der
+        Aufruf ein reines No-op (reference_soc bleibt exakt gleich)."""
         self._recheck_plug()
         self._recheck_motor()
         await self._run_detection()
         await self._run_trip_detection()
         self._check_entity_health()
+        if self._soc is not None:
+            self._update_vehicle_discharge(self._soc)
         await self._async_apply_evcc_mode_control()
 
     def _check_entity_health(self) -> None:

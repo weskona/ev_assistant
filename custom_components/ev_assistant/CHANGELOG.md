@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.84.0] - 2026-09-09
+
+### Fixed
+
+- **Live-SoC discharge tracker could get stuck "pending" indefinitely**: the 0.79.0 confirmation window only re-evaluates when a *new* state-changed event arrives for the SoC entity — if the vehicle simply stops reporting for hours (observed live: 3+ hours with the same value), an already-confirmable drop never got the second look it needed and stayed unbooked the entire time, with the sensor visibly stuck. The existing 60-second periodic check (already used for plug/motor re-detection) now also re-feeds the last known SoC value into the discharge tracker — a pending candidate that's simply been sitting long enough now confirms on the next tick instead of waiting for another live event, still correctly credited to the weekday it was first observed.
+
 ## [0.83.0] - 2026-09-09
 
 ### Fixed

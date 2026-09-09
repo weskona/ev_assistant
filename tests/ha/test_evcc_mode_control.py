@@ -443,6 +443,42 @@ async def test_update_vehicle_discharge_anstieg_setzt_referenz_ohne_buchung(hass
     assert coordinator.data["vehicle_discharge_kwh_total"] == 0.0
 
 
+# ----- _periodic_check: bestaetigt haengengebliebene Kandidaten nach ------
+# Regressionstest fuer einen echten Vorfall: das Fahrzeug meldete stunden-
+# lang keinen neuen SoC-Wert, ein laengst bestaetigungsreifer Rueckgangs-
+# Kandidat blieb dadurch unbegrenzt in der Schwebe (siehe VEHICLE_
+# DISCHARGE_CONFIRM_SECONDS-Docstring). _periodic_check() speist seitdem
+# den zuletzt bekannten SoC-Wert zusaetzlich alle 60s erneut ein.
+
+async def test_periodic_check_bestaetigt_haengenden_kandidaten(hass, coordinators):
+    from homeassistant.util import dt as dt_util
+
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "pc1", options={CONF_USABLE_KWH: 50.0})
+    coordinator._soc = 82.0
+    coordinator._update_vehicle_discharge(82.0)
+    coordinator._soc = 80.0
+    coordinator._update_vehicle_discharge(80.0)  # Kandidat, noch nicht bestaetigt
+    assert coordinator.data["vehicle_discharge_kwh_total"] == 0.0
+    # Fahrzeug meldet sich stundenlang nicht mehr -- Kandidat "altert",
+    # ohne dass ein neues Event ihn je erneut prueft.
+    coordinator.data["vehicle_discharge_pending_since"] -= 3 * 3600
+    await coordinator._periodic_check(dt_util.utcnow())
+    assert coordinator.data["vehicle_discharge_reference_soc"] == 80.0
+    assert coordinator.data["vehicle_discharge_kwh_total"] == 1.0  # 2% von 50 kWh
+    assert coordinator.data["vehicle_discharge_pending_soc"] is None
+
+
+async def test_periodic_check_ohne_soc_ist_no_op_fuers_discharge(hass, coordinators):
+    from homeassistant.util import dt as dt_util
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "pc2")
+    assert coordinator._soc is None
+    await coordinator._periodic_check(dt_util.utcnow())
+    assert coordinator.data["vehicle_discharge_reference_soc"] is None
+
+
 # ----- _update_vehicle_discharge_profile / vehicle_discharge_usage_profile ---
 
 async def test_update_vehicle_discharge_profile_erster_aufruf_setzt_nur_baseline(hass, coordinators):
