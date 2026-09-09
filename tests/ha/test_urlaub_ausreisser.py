@@ -239,7 +239,7 @@ async def test_update_vehicle_discharge_profile_urlaub_aktiv_schliesst_tag_aus(h
     hass.states.async_set("input_boolean.urlaub", "off")
     coordinator.data["vehicle_discharge_kwh_total"] = 100.0
     coordinator._update_vehicle_discharge_profile()
-    coordinator.data["vehicle_discharge_periods"]["day"]["key"] = "ein-anderer-tag"
+    coordinator.data["vehicle_discharge_periods"]["day"]["key"] = str(dt_util.now().date() - timedelta(days=1))
     hass.states.async_set("input_boolean.urlaub", "on")
     coordinator.data["vehicle_discharge_kwh_total"] = 115.0
     coordinator._update_vehicle_discharge_profile()

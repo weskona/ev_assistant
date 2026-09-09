@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.83.0] - 2026-09-09
+
+### Fixed
+
+- **Live-SoC discharge tracker could permanently orphan a day's consumption after a missed nightly rollover**: found live in production — the daily rollover that maintains each weekday's day-count (needed for the average's denominator, see 0.81.0) runs once at 00:05 and has no catch-up mechanism; if Home Assistant happened to be restarting exactly then, that calendar day's count was skipped entirely. Since 0.81.0 split kWh-booking (at confirmation time) from day-counting (at rollover time), a skipped rollover left a weekday's already-booked kWh with no matching day-count (an "orphaned" total that could never average correctly) while the following day's rollover incorrectly picked up a day-count with no kWh at all. The rollover now catches up on every calendar day between the last successful rollover and today, not just "yesterday". The two affected days in the live data were corrected directly.
+
+## [0.82.0] - 2026-09-07
+
+### Added
+
+- **Usage-profile buffer slider on the Wallbox card** (Overview Beta tab): adjust the safety buffer used by the evcc mode/SoC control and the "charge before solar" recommendation directly, without opening the integration's options (which would trigger a full reload of every entity). Dragging the slider commits on release, a small reset button clears it back to the configured value. Implemented as a runtime override (new `set_usage_profile_buffer_pct` service) rather than writing to the config entry's options, specifically to avoid that reload.
+
 ## [0.81.0] - 2026-09-07
 
 ### Fixed

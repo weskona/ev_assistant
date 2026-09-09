@@ -468,11 +468,39 @@ async def test_update_vehicle_discharge_profile_rollover_zaehlt_nur_den_tag_kein
     coordinator.data["vehicle_discharge_kwh_total"] = 5.0
     coordinator._update_vehicle_discharge_profile()
     yesterday_wd = (dt_util.now().date() - timedelta(days=1)).weekday()
-    coordinator.data["vehicle_discharge_periods"]["day"]["key"] = "ein-anderer-tag"
+    coordinator.data["vehicle_discharge_periods"]["day"]["key"] = str(dt_util.now().date() - timedelta(days=1))
     coordinator.data["vehicle_discharge_kwh_total"] = 6.5
     coordinator._update_vehicle_discharge_profile()
     assert coordinator.data["vehicle_discharge_weekday_kwh_totals"] == {}
     assert coordinator.data["vehicle_discharge_weekday_day_counts"] == {str(yesterday_wd): 1}
+
+
+async def test_update_vehicle_discharge_profile_holt_uebersprungenen_tag_nach(hass, coordinators):
+    """Regressionstest fuer einen echten Vorfall: _daily_lts_refresh() laeuft
+    nur einmal taeglich um 00:05 Uhr ohne Nachhol-Mechanismus -- war HA
+    genau dann nicht erreichbar, wird ein kompletter Kalendertag
+    uebersprungen. Der naechste Rollover muss ALLE dazwischenliegenden
+    Tage nachtragen, nicht nur den unmittelbar vorherigen, sonst bekommt
+    ein Wochentag, dem _book_vehicle_discharge_weekday() bereits kWh
+    gutgeschrieben hat, nie einen passenden Tageszaehler (dauerhaft
+    verwaiste Summe)."""
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "uvdp3")
+    coordinator.data["vehicle_discharge_kwh_total"] = 5.0
+    coordinator._update_vehicle_discharge_profile()
+    # Zwei Tage werden uebersprungen (kein Rollover lief in der Zwischenzeit).
+    drei_tage_zurueck = dt_util.now().date() - timedelta(days=3)
+    coordinator.data["vehicle_discharge_periods"]["day"]["key"] = str(drei_tage_zurueck)
+    coordinator.data["vehicle_discharge_kwh_total"] = 6.5
+    coordinator._update_vehicle_discharge_profile()
+    counts = coordinator.data["vehicle_discharge_weekday_day_counts"]
+    erwartete_tage = [drei_tage_zurueck + timedelta(days=i) for i in range(3)]
+    for tag in erwartete_tage:
+        assert counts.get(str(tag.weekday())) == 1
+    assert sum(counts.values()) == 3
 
 
 async def test_vehicle_discharge_usage_profile_ohne_beobachteten_tag_gibt_none(hass, coordinators):
@@ -611,6 +639,69 @@ async def test_evcc_mode_targets_ohne_usage_profile_gibt_none(hass, coordinators
     coordinator, _ = await _make_coordinator(hass, coordinators, "emt4")
     coordinator._soc = 50.0
     assert coordinator._evcc_mode_targets() is None
+
+
+# ----- _usage_profile_buffer_pct / async_set_usage_profile_buffer_pct ------
+# Schieberegler in der Wallbox-Karte (Uebersicht-Beta) -- der Override lebt
+# bewusst in self.data statt in entry.options, siehe Docstring: eine
+# Options-Aenderung wuerde per Update-Listener einen vollen Reload der
+# Integration ausloesen.
+
+async def test_usage_profile_buffer_pct_ohne_override_gibt_konfigurierten_wert(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_USAGE_PROFILE_BUFFER_PCT
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "upbp1", options={CONF_USAGE_PROFILE_BUFFER_PCT: 30.0},
+    )
+    assert coordinator._usage_profile_buffer_pct() == 30.0
+
+
+async def test_usage_profile_buffer_pct_ohne_konfiguration_gibt_default(hass, coordinators):
+    from custom_components.ev_assistant.const import DEFAULT_USAGE_PROFILE_BUFFER_PCT
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "upbp2")
+    assert coordinator._usage_profile_buffer_pct() == DEFAULT_USAGE_PROFILE_BUFFER_PCT
+
+
+async def test_set_usage_profile_buffer_pct_override_hat_vorrang(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_USAGE_PROFILE_BUFFER_PCT
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "upbp3", options={CONF_USAGE_PROFILE_BUFFER_PCT: 30.0},
+    )
+    await coordinator.async_set_usage_profile_buffer_pct(45.0)
+    assert coordinator._usage_profile_buffer_pct() == 45.0
+    # entry.options selbst bleibt unveraendert -- kein Reload ausgeloest.
+    assert coordinator.entry.options[CONF_USAGE_PROFILE_BUFFER_PCT] == 30.0
+
+
+async def test_set_usage_profile_buffer_pct_wird_geklemmt(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "upbp4")
+    await coordinator.async_set_usage_profile_buffer_pct(150.0)
+    assert coordinator._usage_profile_buffer_pct() == 100.0
+    await coordinator.async_set_usage_profile_buffer_pct(-10.0)
+    assert coordinator._usage_profile_buffer_pct() == 0.0
+
+
+async def test_set_usage_profile_buffer_pct_none_setzt_zurueck(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_USAGE_PROFILE_BUFFER_PCT
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "upbp5", options={CONF_USAGE_PROFILE_BUFFER_PCT: 30.0},
+    )
+    await coordinator.async_set_usage_profile_buffer_pct(45.0)
+    assert coordinator._usage_profile_buffer_pct() == 45.0
+    await coordinator.async_set_usage_profile_buffer_pct(None)
+    assert coordinator._usage_profile_buffer_pct() == 30.0
+
+
+async def test_set_usage_profile_buffer_pct_wirkt_sich_auf_usage_profile_tomorrow_aus(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "upbp6")
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    await coordinator.async_set_usage_profile_buffer_pct(50.0)
+    need = coordinator.usage_profile_tomorrow()
+    assert need["puffer_prozent"] == 50.0
+    assert need["benoetigt_kwh"] == 15.0  # 10 kWh * 1.5
 
 
 # ----- _async_apply_evcc_mode_control ---------------------------------------

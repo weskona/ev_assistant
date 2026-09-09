@@ -36,6 +36,7 @@ from .const import (
     SERVICE_LOG,
     SERVICE_LOG_TRIP,
     SERVICE_MARK_MAINTENANCE_DONE,
+    SERVICE_SET_USAGE_PROFILE_BUFFER_PCT,
     SERVICE_SIMULATE,
     SERVICE_SIMULATE_TRIP,
 )
@@ -371,6 +372,14 @@ MARK_MAINTENANCE_DONE_SCHEMA = vol.Schema({
     vol.Optional("datum"): str,
 })
 
+# buffer_pct absichtlich optional OHNE Default: fehlt es, wird der
+# Laufzeit-Override zurueckgesetzt (siehe coordinator.py::async_set_
+# usage_profile_buffer_pct()), statt versehentlich auf 0 zu klemmen.
+SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Optional("buffer_pct"): vol.Coerce(float),
+})
+
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Version 1 -> 2: evcc_intg-Entity-Discovery entfernt (siehe
@@ -608,6 +617,11 @@ def _register_services(hass: HomeAssistant) -> None:
                 call.data["wartung_id"], call.data.get("km"), call.data.get("datum"),
             )
 
+    async def _handle_set_usage_profile_buffer_pct(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_set_usage_profile_buffer_pct(call.data.get("buffer_pct"))
+
     hass.services.async_register(DOMAIN, SERVICE_LOG, _handle_log, schema=LOG_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCARD, _handle_discard, schema=DISCARD_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE, _handle_simulate, schema=SIMULATE_SCHEMA)
@@ -643,6 +657,10 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_MARK_MAINTENANCE_DONE, _handle_mark_maintenance_done,
         schema=MARK_MAINTENANCE_DONE_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_USAGE_PROFILE_BUFFER_PCT, _handle_set_usage_profile_buffer_pct,
+        schema=SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA,
     )
 
 

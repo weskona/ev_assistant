@@ -413,6 +413,13 @@ def _empty_data() -> dict:
         # genau um einen Neustart herum bestaetigt werden sollte, verworfen.
         "vehicle_discharge_pending_soc": None,
         "vehicle_discharge_pending_since": None,
+        # Laufzeit-Override fuer CONF_USAGE_PROFILE_BUFFER_PCT (siehe
+        # _usage_profile_buffer_pct()/async_set_usage_profile_buffer_pct())
+        # -- Schieberegler in der Wallbox-Karte (Uebersicht-Beta), damit
+        # der Puffer nicht jedesmal ueber den Options-Flow (samt vollem
+        # Reload der Integration) angepasst werden muss. None = kein
+        # Override, es gilt der konfigurierte/Default-Wert.
+        "usage_profile_buffer_pct_override": None,
     }
 
 
@@ -4132,6 +4139,34 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._usage_profile_cache = (self._fahrten_version, today, result)
         return result
 
+    def _usage_profile_buffer_pct(self) -> float:
+        """CONF_USAGE_PROFILE_BUFFER_PCT, aber mit Vorrang fuer einen
+        gesetzten Laufzeit-Override (siehe async_set_usage_profile_buffer_
+        pct() -- Schieberegler in der Wallbox-Karte, Uebersicht-Beta).
+        Bewusst NICHT ueber entry.options geloest: eine Aenderung dort
+        loest per Update-Listener einen vollen Reload der Integration aus
+        (siehe __init__.py::_async_reload()), was fuer einen haeufig
+        genutzten Schieberegler viel zu schwerfaellig waere (kurzes
+        Aufflackern aller Entities bei jeder Anpassung)."""
+        override = self.data.get("usage_profile_buffer_pct_override")
+        if override is not None:
+            return float(override)
+        return float(self._opt(CONF_USAGE_PROFILE_BUFFER_PCT, DEFAULT_USAGE_PROFILE_BUFFER_PCT))
+
+    async def async_set_usage_profile_buffer_pct(self, buffer_pct: Optional[float]) -> None:
+        """Setzt/loescht den Laufzeit-Override aus _usage_profile_buffer_
+        pct() -- `buffer_pct=None` setzt auf den konfigurierten Wert
+        zurueck. Geklemmt auf [0, 100]. Stoesst danach sofort eine
+        Neuauswertung der evcc-Modus-/SoC-Ziele an, damit eine Slider-
+        Aenderung ohne Verzoegerung in Min-/Ziel-SoC sichtbar wird, statt
+        erst beim naechsten ohnehin faelligen Update."""
+        self.data["usage_profile_buffer_pct_override"] = (
+            None if buffer_pct is None else max(0.0, min(100.0, float(buffer_pct)))
+        )
+        self.async_set_updated_data(self.data)
+        await self._async_apply_evcc_mode_control()
+        self._save_soon()
+
     def usage_profile_tomorrow(self) -> Optional[dict]:
         """Wochentags-Bedarf (siehe usage_profile()) fuer den morgigen
         Wochentag, zzgl. CONF_USAGE_PROFILE_BUFFER_PCT Puffer -- direkt mit
@@ -4144,7 +4179,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         raw = profile.get(tomorrow_wd)
         if raw is None:
             return None
-        buffer_pct = float(self._opt(CONF_USAGE_PROFILE_BUFFER_PCT, DEFAULT_USAGE_PROFILE_BUFFER_PCT))
+        buffer_pct = self._usage_profile_buffer_pct()
         return {
             "wochentag": _WEEKDAY_NAMES_DE[tomorrow_wd],
             "roh_kwh": raw,
@@ -4435,10 +4470,26 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # als "0 kWh Tag" trotzdem nach unten ziehen.
             if self._urlaub_aktiv():
                 return
-            yesterday_wd = (dt_util.now().date() - timedelta(days=1)).weekday()
+            # ALLE zwischen dem letzten Rollover und heute uebersprungenen
+            # Kalendertage nachholen, nicht nur "gestern" -- dieser Hook
+            # laeuft nur einmal taeglich um 00:05 Uhr (siehe
+            # _daily_lts_refresh()), OHNE Nachhol-Mechanismus, falls HA
+            # genau dann neu startet/nicht laeuft: ein komplett
+            # uebersprungener Tag wuerde sonst NIE einen Tageszaehler
+            # bekommen, obwohl _book_vehicle_discharge_weekday() ihm zu dem
+            # Zeitpunkt (bei Bestaetigung) schon kWh gutgeschrieben haben
+            # kann -- eine dauerhaft verwaiste Summe ohne Nenner (siehe
+            # Vorfall: Rollover am 2026-09-07/08 uebersprungen, "Montag"-
+            # Summe blieb ohne Tageszaehler, "Dienstag" bekam einen
+            # Tageszaehler ohne Summe).
+            old_date = date.fromisoformat(old_entry["key"])
+            new_date = date.fromisoformat(key)
             counts = dict(self.data.get("vehicle_discharge_weekday_day_counts") or {})
-            wd_key = str(yesterday_wd)
-            counts[wd_key] = counts.get(wd_key, 0) + 1
+            d = old_date
+            while d < new_date:
+                wd_key = str(d.weekday())
+                counts[wd_key] = counts.get(wd_key, 0) + 1
+                d += timedelta(days=1)
             self.data["vehicle_discharge_weekday_day_counts"] = counts
 
     def _vehicle_discharge_kwh_used_today(self) -> Optional[float]:
@@ -4519,7 +4570,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         haus_rest_heute = self._house_remaining_today_kwh() or 0.0
         pv_fuer_auto = net_need_after_pv_kwh(pv_rest_heute_roh, haus_rest_heute)
         rest_heute = net_need_after_pv_kwh(rest_heute_roh, pv_fuer_auto)
-        buffer_pct = float(self._opt(CONF_USAGE_PROFILE_BUFFER_PCT, DEFAULT_USAGE_PROFILE_BUFFER_PCT))
+        buffer_pct = self._usage_profile_buffer_pct()
         min_raw = rest_heute + profile.get(tomorrow_wd, 0.0)
         min_kwh = round(min_raw * (1.0 + buffer_pct / 100.0), 2)
         target_raw = rest_heute + weekday_usage_profile_window_kwh(profile, tomorrow_wd, EVCC_MODE_TARGET_DAYS)

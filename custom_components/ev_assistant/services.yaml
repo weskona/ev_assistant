@@ -1156,3 +1156,32 @@ mark_maintenance_done:
       example: "2026-01-15"
       selector:
         date:
+
+set_usage_profile_buffer_pct:
+  name: Nutzungsprofil-Puffer setzen
+  description: >
+    Setzt den Sicherheitspuffer (%) für die evcc-Modus-/SoC-Steuerung und
+    die "Laden vor PV"-Empfehlung direkt als Laufzeit-Override, ohne den
+    Options-Flow (samt Neuladen der Integration) öffnen zu müssen. Ohne
+    buffer_pct wird der Override zurückgesetzt, es gilt wieder der in den
+    Optionen konfigurierte Wert.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    buffer_pct:
+      name: Puffer (%, optional)
+      description: Ohne Angabe wird der Override zurückgesetzt.
+      required: false
+      example: 20
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: box

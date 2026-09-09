@@ -445,6 +445,7 @@ SERVICE_ADD_MAINTENANCE = "add_maintenance"
 SERVICE_EDIT_MAINTENANCE = "edit_maintenance"
 SERVICE_DELETE_MAINTENANCE = "delete_maintenance"
 SERVICE_MARK_MAINTENANCE_DONE = "mark_maintenance_done"
+SERVICE_SET_USAGE_PROFILE_BUFFER_PCT = "set_usage_profile_buffer_pct"
 
 NOTIFY_TAG = "ev_assistant"
 

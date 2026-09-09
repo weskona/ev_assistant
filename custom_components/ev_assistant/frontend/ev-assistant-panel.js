@@ -4283,6 +4283,16 @@ class EVAssistantPanel extends HTMLElement {
           <div class="statblock"><div class="statval mono" id="beta-wb-stat3-val">—</div><div class="dim" id="beta-wb-stat3-label">—</div></div>
         </div>
       </div>
+      <div class="beta-wallbox-buffer">
+        <div class="beta-wb-buffer-row">
+          <span class="beta-wb-buffer-label">Puffer (Min-/Ziel-SoC)</span>
+          <span class="beta-wb-buffer-val" id="beta-wb-buffer-val">—%</span>
+          <button type="button" class="beta-wb-buffer-reset" id="beta-wb-buffer-reset" title="Auf Konfigurationswert zurücksetzen">
+            <ha-icon icon="mdi:restore"></ha-icon>
+          </button>
+        </div>
+        <input type="range" class="beta-wb-buffer-slider" id="beta-wb-buffer-slider" min="0" max="100" step="1" value="20">
+      </div>
     `;
     const q = (s) => card.querySelector(s);
     this._r.betaWallboxCard   = card;
@@ -4301,6 +4311,24 @@ class EVAssistantPanel extends HTMLElement {
     this._r.betaWbStat2Label  = q("#beta-wb-stat2-label");
     this._r.betaWbStat3Val    = q("#beta-wb-stat3-val");
     this._r.betaWbStat3Label  = q("#beta-wb-stat3-label");
+    this._r.betaWbBufferVal    = q("#beta-wb-buffer-val");
+    this._r.betaWbBufferSlider = q("#beta-wb-buffer-slider");
+    this._r.betaWbBufferReset  = q("#beta-wb-buffer-reset");
+
+    // Live-Vorschau beim Ziehen (input), Service-Aufruf erst beim
+    // Loslassen (change) -- verhindert eine Flut von Service-Calls
+    // waehrend des Ziehens, siehe _call()/coordinator.py::async_set_
+    // usage_profile_buffer_pct() (loest je Aufruf eine evcc-Neube-
+    // wertung aus, das soll nicht bei jedem Zwischenwert passieren).
+    this._r.betaWbBufferSlider.addEventListener("input", (e) => {
+      this._r.betaWbBufferVal.textContent = `${e.target.value}%`;
+    });
+    this._r.betaWbBufferSlider.addEventListener("change", (e) => {
+      this._call("set_usage_profile_buffer_pct", { buffer_pct: parseFloat(e.target.value) });
+    });
+    this._r.betaWbBufferReset.addEventListener("click", () => {
+      this._call("set_usage_profile_buffer_pct", {});
+    });
     return card;
   }
 
@@ -4723,6 +4751,22 @@ class EVAssistantPanel extends HTMLElement {
       r.betaWbStat2Label.textContent = "Dauer";
       r.betaWbStat3Val.textContent   = lastHome && lastHome.pricePerKwh != null ? this._fmtNum(lastHome.pricePerKwh, 3) + " €/kWh" : "—";
       r.betaWbStat3Label.textContent = "Preis";
+    }
+
+    // Puffer-Schieberegler: aktuellen Wert (Override oder Konfigurations-
+    // Default, siehe coordinator.py::_usage_profile_buffer_pct()) aus dem
+    // "puffer_prozent"-Attribut von usage_profile_tomorrow uebernehmen --
+    // aber NICHT, waehrend der Nutzer den Regler gerade selbst zieht,
+    // sonst reisst ein zwischenzeitliches Update den Wert unter der Maus
+    // weg (analog dem Scroll-Erhalt an anderer Stelle im Panel).
+    if (this.shadowRoot.activeElement !== r.betaWbBufferSlider) {
+      const needEid = this._eid("usage_profile_tomorrow");
+      const needState = needEid ? this._hass.states[needEid] : null;
+      const bufferPct = needState && needState.attributes ? parseFloat(needState.attributes.puffer_prozent) : NaN;
+      if (!isNaN(bufferPct)) {
+        r.betaWbBufferSlider.value = bufferPct;
+        r.betaWbBufferVal.textContent = `${this._fmtNum(bufferPct, 0)}%`;
+      }
     }
   }
 
@@ -5473,6 +5517,18 @@ class EVAssistantPanel extends HTMLElement {
       .beta-wallbox-stats { flex: 1; display: flex; justify-content: space-around; gap: 10px; min-width: 0; }
       .statval { font-size: 1.15rem; font-weight: 700; line-height: 1.1; }
       .statlabel { font-size: 0.7rem; color: var(--ink-mid); margin-top: 3px; }
+      .beta-wallbox-buffer { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+      .beta-wb-buffer-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+      .beta-wb-buffer-label { font-size: 0.78rem; color: var(--ink-mid); flex: 1; }
+      .beta-wb-buffer-val { font-size: 0.85rem; font-weight: 700; font-family: var(--font-mono); }
+      .beta-wb-buffer-reset {
+        display: grid; place-items: center; border: none; background: none; color: var(--ink-dim);
+        cursor: pointer; padding: 2px; border-radius: 6px; --mdc-icon-size: 16px;
+      }
+      .beta-wb-buffer-reset:hover { color: var(--ink); background: var(--bg-0); }
+      .beta-wb-buffer-slider {
+        width: 100%; margin: 0; accent-color: var(--accent-2); cursor: pointer;
+      }
 
       /* Proportionsbalken (Aufgabe 3.6: Vergleich zum Verbrenner,
          Ladeort-Aufschluesselung) -- ersetzen die frueheren Zahlen-Tabellen. */
