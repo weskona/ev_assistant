@@ -312,6 +312,24 @@ TRIP_CONSUMPTION_MIN_KWH_100KM = 8.0
 TRIP_CONSUMPTION_MAX_KWH_100KM = 40.0
 TRIP_CONSUMPTION_CHECK_MIN_KM = 5.0
 
+# Nachtraegliche Fahrtende-SoC-Korrektur (siehe engine.trip_end_soc_
+# correction()) -- aus echten Produktionsdaten kalibriert (Diagnose
+# 2026-09-10): 47 von 54 beobachteten Ruecknahmen zwischen zwei Fahrten
+# lagen bei maximal 1,5 Prozentpunkten, UNABHAENGIG von der Luecken-Dauer
+# (5 Minuten bis ueber 20 Stunden) -- der SoC-Sensor meldet den finalen
+# Wert am Fahrtende teils erst deutlich verzoegert. Echte, groessere
+# Ereignisse (SoC-Glitch, unerkannte zweite Fahrt) zeigten sich klar
+# getrennt ab 2,0 Prozentpunkten. Bewusst KEINE bestehende Config-Option
+# (CONF_NOISE/CONF_TRIP_IDLE_TIMEOUT) wiederverwendet -- beide sind fuer
+# einen anderen Zweck kalibriert: CONF_TRIP_IDLE_TIMEOUT (typisch 300s)
+# haette nur 1 der 47 legitimen Faelle als Zeitfenster ueberstanden,
+# CONF_NOISE (typisch 0.5) haette die Haelfte (alle mit genau -1.0)
+# faelschlich ausgeschlossen. Das Zeitfenster bestimmt nur die Abdeckung
+# (wie viele echte Faelle erwischt werden), NICHT die Sicherheit -- die
+# liefert allein die Prozentpunkt-Schwelle, unabhaengig von der Dauer.
+TRIP_END_SOC_CORRECTION_MAX_DELTA = 1.5
+TRIP_END_SOC_CORRECTION_WINDOW_S = 86400.0
+
 # AC/DC-Einordnung von Fremdladungen (siehe engine.ac_dc_breakdown()): es
 # gibt kein direktes AC/DC-Signal im Fahrtenbuch, daher abgeleitet aus der
 # Durchschnittsleistung je Ladung (kWh / Ladedauer). 3-phasiges AC-Laden

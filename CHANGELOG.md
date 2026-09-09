@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.86.0] - 2026-09-10
+
+### Added
+
+- **Trip log now catches up on delayed SoC reporting at trip end**: found in production data — a trip's recorded `soc_end` freezes whatever SoC value was last known the moment the trip is detected as finished, but the vehicle's SoC sensor often reports the true value only later while parked. A cross-check of 54 real trip-to-trip gaps showed this isn't a time-dependent standby drain (a 5-minute gap and a 20-hour gap showed the exact same ~0.5-1 percentage point discrepancy) — it's the trip's own final SoC arriving late, then vanishing into the gap between trips (credited to neither). A trip is now retroactively corrected if a small (≤1.5 percentage points), later-arriving drop shows up within 24 hours — size, not elapsed time, is what distinguishes a delayed reading from a genuinely new event (a real second trip or standby drain), so the window is intentionally generous while the threshold stays tight. Works whether the trip is still pending confirmation or already logged (`trip_auto_confirm` on). Existing trips are not retroactively touched — this only improves accuracy for trips going forward.
+
+## [0.85.0] - 2026-09-09
+
+### Changed
+
+- **Temperature-band consumption (feeds the range estimate) now weights by distance instead of averaging per-trip ratios**: previously each trip's own kWh/100km figure counted equally toward a band's average, regardless of length — a very short trip (where whole-percent SoC quantization is a much larger *relative* error) distorted the band's number just as much as a long, precise one. It's now sum of kWh divided by sum of km across all trips in the band, which weights naturally by distance and averages out short-trip quantization noise instead of amplifying it. Internal storage format changed (`temp_bucket_totals` now keeps `sum_kwh`/`sum_km` instead of `sum_pct`) — existing accumulated bands are not migrated (the underlying values aren't convertible) and simply rebuild from newly confirmed trips; each band needs its usual minimum of 3 trips again before it's shown.
+
 ## [0.84.0] - 2026-09-09
 
 ### Fixed

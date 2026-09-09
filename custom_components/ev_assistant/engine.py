@@ -1265,6 +1265,52 @@ def is_plausible_trip_consumption(
     return min_kwh_per_100km <= per_100km <= max_kwh_per_100km
 
 
+def trip_end_soc_correction(
+    last_trip_end_ts: Optional[float],
+    last_trip_soc_end: Optional[float],
+    new_soc: float,
+    ts: float,
+    max_delta: float,
+    window_s: float,
+) -> Optional[float]:
+    """Entscheidet, ob ein neuer SoC-Messwert eine kurz zuvor abgeschlossene
+    Fahrt nachtraeglich korrigieren soll (siehe coordinator.py::
+    _maybe_correct_last_trip_end_soc()).
+
+    Hintergrund, aus echten Produktionsdaten bestaetigt (siehe const.py::
+    TRIP_END_SOC_CORRECTION_MAX_DELTA/_WINDOW_S): der SoC-Sensor meldet den
+    finalen Wert am Fahrtende teils deutlich verzoegert -- "soc_end" der
+    Fahrt friert lediglich den zu dem Zeitpunkt ZULETZT BEKANNTEN Wert ein
+    (siehe coordinator.py::_run_trip_detection()). Ohne diese Korrektur
+    verschwindet der nachtraegliche Rueckgang spurlos: er landet weder in
+    der abgeschlossenen Fahrt (deren soc_end steht schon fest) noch in der
+    naechsten (deren soc_start uebernimmt direkt den bereits korrigierten
+    Wert).
+
+    Liefert `new_soc` als korrigierten Wert, wenn ALLE zutreffen:
+    - eine abgeschlossene Fahrt mit bekanntem soc_end existiert,
+    - `new_soc` ist ein RUECKGANG (kein Anstieg -- das waere Ladung, ein
+      eigenstaendiges Ereignis, hier nicht behandelt),
+    - innerhalb `window_s` seit Fahrtende (reine Abdeckungs-Grenze, siehe
+      const.py-Kommentar -- die eigentliche Sicherheit liefert `max_delta`),
+    - die Differenz liegt innerhalb `max_delta` -- ein groesserer Sprung
+      ist eher eine echte neue Fahrt/ein echter Standby-Ausreisser und
+      bleibt bewusst unangetastet, UNABHAENGIG davon, wie viel Zeit
+      vergangen ist (siehe const.py: Groesse, nicht Dauer, unterscheidet
+      Nachzuegler von echten Ereignissen).
+
+    Sonst None (keine Korrektur)."""
+    if last_trip_end_ts is None or last_trip_soc_end is None:
+        return None
+    if ts - last_trip_end_ts > window_s:
+        return None
+    if new_soc >= last_trip_soc_end:
+        return None
+    if last_trip_soc_end - new_soc > max_delta:
+        return None
+    return new_soc
+
+
 def battery_capacity_samples(history: list, min_soc_delta: float = 20.0) -> list[dict]:
     """Leitet aus abgeschlossenen Fremdladungen (coordinator.py "history")
     mit ausreichend grossem SoC-Hub eine implizite Akku-Gesamtkapazitaet ab:
@@ -1364,18 +1410,28 @@ def temperature_bucket(temp_c: Optional[float], boundaries: tuple = (0.0, 10.0, 
 def temp_bucket_contribution(
     rec: dict, boundaries: tuple = (0.0, 10.0, 20.0)
 ) -> Optional[tuple]:
-    """Beitrag EINER Fahrt zu consumption_by_temp_bucket(): (Band, kWh/100km)
+    """Beitrag EINER Fahrt zu consumption_by_temp_bucket(): (Band, kWh, km)
     -- oder None, wenn Verbrauch/km/Start-Temperatur fehlen (siehe dort).
     Fuer eine laufend gepflegte Lebenszeit-Baseline je Band (siehe
     consumption_by_temp_bucket_from_totals(), coordinator.py::
-    _apply_trip_baselines())."""
+    _apply_trip_baselines()).
+
+    Liefert bewusst die ROHEN kWh/km statt schon das kWh/100km-Verhaeltnis
+    dieser einen Fahrt -- der Aufrufer summiert kWh und km getrennt ueber
+    alle Fahrten eines Bands und bildet das Verhaeltnis erst am Ende
+    (Summe/Summe statt Mittelwert der Einzelverhaeltnisse). Sonst wuerde
+    eine kurze Fahrt (wenige km, aber derselbe absolute SoC-Quantisierungs-
+    fehler wie eine lange) mit demselben Gewicht eingehen wie eine lange,
+    praezise Fahrt -- ihr relativer Fehler ist aber um ein Vielfaches
+    groesser. Summe/Summe gewichtet automatisch nach Strecke und mittelt
+    den Quantisierungsfehler kurzer Fahrten korrekt heraus."""
     verbrauch = rec.get("verbrauch_kwh")
     km = rec.get("km")
     temp = rec.get("temp_start")
     if verbrauch is None or not km or km <= 0 or temp is None:
         return None
     bucket = temperature_bucket(temp, boundaries)
-    return bucket, verbrauch / km * 100.0
+    return bucket, verbrauch, km
 
 
 def consumption_by_temp_bucket(
@@ -1387,18 +1443,22 @@ def consumption_by_temp_bucket(
     _build_trip_record()). Baender mit weniger als `min_samples` Fahrten
     werden ausgelassen -- zu wenige Datenpunkte waeren kein verlaesslicher
     Schnitt und wuerden range_estimate_km() eher verschlechtern als
-    verbessern."""
-    buckets: dict[str, list[float]] = {}
+    verbessern. Summe kWh / Summe km je Band statt Mittelwert der
+    Einzelfahrt-Verhaeltnisse -- siehe temp_bucket_contribution()."""
+    buckets: dict[str, dict] = {}
     for rec in fahrten:
         contribution = temp_bucket_contribution(rec, boundaries)
         if contribution is None:
             continue
-        bucket, pct = contribution
-        buckets.setdefault(bucket, []).append(pct)
+        bucket, kwh, km = contribution
+        entry = buckets.setdefault(bucket, {"sum_kwh": 0.0, "sum_km": 0.0, "count": 0})
+        entry["sum_kwh"] += kwh
+        entry["sum_km"] += km
+        entry["count"] += 1
     return {
-        bucket: round(sum(values) / len(values), 2)
-        for bucket, values in buckets.items()
-        if len(values) >= min_samples
+        bucket: round(v["sum_kwh"] / v["sum_km"] * 100.0, 2)
+        for bucket, v in buckets.items()
+        if v["count"] >= min_samples
     }
 
 
@@ -1406,14 +1466,14 @@ def consumption_by_temp_bucket_from_totals(temp_bucket_totals: dict, min_samples
     """Wie consumption_by_temp_bucket(), aber aus einer laufend gepflegten
     Summe/Anzahl je Band (siehe temp_bucket_contribution(), inkrementell
     gepflegt in coordinator.py::_apply_trip_baselines()) statt aus der
-    vollen fahrten-Liste -- `temp_bucket_totals` je Band: {"sum_pct":
-    Summe der kWh/100km-Werte, "count": Anzahl}. Liefert IDENTISCHE
-    Ergebnisse, unabhaengig davon, ob/wie weit die fahrten-Liste inzwischen
-    archiviert/gekuerzt wurde."""
+    vollen fahrten-Liste -- `temp_bucket_totals` je Band: {"sum_kwh":
+    Summe kWh, "sum_km": Summe km, "count": Anzahl Fahrten}. Liefert
+    IDENTISCHE Ergebnisse, unabhaengig davon, ob/wie weit die fahrten-
+    Liste inzwischen archiviert/gekuerzt wurde."""
     return {
-        bucket: round(v["sum_pct"] / v["count"], 2)
+        bucket: round(v["sum_kwh"] / v["sum_km"] * 100.0, 2)
         for bucket, v in (temp_bucket_totals or {}).items()
-        if v.get("count", 0) >= min_samples
+        if v.get("count", 0) >= min_samples and v.get("sum_km", 0) > 0
     }
 
 

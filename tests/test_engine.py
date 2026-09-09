@@ -59,6 +59,7 @@ from engine import (
     trip_avg_consumption_kwh_from_totals,
     trip_consumption_contribution,
     trip_discharge_pct,
+    trip_end_soc_correction,
     trip_weekday_kwh_parts,
     update_period_baseline,
     vehicle_discharge_update,
@@ -1453,6 +1454,81 @@ def test_is_plausible_trip_consumption_grenzwerte_inklusiv():
     assert is_plausible_trip_consumption(7.99, 100.0, 8.0, 40.0) is False
 
 
+# ----- trip_end_soc_correction: nachtraegliche Fahrtende-Korrektur --------
+# Schwelle (max_delta) und Fenster (window_s) wie in const.py kalibriert:
+# 1.5 Prozentpunkte, 24h -- siehe dortigen Kommentar fuer die Herleitung
+# aus echten Produktionsdaten (Groesse, nicht Dauer, unterscheidet
+# Nachzuegler von echten Ereignissen).
+
+def test_trip_end_soc_correction_kleiner_rueckgang_wird_uebernommen():
+    corrected = trip_end_soc_correction(
+        last_trip_end_ts=1000.0, last_trip_soc_end=29.0, new_soc=28.0,
+        ts=1000.0 + 3600.0, max_delta=1.5, window_s=86400.0,
+    )
+    assert corrected == 28.0
+
+
+def test_trip_end_soc_correction_funktioniert_auch_nach_vielen_stunden():
+    """Kernverhalten: die Dauer allein schliesst eine Korrektur nicht aus,
+    solange sie innerhalb des Fensters bleibt -- 20 Stunden sind in der
+    Praxis genauso haeufig wie 20 Minuten (siehe const.py-Diagnose)."""
+    corrected = trip_end_soc_correction(
+        last_trip_end_ts=0.0, last_trip_soc_end=29.0, new_soc=28.0,
+        ts=20 * 3600.0, max_delta=1.5, window_s=86400.0,
+    )
+    assert corrected == 28.0
+
+
+def test_trip_end_soc_correction_zu_grosser_ruckgang_bleibt_unangetastet():
+    """Groesse, nicht Dauer, ist die Sicherheitsgrenze -- ein grosser
+    Ruckgang wird selbst kurz nach Fahrtende NICHT uebernommen (z.B. ein
+    SoC-Glitch oder eine unerkannte zweite Fahrt)."""
+    corrected = trip_end_soc_correction(
+        last_trip_end_ts=1000.0, last_trip_soc_end=29.0, new_soc=5.0,
+        ts=1000.0 + 60.0, max_delta=1.5, window_s=86400.0,
+    )
+    assert corrected is None
+
+
+def test_trip_end_soc_correction_genau_an_der_schwelle_wird_uebernommen():
+    corrected = trip_end_soc_correction(
+        last_trip_end_ts=1000.0, last_trip_soc_end=29.0, new_soc=27.5,
+        ts=1000.0 + 60.0, max_delta=1.5, window_s=86400.0,
+    )
+    assert corrected == 27.5
+
+
+def test_trip_end_soc_correction_knapp_ueber_der_schwelle_bleibt_unangetastet():
+    corrected = trip_end_soc_correction(
+        last_trip_end_ts=1000.0, last_trip_soc_end=29.0, new_soc=27.4,
+        ts=1000.0 + 60.0, max_delta=1.5, window_s=86400.0,
+    )
+    assert corrected is None
+
+
+def test_trip_end_soc_correction_anstieg_wird_ignoriert():
+    """Ein Anstieg ist Ladung, ein eigenstaendiges Ereignis -- keine
+    Fahrtende-Korrektur."""
+    corrected = trip_end_soc_correction(
+        last_trip_end_ts=1000.0, last_trip_soc_end=29.0, new_soc=30.0,
+        ts=1000.0 + 60.0, max_delta=1.5, window_s=86400.0,
+    )
+    assert corrected is None
+
+
+def test_trip_end_soc_correction_ausserhalb_des_fensters_bleibt_unangetastet():
+    corrected = trip_end_soc_correction(
+        last_trip_end_ts=0.0, last_trip_soc_end=29.0, new_soc=28.5,
+        ts=86400.0 + 1.0, max_delta=1.5, window_s=86400.0,
+    )
+    assert corrected is None
+
+
+def test_trip_end_soc_correction_ohne_vorherige_fahrt_gibt_none():
+    assert trip_end_soc_correction(None, None, 28.0, 1000.0, 1.5, 86400.0) is None
+    assert trip_end_soc_correction(1000.0, None, 28.0, 1060.0, 1.5, 86400.0) is None
+
+
 # ----- battery_capacity_samples / home_capacity_sample /                  --
 # ----- estimate_battery_capacity_kwh ----------------------------------------
 
@@ -1555,7 +1631,7 @@ def test_temperature_bucket_ohne_temperatur_liefert_none():
     assert temperature_bucket(None) is None
 
 
-def test_consumption_by_temp_bucket_gruppiert_und_mittelt():
+def test_consumption_by_temp_bucket_gruppiert_und_summiert():
     fahrten = [
         {"verbrauch_kwh": 3.0, "km": 20.0, "temp_start": -5.0},   # 15.0 kWh/100km, <0°C
         {"verbrauch_kwh": 4.0, "km": 20.0, "temp_start": -2.0},   # 20.0 kWh/100km, <0°C
@@ -1563,7 +1639,27 @@ def test_consumption_by_temp_bucket_gruppiert_und_mittelt():
         {"verbrauch_kwh": 2.0, "km": 20.0, "temp_start": 15.0},   # 10.0 kWh/100km, nur 1x -> raus
     ]
     result = consumption_by_temp_bucket(fahrten, boundaries=(0.0, 10.0, 20.0), min_samples=3)
+    # Summe kWh / Summe km je Band (10.5 / 60 * 100), NICHT Mittelwert der
+    # Einzelverhaeltnisse -- bei identischen km je Fahrt hier zufaellig
+    # dasselbe Ergebnis, siehe naechster Test fuer den Unterschied.
     assert result == {"<0°C": 17.5}
+
+
+def test_consumption_by_temp_bucket_gewichtet_nach_strecke_statt_gleich():
+    """Kernverhalten der Summe/Summe-Umstellung: eine kurze, durch SoC-
+    Quantisierung stark verrauschte Fahrt darf eine lange, praezise Fahrt
+    nicht im selben Mass verzerren wie ein reiner Mittelwert der
+    Einzelverhaeltnisse es taete."""
+    fahrten = [
+        {"verbrauch_kwh": 0.5, "km": 1.0, "temp_start": -5.0},     # 50 kWh/100km (Rauschen, kurze Fahrt)
+        {"verbrauch_kwh": 15.0, "km": 100.0, "temp_start": -3.0},  # 15 kWh/100km (lange, praezise Fahrt)
+        {"verbrauch_kwh": 15.5, "km": 100.0, "temp_start": -2.0},  # 15.5 kWh/100km
+    ]
+    result = consumption_by_temp_bucket(fahrten, boundaries=(0.0, 10.0, 20.0), min_samples=3)
+    summe_summe = round((0.5 + 15.0 + 15.5) / (1.0 + 100.0 + 100.0) * 100.0, 2)
+    mittelwert_verhaeltnisse = round((50.0 + 15.0 + 15.5) / 3, 2)
+    assert result == {"<0°C": summe_summe}
+    assert result["<0°C"] != mittelwert_verhaeltnisse  # deutlich weniger von der kurzen Fahrt verzerrt
 
 
 def test_consumption_by_temp_bucket_ohne_pruefbare_daten_ausgeschlossen():
@@ -1577,7 +1673,7 @@ def test_consumption_by_temp_bucket_ohne_pruefbare_daten_ausgeschlossen():
 
 def test_temp_bucket_contribution_entspricht_voller_liste_berechnung():
     rec = {"verbrauch_kwh": 3.0, "km": 20.0, "temp_start": -5.0}
-    assert temp_bucket_contribution(rec) == ("<0°C", 15.0)
+    assert temp_bucket_contribution(rec) == ("<0°C", 3.0, 20.0)
 
 
 def test_temp_bucket_contribution_ohne_pruefbare_daten_liefert_none():
@@ -1587,16 +1683,16 @@ def test_temp_bucket_contribution_ohne_pruefbare_daten_liefert_none():
 
 
 def test_consumption_by_temp_bucket_from_totals_entspricht_voller_liste():
-    # Dieselben drei Fahrten wie test_consumption_by_temp_bucket_gruppiert_und_mittelt(),
+    # Dieselben drei Fahrten wie test_consumption_by_temp_bucket_gruppiert_und_summiert(),
     # aber als laufend gepflegte Summe/Anzahl je Band (siehe
     # coordinator.py::_apply_trip_baselines()) statt als volle Liste.
-    totals = {"<0°C": {"sum_pct": 15.0 + 20.0 + 17.5, "count": 3}}
+    totals = {"<0°C": {"sum_kwh": 3.0 + 4.0 + 3.5, "sum_km": 60.0, "count": 3}}
     result = consumption_by_temp_bucket_from_totals(totals, min_samples=3)
     assert result == {"<0°C": 17.5}
 
 
 def test_consumption_by_temp_bucket_from_totals_unter_min_samples_ausgeschlossen():
-    totals = {"<0°C": {"sum_pct": 15.0, "count": 2}}
+    totals = {"<0°C": {"sum_kwh": 15.0, "sum_km": 100.0, "count": 2}}
     assert consumption_by_temp_bucket_from_totals(totals, min_samples=3) == {}
 
 
@@ -2663,9 +2759,10 @@ def test_baselines_entsprechen_voller_liste_und_bleiben_nach_kuerzung_unveraende
                 deltasoc_count += 1
         temp_contribution = temp_bucket_contribution(rec)
         if temp_contribution is not None:
-            bucket, pct = temp_contribution
-            entry = temp_totals.setdefault(bucket, {"sum_pct": 0.0, "count": 0})
-            entry["sum_pct"] += pct
+            bucket, kwh, km = temp_contribution
+            entry = temp_totals.setdefault(bucket, {"sum_kwh": 0.0, "sum_km": 0.0, "count": 0})
+            entry["sum_kwh"] += kwh
+            entry["sum_km"] += km
             entry["count"] += 1
 
     charge_total = 0.0

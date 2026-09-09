@@ -139,6 +139,8 @@ from .const import (
     TRIP_CONSUMPTION_CHECK_MIN_KM,
     TRIP_CONSUMPTION_MAX_KWH_100KM,
     TRIP_CONSUMPTION_MIN_KWH_100KM,
+    TRIP_END_SOC_CORRECTION_MAX_DELTA,
+    TRIP_END_SOC_CORRECTION_WINDOW_S,
     VEHICLE_DISCHARGE_CONFIRM_SECONDS,
     WARTUNG_BALD_FAELLIG_KM,
     WARTUNG_BALD_FAELLIG_TAGE,
@@ -194,6 +196,7 @@ from .engine import (
     trip_avg_consumption_kwh_from_totals,
     trip_consumption_contribution,
     trip_discharge_pct,
+    trip_end_soc_correction,
     trip_weekday_kwh_parts,
     update_period_baseline,
     vehicle_discharge_update,
@@ -420,6 +423,11 @@ def _empty_data() -> dict:
         # Reload der Integration) angepasst werden muss. None = kein
         # Override, es gilt der konfigurierte/Default-Wert.
         "usage_profile_buffer_pct_override": None,
+        # Merkposten fuer _maybe_correct_last_trip_end_soc() -- siehe
+        # dortigen Docstring/engine.trip_end_soc_correction().
+        "last_trip_start_ts": None,
+        "last_trip_end_ts": None,
+        "last_trip_end_soc": None,
     }
 
 
@@ -1128,6 +1136,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         except (ValueError, TypeError):
             return
         self._update_vehicle_discharge(self._soc)
+        self._maybe_correct_last_trip_end_soc(self._soc, dt_util.utcnow().timestamp())
         self.hass.async_create_task(self._run_detection())
 
     def _update_vehicle_discharge(self, new_soc: float) -> None:
@@ -1206,6 +1215,61 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         applied_value = clamp_weekday_contribution("exact", kwh, avg_kwh, OUTLIER_DAMPING_FACTOR, None)
         totals[wd_key] = round(totals.get(wd_key, 0.0) + applied_value, 2)
         self.data["vehicle_discharge_weekday_kwh_totals"] = totals
+
+    def _maybe_correct_last_trip_end_soc(self, new_soc: float, ts: float) -> None:
+        """Prueft bei JEDEM neuen SoC-Messwert, ob er die zuletzt
+        abgeschlossene Fahrt nachtraeglich korrigieren sollte (siehe
+        engine.trip_end_soc_correction() fuer die reine Entscheidungslogik
+        und die Begruendung/Kalibrierung aus echten Produktionsdaten). Nur
+        relevant, waehrend gerade KEINE Fahrt laeuft -- ein Rueckgang
+        WAEHREND einer aktiven Fahrt ist deren eigener, normaler Verbrauch,
+        keine Nachzuegler-Korrektur einer bereits beendeten.
+
+        Greift sowohl bei bereits bestaetigten Fahrten (CONF_TRIP_AUTO_
+        CONFIRM aktiv, Fahrt schon in "fahrten" mit gebuchten Baselines --
+        Baseline ab-/wieder aufbuchen, analog async_edit_trip()) als auch
+        bei noch offenen (in "pending_trips", noch keine Baseline gebucht
+        -- direktes Nachtragen im Dict reicht). "last_trip_end_soc" wird
+        nach einer Korrektur aktualisiert, damit ein WEITERER, ebenso
+        kleiner Nachzuegler kurz danach noch relativ zum bereits
+        korrigierten Stand bewertet wird."""
+        if self._trip_detector is not None and self._trip_detector.active:
+            return
+        start_ts = self.data.get("last_trip_start_ts")
+        last_end_ts = self.data.get("last_trip_end_ts")
+        last_soc_end = self.data.get("last_trip_end_soc")
+        corrected = trip_end_soc_correction(
+            last_end_ts, last_soc_end, new_soc, ts,
+            TRIP_END_SOC_CORRECTION_MAX_DELTA, TRIP_END_SOC_CORRECTION_WINDOW_S,
+        )
+        if corrected is None or start_ts is None:
+            return
+        for rec in self.data.get("fahrten") or []:
+            if rec.get("start_ts") == start_ts:
+                old_rec = dict(rec)
+                rec["soc_end"] = round(corrected, 1)
+                if rec.get("soc_start") is not None:
+                    rec["delta_soc"] = round(rec["soc_end"] - rec["soc_start"], 1)
+                    usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+                    rec["verbrauch_kwh"] = round(max(0.0, -rec["delta_soc"]) / 100.0 * usable_kwh, 2)
+                    rec["verbrauch_unsicher"] = not is_plausible_trip_consumption(
+                        rec["verbrauch_kwh"], rec.get("km"),
+                        TRIP_CONSUMPTION_MIN_KWH_100KM, TRIP_CONSUMPTION_MAX_KWH_100KM,
+                    )
+                self._apply_trip_baselines(old_rec, -1)
+                self._apply_trip_baselines(rec, 1)
+                self._fahrten_version += 1
+                self.data["last_trip_end_soc"] = rec["soc_end"]
+                self._save_soon()
+                return
+        for pend in self.data.get("pending_trips") or []:
+            if pend.get("start_ts") == start_ts:
+                pend["soc_end"] = round(corrected, 1)
+                if pend.get("soc_start") is not None:
+                    pend["delta_soc"] = round(pend["soc_end"] - pend["soc_start"], 1)
+                self.data["last_trip_end_soc"] = pend["soc_end"]
+                self._save_soon()
+                return
 
     @callback
     def _set_home(self, raw) -> None:
@@ -2003,6 +2067,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 pend["delta_soc"] = round(self._soc - self._trip_start_soc, 1)
             if self._trip_start_temp is not None:
                 pend["temp_start"] = round(self._trip_start_temp, 1)
+            # Merkposten fuer _maybe_correct_last_trip_end_soc() -- siehe
+            # dortigen Docstring: ein spaeter eintreffender SoC-Wert kann
+            # diese Fahrt (egal ob noch offen oder schon bestaetigt, siehe
+            # CONF_TRIP_AUTO_CONFIRM) nachtraeglich korrigieren.
+            self.data["last_trip_start_ts"] = pend["start_ts"]
+            self.data["last_trip_end_ts"] = pend.get("end_ts")
+            self.data["last_trip_end_soc"] = pend.get("soc_end")
             await self._handle_pending_trip(pend)
 
     async def _record_efficiency_sample(self, sample: float) -> None:
@@ -2348,10 +2419,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             totals["count"] = max(0, totals.get("count", 0) + sign)
         temp_contribution = temp_bucket_contribution(rec, TEMP_BUCKET_BOUNDARIES)
         if temp_contribution is not None:
-            bucket_key, pct = temp_contribution
+            bucket_key, kwh, km = temp_contribution
             buckets = self.data.setdefault("temp_bucket_totals", {})
-            entry = buckets.setdefault(bucket_key, {"sum_pct": 0.0, "count": 0})
-            entry["sum_pct"] = round(entry.get("sum_pct", 0.0) + sign * pct, 4)
+            entry = buckets.setdefault(bucket_key, {"sum_kwh": 0.0, "sum_km": 0.0, "count": 0})
+            entry["sum_kwh"] = round(entry.get("sum_kwh", 0.0) + sign * kwh, 4)
+            entry["sum_km"] = round(entry.get("sum_km", 0.0) + sign * km, 2)
             entry["count"] = max(0, entry.get("count", 0) + sign)
             if entry["count"] <= 0:
                 buckets.pop(bucket_key, None)
