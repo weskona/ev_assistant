@@ -1453,7 +1453,12 @@ class VehicleDischargeSensor(EvAssistantEntity, SensorEntity):
     VEHICLE_DISCHARGE_CONFIRM_SECONDS -- Haertung gegen kurzzeitige,
     stark abweichende SoC-Ausreisser, Produktionsvorfall 2026-09-02ff).
     TOTAL statt TOTAL_INCREASING, da der Zaehler bei Bedarf manuell
-    zurueckgesetzt werden kann (analog EquivalentFullCyclesSensor)."""
+    zurueckgesetzt werden kann (analog EquivalentFullCyclesSensor). Macht
+    zusaetzlich "vehicle_discharge_events" sichtbar (Attribut
+    "live_soc_events") -- das Log, aus dem der Service urlaub_seit
+    (siehe coordinator.py::async_apply_vehicle_discharge_urlaub_since())
+    rueckwirkend Buchungen herausrechnet; hilft beim Ablesen eines
+    passenden seit_ts-Werts fuer den Service-Aufruf."""
 
     _attr_translation_key = "vehicle_discharge_total"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
@@ -1478,6 +1483,7 @@ class VehicleDischargeSensor(EvAssistantEntity, SensorEntity):
         attrs["reference_soc"] = self.coordinator.data.get("vehicle_discharge_reference_soc")
         attrs["pending_soc"] = self.coordinator.data.get("vehicle_discharge_pending_soc")
         attrs["pending_since"] = self.coordinator.data.get("vehicle_discharge_pending_since")
+        attrs["live_soc_events"] = self.coordinator.data.get("vehicle_discharge_events")
         return attrs
 
 

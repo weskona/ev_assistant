@@ -302,6 +302,16 @@ DEFAULT_NOISE = 0.5
 # ueber den in der Praxis beobachteten Ausreissern (wenige Sekunden), aber
 # weit unter der Dauer eines echten Standby-Rueckgangs.
 VEHICLE_DISCHARGE_CONFIRM_SECONDS = 60.0
+
+# Aufbewahrungsfenster fuer "vehicle_discharge_events" (siehe coordinator.py::
+# _book_vehicle_discharge_weekday()/async_apply_vehicle_discharge_urlaub_
+# since()) -- das Log existiert NUR, damit ein vergessenes Aktivieren von
+# CONF_URLAUB_ENTITY rueckwirkend korrigiert werden kann (Service
+# SERVICE_URLAUB_SEIT), keine dauerhafte Historie wie "fahrten"/"history".
+# 7 Tage sind grosszuegig fuer den realistischen Anwendungsfall ("heute oder
+# gestern vergessen"), ohne self.data mit einer weiteren unbegrenzt
+# wachsenden Liste zu belasten.
+VEHICLE_DISCHARGE_EVENTS_MAX_DAYS = 7
 DEFAULT_IDLE_TIMEOUT = 600.0
 DEFAULT_DROP_ENDS = 1.0
 
@@ -441,6 +451,7 @@ EVENT_TRIP_LOGGED = "ev_assistant_trip_logged"
 EVENT_TRIP_EDITED = "ev_assistant_trip_edited"
 EVENT_TRIP_DELETED = "ev_assistant_trip_deleted"
 EVENT_TRIP_IMPORTED = "ev_assistant_trip_imported"
+EVENT_VEHICLE_DISCHARGE_URLAUB_APPLIED = "ev_assistant_vehicle_discharge_urlaub_applied"
 
 SERVICE_LOG = "log_charge"
 SERVICE_DISCARD = "discard_pending"
@@ -464,6 +475,7 @@ SERVICE_EDIT_MAINTENANCE = "edit_maintenance"
 SERVICE_DELETE_MAINTENANCE = "delete_maintenance"
 SERVICE_MARK_MAINTENANCE_DONE = "mark_maintenance_done"
 SERVICE_SET_USAGE_PROFILE_BUFFER_PCT = "set_usage_profile_buffer_pct"
+SERVICE_URLAUB_SEIT = "urlaub_seit"
 
 NOTIFY_TAG = "ev_assistant"
 

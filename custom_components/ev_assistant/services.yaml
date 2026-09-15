@@ -1185,3 +1185,30 @@ set_usage_profile_buffer_pct:
           step: 1
           unit_of_measurement: "%"
           mode: box
+
+urlaub_seit:
+  name: Urlaub rückwirkend anwenden
+  description: >
+    Bucht rückwirkend alle seit dem angegebenen Zeitpunkt bestätigten
+    Live-SoC-Verbrauchsbuchungen (siehe "Live-SoC-Verbrauch gesamt"-Sensor)
+    aus ihrem Wochentags-Topf wieder heraus -- für den Fall, dass der
+    Urlaubsmodus erst nach der Abfahrt aktiviert wurde und der Anfang der
+    Urlaubsfahrt fälschlich als normaler Tag verbucht wurde. Wirkt nur auf
+    die letzten Tage (siehe VEHICLE_DISCHARGE_EVENTS_MAX_DAYS) -- ältere
+    Buchungen sind nicht mehr im Log und bleiben unverändert.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    seit_ts:
+      name: Seit (Unix-Zeitstempel)
+      description: Ab diesem Zeitpunkt gebuchte kWh gelten rückwirkend als Urlaub.
+      required: true
+      example: 1789131934
+      selector:
+        number:
+          mode: box

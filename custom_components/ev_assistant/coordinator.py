@@ -114,6 +114,7 @@ from .const import (
     EVENT_TRIP_IMPORTED,
     EVENT_TRIP_LOGGED,
     EVENT_TRIP_PENDING,
+    EVENT_VEHICLE_DISCHARGE_URLAUB_APPLIED,
     FAHRTEN_MAX_MONATE,
     HISTORY_MAX_MONATE,
     IMPLAUSIBLE_POWER_RATIO,
@@ -142,6 +143,7 @@ from .const import (
     TRIP_END_SOC_CORRECTION_MAX_DELTA,
     TRIP_END_SOC_CORRECTION_WINDOW_S,
     VEHICLE_DISCHARGE_CONFIRM_SECONDS,
+    VEHICLE_DISCHARGE_EVENTS_MAX_DAYS,
     WARTUNG_BALD_FAELLIG_KM,
     WARTUNG_BALD_FAELLIG_TAGE,
     WARTUNG_PRESETS,
@@ -1201,7 +1203,20 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         abfrage moeglich, siehe _urlaub_aktiv()) -- in dem seltenen Fall,
         dass der Urlaub erst NACH der ersten Beobachtung, aber VOR der
         Bestaetigung beginnt, kann ein eigentlich normaler Tag faelschlich
-        ausgeschlossen werden; umgekehrt genauso. Kein Tages-Zaehler-
+        ausgeschlossen werden; umgekehrt genauso. Fuer die erste Richtung
+        (Urlaub vergessen zu aktivieren, ein Urlaubs-Abschnitt landet
+        faelschlich im normalen Topf, Produktionsvorfall 2026-09-11: Abfahrt
+        15:05 Uhr, Schalter erst spaeter waehrend der Fahrt umgelegt) gibt es
+        seit VEHICLE_DISCHARGE_EVENTS_MAX_DAYS eine nachtraegliche Korrektur
+        -- siehe async_apply_vehicle_discharge_urlaub_since(). Dafuer wird
+        JEDE Buchung zusaetzlich in "vehicle_discharge_events" protokolliert
+        (Zeitstempel, Wochentag, tatsaechlich gebuchter Betrag NACH
+        Daempfung -- exakt das, was eine Korrektur wieder abziehen muss,
+        analog dem "weekday_applied"-Freeze bei _apply_trip_baselines()).
+        Das Log ist bewusst kurzlebig (nur fuer den realistischen "heute/
+        gestern vergessen"-Anwendungsfall), keine Dauerhistorie wie
+        "fahrten"/"history" -- wird bei jedem Aufruf auf die letzten
+        VEHICLE_DISCHARGE_EVENTS_MAX_DAYS gekuerzt. Kein Tages-Zaehler-
         Inkrement hier -- das macht ausschliesslich der taegliche Rollover
         (_update_vehicle_discharge_profile()), unabhaengig davon, ob/wann
         an diesem Tag etwas bestaetigt wird."""
@@ -1215,6 +1230,87 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         applied_value = clamp_weekday_contribution("exact", kwh, avg_kwh, OUTLIER_DAMPING_FACTOR, None)
         totals[wd_key] = round(totals.get(wd_key, 0.0) + applied_value, 2)
         self.data["vehicle_discharge_weekday_kwh_totals"] = totals
+        events = list(self.data.get("vehicle_discharge_events") or [])
+        events.append({"ts": observed_ts, "weekday": weekday, "kwh_applied": applied_value})
+        cutoff = dt_util.utcnow().timestamp() - VEHICLE_DISCHARGE_EVENTS_MAX_DAYS * 86400
+        self.data["vehicle_discharge_events"] = [ev for ev in events if ev["ts"] >= cutoff]
+
+    async def async_apply_vehicle_discharge_urlaub_since(self, since_ts: float) -> dict:
+        """Bucht rueckwirkend alle seit `since_ts` bestaetigten Live-SoC-
+        Buchungen (siehe "vehicle_discharge_events" in
+        _book_vehicle_discharge_weekday()) aus ihrem Wochentags-Topf wieder
+        heraus -- fuer den Fall, dass CONF_URLAUB_ENTITY erst NACH Abfahrt
+        aktiviert wurde und der Anfang der Urlaubsfahrt faelschlich als
+        normaler Tag verbucht wurde (Produktionsvorfall 2026-09-11, siehe
+        _book_vehicle_discharge_weekday()-Docstring). Bewusst ohne
+        automatischen Trigger -- WANN der Nutzer eigentlich losgefahren ist,
+        weiss nur der Nutzer selbst (oder ein spaeterer Kalendereintrag/eine
+        Automatisierung ausserhalb von ev_assistant, siehe const.py-Kommentar
+        bei CONF_URLAUB_ENTITY); dieser Service liefert nur den Mechanismus,
+        nicht die Entscheidung.
+
+        Pro betroffenem Kalendertag wird zusaetzlich der Tages-Zaehler
+        korrekt gesetzt: bleibt fuer diesen Tag (nach Abzug der Urlaubs-
+        Buchungen) noch ein normaler Rest-Verbrauch > 0 stehen, zaehlt er
+        weiterhin als beobachteter Tag (genau wie eine "echte" Fahrt vor der
+        Abfahrt) -- war der GESAMTE Tag betroffen, zaehlt er bewusst NICHT
+        (analog dem Urlaubs-Ausschluss in _update_vehicle_discharge_
+        profile()). Der Tag wird in "vehicle_discharge_counted_dates"
+        vermerkt, damit der naechtliche Rollover (_update_vehicle_discharge_
+        profile()) ihn nicht anhand des dann laengst aktiven Urlaubsschalters
+        ein zweites Mal (und diesmal falsch) bewertet.
+
+        Gibt ein Dict mit den insgesamt umgebuchten kWh sowie einer
+        Aufschluesselung je Wochentag zurueck (0=Montag..6=Sonntag als
+        String-Key, wie ueberall sonst in diesem Modul) -- leer, wenn kein
+        Event im Log seit `since_ts` liegt (z.B. ausserhalb von
+        VEHICLE_DISCHARGE_EVENTS_MAX_DAYS, oder es gab schlicht keins)."""
+        events = list(self.data.get("vehicle_discharge_events") or [])
+        remaining_events = []
+        reclassified_by_weekday: dict[str, float] = {}
+        remaining_by_date: dict[str, float] = {}
+        reclassified_dates: set[str] = set()
+        for ev in events:
+            ev_date = dt_util.as_local(dt_util.utc_from_timestamp(ev["ts"])).date().isoformat()
+            if ev["ts"] >= since_ts:
+                wd_key = str(ev["weekday"])
+                reclassified_by_weekday[wd_key] = round(
+                    reclassified_by_weekday.get(wd_key, 0.0) + ev["kwh_applied"], 2
+                )
+                reclassified_dates.add(ev_date)
+            else:
+                remaining_events.append(ev)
+                remaining_by_date[ev_date] = remaining_by_date.get(ev_date, 0.0) + ev["kwh_applied"]
+        if not reclassified_by_weekday:
+            return {"reclassified_kwh": 0.0, "wochentage": {}}
+
+        totals = dict(self.data.get("vehicle_discharge_weekday_kwh_totals") or {})
+        for wd_key, kwh in reclassified_by_weekday.items():
+            totals[wd_key] = round(max(0.0, totals.get(wd_key, 0.0) - kwh), 2)
+        self.data["vehicle_discharge_weekday_kwh_totals"] = totals
+        self.data["vehicle_discharge_events"] = remaining_events
+
+        counts = dict(self.data.get("vehicle_discharge_weekday_day_counts") or {})
+        resolved = set(self.data.get("vehicle_discharge_counted_dates") or [])
+        for date_key in reclassified_dates:
+            if date_key in resolved:
+                continue
+            wd_key = str(date.fromisoformat(date_key).weekday())
+            if remaining_by_date.get(date_key, 0.0) > 0:
+                counts[wd_key] = counts.get(wd_key, 0) + 1
+            resolved.add(date_key)
+        self.data["vehicle_discharge_weekday_day_counts"] = counts
+        self.data["vehicle_discharge_counted_dates"] = list(resolved)
+
+        await self._save()
+        payload = {
+            "since_ts": since_ts,
+            "reclassified_kwh": round(sum(reclassified_by_weekday.values()), 2),
+            "wochentage": reclassified_by_weekday,
+        }
+        self.hass.bus.async_fire(EVENT_VEHICLE_DISCHARGE_URLAUB_APPLIED, payload)
+        self.async_set_updated_data(self.data)
+        return payload
 
     def _maybe_correct_last_trip_end_soc(self, new_soc: float, ts: float) -> None:
         """Prueft bei JEDEM neuen SoC-Messwert, ob er die zuletzt
@@ -4552,12 +4648,6 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["vehicle_discharge_periods"] = new_periods
         new_entry = new_periods["day"]
         if old_entry is not None and old_entry.get("key") != key and "prev" in new_entry:
-            # Urlaub: siehe identischer Kommentar in
-            # _update_house_usage_profile() -- ein Urlaubstag zaehlt gar
-            # nicht erst als beobachteter Tag, sonst wuerde er den Schnitt
-            # als "0 kWh Tag" trotzdem nach unten ziehen.
-            if self._urlaub_aktiv():
-                return
             # ALLE zwischen dem letzten Rollover und heute uebersprungenen
             # Kalendertage nachholen, nicht nur "gestern" -- dieser Hook
             # laeuft nur einmal taeglich um 00:05 Uhr (siehe
@@ -4570,15 +4660,50 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # Vorfall: Rollover am 2026-09-07/08 uebersprungen, "Montag"-
             # Summe blieb ohne Tageszaehler, "Dienstag" bekam einen
             # Tageszaehler ohne Summe).
+            #
+            # "vehicle_discharge_counted_dates" (statt hier bei JEDEM
+            # Kalendertag blind den Live-Urlaubsstatus abzufragen, wie vor
+            # der Einfuehrung von async_apply_vehicle_discharge_urlaub_
+            # since()) enthaelt bereits ENDGUELTIG entschiedene Tage --
+            # entweder von einem frueheren Rollover-Durchlauf, oder (der
+            # eigentliche Grund fuer dieses Set) von einer rueckwirkenden
+            # Urlaubs-Korrektur, die noch VOR diesem naechtlichen Rollover
+            # fuer den betroffenen Tag ausgefuehrt wurde (Produktionsvorfall
+            # 2026-09-11: Abfahrt 15:05 Uhr, Urlaubsschalter erst waehrend
+            # der Fahrt umgelegt -- ohne dieses Set wuerde der Rollover
+            # denselben, schon korrigierten Tag anhand des dann laengst
+            # aktiven Urlaubsschalters ERNEUT (und diesmal faelschlich als
+            # "ganzer Tag Urlaub") bewerten und den bereits korrekt
+            # gezaehlten Tageszaehler wieder verwerfen). Nur fuer Tage, die
+            # NICHT bereits entschieden sind, gilt weiterhin der bisherige
+            # Live-Check -- siehe _urlaub_aktiv()-Docstring fuer die
+            # verbleibende (seltene, mehrtaegige Nachhol-) Einschraenkung
+            # davon.
             old_date = date.fromisoformat(old_entry["key"])
             new_date = date.fromisoformat(key)
             counts = dict(self.data.get("vehicle_discharge_weekday_day_counts") or {})
+            resolved = set(self.data.get("vehicle_discharge_counted_dates") or [])
             d = old_date
             while d < new_date:
-                wd_key = str(d.weekday())
-                counts[wd_key] = counts.get(wd_key, 0) + 1
+                date_key = d.isoformat()
+                if date_key not in resolved:
+                    # Urlaub: siehe identischer Kommentar in
+                    # _update_house_usage_profile() -- ein Urlaubstag zaehlt
+                    # gar nicht erst als beobachteter Tag, sonst wuerde er
+                    # den Schnitt als "0 kWh Tag" trotzdem nach unten ziehen.
+                    if not self._urlaub_aktiv():
+                        wd_key = str(d.weekday())
+                        counts[wd_key] = counts.get(wd_key, 0) + 1
+                    resolved.add(date_key)
                 d += timedelta(days=1)
             self.data["vehicle_discharge_weekday_day_counts"] = counts
+            # Set kurz halten -- aeltere Tage sind fuer keinen zukuenftigen
+            # Rollover/keine Korrektur mehr relevant (analog dem Events-Log,
+            # siehe VEHICLE_DISCHARGE_EVENTS_MAX_DAYS).
+            resolved_cutoff = new_date - timedelta(days=VEHICLE_DISCHARGE_EVENTS_MAX_DAYS)
+            self.data["vehicle_discharge_counted_dates"] = [
+                dk for dk in resolved if date.fromisoformat(dk) >= resolved_cutoff
+            ]
 
     def _vehicle_discharge_kwh_used_today(self) -> Optional[float]:
         """Analog _house_kwh_used_today(), fuers Fahrzeug: aktueller

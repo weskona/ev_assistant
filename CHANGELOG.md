@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.87.0] - 2026-09-15
+
+### Added
+
+- **Retroactive vacation correction for the live-SoC discharge tracker**: found in production — the discharge tracker confirms a SoC drop within `VEHICLE_DISCHARGE_CONFIRM_SECONDS` (60s), while `CONF_URLAUB_ENTITY` is only checked at that same moment. If the vacation switch is flipped *during* a trip rather than before leaving (observed live: departure 15:05, switch flipped sometime mid-drive), the tracker had already confirmed and booked the first part of that trip into the normal weekday bucket before the switch caught up — with no way to undo it afterwards. Every confirmed booking is now also logged to `vehicle_discharge_events` (timestamp, weekday, applied kWh — kept for `VEHICLE_DISCHARGE_EVENTS_MAX_DAYS`, not a permanent history like the trip log), and a new service `urlaub_seit` lets you reclassify everything booked from a given timestamp onward as vacation, subtracting it from the affected weekday's total. The nightly rollover's day-counter logic was also hardened: it now tracks which calendar days have already been finally decided (`vehicle_discharge_counted_dates`) instead of re-evaluating the live vacation switch for a day it — or a correction — already resolved, which previously risked re-deciding (and corrupting) an already-corrected day. No automatic trigger for the vacation switch itself — deciding *when* vacation actually started stays outside this integration's scope.
+
 ## [0.86.0] - 2026-09-10
 
 ### Added
