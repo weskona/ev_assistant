@@ -392,10 +392,13 @@ URLAUB_SEIT_SCHEMA = vol.Schema({
     vol.Required("seit_ts"): vol.Coerce(float),
 })
 
-# enabled absichtlich optional OHNE Default: fehlt es, wird der Laufzeit-
-# Override zurueckgesetzt (siehe coordinator.py::async_set_weekly_full_
-# charge_enabled()), analog SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA -- inkl.
-# desselben vol.Any(None, ...)-Fixes fuer ein explizit mitgegebenes null.
+# enabled absichtlich optional OHNE Default: fehlt es (oder explizit
+# null), wird CONF_WEEKLY_FULL_CHARGE_ENABLED aus entry.data entfernt
+# (zurueck auf DEFAULT_WEEKLY_FULL_CHARGE_ENABLED, siehe coordinator.py::
+# async_set_weekly_full_charge_enabled()) -- ANDERS als
+# SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA (reiner Laufzeit-Override statt
+# Persistenz, siehe dortigen coordinator.py-Docstring), aber mit demselben
+# vol.Any(None, ...)-Fix fuer ein explizit mitgegebenes null.
 SET_WEEKLY_FULL_CHARGE_ENABLED_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
     vol.Optional("enabled"): vol.Any(None, bool),

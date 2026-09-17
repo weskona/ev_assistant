@@ -296,9 +296,15 @@ CONF_EVCC_MODE_CONTROL_ENABLED = "evcc_mode_control_enabled"
 # Steuert NUR Ziel-SoC + Modus -- WOHER der Ladestrom kommt (PV/Netz/Speicher)
 # entscheidet weiterhin evcc selbst (Mindestladeleistung im "minpv"-Modus,
 # Speicher-Entladesperre als evcc-eigene, vom Nutzer gesetzte Einstellung).
-# Zusaetzlich per Panel-Schalter laufzeit-uebersteuerbar (siehe
-# CONF_USAGE_PROFILE_BUFFER_PCT-Pendant _usage_profile_buffer_pct()) --
-# daher bewusst kein CONF_ fuers Intervall im Panel, nur dieser Schalter.
+# Zusaetzlich per Panel-Schalter umschaltbar (siehe coordinator.py::
+# async_set_weekly_full_charge_enabled()) -- ANDERS als der Puffer-Regler
+# (CONF_USAGE_PROFILE_BUFFER_PCT/_usage_profile_buffer_pct(), reiner
+# Laufzeit-Override) schreibt der Panel-Schalter hier direkt nach
+# entry.data, damit der Options-Flow nie einen anderen Wert zeigt als
+# zuletzt per Schalter gesetzt (Produktionsfeedback 2026-09-17) -- dafuer
+# in Kauf genommen: ein kurzer Reload bei jeder Umschaltung, unkritisch
+# fuer einen selten genutzten Schalter. Daher bewusst kein CONF_ fuers
+# Intervall im Panel, nur dieser Schalter.
 CONF_WEEKLY_FULL_CHARGE_ENABLED = "weekly_full_charge_enabled"
 # Seltene Einstellung, nur im Options-Flow (nicht im Panel) -- wie oft eine
 # faellige Balancing-Ladung wiederkehrt.

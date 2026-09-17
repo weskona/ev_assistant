@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.88.2] - 2026-09-17
+
+### Changed
+
+- **Weekly full charge panel switch now stays in sync with the options flow**: it previously used a pure runtime override (like the buffer slider), so opening the options flow after flipping it in the panel showed a stale/seemingly-wrong value. It now writes directly into the config entry instead, the same place the options flow itself saves to — at the cost of a brief integration reload on every toggle, an acceptable trade for a switch that's flipped rarely (unlike the buffer slider, which stays a pure runtime override for exactly that reason).
+
 ## [0.88.1] - 2026-09-17
 
 ### Fixed

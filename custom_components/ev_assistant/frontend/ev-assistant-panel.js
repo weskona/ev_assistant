@@ -4325,8 +4325,10 @@ class EVAssistantPanel extends HTMLElement {
     this._r.betaWbBalancingStatus = q("#beta-wb-balancing-status");
 
     // set_weekly_full_charge_enabled (siehe coordinator.py::async_set_
-    // weekly_full_charge_enabled()) -- Laufzeit-Override, analog dem
-    // Puffer-Regler oben, kein Options-Flow-Neuladen noetig.
+    // weekly_full_charge_enabled()) -- ANDERS als der Puffer-Regler oben
+    // (reiner Laufzeit-Override) schreibt das direkt in die Konfiguration
+    // und loest einen kurzen Neuladen der Integration aus, damit der
+    // Options-Flow nie einen anderen Wert zeigt als hier gesetzt.
     this._r.betaWbBalancingToggle.addEventListener("change", (e) => {
       this._call("set_weekly_full_charge_enabled", { enabled: e.target.checked });
     });

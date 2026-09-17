@@ -1216,11 +1216,13 @@ urlaub_seit:
 set_weekly_full_charge_enabled:
   name: Wöchentliche Vollladung (Balancing) umschalten
   description: >
-    Setzt/löscht den Laufzeit-Override für die wöchentliche Vollladung
-    fürs Zellbalancing direkt (z.B. Panel-Schalter), ohne den Options-Flow
-    (samt Neuladen der Integration) öffnen zu müssen. Ohne enabled wird
-    der Override zurückgesetzt, es gilt wieder der in den Optionen
-    konfigurierte Wert.
+    Schaltet die wöchentliche Vollladung fürs Zellbalancing direkt um
+    (z.B. Panel-Schalter), ohne den Options-Flow öffnen zu müssen —
+    schreibt den Wert aber trotzdem dauerhaft in die Konfiguration
+    (löst einen kurzen Neuladen der Integration aus), damit ein späteres
+    Öffnen des Options-Flows nie einen anderen Wert zeigt als zuletzt
+    per Schalter gesetzt. Ohne enabled wird auf den Standardwert (aus)
+    zurückgesetzt.
   fields:
     config_entry_id:
       name: Fahrzeug

@@ -433,12 +433,6 @@ def _empty_data() -> dict:
         # Reload der Integration) angepasst werden muss. None = kein
         # Override, es gilt der konfigurierte/Default-Wert.
         "usage_profile_buffer_pct_override": None,
-        # Laufzeit-Override fuer CONF_WEEKLY_FULL_CHARGE_ENABLED (siehe
-        # _weekly_full_charge_enabled()/async_set_weekly_full_charge_
-        # enabled()) -- Schalter in der Wallbox-Karte (Uebersicht-Beta),
-        # analog usage_profile_buffer_pct_override(). None = kein Override,
-        # es gilt der konfigurierte/Default-Wert.
-        "weekly_full_charge_enabled_override": None,
         # Zeitstempel der letzten erreichten Vollladung (siehe
         # _maybe_mark_vollladung_erreicht()/VOLLLADUNG_SOC_THRESHOLD) --
         # None = noch nie beobachtet (gilt als sofort faellig, siehe
@@ -4387,27 +4381,31 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._async_apply_evcc_mode_control()
         self._save_soon()
 
-    def _weekly_full_charge_enabled(self) -> bool:
-        """CONF_WEEKLY_FULL_CHARGE_ENABLED, aber mit Vorrang fuer einen
-        gesetzten Laufzeit-Override (siehe async_set_weekly_full_charge_
-        enabled() -- Schalter in der Wallbox-Karte, Uebersicht-Beta).
-        Analog _usage_profile_buffer_pct(): bewusst NICHT ueber
-        entry.options geloest, das wuerde bei jeder Umschaltung einen
-        vollen Reload der Integration auslösen."""
-        override = self.data.get("weekly_full_charge_enabled_override")
-        if override is not None:
-            return bool(override)
-        return bool(self._opt(CONF_WEEKLY_FULL_CHARGE_ENABLED, DEFAULT_WEEKLY_FULL_CHARGE_ENABLED))
-
     async def async_set_weekly_full_charge_enabled(self, enabled: Optional[bool]) -> None:
-        """Setzt/loescht den Laufzeit-Override aus _weekly_full_charge_
-        enabled() -- `enabled=None` setzt auf den konfigurierten Wert
-        zurueck. Stoesst danach sofort eine Neuauswertung der evcc-Modus-/
-        SoC-Ziele an, analog async_set_usage_profile_buffer_pct()."""
-        self.data["weekly_full_charge_enabled_override"] = None if enabled is None else bool(enabled)
-        self.async_set_updated_data(self.data)
-        await self._async_apply_evcc_mode_control()
-        self._save_soon()
+        """Schreibt CONF_WEEKLY_FULL_CHARGE_ENABLED direkt in entry.data --
+        ANDERS als _usage_profile_buffer_pct()/async_set_usage_profile_
+        buffer_pct() (Laufzeit-Override in self.data, um den haeufig
+        genutzten Schieberegler nicht bei jedem Ziehen einen vollen Reload
+        ausloesen zu lassen). Hier bewusst der schwerfaelligere Weg: der
+        Schalter wird selten genutzt, dafuer bleibt der Options-Flow so
+        NIE mit dem Panel-Schalter auseinander -- ein zufaelliges
+        Durchklicken des Flows zeigt sonst einen scheinbar falschen/
+        veralteten Wert (Produktionsfeedback 2026-09-17). entry.data statt
+        entry.options: dieselbe Stelle, in die auch der Options-Flow selbst
+        am Ende schreibt (siehe async_step_vergleich() dort) -- entry.options
+        wird bei jedem Flow-Durchlauf komplett geleert, ein Schreiben dort
+        wuerde beim naechsten Flow-Speichern wieder verschwinden.
+        `enabled=None` entfernt den Key wieder (zurueck auf
+        DEFAULT_WEEKLY_FULL_CHARGE_ENABLED). async_update_entry() loest
+        ueber den bestehenden Update-Listener automatisch einen Reload aus,
+        der die evcc-Modus-/SoC-Ziele neu bewertet -- kein manueller
+        _async_apply_evcc_mode_control()-Aufruf hier noetig."""
+        new_data = dict(self.entry.data)
+        if enabled is None:
+            new_data.pop(CONF_WEEKLY_FULL_CHARGE_ENABLED, None)
+        else:
+            new_data[CONF_WEEKLY_FULL_CHARGE_ENABLED] = bool(enabled)
+        self.hass.config_entries.async_update_entry(self.entry, data=new_data)
 
     def usage_profile_tomorrow(self) -> Optional[dict]:
         """Wochentags-Bedarf (siehe usage_profile()) fuer den morgigen
@@ -4854,7 +4852,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
         mode = determine_evcc_mode(available, min_kwh, target_kwh)
         target_soc = kwh_to_soc_percent(target_kwh, usable_kwh)
-        balancing_enabled = self._weekly_full_charge_enabled()
+        balancing_enabled = bool(self._opt(CONF_WEEKLY_FULL_CHARGE_ENABLED, DEFAULT_WEEKLY_FULL_CHARGE_ENABLED))
         balancing_due = False
         naechste_vollladung_faellig_ts = None
         if balancing_enabled:

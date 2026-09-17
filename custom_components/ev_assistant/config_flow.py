@@ -249,9 +249,10 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
     aus den Wochentags-Nutzungsprofilen aus). Ebenfalls additiv: die
     woechentliche Vollladung fuers Zellbalancing (siehe coordinator.py::
     _evcc_mode_targets()/engine.weekly_balancing_due(), Default aus) --
-    der Ein/Aus-Schalter ist zusaetzlich per Panel-Laufzeit-Override
-    steuerbar (siehe async_set_weekly_full_charge_enabled()), das
-    Intervall in Tagen bewusst nur hier im Options-Flow."""
+    der Ein/Aus-Schalter ist zusaetzlich direkt aus dem Panel schaltbar
+    (siehe async_set_weekly_full_charge_enabled() -- schreibt nach
+    entry.data, damit dieser Flow hier nie einen anderen Wert zeigt),
+    das Intervall in Tagen bewusst nur hier im Options-Flow."""
     def sv(key):
         return {"suggested_value": cur.get(key)}
 
