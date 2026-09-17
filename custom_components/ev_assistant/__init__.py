@@ -37,6 +37,7 @@ from .const import (
     SERVICE_LOG_TRIP,
     SERVICE_MARK_MAINTENANCE_DONE,
     SERVICE_SET_USAGE_PROFILE_BUFFER_PCT,
+    SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED,
     SERVICE_SIMULATE,
     SERVICE_SIMULATE_TRIP,
     SERVICE_URLAUB_SEIT,
@@ -386,6 +387,14 @@ URLAUB_SEIT_SCHEMA = vol.Schema({
     vol.Required("seit_ts"): vol.Coerce(float),
 })
 
+# enabled absichtlich optional OHNE Default: fehlt es, wird der Laufzeit-
+# Override zurueckgesetzt (siehe coordinator.py::async_set_weekly_full_
+# charge_enabled()), analog SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA.
+SET_WEEKLY_FULL_CHARGE_ENABLED_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Optional("enabled"): bool,
+})
+
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Version 1 -> 2: evcc_intg-Entity-Discovery entfernt (siehe
@@ -628,6 +637,11 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_set_usage_profile_buffer_pct(call.data.get("buffer_pct"))
 
+    async def _handle_set_weekly_full_charge_enabled(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_set_weekly_full_charge_enabled(call.data.get("enabled"))
+
     async def _handle_urlaub_seit(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
@@ -673,6 +687,10 @@ def _register_services(hass: HomeAssistant) -> None:
         DOMAIN, SERVICE_SET_USAGE_PROFILE_BUFFER_PCT, _handle_set_usage_profile_buffer_pct,
         schema=SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA,
     )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED, _handle_set_weekly_full_charge_enabled,
+        schema=SET_WEEKLY_FULL_CHARGE_ENABLED_SCHEMA,
+    )
     hass.services.async_register(DOMAIN, SERVICE_URLAUB_SEIT, _handle_urlaub_seit, schema=URLAUB_SEIT_SCHEMA)
 
 
@@ -695,6 +713,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_ADD_LADEKARTE_PREISSTUFE, SERVICE_DELETE_LADEKARTE_PREISSTUFE,
                 SERVICE_ADD_MAINTENANCE, SERVICE_EDIT_MAINTENANCE, SERVICE_DELETE_MAINTENANCE,
                 SERVICE_MARK_MAINTENANCE_DONE, SERVICE_URLAUB_SEIT,
+                SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED,
             ):
                 hass.services.async_remove(DOMAIN, service)
         else:

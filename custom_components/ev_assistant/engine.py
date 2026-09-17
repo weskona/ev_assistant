@@ -982,6 +982,45 @@ def kwh_to_soc_percent(kwh: float, usable_kwh: float) -> Optional[int]:
     return max(0, min(100, pct))
 
 
+def soc_reached_full_charge(soc: float, threshold: float) -> bool:
+    """Ob `soc` den Vollladungs-Schwellwert (VOLLLADUNG_SOC_THRESHOLD)
+    erreicht/ueberschritten hat -- viele Fahrzeuge melden nie exakt 100%,
+    daher ein Schwellwert knapp darunter statt exakter Gleichheit (siehe
+    coordinator.py::_maybe_mark_vollladung_erreicht())."""
+    return soc >= threshold
+
+
+def weekly_balancing_due(
+    last_full_ts: Optional[float], now_ts: float, interval_days: float
+) -> bool:
+    """Ob eine woechentliche Balancing-Vollladung faellig ist (siehe
+    coordinator.py::_evcc_mode_targets()). last_full_ts=None (frische
+    Installation, oder noch nie eine Vollladung beobachtet) gilt als
+    faellig, damit die erste Balancing-Ladung ueberhaupt stattfinden kann --
+    ohne diesen Fall wuerde eine neue Installation nie den fehlenden
+    Zeitstempel "einholen" koennen."""
+    if last_full_ts is None:
+        return True
+    return (now_ts - last_full_ts) >= interval_days * 86400.0
+
+
+def apply_weekly_balancing_override(
+    mode: str, target_soc: Optional[int], due: bool
+) -> tuple[str, Optional[int]]:
+    """Ueberstimmt das profilbasierte evcc-Ziel mit Ziel-SoC=100/Modus=
+    "minpv", wenn eine Balancing-Vollladung faellig ist (siehe
+    weekly_balancing_due()) -- sonst (mode, target_soc) unveraendert.
+    Steuert bewusst NUR Ziel-SoC + Modus, nicht WOHER der Ladestrom kommt
+    (PV/Netz/Speicher entscheidet weiterhin evcc selbst, siehe const.py::
+    CONF_WEEKLY_FULL_CHARGE_ENABLED). min_soc/min_kwh/target_kwh bleiben in
+    _evcc_mode_targets() bewusst die profilbasierten Werte -- nur zur
+    Anzeige/Transparenz, nicht das, was tatsaechlich an evcc geschrieben
+    wird."""
+    if not due:
+        return mode, target_soc
+    return "minpv", 100
+
+
 def vehicle_discharge_update(
     reference_soc: Optional[float],
     new_soc: float,

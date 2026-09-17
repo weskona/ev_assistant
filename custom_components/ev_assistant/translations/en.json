@@ -165,7 +165,9 @@
           "pv_forecast_today_remaining_entity": "PV forecast remaining today (optional, any sensor entity, e.g. Solcast \"Forecast Remaining Today\")",
           "home_consumption_entity": "Home consumption (excluding vehicle/battery)",
           "battery_charge_entity": "Battery charging (optional, if not already included in home consumption)",
-          "urlaub_entity": "Vacation entity (optional)"
+          "urlaub_entity": "Vacation entity (optional)",
+          "weekly_full_charge_enabled": "Weekly full charge for cell balancing",
+          "weekly_full_charge_interval_days": "Interval (days, since last full charge)"
         },
         "data_description": {
           "evcc_host": "Optional — without it, charge power/mode/tariffs/PV in the panel simply stay empty; everything else keeps working as before.",
@@ -174,7 +176,9 @@
           "pv_forecast_today_remaining_entity": "Optional, independent of the tomorrow PV forecast (step 7) — only relevant while the evcc control above is enabled.",
           "home_consumption_entity": "Optional, cumulative energy meter (kWh) — only relevant while the evcc control above is enabled. Without it, the PV forecast would incorrectly be credited entirely to the vehicle.",
           "battery_charge_entity": "Optional, in addition to home consumption — only if a home battery exists AND its charging energy isn't already included in the home consumption meter.",
-          "urlaub_entity": "Optional, e.g. an input_boolean/switch/binary_sensor that's \"on\" during vacation — affected days are then excluded entirely from the weekday usage profiles (vehicle & house) instead of skewing the average, and evcc mode/SoC control pauses."
+          "urlaub_entity": "Optional, e.g. an input_boolean/switch/binary_sensor that's \"on\" during vacation — affected days are then excluded entirely from the weekday usage profiles (vehicle & house) instead of skewing the average, and evcc mode/SoC control pauses.",
+          "weekly_full_charge_enabled": "Off by default: no change to existing behavior. On: once the interval below has elapsed since the last full charge reached (98% or more, manual or automatic — doesn't matter which), evcc control overrides the profile-based target with target SoC=100%/mode=minpv until 100% is reached. Controls ONLY target SoC + mode — WHERE the charging power comes from (solar/grid/battery) is still entirely evcc's own decision (minimum charge power in minpv mode, battery discharge lockout as evcc's own setting). Also toggleable from the panel switch without reopening this options flow.",
+          "weekly_full_charge_interval_days": "Only relevant if enabled above. A manual full charge counts the same as a forced one — the tracker doesn't distinguish why 100% was reached."
         }
       },
       "evcc_loadpoint": {

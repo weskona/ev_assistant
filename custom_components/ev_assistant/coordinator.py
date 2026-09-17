@@ -79,6 +79,8 @@ from .const import (
     CONF_VERBRENNER_PRICE_PER_LITER,
     CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE,
+    CONF_WEEKLY_FULL_CHARGE_ENABLED,
+    CONF_WEEKLY_FULL_CHARGE_INTERVAL_DAYS,
     DEFAULT_CO2_PER_KWH_G,
     DEFAULT_CO2_PER_LITER_KG,
     DEFAULT_DROP_ENDS,
@@ -98,6 +100,8 @@ from .const import (
     DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH,
     DEFAULT_USAGE_PROFILE_BUFFER_PCT,
+    DEFAULT_WEEKLY_FULL_CHARGE_ENABLED,
+    DEFAULT_WEEKLY_FULL_CHARGE_INTERVAL_DAYS,
     DOMAIN,
     EFF_MAX_EFFICIENCY,
     EFF_MAX_SAMPLES,
@@ -144,6 +148,7 @@ from .const import (
     TRIP_END_SOC_CORRECTION_WINDOW_S,
     VEHICLE_DISCHARGE_CONFIRM_SECONDS,
     VEHICLE_DISCHARGE_EVENTS_MAX_DAYS,
+    VOLLLADUNG_SOC_THRESHOLD,
     WARTUNG_BALD_FAELLIG_KM,
     WARTUNG_BALD_FAELLIG_TAGE,
     WARTUNG_PRESETS,
@@ -163,6 +168,7 @@ from .engine import (
     anbieter_breakdown_from_totals,
     apply_ac_dc_delta,
     apply_anbieter_delta,
+    apply_weekly_balancing_override,
     average_efficiency,
     battery_capacity_samples,
     bekannte_anbieter,
@@ -192,6 +198,7 @@ from .engine import (
     remaining_today_kwh,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
+    soc_reached_full_charge,
     split_by_age,
     temp_bucket_contribution,
     temperature_bucket,
@@ -206,6 +213,7 @@ from .engine import (
     wartung_uebersicht,
     weekday_usage_profile_from_totals,
     weekday_usage_profile_window_kwh,
+    weekly_balancing_due,
 )
 from .evcc_client import EvccClient
 
@@ -425,6 +433,17 @@ def _empty_data() -> dict:
         # Reload der Integration) angepasst werden muss. None = kein
         # Override, es gilt der konfigurierte/Default-Wert.
         "usage_profile_buffer_pct_override": None,
+        # Laufzeit-Override fuer CONF_WEEKLY_FULL_CHARGE_ENABLED (siehe
+        # _weekly_full_charge_enabled()/async_set_weekly_full_charge_
+        # enabled()) -- Schalter in der Wallbox-Karte (Uebersicht-Beta),
+        # analog usage_profile_buffer_pct_override(). None = kein Override,
+        # es gilt der konfigurierte/Default-Wert.
+        "weekly_full_charge_enabled_override": None,
+        # Zeitstempel der letzten erreichten Vollladung (siehe
+        # _maybe_mark_vollladung_erreicht()/VOLLLADUNG_SOC_THRESHOLD) --
+        # None = noch nie beobachtet (gilt als sofort faellig, siehe
+        # engine.weekly_balancing_due()).
+        "vollladung_letzter_ts": None,
         # Merkposten fuer _maybe_correct_last_trip_end_soc() -- siehe
         # dortigen Docstring/engine.trip_end_soc_correction().
         "last_trip_start_ts": None,
@@ -1139,7 +1158,24 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return
         self._update_vehicle_discharge(self._soc)
         self._maybe_correct_last_trip_end_soc(self._soc, dt_util.utcnow().timestamp())
+        self._maybe_mark_vollladung_erreicht(self._soc, dt_util.utcnow().timestamp())
         self.hass.async_create_task(self._run_detection())
+
+    def _maybe_mark_vollladung_erreicht(self, soc: float, ts: float) -> None:
+        """Schreibt den Zeitstempel der letzten erreichten Vollladung fort,
+        sobald der SoC VOLLLADUNG_SOC_THRESHOLD erreicht -- unabhaengig
+        davon, ob die Ladung manuell oder ueber die woechentliche Balancing-
+        Steuerung (siehe _evcc_mode_targets()) zustande kam: der Tracker
+        unterscheidet den Grund nicht, jede erreichte Vollladung setzt den
+        Wochenzaehler gleichermassen zurueck -- eine manuelle Vollladung
+        macht eine erzwungene damit ueberfluessig, genau wie gewuenscht.
+        _save_soon() statt _save(): reiner Mirror-Zeitstempel wie andere
+        Live-SoC-Nebenwerte (analog _update_vehicle_discharge()), kein
+        kritisches Ereignis."""
+        if not soc_reached_full_charge(soc, VOLLLADUNG_SOC_THRESHOLD):
+            return
+        self.data["vollladung_letzter_ts"] = ts
+        self._save_soon()
 
     def _update_vehicle_discharge(self, new_soc: float) -> None:
         """Fuettert JEDEN neuen SoC-Messwert in den Live-Ratchet (siehe
@@ -4351,6 +4387,28 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._async_apply_evcc_mode_control()
         self._save_soon()
 
+    def _weekly_full_charge_enabled(self) -> bool:
+        """CONF_WEEKLY_FULL_CHARGE_ENABLED, aber mit Vorrang fuer einen
+        gesetzten Laufzeit-Override (siehe async_set_weekly_full_charge_
+        enabled() -- Schalter in der Wallbox-Karte, Uebersicht-Beta).
+        Analog _usage_profile_buffer_pct(): bewusst NICHT ueber
+        entry.options geloest, das wuerde bei jeder Umschaltung einen
+        vollen Reload der Integration auslösen."""
+        override = self.data.get("weekly_full_charge_enabled_override")
+        if override is not None:
+            return bool(override)
+        return bool(self._opt(CONF_WEEKLY_FULL_CHARGE_ENABLED, DEFAULT_WEEKLY_FULL_CHARGE_ENABLED))
+
+    async def async_set_weekly_full_charge_enabled(self, enabled: Optional[bool]) -> None:
+        """Setzt/loescht den Laufzeit-Override aus _weekly_full_charge_
+        enabled() -- `enabled=None` setzt auf den konfigurierten Wert
+        zurueck. Stoesst danach sofort eine Neuauswertung der evcc-Modus-/
+        SoC-Ziele an, analog async_set_usage_profile_buffer_pct()."""
+        self.data["weekly_full_charge_enabled_override"] = None if enabled is None else bool(enabled)
+        self.async_set_updated_data(self.data)
+        await self._async_apply_evcc_mode_control()
+        self._save_soon()
+
     def usage_profile_tomorrow(self) -> Optional[dict]:
         """Wochentags-Bedarf (siehe usage_profile()) fuer den morgigen
         Wochentag, zzgl. CONF_USAGE_PROFILE_BUFFER_PCT Puffer -- direkt mit
@@ -4764,7 +4822,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         _kwh_used_today(), aus demselben Grund. None, wenn kein Profil
         (weder Live-SoC noch Fahrtenbuch) oder available_kwh() fehlt
         (identische Vorbedingung wie charge_before_pv_recommended() fuer
-        Letzteres)."""
+        Letzteres). Ist eine woechentliche Balancing-Vollladung faellig
+        (siehe CONF_WEEKLY_FULL_CHARGE_ENABLED/weekly_balancing_due()),
+        ueberstimmt apply_weekly_balancing_override() modus/target_soc mit
+        "minpv"/100 -- min_soc/min_kwh/target_kwh bleiben bewusst die
+        profilbasierten Werte (nur Anzeige/Transparenz, nicht das, was
+        tatsaechlich an evcc geschrieben wird, siehe dortigen Docstring)."""
         profile = self._effective_vehicle_usage_profile()
         available = self.available_kwh()
         if profile is None or available is None:
@@ -4790,18 +4853,36 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         target_kwh = round(target_raw * (1.0 + buffer_pct / 100.0), 2)
         usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
         mode = determine_evcc_mode(available, min_kwh, target_kwh)
+        target_soc = kwh_to_soc_percent(target_kwh, usable_kwh)
+        balancing_enabled = self._weekly_full_charge_enabled()
+        balancing_due = False
+        naechste_vollladung_faellig_ts = None
+        if balancing_enabled:
+            interval_days = float(
+                self._opt(CONF_WEEKLY_FULL_CHARGE_INTERVAL_DAYS, DEFAULT_WEEKLY_FULL_CHARGE_INTERVAL_DAYS)
+            )
+            letzter_ts = self.data.get("vollladung_letzter_ts")
+            jetzt_ts = dt_util.utcnow().timestamp()
+            balancing_due = weekly_balancing_due(letzter_ts, jetzt_ts, interval_days)
+            naechste_vollladung_faellig_ts = (
+                jetzt_ts if letzter_ts is None else letzter_ts + interval_days * 86400.0
+            )
+        mode, target_soc = apply_weekly_balancing_override(mode, target_soc, balancing_due)
         return {
             "modus": mode,
             "min_kwh": min_kwh,
             "target_kwh": target_kwh,
             "min_soc": kwh_to_soc_percent(min_kwh, usable_kwh),
-            "target_soc": kwh_to_soc_percent(target_kwh, usable_kwh),
+            "target_soc": target_soc,
             "verfuegbare_kwh": available,
             "rest_heute_kwh": rest_heute,
             "rest_heute_roh_kwh": rest_heute_roh,
             "pv_rest_heute_roh_kwh": pv_rest_heute_roh,
             "haus_rest_heute_kwh": haus_rest_heute,
             "pv_fuer_auto_kwh": pv_fuer_auto,
+            "balancing_enabled": balancing_enabled,
+            "balancing_faellig": balancing_due,
+            "naechste_vollladung_faellig_ts": naechste_vollladung_faellig_ts,
         }
 
     def _current_loadpoint_index(self) -> Optional[int]:

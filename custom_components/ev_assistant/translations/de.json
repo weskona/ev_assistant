@@ -165,7 +165,9 @@
           "pv_forecast_today_remaining_entity": "PV-Restprognose für heute (optional, beliebige sensor-Entität, z.B. Solcast \"Forecast Remaining Today\")",
           "home_consumption_entity": "Hausverbrauch (ohne Auto/Speicher)",
           "battery_charge_entity": "Speicherladung (optional, falls nicht bereits im Hausverbrauch enthalten)",
-          "urlaub_entity": "Urlaubs-Entität (optional)"
+          "urlaub_entity": "Urlaubs-Entität (optional)",
+          "weekly_full_charge_enabled": "Wöchentliche Vollladung fürs Zellbalancing",
+          "weekly_full_charge_interval_days": "Intervall (Tage, seit letzter Vollladung)"
         },
         "data_description": {
           "evcc_host": "Optional — ohne sie bleiben Ladeleistung/Modus/Tarife/PV im Panel einfach leer, alles andere funktioniert unverändert weiter.",
@@ -174,7 +176,9 @@
           "pv_forecast_today_remaining_entity": "Optional, unabhängig von der PV-Ertragsprognose für morgen (Schritt 7) — nur relevant, wenn die evcc-Steuerung oben aktiviert ist.",
           "home_consumption_entity": "Optional, kumulativer Energiezähler (kWh) — nur relevant, wenn die evcc-Steuerung oben aktiviert ist. Ohne ihn wird die PV-Restprognose fälschlich komplett dem Auto zugerechnet.",
           "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
-          "urlaub_entity": "Optional, z.B. ein input_boolean/switch/binary_sensor \"an\" während Urlaub — betroffene Tage werden dann aus den Wochentags-Nutzungsprofilen (Fahrzeug & Haus) ausgeschlossen statt den Schnitt zu verzerren, und die evcc-Modus-/SoC-Steuerung pausiert."
+          "urlaub_entity": "Optional, z.B. ein input_boolean/switch/binary_sensor \"an\" während Urlaub — betroffene Tage werden dann aus den Wochentags-Nutzungsprofilen (Fahrzeug & Haus) ausgeschlossen statt den Schnitt zu verzerren, und die evcc-Modus-/SoC-Steuerung pausiert.",
+          "weekly_full_charge_enabled": "Deaktiviert (Default): keine Änderung am bisherigen Verhalten. Aktiviert: ist seit der letzten erreichten Vollladung (98% oder mehr, egal ob manuell oder automatisch) das Intervall unten verstrichen, überstimmt die evcc-Steuerung das profilbasierte Ziel mit Ziel-SoC=100%/Modus=minpv, bis 100% erreicht sind. Steuert NUR Ziel-SoC + Modus — WOHER der Ladestrom kommt (PV/Netz/Speicher), entscheidet weiterhin evcc selbst (Mindestladeleistung im minpv-Modus, Speicher-Entladesperre als eigene evcc-Einstellung). Zusätzlich per Panel-Schalter umschaltbar, ohne diesen Options-Flow erneut öffnen zu müssen.",
+          "weekly_full_charge_interval_days": "Nur relevant, wenn oben aktiviert. Eine manuelle Vollladung zählt genauso wie eine erzwungene — der Zähler unterscheidet den Grund nicht."
         }
       },
       "evcc_loadpoint": {

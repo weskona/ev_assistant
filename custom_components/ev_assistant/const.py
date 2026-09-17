@@ -287,6 +287,22 @@ CONF_EVCC_LOADPOINT_TITLE   = "evcc_loadpoint_title"
 # ohne sie aendert sich am bisherigen Verhalten (nur Lese-/Anzeige-
 # Empfehlungen wie charge_before_pv_recommended()) nichts.
 CONF_EVCC_MODE_CONTROL_ENABLED = "evcc_mode_control_enabled"
+# Optional, Default aus (siehe DEFAULT_WEEKLY_FULL_CHARGE_ENABLED): woechentliche
+# Vollladung fuers Zellbalancing -- ist sie aktiv und seit der letzten erreichten
+# Vollladung (siehe VOLLLADUNG_SOC_THRESHOLD, coordinator.py::_maybe_mark_
+# vollladung_erreicht()) mindestens CONF_WEEKLY_FULL_CHARGE_INTERVAL_DAYS
+# vergangen, ueberstimmt _evcc_mode_targets() das profilbasierte Ziel mit
+# Ziel-SoC=100/Modus=minpv (siehe engine.apply_weekly_balancing_override()).
+# Steuert NUR Ziel-SoC + Modus -- WOHER der Ladestrom kommt (PV/Netz/Speicher)
+# entscheidet weiterhin evcc selbst (Mindestladeleistung im "minpv"-Modus,
+# Speicher-Entladesperre als evcc-eigene, vom Nutzer gesetzte Einstellung).
+# Zusaetzlich per Panel-Schalter laufzeit-uebersteuerbar (siehe
+# CONF_USAGE_PROFILE_BUFFER_PCT-Pendant _usage_profile_buffer_pct()) --
+# daher bewusst kein CONF_ fuers Intervall im Panel, nur dieser Schalter.
+CONF_WEEKLY_FULL_CHARGE_ENABLED = "weekly_full_charge_enabled"
+# Seltene Einstellung, nur im Options-Flow (nicht im Panel) -- wie oft eine
+# faellige Balancing-Ladung wiederkehrt.
+CONF_WEEKLY_FULL_CHARGE_INTERVAL_DAYS = "weekly_full_charge_interval_days"
 
 DEFAULT_TEMPLATE = "{{ value }}"
 DEFAULT_USABLE_KWH = 45.0
@@ -408,6 +424,15 @@ DEFAULT_EVCC_MODE_CONTROL_ENABLED = False
 # Puffer verhindern, dass ein einzelner ungewoehnlich verbrauchsstarker Tag
 # nach dem naechsten sofort wieder Netzladen erzwingt.
 EVCC_MODE_TARGET_DAYS = 2
+# Feature komplett deaktiviert, bis aktiv per CONF_WEEKLY_FULL_CHARGE_ENABLED
+# (oder dem Panel-Laufzeit-Override) freigeschaltet.
+DEFAULT_WEEKLY_FULL_CHARGE_ENABLED = False
+DEFAULT_WEEKLY_FULL_CHARGE_INTERVAL_DAYS = 7
+# Nutzer-unsichtbar, keine Config-Option (analog VEHICLE_DISCHARGE_CONFIRM_
+# SECONDS) -- viele Fahrzeuge melden nie exakt 100%, ein Schwellwert knapp
+# darunter statt exakter Gleichheit verhindert, dass eine Vollladung nie als
+# "erreicht" erkannt wird (siehe engine.py::soc_reached_full_charge()).
+VOLLLADUNG_SOC_THRESHOLD = 98.0
 # Automatische Ausreisser-Daempfung (siehe engine.py::
 # clamp_weekday_contribution()) fuer alle drei Wochentags-Profil-
 # Buchungsstellen (Fahrtenbuch, Haus, Live-SoC-Fahrzeug) -- ein Beitrag,
@@ -475,6 +500,7 @@ SERVICE_EDIT_MAINTENANCE = "edit_maintenance"
 SERVICE_DELETE_MAINTENANCE = "delete_maintenance"
 SERVICE_MARK_MAINTENANCE_DONE = "mark_maintenance_done"
 SERVICE_SET_USAGE_PROFILE_BUFFER_PCT = "set_usage_profile_buffer_pct"
+SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED = "set_weekly_full_charge_enabled"
 SERVICE_URLAUB_SEIT = "urlaub_seit"
 
 NOTIFY_TAG = "ev_assistant"

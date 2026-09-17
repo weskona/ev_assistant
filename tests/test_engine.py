@@ -20,6 +20,7 @@ from engine import (
     anbieter_breakdown_from_totals,
     apply_ac_dc_delta,
     apply_anbieter_delta,
+    apply_weekly_balancing_override,
     average_efficiency,
     battery_capacity_samples,
     bekannte_anbieter,
@@ -53,6 +54,7 @@ from engine import (
     remaining_today_kwh,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
+    soc_reached_full_charge,
     split_by_age,
     temp_bucket_contribution,
     temperature_bucket,
@@ -69,6 +71,7 @@ from engine import (
     weekday_usage_profile,
     weekday_usage_profile_from_totals,
     weekday_usage_profile_window_kwh,
+    weekly_balancing_due,
 )
 
 
@@ -965,6 +968,62 @@ def test_kwh_to_soc_percent_normale_umrechnung():
 
 def test_kwh_to_soc_percent_rundung():
     assert kwh_to_soc_percent(kwh=15.2, usable_kwh=45.0) == 34  # 33.77... -> 34
+
+
+# ----- soc_reached_full_charge: Vollladungs-Schwellwert --------------------
+
+def test_soc_reached_full_charge_ueber_schwellwert():
+    assert soc_reached_full_charge(soc=100.0, threshold=98.0) is True
+
+
+def test_soc_reached_full_charge_genau_am_schwellwert():
+    assert soc_reached_full_charge(soc=98.0, threshold=98.0) is True
+
+
+def test_soc_reached_full_charge_unter_schwellwert():
+    assert soc_reached_full_charge(soc=97.9, threshold=98.0) is False
+
+
+# ----- weekly_balancing_due: Faelligkeit der Balancing-Vollladung ----------
+
+_ONE_DAY = 86400.0
+
+
+def test_weekly_balancing_due_ohne_zeitstempel_ist_sofort_faellig():
+    # Frische Installation -- kein letzter Zeitstempel bekannt.
+    assert weekly_balancing_due(last_full_ts=None, now_ts=1_000_000.0, interval_days=7) is True
+
+
+def test_weekly_balancing_due_innerhalb_des_intervalls_nicht_faellig():
+    now_ts = 1_000_000.0
+    last_full_ts = now_ts - 3 * _ONE_DAY
+    assert weekly_balancing_due(last_full_ts, now_ts, interval_days=7) is False
+
+
+def test_weekly_balancing_due_nach_ablauf_des_intervalls_faellig():
+    now_ts = 1_000_000.0
+    last_full_ts = now_ts - 8 * _ONE_DAY
+    assert weekly_balancing_due(last_full_ts, now_ts, interval_days=7) is True
+
+
+def test_weekly_balancing_due_genau_am_intervall_faellig():
+    now_ts = 1_000_000.0
+    last_full_ts = now_ts - 7 * _ONE_DAY
+    assert weekly_balancing_due(last_full_ts, now_ts, interval_days=7) is True
+
+
+# ----- apply_weekly_balancing_override: Ziel-SoC/Modus-Ueberstimmung -------
+
+def test_apply_weekly_balancing_override_nicht_faellig_lässt_unveraendert():
+    assert apply_weekly_balancing_override(mode="pv", target_soc=80, due=False) == ("pv", 80)
+
+
+def test_apply_weekly_balancing_override_faellig_ueberstimmt_mit_minpv_100():
+    assert apply_weekly_balancing_override(mode="pv", target_soc=80, due=True) == ("minpv", 100)
+
+
+def test_apply_weekly_balancing_override_faellig_ueberstimmt_auch_now_modus():
+    assert apply_weekly_balancing_override(mode="now", target_soc=None, due=True) == ("minpv", 100)
 
 
 def test_kwh_to_soc_percent_clamped_ueber_100():

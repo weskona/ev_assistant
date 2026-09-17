@@ -4293,6 +4293,13 @@ class EVAssistantPanel extends HTMLElement {
         </div>
         <input type="range" class="beta-wb-buffer-slider" id="beta-wb-buffer-slider" min="0" max="100" step="1" value="20">
       </div>
+      <div class="beta-wallbox-balancing">
+        <label class="beta-wb-balancing-row">
+          <input type="checkbox" class="beta-wb-balancing-toggle" id="beta-wb-balancing-toggle">
+          <span class="beta-wb-balancing-label">Wöchentliche Vollladung (Balancing)</span>
+        </label>
+        <div class="dim beta-wb-balancing-status" id="beta-wb-balancing-status"></div>
+      </div>
     `;
     const q = (s) => card.querySelector(s);
     this._r.betaWallboxCard   = card;
@@ -4314,6 +4321,15 @@ class EVAssistantPanel extends HTMLElement {
     this._r.betaWbBufferVal    = q("#beta-wb-buffer-val");
     this._r.betaWbBufferSlider = q("#beta-wb-buffer-slider");
     this._r.betaWbBufferReset  = q("#beta-wb-buffer-reset");
+    this._r.betaWbBalancingToggle = q("#beta-wb-balancing-toggle");
+    this._r.betaWbBalancingStatus = q("#beta-wb-balancing-status");
+
+    // set_weekly_full_charge_enabled (siehe coordinator.py::async_set_
+    // weekly_full_charge_enabled()) -- Laufzeit-Override, analog dem
+    // Puffer-Regler oben, kein Options-Flow-Neuladen noetig.
+    this._r.betaWbBalancingToggle.addEventListener("change", (e) => {
+      this._call("set_weekly_full_charge_enabled", { enabled: e.target.checked });
+    });
 
     // Live-Vorschau beim Ziehen (input), Service-Aufruf erst beim
     // Loslassen (change) -- verhindert eine Flut von Service-Calls
@@ -4766,6 +4782,26 @@ class EVAssistantPanel extends HTMLElement {
       if (!isNaN(bufferPct)) {
         r.betaWbBufferSlider.value = bufferPct;
         r.betaWbBufferVal.textContent = `${this._fmtNum(bufferPct, 0)}%`;
+      }
+    }
+
+    // Balancing-Schalter: aktuellen Wert (Override oder Konfigurations-
+    // Default, siehe coordinator.py::_weekly_full_charge_enabled()) sowie
+    // Status/naechste Faelligkeit aus den evcc_mode_control-Attributen
+    // (siehe sensor.py::EvccModeControlSensor) uebernehmen -- nicht
+    // waehrend der Nutzer den Schalter gerade selbst antippt, analog dem
+    // Puffer-Regler oben.
+    if (this.shadowRoot.activeElement !== r.betaWbBalancingToggle) {
+      const evccEid = this._eid("evcc_mode_control");
+      const evccState = evccEid ? this._hass.states[evccEid] : null;
+      const evccAttrs = (evccState && evccState.attributes) || {};
+      r.betaWbBalancingToggle.checked = !!evccAttrs.balancing_enabled;
+      if (evccAttrs.balancing_aktiv) {
+        r.betaWbBalancingStatus.textContent = "Aktiv — lädt gerade auf 100% (Zellbalancing)";
+      } else if (evccAttrs.balancing_enabled && evccAttrs.naechste_vollladung_faellig_ts != null) {
+        r.betaWbBalancingStatus.textContent = `Nächste fällig: ${this._fmtDate(evccAttrs.naechste_vollladung_faellig_ts)}`;
+      } else {
+        r.betaWbBalancingStatus.textContent = "";
       }
     }
   }
@@ -5529,6 +5565,11 @@ class EVAssistantPanel extends HTMLElement {
       .beta-wb-buffer-slider {
         width: 100%; margin: 0; accent-color: var(--accent-2); cursor: pointer;
       }
+      .beta-wallbox-balancing { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+      .beta-wb-balancing-row { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+      .beta-wb-balancing-toggle { accent-color: var(--accent-2); cursor: pointer; }
+      .beta-wb-balancing-label { font-size: 0.78rem; color: var(--ink-mid); }
+      .beta-wb-balancing-status { font-size: 0.72rem; margin-top: 4px; min-height: 1em; }
 
       /* Proportionsbalken (Aufgabe 3.6: Vergleich zum Verbrenner,
          Ladeort-Aufschluesselung) -- ersetzen die frueheren Zahlen-Tabellen. */

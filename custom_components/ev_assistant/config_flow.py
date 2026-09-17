@@ -64,6 +64,8 @@ from .const import (
     CONF_VERBRENNER_PRICE_ENTITY,
     CONF_VERBRENNER_PRICE_PER_LITER,
     CONF_WALLBOX_ENERGY_ENTITY,
+    CONF_WEEKLY_FULL_CHARGE_ENABLED,
+    CONF_WEEKLY_FULL_CHARGE_INTERVAL_DAYS,
     DEFAULT_CO2_PER_KWH_G,
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY,
@@ -82,6 +84,8 @@ from .const import (
     DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH,
     DEFAULT_USAGE_PROFILE_BUFFER_PCT,
+    DEFAULT_WEEKLY_FULL_CHARGE_ENABLED,
+    DEFAULT_WEEKLY_FULL_CHARGE_INTERVAL_DAYS,
     DOMAIN,
     LADE_MODUS_GEMISCHT,
     LADE_MODUS_NUR_AUSWAERTS,
@@ -242,7 +246,12 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
     Haus-Nutzungsprofil (PV-Restprognose heute, Hausverbrauch, Speicher-
     ladung) und eine optionale Urlaubs-Entität (siehe coordinator.py::
     _urlaub_aktiv() -- pausiert die Steuerung und schließt betroffene Tage
-    aus den Wochentags-Nutzungsprofilen aus)."""
+    aus den Wochentags-Nutzungsprofilen aus). Ebenfalls additiv: die
+    woechentliche Vollladung fuers Zellbalancing (siehe coordinator.py::
+    _evcc_mode_targets()/engine.weekly_balancing_due(), Default aus) --
+    der Ein/Aus-Schalter ist zusaetzlich per Panel-Laufzeit-Override
+    steuerbar (siehe async_set_weekly_full_charge_enabled()), das
+    Intervall in Tagen bewusst nur hier im Options-Flow."""
     def sv(key):
         return {"suggested_value": cur.get(key)}
 
@@ -254,6 +263,14 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
             CONF_EVCC_MODE_CONTROL_ENABLED,
             default=cur.get(CONF_EVCC_MODE_CONTROL_ENABLED, DEFAULT_EVCC_MODE_CONTROL_ENABLED),
         ): bool,
+        vol.Optional(
+            CONF_WEEKLY_FULL_CHARGE_ENABLED,
+            default=cur.get(CONF_WEEKLY_FULL_CHARGE_ENABLED, DEFAULT_WEEKLY_FULL_CHARGE_ENABLED),
+        ): bool,
+        vol.Optional(
+            CONF_WEEKLY_FULL_CHARGE_INTERVAL_DAYS,
+            default=cur.get(CONF_WEEKLY_FULL_CHARGE_INTERVAL_DAYS, DEFAULT_WEEKLY_FULL_CHARGE_INTERVAL_DAYS),
+        ): vol.Coerce(int),
         vol.Optional(
             CONF_PV_FORECAST_TODAY_REMAINING_ENTITY, description=sv(CONF_PV_FORECAST_TODAY_REMAINING_ENTITY)
         ): _PV_FORECAST_ENTITY,

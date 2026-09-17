@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.88.0] - 2026-09-17
+
+### Added
+
+- **Optional weekly full charge for cell balancing**: if enabled and at least a configurable number of days (default 7) have passed since the last time the SoC reached ~100% (98% threshold — many vehicles never report exactly 100%), evcc control now overrides the usual profile-based target with target SoC 100%/mode `minpv` until 100% is actually reached, then resets the counter. A manual full charge counts exactly the same as a triggered one — the tracker doesn't distinguish why 100% was reached, so a manual top-up makes a forced one unnecessary. Toggle is also available directly from the Wallbox card in the panel (runtime override, no integration reload needed), with the interval itself staying a rarer options-flow-only setting. **Scope, stated plainly**: this only ever sets target SoC + mode. It does **not** control *where* the charging power comes from — that's still entirely evcc's own job. "minpv" simply uses evcc's own configured minimum charge power as a floor plus whatever solar surplus is available; a home battery's discharge lockout (if you want one during a forced charge) is an evcc setting you already control there, not something this integration touches.
+
 ## [0.87.0] - 2026-09-15
 
 ### Added

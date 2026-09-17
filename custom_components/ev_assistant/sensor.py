@@ -1458,7 +1458,10 @@ class VehicleDischargeSensor(EvAssistantEntity, SensorEntity):
     "live_soc_events") -- das Log, aus dem der Service urlaub_seit
     (siehe coordinator.py::async_apply_vehicle_discharge_urlaub_since())
     rueckwirkend Buchungen herausrechnet; hilft beim Ablesen eines
-    passenden seit_ts-Werts fuer den Service-Aufruf."""
+    passenden seit_ts-Werts fuer den Service-Aufruf. Zusaetzlich
+    "vollladung_letzter_ts" (siehe coordinator.py::_maybe_mark_vollladung_
+    erreicht()/VOLLLADUNG_SOC_THRESHOLD) -- thematisch hier statt eines
+    eigenen Sensors, da ebenfalls reines Live-SoC-Bookkeeping."""
 
     _attr_translation_key = "vehicle_discharge_total"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
@@ -1484,6 +1487,7 @@ class VehicleDischargeSensor(EvAssistantEntity, SensorEntity):
         attrs["pending_soc"] = self.coordinator.data.get("vehicle_discharge_pending_soc")
         attrs["pending_since"] = self.coordinator.data.get("vehicle_discharge_pending_since")
         attrs["live_soc_events"] = self.coordinator.data.get("vehicle_discharge_events")
+        attrs["vollladung_letzter_ts"] = self.coordinator.data.get("vollladung_letzter_ts")
         return attrs
 
 
@@ -1516,7 +1520,12 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
     liefert. Attribut "urlaub_aktiv" zeigt IMMER (auch bei unknown-Value)
     den Urlaubsmodus-Status -- waehrend aktiv liefert der Sensor weiterhin
     die rechnerische Empfehlung, es wird aber NICHTS mehr tatsaechlich an
-    evcc geschrieben (siehe _async_apply_evcc_mode_control())."""
+    evcc geschrieben (siehe _async_apply_evcc_mode_control()). Attribute
+    "balancing_enabled"/"balancing_aktiv"/"naechste_vollladung_faellig_ts"
+    (siehe CONF_WEEKLY_FULL_CHARGE_ENABLED/engine.weekly_balancing_due())
+    nur bei aktivierter evcc-Steuerung sichtbar, da eine faellige Balancing-
+    Ladung ohnehin nur wirkt, wenn ueberhaupt etwas an evcc geschrieben
+    wird."""
 
     _attr_translation_key = "evcc_mode_control"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -1564,6 +1573,9 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             "aktiv": True,
             "min_soc_scope": self.coordinator.data.get("evcc_min_soc_scope"),
             "limit_soc_scope": self.coordinator.data.get("evcc_limit_soc_scope"),
+            "balancing_enabled": targets["balancing_enabled"],
+            "balancing_aktiv": targets["balancing_faellig"],
+            "naechste_vollladung_faellig_ts": targets["naechste_vollladung_faellig_ts"],
         }
         written = self.coordinator.data.get("evcc_mode_control")
         if written and "geschrieben_ts" in written:
