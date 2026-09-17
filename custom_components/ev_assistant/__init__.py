@@ -377,9 +377,14 @@ MARK_MAINTENANCE_DONE_SCHEMA = vol.Schema({
 # buffer_pct absichtlich optional OHNE Default: fehlt es, wird der
 # Laufzeit-Override zurueckgesetzt (siehe coordinator.py::async_set_
 # usage_profile_buffer_pct()), statt versehentlich auf 0 zu klemmen.
+# vol.Any(None, ...) zusaetzlich zum blossen vol.Optional: ein explizit
+# mitgegebenes null/None (z.B. per REST-API statt einfach das Feld
+# wegzulassen) wuerde sonst an vol.Coerce(float) scheitern (float(None)
+# wirft) und die gesamte Anfrage mit 400 ablehnen, statt wie beabsichtigt
+# den Override zurueckzusetzen -- gefundener Vorfall 2026-09-17.
 SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
-    vol.Optional("buffer_pct"): vol.Coerce(float),
+    vol.Optional("buffer_pct"): vol.Any(None, vol.Coerce(float)),
 })
 
 URLAUB_SEIT_SCHEMA = vol.Schema({
@@ -389,10 +394,11 @@ URLAUB_SEIT_SCHEMA = vol.Schema({
 
 # enabled absichtlich optional OHNE Default: fehlt es, wird der Laufzeit-
 # Override zurueckgesetzt (siehe coordinator.py::async_set_weekly_full_
-# charge_enabled()), analog SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA.
+# charge_enabled()), analog SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA -- inkl.
+# desselben vol.Any(None, ...)-Fixes fuer ein explizit mitgegebenes null.
 SET_WEEKLY_FULL_CHARGE_ENABLED_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
-    vol.Optional("enabled"): bool,
+    vol.Optional("enabled"): vol.Any(None, bool),
 })
 
 

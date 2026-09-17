@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.88.1] - 2026-09-17
+
+### Fixed
+
+- **`set_weekly_full_charge_enabled`/`set_usage_profile_buffer_pct` rejected an explicit `null`**: both services reset their runtime override when the field is *omitted*, but passing it explicitly as `null` (e.g. from a REST call rather than just leaving the field out) failed schema validation with a 400 instead of doing the same reset — `vol.Coerce(float)`/`bool` don't accept `None`. Both now also accept an explicit `null`.
+
 ## [0.88.0] - 2026-09-17
 
 ### Added
