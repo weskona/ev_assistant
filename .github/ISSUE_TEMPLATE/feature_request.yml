@@ -20,6 +20,15 @@ body:
     attributes:
       label: Alternatives you've considered
 
+  - type: dropdown
+    id: evcc-related
+    attributes:
+      label: Is this related to evcc (charge mode/target-SoC control)?
+      options:
+        - "Yes"
+        - "No"
+        - Not sure
+
   - type: textarea
     id: context
     attributes:

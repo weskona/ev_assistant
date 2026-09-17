@@ -37,10 +37,30 @@ body:
       required: true
 
   - type: input
+    id: hacs-version
+    attributes:
+      label: HACS version
+      description: Only relevant if you installed via HACS.
+      placeholder: e.g. 2.0.5
+
+  - type: input
     id: vehicle
     attributes:
       label: Vehicle (manufacturer + model)
       placeholder: e.g. Peugeot e-Rifter
+    validations:
+      required: true
+
+  - type: textarea
+    id: soc-reporting
+    attributes:
+      label: How does your vehicle report SoC?
+      description: >
+        Where does the SoC value come from (manufacturer cloud integration, OBD dongle,
+        evcc, ...)? Does it report whole percent steps or with decimals, and roughly how
+        often does it update? This is usually the first thing that explains
+        detection/profile differences between vehicles.
+      placeholder: e.g. via evcc's vehicle plugin, whole percent only, updates every ~5 min
     validations:
       required: true
 
@@ -77,6 +97,43 @@ body:
         wallbox energy, ...)? Settings → Devices & Services → EV Assistant → Configure shows
         the currently selected entities per step.
       render: text
+
+  - type: input
+    id: evcc-version
+    attributes:
+      label: evcc version
+      description: Leave blank if you don't use evcc.
+      placeholder: e.g. 0.203.5
+
+  - type: dropdown
+    id: evcc-write-control
+    attributes:
+      label: Is evcc write control active?
+      description: >
+        Settings → Devices & Services → EV Assistant → Configure. Only relevant to charge
+        mode/target-SoC related issues.
+      options:
+        - "Yes"
+        - "No"
+        - Not using evcc
+
+  - type: textarea
+    id: wallbox
+    attributes:
+      label: Wallbox / charging location setup
+      description: Brief description, e.g. wallbox model, home vs. public charging involved.
+
+  - type: checkboxes
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      options:
+        - label: >
+            I've attached a Diagnostics download (Settings → Devices & Services →
+            EV Assistant → ⋮ → Download diagnostics). The dump is automatically redacted —
+            no tokens or precise location data — and helps far more than manually
+            transcribed config.
+          required: true
 
   - type: textarea
     id: logs

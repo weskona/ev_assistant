@@ -17,6 +17,20 @@ A comprehensive **EV monitoring integration for Home Assistant**. EV Assistant c
 
 ---
 
+## Status & Known Limitations
+
+EV Assistant is in **active 0.x development** — pre-1.0. Behavior and configuration can still change between releases; check the [CHANGELOG](custom_components/ev_assistant/CHANGELOG.md) when updating.
+
+It's been tested primarily against **one real setup**: a Stellantis-based vehicle (SoC via the manufacturer's cloud integration), one evcc version, one wallbox. That's a narrow slice of the "any vehicle, any evcc version, any wallbox" space this integration aims to cover — feedback from different vehicles, SoC reporting behavior, evcc versions, and wallboxes is genuinely wanted, not just tolerated. That's exactly what the detection logic needs to get more robust.
+
+A few known limitations, stated plainly:
+
+- **Detection and usage profiles are only as good as the SoC signal.** Vehicles that report coarsely (whole-percent steps only, infrequent updates) still work, just less precisely — a small trip or standby drain can get lost between two identical readings.
+- **Usage profiles need time to build up** (roughly two weeks for a full weekday spread) before they're reliable. The live-SoC tracker starts from zero on install/upgrade and can't backfill history that was never recorded.
+- **The evcc write control is opt-in and off by default.** Starting out, leave it off, watch the `evcc_mode_control` sensor for a while (it computes its recommendation regardless of whether writing is enabled), compare it against what you'd actually want, and only turn it on once the recommendations look plausible. Once enabled, it sets evcc's charge mode and min/target SoC — it does **not** decide where the charging power comes from (solar/grid/battery); that stays entirely evcc's own job.
+
+---
+
 ## Features
 
 - **Home charging monitoring** — tracks kWh and cost via your wallbox energy meter and evcc session history; displays session history with SOC bars, solar share, and Ø charge power per session.

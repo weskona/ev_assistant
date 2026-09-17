@@ -15,6 +15,18 @@ Detects EV charging sessions **away from your home wallbox** ("external charge")
 
 ## 🇬🇧 English
 
+### Status & Known Limitations
+
+EV Assistant is in **active 0.x development** — pre-1.0. Behavior and configuration can still change between releases; check the [CHANGELOG](CHANGELOG.md) when updating.
+
+It's been tested primarily against **one real setup**: a Stellantis-based vehicle (SoC via the manufacturer's cloud integration), one evcc version, one wallbox. That's a narrow slice of the "any vehicle, any evcc version, any wallbox" space this integration aims to cover — feedback from different vehicles, SoC reporting behavior, evcc versions, and wallboxes is genuinely wanted, not just tolerated. That's exactly what the detection logic needs to get more robust.
+
+A few known limitations, stated plainly:
+
+- **Detection and usage profiles are only as good as the SoC signal.** Vehicles that report coarsely (whole-percent steps only, infrequent updates) still work, just less precisely — a small trip or standby drain can get lost between two identical readings.
+- **Usage profiles need time to build up** (roughly two weeks for a full weekday spread) before they're reliable. The live-SoC tracker starts from zero on install/upgrade and can't backfill history that was never recorded.
+- **The evcc write control is opt-in and off by default.** Starting out, leave it off, watch the `evcc_mode_control` sensor for a while (it computes its recommendation regardless of whether writing is enabled), compare it against what you'd actually want, and only turn it on once the recommendations look plausible. Once enabled, it sets evcc's charge mode and min/target SoC — it does **not** decide where the charging power comes from (solar/grid/battery); that stays entirely evcc's own job.
+
 ### How it works
 
 EV Assistant never needs GPS, a specific manufacturer API, or a list of known charging stations. It works purely from two numbers it already gets from your car and your home:
@@ -301,6 +313,18 @@ tests/                # pytest (engine.py)
 ---
 
 ## 🇩🇪 Deutsch
+
+### Status & bekannte Grenzen
+
+EV Assistant befindet sich in **aktiver 0.x-Entwicklung** — vor 1.0. Verhalten und Konfiguration können sich zwischen Releases noch ändern; beim Update lohnt ein Blick ins [CHANGELOG](CHANGELOG.md).
+
+Getestet wurde bisher vor allem an **einem realen Setup**: ein Stellantis-basiertes Fahrzeug (SoC über die Cloud-Integration des Herstellers), eine evcc-Version, eine Wallbox. Das ist ein schmaler Ausschnitt aus dem Anspruch "jedes Fahrzeug, jede evcc-Version, jede Wallbox" — Rückmeldungen zu anderen Fahrzeugen, SoC-Meldeverhalten, evcc-Versionen und Wallboxen sind ausdrücklich erwünscht, nicht nur geduldet. Genau daran wird die Erkennungslogik robuster.
+
+Ein paar bekannte Grenzen, offen benannt:
+
+- **Erkennung und Nutzungsprofile sind nur so gut wie das SoC-Signal.** Fahrzeuge, die nur grob melden (ganze Prozentschritte, seltene Updates), funktionieren trotzdem, nur ungenauer — eine kleine Fahrt oder Standby-Entladung kann zwischen zwei identischen Messwerten untergehen.
+- **Nutzungsprofile brauchen Aufbauzeit** (grob zwei Wochen für eine vollständige Wochentagsverteilung), bevor sie verlässlich sind. Der Live-SoC-Tracker startet bei Installation/Update bei null und kann keine Historie nachtragen, die nie aufgezeichnet wurde.
+- **Die evcc-Schreibsteuerung ist opt-in und standardmäßig aus.** Am Anfang am besten aus lassen, eine Weile den Sensor `evcc_mode_control` beobachten (der berechnet seine Empfehlung unabhängig davon, ob das Schreiben aktiv ist), mit der eigenen Erwartung vergleichen und erst aktivieren, wenn die Empfehlungen plausibel aussehen. Einmal aktiviert, setzt sie evccs Lademodus und Min-/Ziel-SoC — sie entscheidet **nicht**, woher die Ladeleistung kommt (Solar/Netz/Speicher); das bleibt vollständig evccs eigene Aufgabe.
 
 ### Funktionsweise
 

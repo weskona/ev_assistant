@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.88.3] - 2026-09-17
+
+### Docs
+
+- **Beta-readiness pass ahead of the public launch**: added an honest "Status & Known Limitations" section to both READMEs (and the bundled `custom_components/ev_assistant/README.md`) — active 0.x/pre-1.0 status, disclosure that real-world testing so far has mostly been on one setup (Stellantis vehicle, one evcc version, one wallbox), and the known limitations around SoC signal quality, usage-profile buildup time (no history backfill), and the evcc write control being opt-in. Enhanced the bug report issue template with fields for HACS version, vehicle SoC-reporting behavior, evcc version/write-control status, and wallbox setup, plus a mandatory Diagnostics-download checkbox; the feature request template now asks whether a request is evcc-related.
+
 ## [0.88.2] - 2026-09-17
 
 ### Changed

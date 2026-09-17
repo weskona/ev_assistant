@@ -17,6 +17,20 @@ Eine umfassende **EV-Monitoring-Integration für Home Assistant**. EV Assistant 
 
 ---
 
+## Status & bekannte Grenzen
+
+EV Assistant befindet sich in **aktiver 0.x-Entwicklung** — vor 1.0. Verhalten und Konfiguration können sich zwischen Releases noch ändern; beim Update lohnt ein Blick ins [CHANGELOG](custom_components/ev_assistant/CHANGELOG.md).
+
+Getestet wurde bisher vor allem an **einem realen Setup**: ein Stellantis-basiertes Fahrzeug (SoC über die Cloud-Integration des Herstellers), eine evcc-Version, eine Wallbox. Das ist ein schmaler Ausschnitt aus dem Anspruch "jedes Fahrzeug, jede evcc-Version, jede Wallbox" — Rückmeldungen zu anderen Fahrzeugen, SoC-Meldeverhalten, evcc-Versionen und Wallboxen sind ausdrücklich erwünscht, nicht nur geduldet. Genau daran wird die Erkennungslogik robuster.
+
+Ein paar bekannte Grenzen, offen benannt:
+
+- **Erkennung und Nutzungsprofile sind nur so gut wie das SoC-Signal.** Fahrzeuge, die nur grob melden (ganze Prozentschritte, seltene Updates), funktionieren trotzdem, nur ungenauer — eine kleine Fahrt oder Standby-Entladung kann zwischen zwei identischen Messwerten untergehen.
+- **Nutzungsprofile brauchen Aufbauzeit** (grob zwei Wochen für eine vollständige Wochentagsverteilung), bevor sie verlässlich sind. Der Live-SoC-Tracker startet bei Installation/Update bei null und kann keine Historie nachtragen, die nie aufgezeichnet wurde.
+- **Die evcc-Schreibsteuerung ist opt-in und standardmäßig aus.** Am Anfang am besten aus lassen, eine Weile den Sensor `evcc_mode_control` beobachten (der berechnet seine Empfehlung unabhängig davon, ob das Schreiben aktiv ist), mit der eigenen Erwartung vergleichen und erst aktivieren, wenn die Empfehlungen plausibel aussehen. Einmal aktiviert, setzt sie evccs Lademodus und Min-/Ziel-SoC — sie entscheidet **nicht**, woher die Ladeleistung kommt (Solar/Netz/Speicher); das bleibt vollständig evccs eigene Aufgabe.
+
+---
+
 ## Funktionen
 
 - **Heimladen-Überwachung** — erfasst kWh und Kosten über den Wallbox-Energiezähler und die evcc-Ladehistorie; zeigt die Sitzungshistorie mit SOC-Balken, Solaranteil und Ø-Ladeleistung pro Sitzung.
