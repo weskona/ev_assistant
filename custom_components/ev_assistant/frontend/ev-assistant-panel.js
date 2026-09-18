@@ -1451,10 +1451,12 @@ class EVAssistantPanel extends HTMLElement {
         <div class="divider"></div>
         <div class="kpi-row">
           <div class="kpi"><div class="kv" id="analyse-loc-eur100">—</div><div class="kl">EUR/100km gesamt (Heim + Fremd)</div></div>
+          <div class="kpi"><div class="kv" id="analyse-loc-gesamt-autarkie">—</div><div class="kl">Gesamt-Autarkiegrad (Heim + Fremd)</div></div>
         </div>
         <div class="profil-empty">
-          Solaranteil nur für Heimladungen, die evcc gesteuert hat. EUR/100km ist fahrzeugweit über die
-          Gesamtstrecke — km lassen sich keinem einzelnen Ladeort zuordnen.
+          Solaranteil nur für Heimladungen, die evcc gesteuert hat. EUR/100km und Gesamt-Autarkiegrad sind
+          fahrzeugweit über die Gesamtladung — Fremdladung zählt beim Autarkiegrad als 0% Solar, da der
+          Strommix an fremden Ladesäulen unbekannt ist. km lassen sich keinem einzelnen Ladeort zuordnen.
         </div>
         <div class="divider hidden" id="analyse-acdc-divider"></div>
         <div class="sub-head hidden" id="analyse-acdc-head" title="Geschätzt aus Ø-Ladeleistung (kWh/Ladedauer), keine direkte AC/DC-Messung.">Fremdladung nach AC/DC ⓘ</div>
@@ -1510,6 +1512,7 @@ class EVAssistantPanel extends HTMLElement {
       analyseLocExtPct:    q("#analyse-loc-ext-pct"),
       analyseLocExtPrice:  q("#analyse-loc-ext-price"),
       analyseLocEur100:    q("#analyse-loc-eur100"),
+      analyseLocGesamtAutarkie: q("#analyse-loc-gesamt-autarkie"),
       analyseAcdcDivider: q("#analyse-acdc-divider"),
       analyseAcdcHead:    q("#analyse-acdc-head"),
       analyseAcdcGrid:    q("#analyse-acdc-grid"),
@@ -1689,6 +1692,8 @@ class EVAssistantPanel extends HTMLElement {
     r.analyseLocExtPct.textContent = fmt(fremd.kwh_anteil_pct, 1);
     r.analyseLocExtPrice.textContent = fmt(fremd.preis_je_kwh, 3);
     r.analyseLocEur100.textContent = fmt(locAttrs.eur_je_100km, 2);
+    r.analyseLocGesamtAutarkie.textContent = typeof locAttrs.gesamt_autarkie_pct === "number"
+      ? `${this._fmtNum(locAttrs.gesamt_autarkie_pct, 1)} %` : "—";
 
     const acDc = locAttrs.ac_dc || {};
     const hasAcDc = !!(acDc.ac || acDc.dc);
@@ -4179,6 +4184,9 @@ class EVAssistantPanel extends HTMLElement {
     );
     grid.appendChild(bottomRow);
     grid.appendChild(this._buildBetaEvccModeCard());
+    if (modus !== "nur_auswaerts") {
+      grid.appendChild(this._buildBetaEvccPlanCard());
+    }
 
     wrap.appendChild(grid);
     return wrap;
@@ -4482,8 +4490,9 @@ class EVAssistantPanel extends HTMLElement {
     const { card, head } = this._card("Automatische Ladesteuerung", "mdi:tune-variant");
     head.querySelector("h2").title =
       "Setzt evccs Lademodus sowie Min-/Ziel-SoC automatisch anhand des Nutzungsprofils " +
-      "(Fahrzeug + optional Haus/Speicher). Schreibt nur bei Änderung der Empfehlung -- " +
-      "ein manueller evcc-Eingriff bleibt bis zur nächsten Änderung bestehen.";
+      "(Fahrzeug + optional Haus/Speicher) und gleicht dabei laufend evccs Live-Zustand ab " +
+      "-- ein manueller evcc-Eingriff hält daher nur bis zum nächsten Zyklus (~1 Min.), " +
+      "außer der Schalter unten ist aktiv.";
     card.classList.add("beta-status-card", "beta-evcc-card", "hidden");
 
     const badge = document.createElement("div");
@@ -4504,6 +4513,31 @@ class EVAssistantPanel extends HTMLElement {
       </div>
     `;
     card.appendChild(list);
+
+    // Manuelle Pause (siehe coordinator.py::async_set_evcc_mode_control_
+    // pause()/services.yaml::set_evcc_mode_control_pause) -- seit dem
+    // evcc-Live-Zustand-Abgleich in _async_apply_evcc_mode_control() haelt
+    // ein manueller evcc-Eingriff sonst nur noch bis zum naechsten Zyklus
+    // (~1 Min.), nicht mehr bis zur naechsten echten Empfehlungsaenderung.
+    // Einfacher Dauer-Schalter statt Zeitfenster (Nutzerentscheidung,
+    // Produktionsfeedback 2026-09-18) -- analog dem Balancing-Schalter in
+    // _buildBetaWallboxCard(), nur hier als reiner Laufzeit-Override (kein
+    // Integrations-Reload).
+    const pause = document.createElement("div");
+    pause.className = "beta-evcc-pause";
+    pause.innerHTML = `
+      <label class="beta-evcc-pause-row">
+        <input type="checkbox" class="beta-evcc-pause-toggle" id="beta-evcc-pause-toggle">
+        <span class="bl">Automatik pausiert</span>
+      </label>
+    `;
+    card.appendChild(pause);
+    const qp = (s) => pause.querySelector(s);
+    this._r.betaEvccPauseToggle = qp("#beta-evcc-pause-toggle");
+    this._r.betaEvccPauseToggle.addEventListener("change", (e) => {
+      this._call("set_evcc_mode_control_pause", { paused: e.target.checked });
+    });
+
     const q = (s) => list.querySelector(s);
     this._r.betaEvccCard        = card;
     this._r.betaEvccModeLabel   = badge.querySelector("#beta-evcc-mode-label");
@@ -4515,6 +4549,89 @@ class EVAssistantPanel extends HTMLElement {
     this._r.betaEvccLastWritten = q("#beta-evcc-last-written");
     this._r.betaEvccScopeWarnRow = q("#beta-evcc-scope-warn-row");
     return card;
+  }
+
+  // evccs eigener Ladeplan (Zielzeit-Laden, siehe coordinator.py::
+  // async_set_evcc_charge_plan()/EvccChargePlanSensor) -- absichtlich eine
+  // EIGENE Karte statt Teil von _buildBetaEvccModeCard(): funktioniert
+  // unabhaengig von CONF_EVCC_MODE_CONTROL_ENABLED (siehe dortige
+  // "hidden"-Vorbelegung, die nur fuer den Modus-Karte gilt), pausiert bei
+  // aktivem Plan aber die dortige profilbasierte Steuerung (siehe
+  // _async_apply_evcc_mode_control()). Formular bleibt immer sichtbar
+  // (auch bei bereits aktivem Plan) -- erneutes Absenden aendert den Plan
+  // einfach, statt zwischen zwei Ansichten hin- und herzuschalten.
+  _buildBetaEvccPlanCard() {
+    const { card } = this._card("Ladeplan", "mdi:calendar-clock");
+    card.classList.add("beta-status-card", "hidden");
+
+    const status = document.createElement("div");
+    status.className = "beta-plan-status hidden";
+    status.innerHTML = `
+      <div class="beta-status-row"><span class="bl">Ziel</span><span class="bv" id="beta-plan-target">—</span></div>
+      <div class="beta-status-row" id="beta-plan-start-row"><span class="bl">Geplanter Start</span><span class="bv" id="beta-plan-start">—</span></div>
+      <div class="beta-status-row"><span class="bl">Status</span><span class="bv" id="beta-plan-active">—</span></div>
+    `;
+    card.appendChild(status);
+
+    const form = document.createElement("div");
+    form.className = "beta-plan-form";
+    form.innerHTML = `
+      <label class="beta-plan-field">Zielzeit<input type="datetime-local" id="beta-plan-time-input"></label>
+      <label class="beta-plan-field">Ziel-SoC<input type="number" id="beta-plan-soc-input" min="0" max="100" step="1" value="80">%</label>
+      <div class="beta-plan-buttons">
+        <button type="button" class="beta-plan-set-btn" id="beta-plan-set-btn">Plan setzen</button>
+        <button type="button" class="beta-plan-clear-btn hidden" id="beta-plan-clear-btn">Plan löschen</button>
+      </div>
+    `;
+    card.appendChild(form);
+
+    const q = (s) => card.querySelector(s);
+    this._r.betaPlanCard       = card;
+    this._r.betaPlanStatus     = status;
+    this._r.betaPlanTarget     = q("#beta-plan-target");
+    this._r.betaPlanStartRow   = q("#beta-plan-start-row");
+    this._r.betaPlanStart      = q("#beta-plan-start");
+    this._r.betaPlanActive     = q("#beta-plan-active");
+    this._r.betaPlanTimeInput  = q("#beta-plan-time-input");
+    this._r.betaPlanSocInput   = q("#beta-plan-soc-input");
+    this._r.betaPlanSetBtn     = q("#beta-plan-set-btn");
+    this._r.betaPlanClearBtn   = q("#beta-plan-clear-btn");
+
+    this._r.betaPlanSetBtn.addEventListener("click", () => {
+      const targetTime = this._fromDatetimeLocal(this._r.betaPlanTimeInput.value);
+      const targetSoc = parseFloat(this._r.betaPlanSocInput.value);
+      if (targetTime === null || isNaN(targetSoc)) return;
+      this._call("set_evcc_charge_plan", { target_time: targetTime, target_soc: targetSoc });
+    });
+    this._r.betaPlanClearBtn.addEventListener("click", () => {
+      this._call("clear_evcc_charge_plan", {});
+    });
+    return card;
+  }
+
+  _updateBetaEvccPlan() {
+    const r = this._r;
+    if (!r.betaPlanCard) return;
+    const eid = this._eid("evcc_charge_plan");
+    const s = eid ? this._hass.states[eid] : null;
+    // Karte selbst nur ausblenden, wenn ueberhaupt kein evcc-State vorliegt
+    // (kein evcc_host konfiguriert/erreichbar) -- analog _updateBetaWallbox().
+    const available = !!s && s.state !== "unavailable";
+    r.betaPlanCard.classList.toggle("hidden", !available);
+    if (!available) return;
+
+    const hasPlan = s.state && s.state !== "unknown";
+    r.betaPlanStatus.classList.toggle("hidden", !hasPlan);
+    r.betaPlanClearBtn.classList.toggle("hidden", !hasPlan);
+    if (hasPlan) {
+      const attrs = s.attributes || {};
+      const targetSoc = typeof attrs.target_soc === "number" ? `${Math.round(attrs.target_soc)}%` : "—";
+      r.betaPlanTarget.textContent = `${targetSoc} bis ${this._fmtDate(new Date(s.state).getTime() / 1000)}`;
+      const projStart = attrs.projected_start ? new Date(attrs.projected_start).getTime() / 1000 : null;
+      r.betaPlanStartRow.classList.toggle("hidden", !projStart);
+      if (projStart) r.betaPlanStart.textContent = this._fmtDate(projStart);
+      r.betaPlanActive.textContent = attrs.aktiv ? "Lädt gerade nach Plan" : "Geplant";
+    }
   }
 
   _updateUebersichtBeta() {
@@ -4590,6 +4707,7 @@ class EVAssistantPanel extends HTMLElement {
     }
 
     this._updateBetaEvccMode();
+    if (modus !== "nur_auswaerts") this._updateBetaEvccPlan();
   }
 
   // Fahrzeug-SoC-Zeile (Aufgabe 3.2) -- Quelle wie Fahrzeug-Tab
@@ -4686,6 +4804,12 @@ class EVAssistantPanel extends HTMLElement {
     // sobald mindestens einer davon fehlt.
     const scopeOk = attrs.min_soc_scope != null && attrs.limit_soc_scope != null;
     r.betaEvccScopeWarnRow.classList.toggle("hidden", scopeOk);
+
+    // Pause-Status (siehe coordinator.py::async_set_evcc_mode_control_
+    // pause()) -- reiner Anzeige-Sync wie r.betaWbBalancingToggle oben,
+    // kein Sonderfall fuer "gerade angeklickt" noetig (einfacher Ein/Aus-
+    // Schalter, kein Schieberegler mit Zwischenzustaenden).
+    r.betaEvccPauseToggle.checked = !!attrs.pausiert;
   }
 
   // Wallbox-Karte (Aufgabe 3.3) -- IMMER dieselbe Struktur, nur der
@@ -5595,6 +5719,25 @@ class EVAssistantPanel extends HTMLElement {
         width: 10px; height: 10px; border-radius: 50%; background: var(--ink-dim); flex-shrink: 0;
       }
       .beta-evcc-warn { color: #f97316; font-weight: 600; }
+      .beta-evcc-pause { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+      .beta-evcc-pause-row { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; cursor: pointer; }
+      .beta-evcc-pause-row .bl { color: var(--ink-mid); }
+      .beta-evcc-pause-toggle { accent-color: var(--accent-2); cursor: pointer; }
+      .beta-plan-status { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
+      .beta-plan-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+      .beta-plan-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--ink-mid); }
+      .beta-plan-field input {
+        border: 1px solid var(--line); background: var(--bg-0); color: var(--ink);
+        border-radius: 8px; padding: 5px 8px; font-size: 0.85rem; font-family: var(--font-mono);
+      }
+      .beta-plan-field input[type="number"] { width: 70px; }
+      .beta-plan-buttons { display: flex; gap: 8px; margin-left: auto; }
+      .beta-plan-set-btn, .beta-plan-clear-btn {
+        border: 1px solid var(--line); background: var(--bg-0); color: var(--ink);
+        font-size: 0.78rem; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+      }
+      .beta-plan-set-btn { color: var(--accent-2); border-color: var(--accent-2); }
+      .beta-plan-set-btn:hover, .beta-plan-clear-btn:hover { opacity: 0.8; }
       @media (max-width: 900px) {
         .beta-hero-row { grid-template-columns: 1fr; }
         .beta-bottom-row { grid-template-columns: 1fr; }

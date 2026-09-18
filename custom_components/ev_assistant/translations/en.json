@@ -173,7 +173,7 @@
         "data_description": {
           "evcc_host": "Optional — without it, charge power/mode/tariffs/PV in the panel simply stay empty; everything else keeps working as before.",
           "home_entity": "Just a yes/no threshold (>0.1 kW = 'currently charging at home') — not an energy value, and only reports anything while the vehicle is plugged into this wallbox.",
-          "evcc_mode_control_enabled": "Off by default: only the existing display recommendations (Usage Profile tab, \"Charge Before Solar Recommended\") stay unchanged. On: evcc additionally gets an actual charge mode (pv/minpv/now) and min/target SoC written from the usage profile — only on an actual change, so a manual override in the evcc UI stays in place until the next real recommendation change.",
+          "evcc_mode_control_enabled": "Off by default: only the existing display recommendations (Usage Profile tab, \"Charge Before Solar Recommended\") stay unchanged. On: evcc additionally gets an actual charge mode (pv/minpv/now) and min/target SoC written from the usage profile — whenever it differs from evcc's live state (not just from what was last written), so it self-corrects e.g. after an evcc restart. A manual override in the evcc UI therefore only holds until the next cycle (~1 min) — see the set_evcc_mode_control_pause service (also exposed as a toggle in the panel) to deliberately hold it off until switched back on.",
           "wallbox_min_power_w": "Only relevant while the evcc control above is enabled. If the current PV surplus (site PV minus grid export) is below this value, the wallbox wouldn't charge at all in \"pv\" mode and the surplus would go to waste on the grid — ev_assistant then upgrades the mode in real time (independent of the usage-profile logic above, pv→minpv only, never the other way) to \"minpv\", with hysteresis against flapping. Default 1380 W = 6A × 230V single-phase; for a three-phase connection it would be 6A × 3 × 230V ≈ 4140 W.",
           "pv_forecast_today_remaining_entity": "Optional, independent of the tomorrow PV forecast (step 7) — only relevant while the evcc control above is enabled.",
           "home_consumption_entity": "Optional, cumulative energy meter (kWh) — only relevant while the evcc control above is enabled. Without it, the PV forecast would incorrectly be credited entirely to the vehicle.",
@@ -467,6 +467,9 @@
       },
       "evcc_mode_control": {
         "name": "evcc Mode Control"
+      },
+      "evcc_charge_plan": {
+        "name": "evcc Charge Plan"
       }
     },
     "binary_sensor": {

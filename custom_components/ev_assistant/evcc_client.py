@@ -8,6 +8,7 @@ Websocket noetig -- Polling reicht fuer die Zwecke von ev_assistant.
 from __future__ import annotations
 
 import logging
+from urllib.parse import quote
 
 import aiohttp
 
@@ -99,6 +100,34 @@ class EvccClient:
             else f"{self._host}/api/vehicles/{vehicle_name}/limitsoc/{soc}"
         )
         return await self._post(url)
+
+    async def async_set_vehicle_plan_soc(self, vehicle_name: str, soc: int, target_time_iso: str) -> bool:
+        """Setzt evccs eigenen Ladeplan (Zielzeit-Laden): das Fahrzeug soll
+        bis `target_time_iso` (RFC3339, UTC, z.B. "2026-09-19T04:21:15Z" --
+        live gegen die evcc-REST-API verifiziertes Format, Stand 0.315.2) auf
+        `soc` Prozent geladen sein. evcc uebernimmt danach selbst, WANN
+        (Tarif-/PV-optimiert) geladen wird -- ein eigener Mechanismus,
+        unabhaengig von Modus/Min-/Ziel-SoC (siehe async_set_mode()/
+        async_set_limit_soc()). Nur auf Fahrzeug-Ebene verfuegbar (siehe
+        evcc-API-Doku https://docs.evcc.io/integrations/rest-api) --
+        anders als minsoc/limitsoc kein Loadpoint-Scope-Fallback noetig."""
+        return await self._post(f"{self._host}/api/vehicles/{vehicle_name}/plan/soc/{soc}/{quote(target_time_iso, safe='')}")
+
+    async def async_clear_vehicle_plan_soc(self, vehicle_name: str) -> bool:
+        return await self._delete(f"{self._host}/api/vehicles/{vehicle_name}/plan/soc")
+
+    async def _delete(self, url: str) -> bool:
+        """Wie _post(), aber fuer DELETE-Endpunkte (aktuell nur der
+        Ladeplan-Loeschung, siehe async_clear_vehicle_plan_soc())."""
+        try:
+            async with self._session.delete(url, timeout=_TIMEOUT, ssl=False) as resp:
+                if resp.status != 200:
+                    _LOGGER.warning("evcc_client: DELETE %s -> HTTP %s", url, resp.status)
+                    return False
+                return True
+        except (aiohttp.ClientError, TimeoutError) as err:
+            _LOGGER.warning("evcc_client: DELETE %s -> %s: %s", url, type(err).__name__, err)
+            return False
 
     async def _post(self, url: str) -> bool:
         """Wie _get_json(), aber fuer Schreibzugriffe -- POST, nicht PUT:

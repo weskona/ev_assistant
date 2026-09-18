@@ -173,7 +173,7 @@
         "data_description": {
           "evcc_host": "Optional — ohne sie bleiben Ladeleistung/Modus/Tarife/PV im Panel einfach leer, alles andere funktioniert unverändert weiter.",
           "home_entity": "Nur ein Ja/Nein-Schwellwert (>0,1 kW = \"lädt gerade zuhause\") — kein Energie-Messwert und liefert nur Werte, während das Fahrzeug an dieser Wallbox hängt.",
-          "evcc_mode_control_enabled": "Deaktiviert (Default): nur die bisherigen Anzeige-Empfehlungen (Nutzungsprofil-Tab, „Laden vor PV empfehlenswert“) bleiben unverändert bestehen. Aktiviert: evcc bekommt zusätzlich tatsächlich einen Lademodus (pv/minpv/now) sowie Min-/Ziel-SoC nach dem Nutzungsprofil geschrieben — nur bei tatsächlicher Änderung, ein manueller Eingriff in der evcc-UI bleibt also bis zur nächsten echten Empfehlungsänderung bestehen.",
+          "evcc_mode_control_enabled": "Deaktiviert (Default): nur die bisherigen Anzeige-Empfehlungen (Nutzungsprofil-Tab, „Laden vor PV empfehlenswert“) bleiben unverändert bestehen. Aktiviert: evcc bekommt zusätzlich tatsächlich einen Lademodus (pv/minpv/now) sowie Min-/Ziel-SoC nach dem Nutzungsprofil geschrieben — bei jeder Abweichung vom evcc-Live-Zustand (nicht nur vom eigenen zuletzt geschriebenen Stand), damit sich das z.B. nach einem evcc-Neustart selbst korrigiert. Ein manueller Eingriff in der evcc-UI hält dadurch nur bis zum nächsten Zyklus (~1 Min.) — siehe Service set_evcc_mode_control_pause (auch als Schalter im Panel), um das gezielt zu unterbinden, bis er wieder ausgeschaltet wird.",
           "wallbox_min_power_w": "Nur relevant, wenn die evcc-Steuerung oben aktiviert ist. Liegt der aktuelle PV-Überschuss (Site-PV minus Netzeinspeisung) unter diesem Wert, würde die Wallbox im Modus \"pv\" gar nicht laden und der Überschuss ungenutzt ins Netz gehen — ev_assistant hebt den Modus dann in Echtzeit (unabhängig von der Nutzungsprofil-Logik oben, nur pv→minpv, nie umgekehrt) auf \"minpv\" an, mit Hysterese gegen Flattern. Default 1380 W = 6A × 230V einphasig; bei dreiphasigem Anschluss wären es 6A × 3 × 230V ≈ 4140 W.",
           "pv_forecast_today_remaining_entity": "Optional, unabhängig von der PV-Ertragsprognose für morgen (Schritt 7) — nur relevant, wenn die evcc-Steuerung oben aktiviert ist.",
           "home_consumption_entity": "Optional, kumulativer Energiezähler (kWh) — nur relevant, wenn die evcc-Steuerung oben aktiviert ist. Ohne ihn wird die PV-Restprognose fälschlich komplett dem Auto zugerechnet.",
@@ -467,6 +467,9 @@
       },
       "evcc_mode_control": {
         "name": "evcc-Modus-Steuerung"
+      },
+      "evcc_charge_plan": {
+        "name": "evcc-Ladeplan"
       }
     },
     "binary_sensor": {

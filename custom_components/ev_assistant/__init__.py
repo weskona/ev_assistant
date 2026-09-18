@@ -20,6 +20,7 @@ from .const import (
     SERVICE_ADD_LADEKARTE,
     SERVICE_ADD_LADEKARTE_PREISSTUFE,
     SERVICE_ADD_MAINTENANCE,
+    SERVICE_CLEAR_EVCC_CHARGE_PLAN,
     SERVICE_DELETE,
     SERVICE_DELETE_LADEKARTE,
     SERVICE_DELETE_LADEKARTE_PREISSTUFE,
@@ -36,6 +37,8 @@ from .const import (
     SERVICE_LOG,
     SERVICE_LOG_TRIP,
     SERVICE_MARK_MAINTENANCE_DONE,
+    SERVICE_SET_EVCC_CHARGE_PLAN,
+    SERVICE_SET_EVCC_MODE_CONTROL_PAUSE,
     SERVICE_SET_USAGE_PROFILE_BUFFER_PCT,
     SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED,
     SERVICE_SIMULATE,
@@ -404,6 +407,25 @@ SET_WEEKLY_FULL_CHARGE_ENABLED_SCHEMA = vol.Schema({
     vol.Optional("enabled"): vol.Any(None, bool),
 })
 
+# Einfacher Dauer-Schalter (siehe coordinator.py::async_set_evcc_mode_
+# control_pause()) statt Zeitfenster -- beide Zustaende sind immer explizit
+# gewollt, kein "Feld weglassen"-Reset-Fall wie bei den anderen Laufzeit-
+# Overrides noetig.
+SET_EVCC_MODE_CONTROL_PAUSE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("paused"): bool,
+})
+
+SET_EVCC_CHARGE_PLAN_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("target_soc"): vol.All(vol.Coerce(int), vol.Range(min=0, max=100)),
+    vol.Required("target_time"): vol.Coerce(float),
+})
+
+CLEAR_EVCC_CHARGE_PLAN_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+})
+
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Version 1 -> 2: evcc_intg-Entity-Discovery entfernt (siehe
@@ -656,6 +678,21 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_apply_vehicle_discharge_urlaub_since(call.data["seit_ts"])
 
+    async def _handle_set_evcc_mode_control_pause(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_set_evcc_mode_control_pause(call.data["paused"])
+
+    async def _handle_set_evcc_charge_plan(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_set_evcc_charge_plan(call.data["target_soc"], call.data["target_time"])
+
+    async def _handle_clear_evcc_charge_plan(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_clear_evcc_charge_plan()
+
     hass.services.async_register(DOMAIN, SERVICE_LOG, _handle_log, schema=LOG_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCARD, _handle_discard, schema=DISCARD_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE, _handle_simulate, schema=SIMULATE_SCHEMA)
@@ -701,6 +738,18 @@ def _register_services(hass: HomeAssistant) -> None:
         schema=SET_WEEKLY_FULL_CHARGE_ENABLED_SCHEMA,
     )
     hass.services.async_register(DOMAIN, SERVICE_URLAUB_SEIT, _handle_urlaub_seit, schema=URLAUB_SEIT_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_EVCC_MODE_CONTROL_PAUSE, _handle_set_evcc_mode_control_pause,
+        schema=SET_EVCC_MODE_CONTROL_PAUSE_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_EVCC_CHARGE_PLAN, _handle_set_evcc_charge_plan,
+        schema=SET_EVCC_CHARGE_PLAN_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_CLEAR_EVCC_CHARGE_PLAN, _handle_clear_evcc_charge_plan,
+        schema=CLEAR_EVCC_CHARGE_PLAN_SCHEMA,
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -722,7 +771,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_ADD_LADEKARTE_PREISSTUFE, SERVICE_DELETE_LADEKARTE_PREISSTUFE,
                 SERVICE_ADD_MAINTENANCE, SERVICE_EDIT_MAINTENANCE, SERVICE_DELETE_MAINTENANCE,
                 SERVICE_MARK_MAINTENANCE_DONE, SERVICE_URLAUB_SEIT,
-                SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED,
+                SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED, SERVICE_SET_EVCC_MODE_CONTROL_PAUSE,
+                SERVICE_SET_EVCC_CHARGE_PLAN, SERVICE_CLEAR_EVCC_CHARGE_PLAN,
             ):
                 hass.services.async_remove(DOMAIN, service)
         else:

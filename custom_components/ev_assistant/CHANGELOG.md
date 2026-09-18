@@ -2,6 +2,28 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.92.0] - 2026-09-19
+
+### Added
+
+- **`gesamt_autarkie_pct` on `charging_location_breakdown`**: the solar self-sufficiency share of the vehicle's *total* charged energy — home + external combined, not just home charging (the existing `heim.solar_pct` only ever covered home sessions). External charging always counts as 0% solar (charger power mix is unknown), computed from figures already gathered for this sensor (home kWh, home solar %, external kWh) — no new data source. Shown in the panel's "Ladeort-Aufschlüsselung" card (Analyse tab) next to the existing EUR/100km KPI.
+
+## [0.91.0] - 2026-09-19
+
+### Added
+
+- **evcc charge plan (target-time charging) control**: a new, independently usable complement to the automatic mode/SoC control — sets evcc's own charging plan via the new `set_evcc_charge_plan`/`clear_evcc_charge_plan` services (or the new "Ladeplan" panel card), so evcc itself decides *when* to charge (tariff-/PV-optimized) to hit a specific deadline ("80% by 7am"), the same mechanism its own UI's charging plan uses. Solves a case the profile-based mode control doesn't cover — a hard deadline vs. its rolling 1-2 day buffer. Only needs `evcc_host`, no `evcc_mode_control_enabled`. While a plan is active, the automatic mode/SoC control steps back entirely (regardless of whether the plan was set via ev_assistant or evcc's own UI) so the two mechanisms never fight over the loadpoint. New `evcc_charge_plan` diagnostic sensor mirrors the live plan status.
+
+## [0.90.0] - 2026-09-18
+
+### Changed
+
+- **evcc mode control now self-heals against live drift, not just its own write cache**: `_async_apply_evcc_mode_control()` previously only re-wrote to evcc when its own computed recommendation changed compared to the last value *it itself* had written — it had no way to notice when evcc's actual state had silently diverged (e.g. an evcc add-on restart falling back to its own config defaults, discovered live: a Warp3 loadpoint reset to mode `off`/limit 80% after two evcc restarts ~55 minutes apart, while ev_assistant's own record still showed the correct `minpv`/100% it had written 5 hours earlier and therefore never re-asserted it). Left unfixed, this could permanently block the weekly full-charge balancing feature, since the vehicle would never actually reach 100% again. It now also compares against evcc's live loadpoint state (`mode`/`effectiveMinSoc`/`effectiveLimitSoc`) and re-writes whenever either has drifted.
+
+### Added
+
+- **`set_evcc_mode_control_pause` service + panel toggle**: the drift self-healing above means a manual mode/SoC change made directly in evcc's own UI now only survives until the next control cycle (~1 minute), not indefinitely as before — this service (and a matching toggle in the "Automatische Ladesteuerung" panel card) holds off write-back until switched back off, for when a deliberate manual change needs to stick for a while. New `evcc_mode_control` sensor attribute `pausiert` reflects the current state.
+
 ## [0.89.0] - 2026-09-18
 
 ### Added

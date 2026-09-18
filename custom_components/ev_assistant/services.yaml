@@ -1237,3 +1237,82 @@ set_weekly_full_charge_enabled:
       required: false
       selector:
         boolean:
+
+set_evcc_mode_control_pause:
+  name: evcc-Modus-/SoC-Steuerung pausieren
+  description: >
+    Unterdrückt das automatische Zurückschreiben von Lademodus/Min-/
+    Ziel-SoC nach evcc, solange aktiviert — z.B. wenn du selbst etwas in
+    evccs eigener Oberfläche einstellst und verhindern willst, dass
+    ev_assistant das im nächsten Zyklus (~1 Min.) wieder überschreibt.
+    Bleibt an, bis dieser Service mit paused: false wieder aufgerufen wird
+    (z.B. über den Panel-Schalter in der Karte "Automatische
+    Ladesteuerung").
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    paused:
+      name: Pausiert
+      description: Ein zum Pausieren, aus zum Fortsetzen der automatischen Steuerung.
+      required: true
+      selector:
+        boolean:
+
+set_evcc_charge_plan:
+  name: evcc-Ladeplan setzen
+  description: >
+    Setzt evccs eigenen Ladeplan (Zielzeit-Laden): das Fahrzeug soll bis
+    zur angegebenen Zeit den angegebenen SoC erreicht haben — evcc wählt
+    danach selbst, WANN (tarif-/PV-optimiert) geladen wird. Pausiert dabei
+    automatisch die profilbasierte evcc-Modus-/SoC-Steuerung, solange der
+    Plan aktiv ist, damit sich beide nicht in die Quere kommen. Braucht
+    keine aktivierte evcc-Modus-/SoC-Steuerung, nur einen konfigurierten
+    evcc_host.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    target_soc:
+      name: Ziel-SoC (%)
+      description: Auf wie viel Prozent das Fahrzeug bis zur Zielzeit geladen sein soll.
+      required: true
+      example: 80
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: box
+    target_time:
+      name: Zielzeit (Unix)
+      description: Bis wann der Ziel-SoC erreicht sein soll.
+      required: true
+      example: 1789780800
+      selector:
+        number:
+          mode: box
+
+clear_evcc_charge_plan:
+  name: evcc-Ladeplan löschen
+  description: >
+    Entfernt einen gesetzten evcc-Ladeplan (siehe set_evcc_charge_plan)
+    wieder — danach greift die profilbasierte evcc-Modus-/SoC-Steuerung
+    wieder normal (sofern aktiviert und nicht manuell pausiert).
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant

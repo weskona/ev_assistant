@@ -795,6 +795,19 @@ async def test_apply_evcc_mode_control_unveraenderte_empfehlung_schreibt_kein_zw
     coordinator._evcc_state = {"loadpoints": [{}]}
 
     await coordinator._async_apply_evcc_mode_control()
+    # evcc-Live-Zustand jetzt so tun, als haette der erste Schreibvorgang
+    # tatsaechlich gewirkt (siehe _async_apply_evcc_mode_control()-
+    # Docstring: seit dem Live-Zustand-Abgleich muss der Loadpoint den
+    # geschriebenen Stand auch widerspiegeln, sonst wuerde JEDER Zyklus
+    # erneut schreiben, unabhaengig von einer unveraenderten Empfehlung).
+    written = coordinator.data["evcc_mode_control"]
+    coordinator._evcc_state = {
+        "loadpoints": [{
+            "mode": written["modus"],
+            "effectiveMinSoc": written["min_soc"],
+            "effectiveLimitSoc": written["target_soc"],
+        }],
+    }
     await coordinator._async_apply_evcc_mode_control()
 
     coordinator._evcc_client.async_set_mode.assert_awaited_once()
@@ -985,6 +998,226 @@ async def test_apply_evcc_mode_control_min_und_limit_soc_koennen_unterschiedlich
     coordinator._evcc_client.async_set_limit_soc.assert_awaited_once()
     assert coordinator.data["evcc_mode_control"] is not None
     assert ir.async_get(hass).async_get_issue(DOMAIN, f"{coordinator.entry.entry_id}_evcc_soc_scope_failed") is None
+
+
+async def test_apply_evcc_mode_control_evcc_live_zustand_weicht_ab_schreibt_erneut(hass, coordinators):
+    """Kernszenario des Live-Zustand-Abgleichs (Produktionsfeedback
+    2026-09-18): evcc hat den zuletzt geschriebenen Modus/SoC verloren
+    (z.B. Addon-Neustart faellt auf den evcc-eigenen Konfig-Default
+    zurueck), OBWOHL sich die eigene Empfehlung nicht geaendert hat -- ein
+    reiner Vergleich gegen den eigenen Schreib-Cache (self.data
+    ["evcc_mode_control"]) wuerde das nie bemerken und z.B. eine faellige
+    woechentliche Vollladung dauerhaft blockieren."""
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "aemc12", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator._evcc_client = _fake_evcc_client(probe_result="loadpoint")
+    coordinator._evcc_state = {"loadpoints": [{}]}
+    await coordinator._async_apply_evcc_mode_control()
+    coordinator._evcc_client.async_set_mode.assert_awaited_once()
+
+    # evcc "vergisst" den geschriebenen Stand wieder (z.B. Addon-Neustart) --
+    # die eigene Empfehlung (SoC/Profil) bleibt dabei UNVERAENDERT.
+    coordinator._evcc_state = {"loadpoints": [{"mode": "off", "effectiveMinSoc": 0, "effectiveLimitSoc": 80}]}
+    await coordinator._async_apply_evcc_mode_control()
+
+    assert coordinator._evcc_client.async_set_mode.await_count == 2
+
+
+async def test_apply_evcc_mode_control_evcc_live_zustand_stimmt_ueberein_kein_erneutes_schreiben(hass, coordinators):
+    """Gegenprobe zu obigem Test: stimmt der evcc-Live-Zustand bereits mit
+    der (unveraenderten) Empfehlung ueberein, wird trotz vorhandenem
+    Loadpoint-Objekt nicht erneut geschrieben."""
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "aemc13", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator._evcc_client = _fake_evcc_client(probe_result="loadpoint")
+    coordinator._evcc_state = {"loadpoints": [{}]}
+    await coordinator._async_apply_evcc_mode_control()
+    written = coordinator.data["evcc_mode_control"]
+
+    coordinator._evcc_state = {
+        "loadpoints": [{
+            "mode": written["modus"],
+            "effectiveMinSoc": written["min_soc"],
+            "effectiveLimitSoc": written["target_soc"],
+        }],
+    }
+    await coordinator._async_apply_evcc_mode_control()
+
+    coordinator._evcc_client.async_set_mode.assert_awaited_once()
+
+
+async def test_apply_evcc_mode_control_pause_unterdrueckt_schreiben(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "aemc14", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator._evcc_client = _fake_evcc_client(probe_result="loadpoint")
+    coordinator._evcc_state = {"loadpoints": [{"mode": "off", "effectiveMinSoc": 0, "effectiveLimitSoc": 80}]}
+
+    await coordinator.async_set_evcc_mode_control_pause(True)
+    await coordinator._async_apply_evcc_mode_control()
+
+    coordinator._evcc_client.async_set_mode.assert_not_called()
+
+
+async def test_apply_evcc_mode_control_pause_wieder_ausgeschaltet_schreibt_wieder(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "aemc15", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator._evcc_client = _fake_evcc_client(probe_result="loadpoint")
+    coordinator._evcc_state = {"loadpoints": [{"mode": "off", "effectiveMinSoc": 0, "effectiveLimitSoc": 80}]}
+
+    await coordinator.async_set_evcc_mode_control_pause(True)
+    await coordinator.async_set_evcc_mode_control_pause(False)
+    assert coordinator.data.get("evcc_mode_control_paused") is False
+    await coordinator._async_apply_evcc_mode_control()
+
+    coordinator._evcc_client.async_set_mode.assert_awaited_once()
+
+
+async def test_set_evcc_mode_control_pause_setzt_und_loescht_flag(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "aemc16")
+    await coordinator.async_set_evcc_mode_control_pause(True)
+    assert coordinator.data["evcc_mode_control_paused"] is True
+    await coordinator.async_set_evcc_mode_control_pause(False)
+    assert coordinator.data["evcc_mode_control_paused"] is False
+
+
+# ----- evcc-Ladeplan (Zielzeit-Laden) ----------------------------------------
+
+async def test_evcc_charge_plan_status_ohne_plan_gibt_none(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "ecp1")
+    coordinator._evcc_state = {"loadpoints": [{"effectivePlanTime": None, "planTime": None}]}
+    assert coordinator._evcc_charge_plan_status() is None
+    assert coordinator._evcc_charge_plan_active() is False
+
+
+async def test_evcc_charge_plan_status_mit_plan_liest_live_felder(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "ecp2")
+    coordinator._evcc_state = {
+        "loadpoints": [{
+            "effectivePlanTime": "2026-09-19T06:00:00Z",
+            "effectivePlanSoc": 80,
+            "planProjectedStart": "2026-09-19T04:48:00+02:00",
+            "planProjectedEnd": "2026-09-19T06:00:00+02:00",
+            "planActive": True,
+        }],
+    }
+    status = coordinator._evcc_charge_plan_status()
+    assert status == {
+        "target_time": "2026-09-19T06:00:00Z",
+        "target_soc": 80,
+        "projected_start": "2026-09-19T04:48:00+02:00",
+        "projected_end": "2026-09-19T06:00:00+02:00",
+        "aktiv": True,
+    }
+    assert coordinator._evcc_charge_plan_active() is True
+
+
+async def test_apply_evcc_mode_control_charge_plan_aktiv_unterdrueckt_schreiben(hass, coordinators):
+    """Kernszenario: ein aktiver evcc-Ladeplan (egal ob per ev_assistant
+    oder direkt in evccs eigener Oberflaeche gesetzt) pausiert die
+    profilbasierte Modus-/SoC-Steuerung, damit sich beide nicht in die
+    Quere kommen (Nutzerentscheidung 2026-09-19)."""
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "ecp3", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator._evcc_client = _fake_evcc_client(probe_result="loadpoint")
+    coordinator._evcc_state = {
+        "loadpoints": [{
+            "mode": "off", "effectiveMinSoc": 0, "effectiveLimitSoc": 80,
+            "effectivePlanTime": "2026-09-19T06:00:00Z", "effectivePlanSoc": 80,
+        }],
+    }
+
+    await coordinator._async_apply_evcc_mode_control()
+
+    coordinator._evcc_client.async_set_mode.assert_not_called()
+
+
+async def test_async_set_evcc_charge_plan_ruft_client_mit_rfc3339_zeit_auf(hass, coordinators):
+    from datetime import datetime, timezone
+
+    from custom_components.ev_assistant.const import CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "ecp4",
+        options={CONF_VEHICLE_HERSTELLER: "Peugeot", CONF_VEHICLE_MODELL: "eRifter"},
+    )
+    coordinator._evcc_state = {"vehicles": {"db:8": {"title": "eRifter"}}, "loadpoints": [{}]}
+    coordinator._evcc_client = _fake_evcc_client()
+    coordinator._evcc_client.async_set_vehicle_plan_soc = AsyncMock(return_value=True)
+
+    target_time = datetime(2026, 9, 19, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+    ok = await coordinator.async_set_evcc_charge_plan(80, target_time)
+
+    assert ok is True
+    coordinator._evcc_client.async_set_vehicle_plan_soc.assert_awaited_once_with(
+        "db:8", 80, "2026-09-19T12:00:00Z"
+    )
+
+
+async def test_async_set_evcc_charge_plan_ohne_vehicle_key_gibt_false(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "ecp5")
+    coordinator._evcc_client = _fake_evcc_client()
+
+    ok = await coordinator.async_set_evcc_charge_plan(80, 1789833600.0)
+
+    assert ok is False
+    coordinator._evcc_client.async_set_vehicle_plan_soc.assert_not_called()
+
+
+async def test_async_clear_evcc_charge_plan_ruft_client_auf(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "ecp6",
+        options={CONF_VEHICLE_HERSTELLER: "Peugeot", CONF_VEHICLE_MODELL: "eRifter"},
+    )
+    coordinator._evcc_state = {"vehicles": {"db:8": {"title": "eRifter"}}, "loadpoints": [{}]}
+    coordinator._evcc_client = _fake_evcc_client()
+    coordinator._evcc_client.async_clear_vehicle_plan_soc = AsyncMock(return_value=True)
+
+    ok = await coordinator.async_clear_evcc_charge_plan()
+
+    assert ok is True
+    coordinator._evcc_client.async_clear_vehicle_plan_soc.assert_awaited_once_with("db:8")
 
 
 # ----- _evcc_vehicle_api_key --------------------------------------------------

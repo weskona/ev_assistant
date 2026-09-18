@@ -5012,13 +5012,26 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return scope
 
     async def _async_apply_evcc_mode_control(self) -> None:
-        """Schreibt Lademodus + Min-/Ziel-SoC nach evcc, aber NUR wenn sich
-        die eigene berechnete Empfehlung seit dem letzten Schreibvorgang
-        geaendert hat -- kein periodisches Ueberschreiben, damit ein
-        manueller evcc-Eingriff (z.B. Nutzer stellt in der evcc-UI selbst
-        "now" ein) bis zur naechsten tatsaechlichen Empfehlungsaenderung
-        bestehen bleibt. Deaktiviert per Default
-        (CONF_EVCC_MODE_CONTROL_ENABLED); no-op ohne evcc-Client.
+        """Schreibt Lademodus + Min-/Ziel-SoC nach evcc, aber NUR wenn die
+        eigene berechnete Empfehlung vom evcc-LIVE-Zustand abweicht (siehe
+        _current_loadpoint(), "mode"/"effectiveMinSoc"/"effectiveLimitSoc")
+        ODER vom eigenen zuletzt geschriebenen Stand -- Produktionsfeedback
+        2026-09-18: ein reiner Vergleich gegen den eigenen Schreib-Cache
+        (fruehere Version) bemerkt nie, wenn evcc selbst den Wert wieder
+        verliert (z.B. nach einem evcc-Addon-Neustart faellt ein nur zur
+        Laufzeit gesetzter Modus/Limit auf den evcc-eigenen Konfig-Default
+        zurueck) -- dann bliebe z.B. eine faellige woechentliche Vollladung
+        (siehe apply_weekly_balancing_override()) dauerhaft blockiert, weil
+        die eigene Empfehlung ("minpv"/100) sich ja nicht mehr aendert.
+        Kehrseite: ein manueller Eingriff in evccs eigener UI wird dadurch
+        NICHT mehr bis zur naechsten Empfehlungsaenderung respektiert,
+        sondern spaetestens im naechsten Zyklus (~1 Min.) wieder
+        ueberschrieben -- siehe async_set_evcc_mode_control_pause() fuer
+        einen bewussten Weg, das zu unterbinden (Panel-Schalter, bleibt
+        aktiv bis manuell wieder ausgeschaltet).
+
+        Deaktiviert per Default (CONF_EVCC_MODE_CONTROL_ENABLED); no-op
+        ohne evcc-Client.
 
         Min- und Ziel-SoC werden UNABHAENGIG voneinander geprobt/geschrieben
         (siehe _evcc_scope()/evcc_client.py::async_probe_scope()) -- neuere
@@ -5034,6 +5047,19 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # erzwingen, bestehender evcc-/manueller Zustand bleibt
             # unangetastet (siehe CONF_URLAUB_ENTITY-Kommentar in const.py).
             return
+        if self.data.get("evcc_mode_control_paused"):
+            # Manuell angeforderte Pause (siehe async_set_evcc_mode_control_
+            # pause()/Panel-Schalter) -- bleibt aktiv, bis sie explizit
+            # wieder ausgeschaltet wird (Nutzerentscheidung, Produktions-
+            # feedback 2026-09-18: einfacher Dauer-Schalter statt Zeitfenster).
+            return
+        if self._evcc_charge_plan_active():
+            # evcc verfolgt gerade einen eigenen Ladeplan (Zielzeit-Laden,
+            # siehe async_set_evcc_charge_plan()/_evcc_charge_plan_active())
+            # -- unabhaengig davon, ob per ev_assistant oder direkt in evccs
+            # eigener Oberflaeche gesetzt. Die profilbasierte Steuerung soll
+            # dem nicht ins Gehege kommen (Nutzerentscheidung 2026-09-19).
+            return
         targets = self._evcc_mode_targets()
         if targets is None:
             return
@@ -5048,8 +5074,22 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "min_soc": targets["min_soc"],
             "target_soc": targets["target_soc"],
         }
-        if all(last.get(k) == new_state[k] for k in new_state):
-            return  # keine Aenderung -- nichts schreiben, manueller Eingriff bleibt bestehen
+        loadpoint = self._current_loadpoint() or {}
+        live = {
+            "modus": loadpoint.get("mode"),
+            "min_soc": loadpoint.get("effectiveMinSoc", loadpoint.get("minSoc")),
+            "target_soc": loadpoint.get("effectiveLimitSoc", loadpoint.get("limitSoc")),
+        }
+        matches_last = all(last.get(k) == new_state[k] for k in new_state)
+        # new_state[k] is None faellt aus dem Live-Vergleich raus (fehlende
+        # usable_kwh o.ae., siehe kwh_to_soc_percent()) -- evcc liefert dort
+        # ohnehin immer einen echten Zahlenwert, ein None<->Zahl-Vergleich
+        # waere sonst JEDEN Zyklus ein "Unterschied" und wuerde endlos
+        # (nutzlos) neu schreiben, obwohl new_state["target_soc"] is not
+        # None weiter unten diesen Wert sowieso nie tatsaechlich sendet.
+        matches_live = all(new_state[k] is None or live.get(k) == new_state[k] for k in new_state)
+        if matches_last and matches_live:
+            return  # keine Aenderung -- nichts schreiben
         loadpoint_id = self._current_loadpoint_index()
         if loadpoint_id is None:
             _LOGGER.warning("evcc_mode_control: kein Loadpoint gefunden, ueberspringe Schreibvorgang")
@@ -5100,6 +5140,98 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return  # bei Fehler NICHT als "geschrieben" vermerken -> naechster Zyklus versucht erneut
         self.data["evcc_mode_control"] = {**new_state, "geschrieben_ts": dt_util.utcnow().timestamp()}
         await self._store.async_save(self.data)
+
+    async def async_set_evcc_mode_control_pause(self, paused: bool) -> None:
+        """Schaltet die manuelle Pause von _async_apply_evcc_mode_control()
+        um (Panel-Schalter, siehe dortigen Docstring) -- fuer einen bewusst
+        gesetzten manuellen evcc-Eingriff (z.B. selbst kurz auf "now"
+        gestellt), der seit dem evcc-Live-Zustand-Abgleich dort sonst binnen
+        des naechsten Zyklus (~1 Min.) wieder ueberschrieben wuerde. Bleibt
+        aktiv, bis sie hierueber explizit wieder ausgeschaltet wird -- bewusst
+        einfacher Dauer-Schalter statt Zeitfenster (Nutzerentscheidung,
+        Produktionsfeedback 2026-09-18). Reiner Laufzeit-Zustand in self.data
+        (kein Config-Flow-Feld, kein Reload noetig), analog
+        async_set_usage_profile_buffer_pct()."""
+        self.data["evcc_mode_control_paused"] = bool(paused)
+        self.async_set_updated_data(self.data)
+        self._save_soon()
+
+    def _evcc_charge_plan_status(self) -> Optional[dict]:
+        """Live-Status von evccs eigenem Ladeplan (Zielzeit-Laden, siehe
+        evcc_client.py::async_set_vehicle_plan_soc()) fuer EvccChargePlanSensor
+        -- direkt aus dem ohnehin gepollten evcc-Loadpoint-State, kein
+        zusaetzlicher evcc-Aufruf. None ohne evcc-State/Loadpoint oder ohne
+        gesetzten Plan (evcc liefert "effectivePlanTime"/"planTime" dann als
+        null). "aktiv" heisst: evcc laedt GERADE aufgrund dieses Plans, nicht
+        nur "ein Plan ist fuer die Zukunft gesetzt" (dafuer reicht schon,
+        dass diese Funktion ueberhaupt nicht None zurueckgibt)."""
+        loadpoint = self._current_loadpoint()
+        if loadpoint is None:
+            return None
+        plan_time = loadpoint.get("effectivePlanTime") or loadpoint.get("planTime")
+        if not plan_time:
+            return None
+        return {
+            "target_time": plan_time,
+            "target_soc": loadpoint.get("effectivePlanSoc"),
+            "projected_start": loadpoint.get("planProjectedStart"),
+            "projected_end": loadpoint.get("planProjectedEnd"),
+            "aktiv": bool(loadpoint.get("planActive")),
+        }
+
+    def _evcc_charge_plan_active(self) -> bool:
+        """Ob evcc GERADE einen Ladeplan verfolgt (siehe
+        _evcc_charge_plan_status()) -- greift in _async_apply_evcc_mode_
+        control(), damit die profilbasierte Modus-/SoC-Steuerung evccs
+        eigenem, zeitzielbasiertem Laden nicht ins Gehege kommt (Nutzer-
+        entscheidung 2026-09-18). Absichtlich unabhaengig davon, WER den
+        Plan gesetzt hat -- ev_assistant selbst (async_set_evcc_charge_
+        plan()) oder der Nutzer direkt in evccs eigener Oberflaeche, beides
+        soll die Modus-Steuerung gleichermassen pausieren."""
+        return self._evcc_charge_plan_status() is not None
+
+    async def async_set_evcc_charge_plan(self, target_soc: int, target_time: float) -> bool:
+        """Setzt evccs Ladeplan (siehe evcc_client.py::async_set_vehicle_
+        plan_soc()) -- `target_time` als Unix-Zeitstempel (Sekunden, wie im
+        Rest der Integration), hier zu evccs RFC3339/UTC-Format konvertiert.
+        Pausiert dadurch implizit auch die profilbasierte Modus-/SoC-
+        Steuerung (siehe _evcc_charge_plan_active()/_async_apply_evcc_mode_
+        control()). Stoesst nach Erfolg einen sofortigen evcc-State-Refresh
+        an, damit Sensor/Panel den neuen Plan ohne Wartezeit auf den
+        naechsten Poll-Zyklus zeigen (analog async_set_usage_profile_
+        buffer_pct())."""
+        if self._evcc_client is None:
+            return False
+        vehicle_name = self._evcc_vehicle_api_key()
+        if not vehicle_name:
+            _LOGGER.warning("evcc_charge_plan: kein evcc-Fahrzeugschluessel ermittelbar, ueberspringe")
+            return False
+        target_time_iso = dt_util.utc_from_timestamp(target_time).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ok = await self._evcc_client.async_set_vehicle_plan_soc(vehicle_name, int(target_soc), target_time_iso)
+        if not ok:
+            _LOGGER.warning("evcc_charge_plan: Setzen fehlgeschlagen (soc=%s, time=%s)", target_soc, target_time_iso)
+            return False
+        await self._refresh_evcc_state()
+        self.async_set_updated_data(self.data)
+        return True
+
+    async def async_clear_evcc_charge_plan(self) -> bool:
+        """Loescht evccs Ladeplan wieder (siehe async_set_evcc_charge_plan()) --
+        danach greift die profilbasierte Modus-/SoC-Steuerung wieder normal
+        (sofern aktiviert und nicht manuell pausiert, siehe
+        _async_apply_evcc_mode_control())."""
+        if self._evcc_client is None:
+            return False
+        vehicle_name = self._evcc_vehicle_api_key()
+        if not vehicle_name:
+            return False
+        ok = await self._evcc_client.async_clear_vehicle_plan_soc(vehicle_name)
+        if not ok:
+            _LOGGER.warning("evcc_charge_plan: Loeschen fehlgeschlagen")
+            return False
+        await self._refresh_evcc_state()
+        self.async_set_updated_data(self.data)
+        return True
 
     async def _dismiss(self) -> None:
         try:

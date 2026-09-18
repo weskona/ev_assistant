@@ -2118,7 +2118,10 @@ def test_charging_location_breakdown_leere_eingaben_liefert_partielles_dict():
     result = charging_location_breakdown(
         home_kwh=None, home_cost=None, extern_kwh=15.0, extern_cost=None, km_driven=None,
     )
-    assert result == {"fremd": {"kwh": 15.0, "kwh_anteil_pct": 100.0}}
+    assert result == {
+        "fremd": {"kwh": 15.0, "kwh_anteil_pct": 100.0},
+        "gesamt_autarkie_pct": 0.0,
+    }
 
 
 def test_charging_location_breakdown_extra_cost_fliesst_nur_in_eur_je_100km():
@@ -2145,6 +2148,66 @@ def test_charging_location_breakdown_nur_extra_cost_liefert_trotzdem_eur_je_100k
         extra_cost=10.0,
     )
     assert result == {"eur_je_100km": 20.0}
+
+
+# ----- charging_location_breakdown: gesamt_autarkie_pct ---------------------
+
+def test_charging_location_breakdown_gesamt_autarkie_nur_heim_entspricht_solar_pct():
+    # Nur Heimladung -- Gesamt-Autarkie entspricht direkt dem Heim-Solaranteil.
+    result = charging_location_breakdown(
+        home_kwh=100.0, home_cost=25.0, extern_kwh=0.0, extern_cost=0.0,
+        km_driven=500.0, home_solar_pct=60.0,
+    )
+    assert result["gesamt_autarkie_pct"] == 60.0
+
+
+def test_charging_location_breakdown_gesamt_autarkie_gemischt():
+    # 70 kWh Heim @ 45% Solar = 31.5 kWh Solar, 30 kWh Fremd (0% Solar) ->
+    # 31.5 / 100 kWh Gesamt = 31.5%.
+    result = charging_location_breakdown(
+        home_kwh=70.0, home_cost=14.0, extern_kwh=30.0, extern_cost=21.0,
+        km_driven=400.0, home_solar_pct=45.0,
+    )
+    assert result["gesamt_autarkie_pct"] == 31.5
+
+
+def test_charging_location_breakdown_gesamt_autarkie_nur_fremd_ist_null():
+    # Reine Fremdladung zaehlt komplett als 0% Solar -- kein Heimanteil,
+    # der etwas beitragen koennte.
+    result = charging_location_breakdown(
+        home_kwh=0.0, home_cost=0.0, extern_kwh=50.0, extern_cost=30.0,
+        km_driven=250.0,
+    )
+    assert result["gesamt_autarkie_pct"] == 0.0
+
+
+def test_charging_location_breakdown_gesamt_autarkie_fehlender_solar_pct_zaehlt_als_null():
+    # home_kwh > 0, aber home_solar_pct unbekannt (None) -- zaehlt
+    # konservativ als 0% Solar fuer den Heimanteil, wird NICHT ganz
+    # ausgelassen (anders als das "solar_pct"-Attribut selbst, siehe
+    # test_charging_location_breakdown_fehlender_solaranteil_wird_ausgelassen).
+    result = charging_location_breakdown(
+        home_kwh=10.0, home_cost=2.0, extern_kwh=10.0, extern_cost=5.0,
+        km_driven=100.0, home_solar_pct=None,
+    )
+    assert result["gesamt_autarkie_pct"] == 0.0
+
+
+def test_charging_location_breakdown_gesamt_autarkie_ohne_jede_ladung_fehlt_ganz():
+    result = charging_location_breakdown(
+        home_kwh=0.0, home_cost=0.0, extern_kwh=0.0, extern_cost=0.0, km_driven=None,
+    )
+    assert "gesamt_autarkie_pct" not in result
+
+
+def test_charging_location_breakdown_gesamt_autarkie_geklemmt_auf_100():
+    # Rundungsartefakte/inkonsistente Eingaben duerfen die Autarkie nicht
+    # rechnerisch ueber 100% treiben.
+    result = charging_location_breakdown(
+        home_kwh=10.0, home_cost=2.0, extern_kwh=0.0, extern_cost=0.0,
+        km_driven=100.0, home_solar_pct=150.0,
+    )
+    assert result["gesamt_autarkie_pct"] == 100.0
 
 
 # ----- normalize_anbieter / bekannte_anbieter / anbieter_breakdown:

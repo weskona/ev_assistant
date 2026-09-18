@@ -1741,6 +1741,16 @@ def charging_location_breakdown(
     Strom, Kilometer lassen sich nicht ursaechlich einem Ladeort zuordnen,
     nur die Gesamtstrecke gegen die Gesamtkosten ist eine sinnvolle Zahl.
 
+    Ebenfalls top-level "gesamt_autarkie_pct": welcher Anteil der GESAMTEN
+    ins Fahrzeug geladenen Energie (Heim + Fremd) aus PV kam -- Fremdladung
+    zaehlt dabei IMMER als 0% Solar (an einer fremden Ladesaeule ist der
+    Strommix unbekannt/nicht PV-eigen, analog "solar_pct" oben, das
+    ebenfalls nur fuer Heimladungen gilt). Nur vorhanden, wenn ueberhaupt
+    etwas geladen wurde (total_kwh > 0); fehlender home_solar_pct bei
+    bekanntem home_kwh zaehlt konservativ als 0% Solar-Anteil fuer diesen
+    Teil (nicht als "unbekannt gesamt"), analog dazu, wie total_kwh selbst
+    fehlende Werte bereits als nicht beitragend behandelt.
+
     `extra_cost` (z.B. monatliche Ladekarten-Grundgebuehren, siehe
     coordinator.py::_ladekarten_cost_total()) sind Kosten, die KEINEM
     Ladeort zuzuordnen sind -- fliessen bewusst NUR in eur_je_100km ein,
@@ -1780,6 +1790,10 @@ def charging_location_breakdown(
 
     if km_driven is not None and km_driven > 0 and (home_cost is not None or extern_cost is not None or extra_cost):
         result["eur_je_100km"] = round((total_cost + (extra_cost or 0.0)) / km_driven * 100.0, 2)
+
+    if total_kwh > 0:
+        solar_kwh = (home_kwh or 0.0) * (home_solar_pct or 0.0) / 100.0
+        result["gesamt_autarkie_pct"] = round(min(100.0, solar_kwh / total_kwh * 100.0), 1)
 
     return result
 

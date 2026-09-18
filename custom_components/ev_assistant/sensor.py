@@ -87,6 +87,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         VehicleDischargeSensor(coordinator, entry),
         AvailableKwhSensor(coordinator, entry),
         EvccModeControlSensor(coordinator, entry),
+        EvccChargePlanSensor(coordinator, entry),
         WartungSensor(coordinator, entry),
     ])
 
@@ -942,9 +943,11 @@ class ChargingLocationSensor(EvAssistantEntity, SensorEntity):
     Ladeenergie (Heim + Fremd) als Hauptwert, volle Aufschluesselung als
     Attribute (siehe coordinator.py::charging_location_stats()/engine.
     charging_location_breakdown()): kWh/Kosten/Anteile je Ladeort,
-    Heim-Solaranteil, sowie ein fahrzeugweites eur_je_100km -- bewusst
-    NICHT je Ladeort, da sich gefahrene km keinem Ladeort zuordnen lassen.
-    unknown ohne jede bekannte Lademenge (weder Heim noch Fremd).
+    Heim-Solaranteil, ein fahrzeugweites eur_je_100km -- bewusst NICHT je
+    Ladeort, da sich gefahrene km keinem Ladeort zuordnen lassen -- sowie
+    gesamt_autarkie_pct (Solaranteil an der GESAMTEN geladenen Energie,
+    Heim+Fremd, Fremdladung zaehlt dabei als 0% Solar). unknown ohne jede
+    bekannte Lademenge (weder Heim noch Fremd).
 
     charging_location_stats() ist bewusst ungecacht (siehe dortiger
     Docstring), wird hier aber trotzdem nur EINMAL pro Coordinator-Update
@@ -1528,7 +1531,9 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
     wird. native_value ist "modus_effektiv" aus _evcc_mode_targets() --
     bereits inkl. der Echtzeit-PV-Uebersteuerung (siehe engine.
     apply_realtime_pv_override()); die Attribute "pv_override_aktiv"/
-    "pv_ueberschuss_w" zeigen, ob/warum gerade hochgestuft wurde."""
+    "pv_ueberschuss_w" zeigen, ob/warum gerade hochgestuft wurde. Attribut
+    "pausiert" zeigt, ob die manuelle Schreib-Pause (Panel-Schalter, siehe
+    coordinator.py::async_set_evcc_mode_control_pause()) gerade aktiv ist."""
 
     _attr_translation_key = "evcc_mode_control"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -1586,8 +1591,48 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             "balancing_enabled": targets["balancing_enabled"],
             "balancing_aktiv": targets["balancing_faellig"],
             "naechste_vollladung_faellig_ts": targets["naechste_vollladung_faellig_ts"],
+            "pausiert": bool(self.coordinator.data.get("evcc_mode_control_paused")),
         }
         written = self.coordinator.data.get("evcc_mode_control")
         if written and "geschrieben_ts" in written:
             attrs["zuletzt_geschrieben"] = written["geschrieben_ts"]
         return attrs
+
+
+class EvccChargePlanSensor(EvAssistantEntity, SensorEntity):
+    """Diagnose-Sensor fuer evccs eigenen Ladeplan (Zielzeit-Laden, siehe
+    coordinator.py::async_set_evcc_charge_plan()/_evcc_charge_plan_status())
+    -- ein von der profilbasierten evcc-Modus-Steuerung unabhaengiger
+    evcc-Mechanismus (der bei aktivem Plan pausiert, siehe
+    _async_apply_evcc_mode_control()). Funktioniert unabhaengig von
+    CONF_EVCC_MODE_CONTROL_ENABLED -- braucht nur einen konfigurierten
+    evcc_host, da es sich um eine reine evcc-eigene Funktion handelt, die
+    ev_assistant lediglich fernsteuert. native_value ist die Zielzeit
+    (device_class TIMESTAMP), `unknown`/None ohne gesetzten Plan."""
+
+    _attr_translation_key = "evcc_charge_plan"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:calendar-clock"
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "evcc_charge_plan")
+
+    @property
+    def native_value(self):
+        status = self.coordinator._evcc_charge_plan_status()
+        if status is None:
+            return None
+        return dt_util.parse_datetime(status["target_time"])
+
+    @property
+    def extra_state_attributes(self):
+        status = self.coordinator._evcc_charge_plan_status()
+        if status is None:
+            return {}
+        return {
+            "target_soc": status["target_soc"],
+            "projected_start": status["projected_start"],
+            "projected_end": status["projected_end"],
+            "aktiv": status["aktiv"],
+        }
