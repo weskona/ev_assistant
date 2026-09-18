@@ -1525,7 +1525,10 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
     (siehe CONF_WEEKLY_FULL_CHARGE_ENABLED/engine.weekly_balancing_due())
     nur bei aktivierter evcc-Steuerung sichtbar, da eine faellige Balancing-
     Ladung ohnehin nur wirkt, wenn ueberhaupt etwas an evcc geschrieben
-    wird."""
+    wird. native_value ist "modus_effektiv" aus _evcc_mode_targets() --
+    bereits inkl. der Echtzeit-PV-Uebersteuerung (siehe engine.
+    apply_realtime_pv_override()); die Attribute "pv_override_aktiv"/
+    "pv_ueberschuss_w" zeigen, ob/warum gerade hochgestuft wurde."""
 
     _attr_translation_key = "evcc_mode_control"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -1542,7 +1545,7 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
         if not self._enabled():
             return None
         targets = self.coordinator._evcc_mode_targets()
-        return targets["modus"] if targets else None
+        return targets["modus_effektiv"] if targets else None
 
     @property
     def extra_state_attributes(self):
@@ -1562,6 +1565,13 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             "urlaub_aktiv": urlaub_aktiv,
             "min_soc": targets["min_soc"],
             "target_soc": targets["target_soc"],
+            # Echtzeit-PV-Uebersteuerung (siehe engine.apply_realtime_pv_
+            # override()) -- "modus" oben (native_value) ist bereits
+            # "modus_effektiv"; diese beiden Attribute zeigen, OB und WARUM
+            # gerade hochgestuft wurde. pv_ueberschuss_w kann None sein
+            # (noch kein evcc-State geladen) oder negativ (Netzbezug).
+            "pv_override_aktiv": targets["pv_override_aktiv"],
+            "pv_ueberschuss_w": targets["pv_ueberschuss_w"],
             "verfuegbare_kwh": targets["verfuegbare_kwh"],
             "min_kwh": targets["min_kwh"],
             "target_kwh": targets["target_kwh"],

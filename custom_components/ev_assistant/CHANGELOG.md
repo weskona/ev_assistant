@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.89.0] - 2026-09-18
+
+### Added
+
+- **Real-time PV surplus override for automatic evcc mode control**: a second, faster decision layer on top of the existing usage-profile-based mode (which only re-evaluates roughly once a minute on a day-scale profile). It reacts to the *current* PV surplus (site PV minus grid export, from the already-polled live evcc feed — no extra evcc call) and can upgrade `pv` to `minpv` in real time, never the other way, and only while the usage profile itself still recommends `pv`. Fixes the case where a real but insufficient surplus (e.g. 1200 W against a 1380 W wallbox floor) charges nothing at all in pure `pv` mode and gets fed into the grid unused, when `minpv` would gladly take it. New optional `wallbox_min_power_w` field (evcc/Wallbox step, default 1380 W = 6A × 230V single-phase) plus a 100 W hysteresis band against flapping on a surplus that hovers right at the threshold. Deliberately does **not** count PV currently charging a home battery as "surplus" — that's already put to good use, not wasted, so this can't fight a battery-protection priority set up in evcc itself. `evcc_mode_control` sensor gained `pv_override_aktiv`/`pv_ueberschuss_w` attributes.
+
 ## [0.88.3] - 2026-09-17
 
 ### Docs

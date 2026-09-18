@@ -20,6 +20,7 @@ from engine import (
     anbieter_breakdown_from_totals,
     apply_ac_dc_delta,
     apply_anbieter_delta,
+    apply_realtime_pv_override,
     apply_weekly_balancing_override,
     average_efficiency,
     battery_capacity_samples,
@@ -1024,6 +1025,71 @@ def test_apply_weekly_balancing_override_faellig_ueberstimmt_mit_minpv_100():
 
 def test_apply_weekly_balancing_override_faellig_ueberstimmt_auch_now_modus():
     assert apply_weekly_balancing_override(mode="now", target_soc=None, due=True) == ("minpv", 100)
+
+
+# ----- apply_realtime_pv_override: Echtzeit-PV-Hochstufung pv->minpv -------
+
+def test_apply_realtime_pv_override_kein_ueberschuss_bleibt_pv():
+    assert apply_realtime_pv_override(
+        base_mode="pv", pv_surplus_w=0.0, wallbox_min_power_w=1380.0
+    ) == "pv"
+    assert apply_realtime_pv_override(
+        base_mode="pv", pv_surplus_w=-500.0, wallbox_min_power_w=1380.0
+    ) == "pv"
+
+
+def test_apply_realtime_pv_override_ueberschuss_knapp_unter_schwelle_hebt_auf_minpv():
+    assert apply_realtime_pv_override(
+        base_mode="pv", pv_surplus_w=1200.0, wallbox_min_power_w=1380.0
+    ) == "minpv"
+
+
+def test_apply_realtime_pv_override_ueberschuss_deutlich_ueber_schwelle_bleibt_pv():
+    assert apply_realtime_pv_override(
+        base_mode="pv", pv_surplus_w=2000.0, wallbox_min_power_w=1380.0
+    ) == "pv"
+
+
+def test_apply_realtime_pv_override_hysterese_kein_sofortiger_ruecksprung():
+    wallbox_min_power_w = 1380.0
+    hysteresis_w = 100.0
+    # Knapp unter der Schwelle -> Hochstufung.
+    effective = apply_realtime_pv_override(
+        base_mode="pv", pv_surplus_w=1200.0, wallbox_min_power_w=wallbox_min_power_w,
+        hysteresis_w=hysteresis_w, last_effective_mode=None,
+    )
+    assert effective == "minpv"
+    # Knapp wieder ueber derselben Schwelle (1390 > 1380) -- KEIN Ruecksprung,
+    # da noch unter Schwelle + Hysterese (1480).
+    effective = apply_realtime_pv_override(
+        base_mode="pv", pv_surplus_w=1390.0, wallbox_min_power_w=wallbox_min_power_w,
+        hysteresis_w=hysteresis_w, last_effective_mode=effective,
+    )
+    assert effective == "minpv"
+    # Deutlich ueber Schwelle + Hysterese -> jetzt erst Ruecksprung auf pv.
+    effective = apply_realtime_pv_override(
+        base_mode="pv", pv_surplus_w=1500.0, wallbox_min_power_w=wallbox_min_power_w,
+        hysteresis_w=hysteresis_w, last_effective_mode=effective,
+    )
+    assert effective == "pv"
+
+
+def test_apply_realtime_pv_override_base_mode_minpv_bleibt_immer_minpv():
+    assert apply_realtime_pv_override(
+        base_mode="minpv", pv_surplus_w=5000.0, wallbox_min_power_w=1380.0
+    ) == "minpv"
+    assert apply_realtime_pv_override(
+        base_mode="minpv", pv_surplus_w=0.0, wallbox_min_power_w=1380.0
+    ) == "minpv"
+
+
+def test_apply_realtime_pv_override_base_mode_now_bleibt_immer_now():
+    assert apply_realtime_pv_override(
+        base_mode="now", pv_surplus_w=5000.0, wallbox_min_power_w=1380.0
+    ) == "now"
+    assert apply_realtime_pv_override(
+        base_mode="now", pv_surplus_w=0.0, wallbox_min_power_w=1380.0
+    ) == "now"
 
 
 def test_kwh_to_soc_percent_clamped_ueber_100():

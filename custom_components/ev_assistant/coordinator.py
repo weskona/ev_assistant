@@ -79,6 +79,7 @@ from .const import (
     CONF_VERBRENNER_PRICE_PER_LITER,
     CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE,
+    CONF_WALLBOX_MIN_POWER_W,
     CONF_WEEKLY_FULL_CHARGE_ENABLED,
     CONF_WEEKLY_FULL_CHARGE_INTERVAL_DAYS,
     DEFAULT_CO2_PER_KWH_G,
@@ -100,6 +101,7 @@ from .const import (
     DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH,
     DEFAULT_USAGE_PROFILE_BUFFER_PCT,
+    DEFAULT_WALLBOX_MIN_POWER_W,
     DEFAULT_WEEKLY_FULL_CHARGE_ENABLED,
     DEFAULT_WEEKLY_FULL_CHARGE_INTERVAL_DAYS,
     DOMAIN,
@@ -168,6 +170,7 @@ from .engine import (
     anbieter_breakdown_from_totals,
     apply_ac_dc_delta,
     apply_anbieter_delta,
+    apply_realtime_pv_override,
     apply_weekly_balancing_override,
     average_efficiency,
     battery_capacity_samples,
@@ -886,6 +889,30 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "stat_solar_pct": statistics.get("solarPercentage"),
             "stat_avg_price": statistics.get("avgPrice"),
         }
+
+    def _evcc_realtime_pv_surplus_w(self) -> Optional[float]:
+        """Aktueller PV-Ueberschuss in Watt fuer engine.apply_realtime_pv_
+        override() (siehe _evcc_mode_targets()) -- aus dem ohnehin gepollten
+        evcc-Site-State (_refresh_evcc_state()), keine neue Datenquelle.
+        Bewusst NUR aus gridPower abgeleitet (site.get("gridPower", ...),
+        positiv=Import, negativ=Export -- siehe evcc_live_attrs()-Kommentar),
+        NICHT zusaetzlich um batteryPower bereinigt: ein Hausspeicher, der
+        gerade PV laedt, "verbraucht" den Ueberschuss bereits sinnvoll
+        (Zellbalancing/Autarkie) -- das ist NICHT dasselbe wie ein
+        Ueberschuss, der ungenutzt ins Netz eingespeist wird (siehe
+        engine.apply_realtime_pv_override()-Docstring), und soll die
+        Wallbox nicht gegen die separate Speicherschutz-Priorisierung
+        hochstufen. -grid_power < 0 (Netzbezug) liefert also automatisch
+        einen negativen "Ueberschuss" -> apply_realtime_pv_override()
+        greift dann ohnehin nicht (pv_surplus_w <= 0). None ohne
+        bereits vorliegenden evcc-State oder ohne numerischen Wert."""
+        if self._evcc_state is None:
+            return None
+        site = self._evcc_state
+        grid_power = site.get("gridPower", (site.get("grid") or {}).get("power"))
+        if not isinstance(grid_power, (int, float)):
+            return None
+        return -float(grid_power)
 
     def _wire_home_price(self) -> None:
         """Heimstrompreis: optionale Live-Entitaet (z.B. ein dynamischer
@@ -4811,7 +4838,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     def _evcc_mode_targets(self) -> Optional[dict]:
         """Berechnet Ziel-Modus + Min-/Ziel-SoC fuer die evcc-Schreib-
-        steuerung (siehe _async_apply_evcc_mode_control()). Nutzt
+        steuerung (siehe _async_apply_evcc_mode_control()). Liefert sowohl
+        den Tages-Nutzungsprofil-Modus ("modus") als auch den davon
+        abgeleiteten, um die Echtzeit-PV-Uebersteuerung ergaenzten Modus
+        ("modus_effektiv", siehe engine.apply_realtime_pv_override()/
+        _evcc_realtime_pv_surplus_w()) -- _async_apply_evcc_mode_control()
+        schreibt "modus_effektiv" an evcc, EvccModeControlSensor zeigt ihn
+        als Zustand. Nutzt
         _effective_vehicle_usage_profile() statt usage_profile() direkt --
         siehe dort fuer die Bevorzugung des Live-SoC-basierten Profils (auch
         Standby-Verbrauch) gegenueber dem reinen Fahrtenbuch-Profil, samt
@@ -4866,8 +4899,32 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 jetzt_ts if letzter_ts is None else letzter_ts + interval_days * 86400.0
             )
         mode, target_soc = apply_weekly_balancing_override(mode, target_soc, balancing_due)
+        # Zweite, schnellere Entscheidungsebene (siehe engine.apply_realtime_
+        # pv_override()-Docstring): hebt "mode" (die obige Tages-Logik) in
+        # Echtzeit von "pv" auf "minpv" an, wenn der aktuelle PV-Ueberschuss
+        # sonst ungenutzt ins Netz ginge. last_effective_mode kommt aus dem
+        # zuletzt tatsaechlich an evcc geschriebenen Modus (self.data
+        # ["evcc_mode_control"]["modus"], siehe _async_apply_evcc_mode_
+        # control()) -- das haelt die Hysterese stabil, auch wenn
+        # _evcc_mode_targets() mehrfach pro Zyklus aufgerufen wird (Sensor +
+        # Schreibpfad), da dieselbe Referenz fuer alle Aufrufe gilt.
+        pv_surplus_w = self._evcc_realtime_pv_surplus_w()
+        wallbox_min_power_w = float(self._opt(CONF_WALLBOX_MIN_POWER_W, DEFAULT_WALLBOX_MIN_POWER_W))
+        last_effective_mode = (self.data.get("evcc_mode_control") or {}).get("modus")
+        if pv_surplus_w is None:
+            # Kein evcc-State (noch) verfuegbar -- konservativ die Tages-
+            # Logik unveraendert lassen statt mit einem Platzhalterwert
+            # (z.B. 0) faelschlich hoch-/nicht hochzustufen.
+            effective_mode = mode
+        else:
+            effective_mode = apply_realtime_pv_override(
+                mode, pv_surplus_w, wallbox_min_power_w, last_effective_mode=last_effective_mode
+            )
         return {
             "modus": mode,
+            "modus_effektiv": effective_mode,
+            "pv_override_aktiv": effective_mode != mode,
+            "pv_ueberschuss_w": pv_surplus_w,
             "min_kwh": min_kwh,
             "target_kwh": target_kwh,
             "min_soc": kwh_to_soc_percent(min_kwh, usable_kwh),
@@ -4982,7 +5039,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return
         last = self.data.get("evcc_mode_control") or {}
         new_state = {
-            "modus": targets["modus"],
+            # "modus_effektiv" statt "modus": inkl. der Echtzeit-PV-
+            # Uebersteuerung (siehe engine.apply_realtime_pv_override()/
+            # _evcc_mode_targets()) -- Min-/Ziel-SoC bleiben bewusst die
+            # tagesprofilbasierten Werte, nur der Modus wird in Echtzeit
+            # angepasst.
+            "modus": targets["modus_effektiv"],
             "min_soc": targets["min_soc"],
             "target_soc": targets["target_soc"],
         }

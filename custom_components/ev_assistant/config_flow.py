@@ -64,6 +64,7 @@ from .const import (
     CONF_VERBRENNER_PRICE_ENTITY,
     CONF_VERBRENNER_PRICE_PER_LITER,
     CONF_WALLBOX_ENERGY_ENTITY,
+    CONF_WALLBOX_MIN_POWER_W,
     CONF_WEEKLY_FULL_CHARGE_ENABLED,
     CONF_WEEKLY_FULL_CHARGE_INTERVAL_DAYS,
     DEFAULT_CO2_PER_KWH_G,
@@ -84,6 +85,7 @@ from .const import (
     DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH,
     DEFAULT_USAGE_PROFILE_BUFFER_PCT,
+    DEFAULT_WALLBOX_MIN_POWER_W,
     DEFAULT_WEEKLY_FULL_CHARGE_ENABLED,
     DEFAULT_WEEKLY_FULL_CHARGE_INTERVAL_DAYS,
     DOMAIN,
@@ -244,7 +246,9 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
     automatische evcc-Modus-/SoC-Steuerung (siehe coordinator.py::
     _async_apply_evcc_mode_control(), Default aus) sowie deren optionales
     Haus-Nutzungsprofil (PV-Restprognose heute, Hausverbrauch, Speicher-
-    ladung) und eine optionale Urlaubs-Entität (siehe coordinator.py::
+    ladung), die Wallbox-Mindestladeleistung fuer die Echtzeit-PV-Über-
+    steuerung (siehe engine.apply_realtime_pv_override()/const.py::
+    CONF_WALLBOX_MIN_POWER_W) und eine optionale Urlaubs-Entität (siehe coordinator.py::
     _urlaub_aktiv() -- pausiert die Steuerung und schließt betroffene Tage
     aus den Wochentags-Nutzungsprofilen aus). Ebenfalls additiv: die
     woechentliche Vollladung fuers Zellbalancing (siehe coordinator.py::
@@ -264,6 +268,10 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
             CONF_EVCC_MODE_CONTROL_ENABLED,
             default=cur.get(CONF_EVCC_MODE_CONTROL_ENABLED, DEFAULT_EVCC_MODE_CONTROL_ENABLED),
         ): bool,
+        vol.Optional(
+            CONF_WALLBOX_MIN_POWER_W,
+            default=cur.get(CONF_WALLBOX_MIN_POWER_W, DEFAULT_WALLBOX_MIN_POWER_W),
+        ): vol.Coerce(float),
         vol.Optional(
             CONF_WEEKLY_FULL_CHARGE_ENABLED,
             default=cur.get(CONF_WEEKLY_FULL_CHARGE_ENABLED, DEFAULT_WEEKLY_FULL_CHARGE_ENABLED),

@@ -287,6 +287,17 @@ CONF_EVCC_LOADPOINT_TITLE   = "evcc_loadpoint_title"
 # ohne sie aendert sich am bisherigen Verhalten (nur Lese-/Anzeige-
 # Empfehlungen wie charge_before_pv_recommended()) nichts.
 CONF_EVCC_MODE_CONTROL_ENABLED = "evcc_mode_control_enabled"
+# Optional, nur relevant bei aktiver evcc-Steuerung oben: Mindestladeleistung
+# der Wallbox, gegen die engine.apply_realtime_pv_override() den aktuellen
+# PV-Ueberschuss (siehe coordinator.py::_evcc_realtime_pv_surplus_w()) prueft,
+# um "pv" in Echtzeit auf "minpv" hochzustufen, wenn der Ueberschuss real,
+# aber zu klein fuer reinen PV-Modus ist (sonst ungenutzt ins Netz). Default
+# = 6A x 230V einphasig (die in evcc/IEC 61851 uebliche technische Mindest-
+# ladeleistung); 3-phasig waere es 6A x 3 x 230V ~= 4140W -- je nachdem, ob
+# die Wallbox (z.B. Warp3 Pro/e-Rifter) ein- oder dreiphasig angeschlossen
+# ist. Rein additiv, wirkt nur ueber apply_realtime_pv_override(), aendert
+# nichts, solange CONF_EVCC_MODE_CONTROL_ENABLED aus ist.
+CONF_WALLBOX_MIN_POWER_W = "wallbox_min_power_w"
 # Optional, Default aus (siehe DEFAULT_WEEKLY_FULL_CHARGE_ENABLED): woechentliche
 # Vollladung fuers Zellbalancing -- ist sie aktiv und seit der letzten erreichten
 # Vollladung (siehe VOLLLADUNG_SOC_THRESHOLD, coordinator.py::_maybe_mark_
@@ -424,6 +435,8 @@ MIN_USAGE_PROFILE_DAYS = 7
 # Feature komplett deaktiviert, bis aktiv per CONF_EVCC_MODE_CONTROL_ENABLED
 # freigeschaltet (siehe coordinator.py::_async_apply_evcc_mode_control()).
 DEFAULT_EVCC_MODE_CONTROL_ENABLED = False
+# Siehe CONF_WALLBOX_MIN_POWER_W-Kommentar oben: 6A x 230V einphasig.
+DEFAULT_WALLBOX_MIN_POWER_W = 1380.0
 # Wie viele Tage (ab dem Tag NACH heute) der evcc-Ziel-SoC abdeckt (siehe
 # engine.py::determine_evcc_mode()/coordinator.py::_evcc_mode_targets()) --
 # der Mindest-SoC deckt dagegen nur den naechsten einzelnen Tag ab. 2 Tage

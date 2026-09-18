@@ -1021,6 +1021,50 @@ def apply_weekly_balancing_override(
     return "minpv", 100
 
 
+def apply_realtime_pv_override(
+    base_mode: str,
+    pv_surplus_w: float,
+    wallbox_min_power_w: float,
+    hysteresis_w: float = 100.0,
+    last_effective_mode: Optional[str] = None,
+) -> str:
+    """Zweite, schnellere Entscheidungsebene ueber determine_evcc_mode()/
+    apply_weekly_balancing_override() (deren Ergebnis hier als `base_mode`
+    reinkommt): hebt "pv" auf "minpv" an, wenn der AKTUELLE PV-Ueberschuss
+    zwar positiv, aber unter der Mindestladeleistung der Wallbox liegt --
+    in reinem "pv"-Modus wuerde die Wallbox dann gar nicht laden und der
+    Ueberschuss ungenutzt ins Netz gehen (siehe coordinator.py::
+    _evcc_realtime_pv_surplus_w()). Greift NUR bei base_mode == "pv" --
+    "now"/"minpv" kommen bereits von der (strengeren) Tages-Logik und
+    werden nie abgeschwaecht, nur die pv->minpv-Richtung ist erlaubt.
+
+    Hysterese gegen Flattern (Aufruf ca. alle _EVCC_POLL_INTERVAL_S, siehe
+    coordinator.py): `last_effective_mode` ist das beim letzten Aufruf
+    zurueckgegebene (oder tatsaechlich an evcc geschriebene) Ergebnis.
+    - War es NICHT "minpv" (noch kein Override aktiv, oder base_mode war
+      zuletzt selbst schon minpv/now): ein Override schaltet erst bei
+      pv_surplus_w < wallbox_min_power_w ein (unterer Rand).
+    - War es "minpv": ein Rueckschalten auf "pv" erst bei
+      pv_surplus_w >= wallbox_min_power_w + hysteresis_w (oberer Rand,
+      deutlich ueber der Schwelle). Dazwischen (wallbox_min_power_w <=
+      pv_surplus_w < wallbox_min_power_w + hysteresis_w) bleibt der
+      zuletzt aktive Zustand einfach bestehen -- ohne dieses Totband
+      wuerde ein PV-Ueberschuss, der knapp um die Schwelle schwankt
+      (Wolken, kurze Verbraucher-Spitzen im Haus), den Modus im
+      Minutentakt hin- und herspringen lassen."""
+    if base_mode != "pv":
+        return base_mode
+    if pv_surplus_w <= 0:
+        return "pv"
+    if last_effective_mode == "minpv":
+        if pv_surplus_w >= wallbox_min_power_w + hysteresis_w:
+            return "pv"
+        return "minpv"
+    if pv_surplus_w >= wallbox_min_power_w:
+        return "pv"
+    return "minpv"
+
+
 def vehicle_discharge_update(
     reference_soc: Optional[float],
     new_soc: float,
