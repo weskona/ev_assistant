@@ -20,6 +20,7 @@ from engine import (
     anbieter_breakdown_from_totals,
     apply_ac_dc_delta,
     apply_anbieter_delta,
+    apply_opportunistic_surplus_target,
     apply_realtime_pv_override,
     apply_weekly_balancing_override,
     average_efficiency,
@@ -1090,6 +1091,90 @@ def test_apply_realtime_pv_override_base_mode_now_bleibt_immer_now():
     assert apply_realtime_pv_override(
         base_mode="now", pv_surplus_w=0.0, wallbox_min_power_w=1380.0
     ) == "now"
+
+
+# ----- apply_opportunistic_surplus_target: Ziel-Anhebung bei Ueberschuss --
+
+def test_opportunistic_surplus_target_aktiviert_erst_nach_hold_zeit():
+    # Bedingung erfuellt (mode="pv", Ueberschuss >= Schwelle), aber noch
+    # nicht lange genug -> bleibt inaktiv, Timer startet.
+    soc, active, pending = apply_opportunistic_surplus_target(
+        mode="pv", target_soc=13, pv_surplus_w=2000.0, wallbox_min_power_w=1380.0,
+        was_active=False, pending_since_ts=None, now_ts=1000.0, min_hold_s=300.0,
+    )
+    assert (soc, active) == (13, False)
+    assert pending == 1000.0
+    # Noch nicht lange genug (100s von 300s).
+    soc, active, pending = apply_opportunistic_surplus_target(
+        mode="pv", target_soc=13, pv_surplus_w=2000.0, wallbox_min_power_w=1380.0,
+        was_active=False, pending_since_ts=pending, now_ts=1100.0, min_hold_s=300.0,
+    )
+    assert (soc, active) == (13, False)
+    assert pending == 1000.0
+    # Hold-Zeit erreicht -> jetzt aktiv, Ziel auf 100 angehoben.
+    soc, active, pending = apply_opportunistic_surplus_target(
+        mode="pv", target_soc=13, pv_surplus_w=2000.0, wallbox_min_power_w=1380.0,
+        was_active=False, pending_since_ts=pending, now_ts=1300.0, min_hold_s=300.0,
+    )
+    assert (soc, active) == (100, True)
+    assert pending is None
+
+
+def test_opportunistic_surplus_target_kurzer_ausschlag_verfaellt_ohne_wirkung():
+    # Bedingung kurz erfuellt...
+    _, active, pending = apply_opportunistic_surplus_target(
+        mode="pv", target_soc=13, pv_surplus_w=2000.0, wallbox_min_power_w=1380.0,
+        was_active=False, pending_since_ts=None, now_ts=1000.0, min_hold_s=300.0,
+    )
+    assert (active, pending) == (False, 1000.0)
+    # ...dann wieder hinfaellig, bevor die Hold-Zeit um ist -> Timer verfaellt.
+    soc, active, pending = apply_opportunistic_surplus_target(
+        mode="pv", target_soc=13, pv_surplus_w=0.0, wallbox_min_power_w=1380.0,
+        was_active=False, pending_since_ts=pending, now_ts=1100.0, min_hold_s=300.0,
+    )
+    assert (soc, active, pending) == (13, False, None)
+
+
+def test_opportunistic_surplus_target_deaktiviert_erst_nach_hold_zeit():
+    # Bereits aktiv (target 100), Ueberschuss faellt unter die Schwelle.
+    soc, active, pending = apply_opportunistic_surplus_target(
+        mode="pv", target_soc=13, pv_surplus_w=0.0, wallbox_min_power_w=1380.0,
+        was_active=True, pending_since_ts=None, now_ts=1000.0, min_hold_s=300.0,
+    )
+    assert (soc, active) == (100, True)  # noch aktiv, Hold-Zeit laeuft erst
+    assert pending == 1000.0
+    soc, active, pending = apply_opportunistic_surplus_target(
+        mode="pv", target_soc=13, pv_surplus_w=0.0, wallbox_min_power_w=1380.0,
+        was_active=True, pending_since_ts=pending, now_ts=1300.0, min_hold_s=300.0,
+    )
+    assert (soc, active, pending) == (13, False, None)
+
+
+def test_opportunistic_surplus_target_nur_bei_modus_pv():
+    # mode="minpv"/"now" -> nie aktivieren, egal wie viel Ueberschuss da ist
+    # (soll keinen Netzbezug ueber den Tagesbedarf hinaus ausloesen).
+    assert apply_opportunistic_surplus_target(
+        mode="minpv", target_soc=50, pv_surplus_w=5000.0, wallbox_min_power_w=1380.0,
+        was_active=False, pending_since_ts=None, now_ts=1000.0, min_hold_s=300.0,
+    ) == (50, False, None)
+    assert apply_opportunistic_surplus_target(
+        mode="now", target_soc=50, pv_surplus_w=5000.0, wallbox_min_power_w=1380.0,
+        was_active=False, pending_since_ts=None, now_ts=1000.0, min_hold_s=300.0,
+    ) == (50, False, None)
+
+
+def test_opportunistic_surplus_target_bereits_bei_100_bleibt_inaktiv():
+    assert apply_opportunistic_surplus_target(
+        mode="pv", target_soc=100, pv_surplus_w=5000.0, wallbox_min_power_w=1380.0,
+        was_active=False, pending_since_ts=None, now_ts=1000.0, min_hold_s=300.0,
+    ) == (100, False, None)
+
+
+def test_opportunistic_surplus_target_pv_surplus_none_deaktiviert():
+    assert apply_opportunistic_surplus_target(
+        mode="pv", target_soc=13, pv_surplus_w=None, wallbox_min_power_w=1380.0,
+        was_active=False, pending_since_ts=None, now_ts=1000.0, min_hold_s=300.0,
+    ) == (13, False, None)
 
 
 def test_kwh_to_soc_percent_clamped_ueber_100():

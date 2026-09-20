@@ -111,6 +111,7 @@ from .const import (
     EFF_MIN_SAMPLES,
     EFF_MIN_SOC_DELTA,
     EVCC_MODE_TARGET_DAYS,
+    EVCC_UEBERSCHUSS_ZIEL_HOLD_S,
     EVENT_DELETED,
     EVENT_EDITED,
     EVENT_LOGGED,
@@ -170,6 +171,7 @@ from .engine import (
     anbieter_breakdown_from_totals,
     apply_ac_dc_delta,
     apply_anbieter_delta,
+    apply_opportunistic_surplus_target,
     apply_realtime_pv_override,
     apply_weekly_balancing_override,
     average_efficiency,
@@ -582,6 +584,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._evcc_client: Optional[EvccClient] = None
         self._evcc_state: Optional[dict] = None
         self._evcc_session_sums: dict = {}
+        # Debounce-Zustand fuer engine.apply_opportunistic_surplus_target()
+        # (siehe dortigen Docstring) -- rein im Arbeitsspeicher, analog
+        # _soc_scope_issue_active: ein Neustart faengt konservativ bei
+        # "nicht aktiv" an, das ist bereits der sichere Default.
+        self._ueberschuss_ziel_aktiv: bool = False
+        self._ueberschuss_ziel_pending_seit_ts: Optional[float] = None
         # Ob gerade ein Repair-Issue fuer eine fehlgeschlagene SoC-Scope-
         # Probe aktiv ist (siehe _update_soc_scope_issue()) -- rein im
         # Arbeitsspeicher, analog _entity_issue_active: ein Neustart faengt
@@ -4858,7 +4866,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         ueberstimmt apply_weekly_balancing_override() modus/target_soc mit
         "minpv"/100 -- min_soc/min_kwh/target_kwh bleiben bewusst die
         profilbasierten Werte (nur Anzeige/Transparenz, nicht das, was
-        tatsaechlich an evcc geschrieben wird, siehe dortigen Docstring)."""
+        tatsaechlich an evcc geschrieben wird, siehe dortigen Docstring).
+        Zusaetzlich hebt engine.apply_opportunistic_surplus_target() das
+        zurueckgegebene "target_soc" auf 100 an, solange bei mode == "pv"
+        ausreichend echter PV-Ueberschuss anliegt -- "ueberschuss_ziel_
+        erweitert_aktiv" zeigt, ob das gerade der Fall ist."""
         profile = self._effective_vehicle_usage_profile()
         available = self.available_kwh()
         if profile is None or available is None:
@@ -4920,6 +4932,27 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             effective_mode = apply_realtime_pv_override(
                 mode, pv_surplus_w, wallbox_min_power_w, last_effective_mode=last_effective_mode
             )
+        # Ueberschuss-Zielanhebung (siehe engine.apply_opportunistic_surplus_
+        # target()-Docstring): hebt target_soc auf 100 an, solange ein fuer
+        # reines PV-Laden ausreichender Ueberschuss anliegt und der
+        # Tagesbedarf laut Profil bereits gedeckt ist (mode == "pv") --
+        # sonst wuerde evccs eigene Ladegrenze jeden Ueberschuss darueber
+        # hinaus ungenutzt lassen. Debounce-Zustand (Instanzattribute, siehe
+        # __init__()) wird hier aktualisiert -- _evcc_mode_targets() wird
+        # sowohl vom Schreibpfad als auch vom Sensor aufgerufen, beide
+        # sollen denselben (bereits angehobenen) target_soc sehen.
+        target_soc, self._ueberschuss_ziel_aktiv, self._ueberschuss_ziel_pending_seit_ts = (
+            apply_opportunistic_surplus_target(
+                mode,
+                target_soc,
+                pv_surplus_w,
+                wallbox_min_power_w,
+                self._ueberschuss_ziel_aktiv,
+                self._ueberschuss_ziel_pending_seit_ts,
+                dt_util.utcnow().timestamp(),
+                EVCC_UEBERSCHUSS_ZIEL_HOLD_S,
+            )
+        )
         return {
             "modus": mode,
             "modus_effektiv": effective_mode,
@@ -4929,6 +4962,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "target_kwh": target_kwh,
             "min_soc": kwh_to_soc_percent(min_kwh, usable_kwh),
             "target_soc": target_soc,
+            "ueberschuss_ziel_erweitert_aktiv": self._ueberschuss_ziel_aktiv,
             "verfuegbare_kwh": available,
             "rest_heute_kwh": rest_heute,
             "rest_heute_roh_kwh": rest_heute_roh,

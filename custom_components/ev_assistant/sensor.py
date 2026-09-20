@@ -1533,7 +1533,10 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
     apply_realtime_pv_override()); die Attribute "pv_override_aktiv"/
     "pv_ueberschuss_w" zeigen, ob/warum gerade hochgestuft wurde. Attribut
     "pausiert" zeigt, ob die manuelle Schreib-Pause (Panel-Schalter, siehe
-    coordinator.py::async_set_evcc_mode_control_pause()) gerade aktiv ist."""
+    coordinator.py::async_set_evcc_mode_control_pause()) gerade aktiv ist.
+    "target_soc" ist bereits inkl. der Ueberschuss-Zielanhebung (siehe
+    engine.apply_opportunistic_surplus_target()) -- Attribut
+    "ueberschuss_ziel_erweitert_aktiv" zeigt, ob diese gerade greift."""
 
     _attr_translation_key = "evcc_mode_control"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -1577,6 +1580,10 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             # (noch kein evcc-State geladen) oder negativ (Netzbezug).
             "pv_override_aktiv": targets["pv_override_aktiv"],
             "pv_ueberschuss_w": targets["pv_ueberschuss_w"],
+            # Ueberschuss-Zielanhebung (siehe engine.apply_opportunistic_
+            # surplus_target()) -- target_soc oben ist bereits inkl. dieser
+            # Anhebung, dieses Flag zeigt nur ob/warum.
+            "ueberschuss_ziel_erweitert_aktiv": targets["ueberschuss_ziel_erweitert_aktiv"],
             "verfuegbare_kwh": targets["verfuegbare_kwh"],
             "min_kwh": targets["min_kwh"],
             "target_kwh": targets["target_kwh"],

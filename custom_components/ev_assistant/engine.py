@@ -1065,6 +1065,69 @@ def apply_realtime_pv_override(
     return "minpv"
 
 
+def apply_opportunistic_surplus_target(
+    mode: str,
+    target_soc: Optional[int],
+    pv_surplus_w: Optional[float],
+    wallbox_min_power_w: float,
+    was_active: bool,
+    pending_since_ts: Optional[float],
+    now_ts: float,
+    min_hold_s: float,
+    ceiling_soc: int = 100,
+) -> tuple[Optional[int], bool, Optional[float]]:
+    """Hebt target_soc voruebergehend auf `ceiling_soc` an, wenn Modus "pv"
+    ist (Tagesbedarf laut Profil bereits gedeckt, siehe determine_evcc_mode())
+    UND echter, fuer reines PV-Laden ausreichender Ueberschuss da ist
+    (pv_surplus_w >= wallbox_min_power_w) -- ohne diese Anhebung wuerde
+    evccs eigene limitSoc-Kappung jeden ueber den Tagesbedarf hinausgehenden
+    Ueberschuss ungenutzt Richtung Netz/Speicher durchlassen (Nutzerfrage
+    2026-09-20: "was passiert wenn min soc erreicht wurde und doch pv
+    ueberschuss vorhanden ist?"). Bewusst nur bei mode == "pv", nie bei
+    "minpv"/"now" -- dort wuerde eine Anhebung faktisch Netzladen ueber den
+    Tagesbedarf hinaus ausloesen, was diese Funktion explizit vermeiden soll
+    (nur echter Solar-Ueberschuss, wie vom Nutzer gefordert: "und per
+    ueberschuss genutzt wird bis es keinen mehr gibt").
+
+    Zeitbasiertes Debouncing statt eines reinen Leistungs-Totbands wie bei
+    apply_realtime_pv_override(): Produktionsdaten vom 2026-09-19 zeigten
+    PV-Ueberschuss-Spruenge von mehreren kW innerhalb einer Minute (schnell
+    ziehende Wolken, sowie ein Hausspeicher-Vollladeereignis) -- ein reines
+    Leistungsband, egal wie breit, kann solche Spruenge nicht abfangen.
+    target_soc ist hier aber (anders als der reine Modus-Wechsel bei
+    apply_realtime_pv_override()) die tatsaechliche evcc-Ladegrenze -- ein
+    haeufiger Wechsel wuerde also echtes Start/Stopp-Klappern an der Wallbox
+    bedeuten, nicht nur einen belanglosen Modus-Sensorwert. Ein Wechsel
+    (aktiv<->inaktiv) wird daher erst uebernommen, wenn die neue Bedingung
+    durchgaengig seit mindestens `min_hold_s` angefragt wird (`pending_
+    since_ts` haelt den Zeitpunkt fest, seit dem der Wechsel ansteht; wird
+    er vorher wieder hinfaellig, verfaellt der Timer -- kein "Punktesammeln"
+    ueber mehrere kurze Ausschlaege).
+
+    Rueckgabe (effektives target_soc, ist_aktiv, neuer pending_since_ts) --
+    die letzten beiden vom Aufrufer als was_active/pending_since_ts in den
+    naechsten Aufruf zurueckzureichen (siehe coordinator.py::
+    _evcc_mode_targets(), dort als Instanzattribut gehalten -- bewusst NICHT
+    persistiert: ein Neustart faengt konservativ bei "nicht aktiv" an, das
+    ist der sichere Default, kein Datenverlust-Risiko)."""
+    raw_ok = (
+        mode == "pv"
+        and target_soc is not None
+        and target_soc < ceiling_soc
+        and pv_surplus_w is not None
+        and pv_surplus_w >= wallbox_min_power_w
+    )
+    if raw_ok == was_active:
+        pending_since_ts = None  # im Einklang -- kein Wechsel ansteht
+    elif pending_since_ts is None:
+        pending_since_ts = now_ts  # neu anstehender Wechsel -- Timer starten
+    elif now_ts - pending_since_ts >= min_hold_s:
+        was_active = raw_ok  # Wechsel lang genug angefragt -- uebernehmen
+        pending_since_ts = None
+    effective_target_soc = ceiling_soc if was_active else target_soc
+    return effective_target_soc, was_active, pending_since_ts
+
+
 def vehicle_discharge_update(
     reference_soc: Optional[float],
     new_soc: float,

@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.93.0] - 2026-09-20
+
+### Added
+
+- **Opportunistic PV-surplus target-SoC extension**: once the daily usage-profile need is met (evcc mode control already at `pv`), a real, sustained PV surplus large enough for pure-solar charging (≥ `wallbox_min_power_w`) now temporarily raises the written `target_soc`/evcc `limitSoc` to 100 instead of leaving it capped at the profile's actual need — previously any surplus beyond that cap was wasted (exported/into the home battery) even though the vehicle could have taken it, since evcc's own `limitSoc` is a hard ceiling regardless of mode. Solar-only: only ever activates on `mode == "pv"`, never `minpv`/`now`, so it can't trigger grid charging beyond the profile's own need. New `engine.apply_opportunistic_surplus_target()` debounces the activate/deactivate transition with a 5-minute hold time (not a power-band hysteresis like the existing real-time PV-mode override) — production data from 2026-09-19 showed multi-kW surplus swings within a single minute (fast-moving clouds, a home-battery-full event) that a power band alone couldn't filter, and this lever is a real evcc charging-limit change, not just a diagnostic mode value, so unfiltered flapping would mean actual wallbox start/stop cycling. Always on wherever evcc mode control is enabled, no separate toggle. `evcc_mode_control` sensor's `target_soc` reflects the raised value directly; new `ueberschuss_ziel_erweitert_aktiv` attribute shows whether the extension is currently active.
+
 ## [0.92.0] - 2026-09-19
 
 ### Added

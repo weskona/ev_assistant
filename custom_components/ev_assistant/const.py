@@ -443,6 +443,14 @@ DEFAULT_WALLBOX_MIN_POWER_W = 1380.0
 # Puffer verhindern, dass ein einzelner ungewoehnlich verbrauchsstarker Tag
 # nach dem naechsten sofort wieder Netzladen erzwingt.
 EVCC_MODE_TARGET_DAYS = 2
+
+# Mindest-Haltezeit (Sekunden) fuer engine.apply_opportunistic_surplus_target()
+# bevor ein Aktiv/Inaktiv-Wechsel der PV-Ueberschuss-Zielanhebung uebernommen
+# wird. 5 Minuten: lang genug, um kurze Wolken-Ausschlaege (Produktionsdaten
+# 2026-09-19: mehrere kW Sprung innerhalb einer Minute) nicht durchschlagen
+# zu lassen, kurz genug, um laengere echte Ueberschussphasen noch sinnvoll
+# zu nutzen.
+EVCC_UEBERSCHUSS_ZIEL_HOLD_S = 300.0
 # Feature komplett deaktiviert, bis aktiv per CONF_WEEKLY_FULL_CHARGE_ENABLED
 # (oder dem Panel-Laufzeit-Override) freigeschaltet.
 DEFAULT_WEEKLY_FULL_CHARGE_ENABLED = False
