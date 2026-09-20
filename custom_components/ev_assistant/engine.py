@@ -1069,7 +1069,6 @@ def apply_opportunistic_surplus_target(
     mode: str,
     target_soc: Optional[int],
     pv_surplus_w: Optional[float],
-    wallbox_min_power_w: float,
     was_active: bool,
     pending_since_ts: Optional[float],
     now_ts: float,
@@ -1078,16 +1077,24 @@ def apply_opportunistic_surplus_target(
 ) -> tuple[Optional[int], bool, Optional[float]]:
     """Hebt target_soc voruebergehend auf `ceiling_soc` an, wenn Modus "pv"
     ist (Tagesbedarf laut Profil bereits gedeckt, siehe determine_evcc_mode())
-    UND echter, fuer reines PV-Laden ausreichender Ueberschuss da ist
-    (pv_surplus_w >= wallbox_min_power_w) -- ohne diese Anhebung wuerde
-    evccs eigene limitSoc-Kappung jeden ueber den Tagesbedarf hinausgehenden
-    Ueberschuss ungenutzt Richtung Netz/Speicher durchlassen (Nutzerfrage
-    2026-09-20: "was passiert wenn min soc erreicht wurde und doch pv
-    ueberschuss vorhanden ist?"). Bewusst nur bei mode == "pv", nie bei
-    "minpv"/"now" -- dort wuerde eine Anhebung faktisch Netzladen ueber den
-    Tagesbedarf hinaus ausloesen, was diese Funktion explizit vermeiden soll
-    (nur echter Solar-Ueberschuss, wie vom Nutzer gefordert: "und per
-    ueberschuss genutzt wird bis es keinen mehr gibt").
+    UND ueberhaupt echter, positiver PV-Ueberschuss da ist -- ohne diese
+    Anhebung wuerde evccs eigene limitSoc-Kappung jeden ueber den Tagesbedarf
+    hinausgehenden Ueberschuss ungenutzt Richtung Netz/Speicher durchlassen
+    (Nutzerfrage 2026-09-20: "was passiert wenn min soc erreicht wurde und
+    doch pv ueberschuss vorhanden ist?"). Bewusst nur bei mode == "pv", nie
+    bei "minpv"/"now" -- dort ist der Tagesbedarf selbst noch nicht gedeckt,
+    eine Anhebung dort waere keine Ueberschuss-Nutzung mehr, sondern eine
+    Verschaerfung der Tages-Logik selbst.
+
+    Schwelle bewusst pv_surplus_w > 0, NICHT erst ab wallbox_min_power_w:
+    reicht der Ueberschuss allein nicht fuer reines PV-Laden (z.B. 1280W bei
+    1400W Wallbox-Mindestleistung, Nutzerbeispiel 2026-09-20), uebernimmt die
+    bereits bestehende apply_realtime_pv_override()-Ebene automatisch die
+    Hochstufung auf "minpv" (kleiner Netz-Zuschuss nur fuer die Differenz zur
+    Mindestleistung) -- dieselbe Kompromisslogik, die fuer die Vor-Ziel-Phase
+    schon gilt, wird hier bewusst identisch weitergefuehrt (Nutzerentscheidung
+    2026-09-20: "minpv-Ergaenzung bauen" statt den Rest-Ueberschuss ungenutzt
+    einspeisen zu lassen).
 
     Zeitbasiertes Debouncing statt eines reinen Leistungs-Totbands wie bei
     apply_realtime_pv_override(): Produktionsdaten vom 2026-09-19 zeigten
@@ -1115,7 +1122,7 @@ def apply_opportunistic_surplus_target(
         and target_soc is not None
         and target_soc < ceiling_soc
         and pv_surplus_w is not None
-        and pv_surplus_w >= wallbox_min_power_w
+        and pv_surplus_w > 0
     )
     if raw_ok == was_active:
         pending_since_ts = None  # im Einklang -- kein Wechsel ansteht

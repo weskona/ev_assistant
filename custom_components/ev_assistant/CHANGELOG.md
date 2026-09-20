@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.93.1] - 2026-09-20
+
+### Changed
+
+- **Opportunistic PV-surplus target-SoC extension (v0.93.0) now also activates below the wallbox's pure-solar floor**: previously required `pv_surplus_w >= wallbox_min_power_w` to activate at all, which meant a real, sustained but insufficient-for-pure-`pv` surplus late in the day (user example: 1280 W against a 1400 W floor, for 3 hours) got completely wasted — even though the already-existing real-time PV-mode override (v0.89.0) already upgrades `pv`→`minpv` for exactly this case, it couldn't help because the target ceiling itself was never raised. Now activates on any real positive surplus; the existing mode override picks pure `pv` or `minpv`-with-small-grid-top-up as before, so this reuses the same accepted trade-off as the pre-target phase instead of introducing a new one.
+
 ## [0.93.0] - 2026-09-20
 
 ### Added

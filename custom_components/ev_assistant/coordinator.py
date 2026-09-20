@@ -4933,20 +4933,23 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 mode, pv_surplus_w, wallbox_min_power_w, last_effective_mode=last_effective_mode
             )
         # Ueberschuss-Zielanhebung (siehe engine.apply_opportunistic_surplus_
-        # target()-Docstring): hebt target_soc auf 100 an, solange ein fuer
-        # reines PV-Laden ausreichender Ueberschuss anliegt und der
-        # Tagesbedarf laut Profil bereits gedeckt ist (mode == "pv") --
-        # sonst wuerde evccs eigene Ladegrenze jeden Ueberschuss darueber
-        # hinaus ungenutzt lassen. Debounce-Zustand (Instanzattribute, siehe
-        # __init__()) wird hier aktualisiert -- _evcc_mode_targets() wird
-        # sowohl vom Schreibpfad als auch vom Sensor aufgerufen, beide
+        # target()-Docstring): hebt target_soc auf 100 an, solange ueberhaupt
+        # echter positiver Ueberschuss anliegt und der Tagesbedarf laut
+        # Profil bereits gedeckt ist (mode == "pv") -- sonst wuerde evccs
+        # eigene Ladegrenze jeden Ueberschuss darueber hinaus ungenutzt
+        # lassen. Reicht der Ueberschuss allein nicht fuer reines PV-Laden,
+        # uebernimmt die obige apply_realtime_pv_override()-Hochstufung auf
+        # "minpv" automatisch den kleinen Netz-Zuschuss zur Differenz --
+        # dieselbe Kompromisslogik wie in der Vor-Ziel-Phase, kein separater
+        # Schwellenwert hier noetig. Debounce-Zustand (Instanzattribute,
+        # siehe __init__()) wird hier aktualisiert -- _evcc_mode_targets()
+        # wird sowohl vom Schreibpfad als auch vom Sensor aufgerufen, beide
         # sollen denselben (bereits angehobenen) target_soc sehen.
         target_soc, self._ueberschuss_ziel_aktiv, self._ueberschuss_ziel_pending_seit_ts = (
             apply_opportunistic_surplus_target(
                 mode,
                 target_soc,
                 pv_surplus_w,
-                wallbox_min_power_w,
                 self._ueberschuss_ziel_aktiv,
                 self._ueberschuss_ziel_pending_seit_ts,
                 dt_util.utcnow().timestamp(),
