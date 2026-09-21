@@ -1353,12 +1353,23 @@ class KwhYearSensor(_KwhPeriodSensor):
 
 
 class UsageProfileSensor(EvAssistantEntity, SensorEntity):
-    """Durchschnittlicher kWh-Bedarf pro Wochentag aus der Fahrtenbuch-
-    Historie (siehe coordinator.py::usage_profile()/engine.py::
-    weekday_usage_profile()) -- native_value ist der heutige Wochentag,
-    alle 7 Werte stehen als Attribute zur Verfuegung (z.B. fuer das
-    Nutzungsprofil-Tab im Panel). unknown, solange weniger als 7 Tage
-    Fahrtenbuch-Historie vorliegen."""
+    """Durchschnittlicher kWh-Bedarf pro Wochentag -- native_value ist der
+    heutige Wochentag, alle 7 Werte stehen als Attribute zur Verfuegung
+    (z.B. fuer das Nutzungsprofil-Tab im Panel). Zeigt seit 2026-09-22 das
+    EFFEKTIVE Profil (coordinator.py::_effective_vehicle_usage_profile()),
+    nicht mehr nur das reine Fahrtenbuch (coordinator.py::usage_profile())
+    -- Nutzer-Feedback: der Sensor hiess "Nutzungsprofil", zeigte aber
+    weiterhin den laengst ueberholten Fahrtenbuch-Wert, waehrend die
+    evcc-Steuerung selbst schon laengst das genauere Live-SoC-Profil
+    (coordinator.py::vehicle_discharge_usage_profile()) nutzte, sobald fuer
+    einen Wochentag Live-SoC-Daten vorliegen -- "total verwirrend", weil der
+    prominenteste Sensor nicht das zeigte, was tatsaechlich zaehlte. Neues
+    Attribut "quelle" zeigt PRO Wochentag, ob "live_soc" oder "fahrtenbuch"
+    gerade massgeblich ist -- die reinen Fahrtenbuch-Werte bleiben weiterhin
+    unter sensor.*_live_soc_verbrauch_gesamt (vehicle_discharge_usage_
+    profile()) einsehbar. unknown nur noch, wenn WEDER Fahrtenbuch noch
+    Live-SoC-Profil ueberhaupt Daten liefern (siehe _effective_vehicle_
+    usage_profile()-Docstring)."""
 
     _attr_translation_key = "usage_profile"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
@@ -1372,7 +1383,7 @@ class UsageProfileSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def native_value(self):
-        profile = self.coordinator.usage_profile()
+        profile = self.coordinator._effective_vehicle_usage_profile()
         if not profile:
             return None
         today_wd = dt_util.now().weekday()
@@ -1380,10 +1391,16 @@ class UsageProfileSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        profile = self.coordinator.usage_profile()
+        profile = self.coordinator._effective_vehicle_usage_profile()
         if not profile:
             return {}
-        return {self._WEEKDAY_KEYS[wd]: kwh for wd, kwh in profile.items()}
+        discharge_profile = self.coordinator.vehicle_discharge_usage_profile() or {}
+        attrs = {self._WEEKDAY_KEYS[wd]: kwh for wd, kwh in profile.items()}
+        attrs["quelle"] = {
+            self._WEEKDAY_KEYS[wd]: ("live_soc" if wd in discharge_profile else "fahrtenbuch")
+            for wd in profile
+        }
+        return attrs
 
 
 class UsageProfileTomorrowSensor(EvAssistantEntity, SensorEntity):

@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.93.2] - 2026-09-22
+
+### Changed
+
+- **"Nutzungsprofil" sensor now shows the effective (live-SoC-preferred) usage profile, not just the trip log**: it previously always read `usage_profile()` (pure trip-log average per weekday), which the evcc mode control itself had already stopped using per-weekday as soon as live-SoC discharge data became available for that weekday (`_effective_vehicle_usage_profile()`, since a much earlier release) — the panel's most prominent usage-profile sensor was silently showing a value that no longer mattered for the actual charging decisions, confusing to reconcile against the mode-control's own numbers. Now reads the effective profile directly, with a new `quelle` (source) attribute showing per weekday whether `live_soc` or `fahrtenbuch` is currently authoritative. The pure trip-log values remain visible on the separate `usage_profile()`/`*_live_soc_verbrauch_gesamt` sensors as before. `usage_profile_tomorrow()`/`charge_before_pv_recommended()` (a separate, older advisory feature) intentionally still use the plain trip log, unchanged.
+
 ## [0.93.1] - 2026-09-20
 
 ### Changed
