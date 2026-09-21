@@ -1407,7 +1407,11 @@ class UsageProfileTomorrowSensor(EvAssistantEntity, SensorEntity):
     """Gepufferter kWh-Bedarf fuer morgen (siehe
     coordinator.py::usage_profile_tomorrow()) -- direkt mit dem SoC-
     basierten `available_kwh`-Sensor vergleichbar, um zu entscheiden, ob
-    heute noch (z.B. ohne PV-Ueberschuss) nachgeladen werden muss."""
+    heute noch (z.B. ohne PV-Ueberschuss) nachgeladen werden muss. Nutzt
+    seit 2026-09-22 wie UsageProfileSensor das effektive (Live-SoC-
+    bevorzugte) Profil statt nur des reinen Fahrtenbuchs -- vorher zeigte
+    diese Empfehlung neben dem bereits umgestellten Nutzungsprofil-Sensor
+    inkonsistent noch die veraltete Fahrtenbuch-Zahl."""
 
     _attr_translation_key = "usage_profile_tomorrow"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR

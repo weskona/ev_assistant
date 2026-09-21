@@ -4443,11 +4443,18 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.hass.config_entries.async_update_entry(self.entry, data=new_data)
 
     def usage_profile_tomorrow(self) -> Optional[dict]:
-        """Wochentags-Bedarf (siehe usage_profile()) fuer den morgigen
-        Wochentag, zzgl. CONF_USAGE_PROFILE_BUFFER_PCT Puffer -- direkt mit
-        available_kwh() vergleichbar, um zu entscheiden, ob heute noch
-        (z.B. ohne PV-Ueberschuss) nachgeladen werden muss."""
-        profile = self.usage_profile()
+        """Wochentags-Bedarf (siehe _effective_vehicle_usage_profile()) fuer
+        den morgigen Wochentag, zzgl. CONF_USAGE_PROFILE_BUFFER_PCT Puffer --
+        direkt mit available_kwh() vergleichbar, um zu entscheiden, ob heute
+        noch (z.B. ohne PV-Ueberschuss) nachgeladen werden muss. Bis
+        2026-09-22 wurde hier bewusst NUR das reine Fahrtenbuch-Profil
+        (usage_profile()) genutzt, unabhaengig vom neueren, praeziseren
+        Live-SoC-Profil der evcc-Modus-Steuerung -- Nutzerentscheidung
+        (2026-09-22): vereinheitlicht, da inkonsistent wirkte (Nutzungsprofil-
+        Sensor zeigt bereits das effektive Profil, siehe UsageProfileSensor
+        in sensor.py, diese Empfehlung zeigte aber weiterhin die veraltete
+        Fahrtenbuch-Zahl daneben)."""
+        profile = self._effective_vehicle_usage_profile()
         if profile is None:
             return None
         tomorrow_wd = (dt_util.now().date() + timedelta(days=1)).weekday()
@@ -4495,7 +4502,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         """Empfehlung, ob vor dem naechsten PV-Ueberschuss noch nachgeladen
         werden sollte. None, wenn available_kwh()/usage_profile_tomorrow()
         fehlt -- siehe charge_before_pv_decision() in engine.py fuer die
-        eigentliche Entscheidung (mit optionaler PV-Prognose)."""
+        eigentliche Entscheidung (mit optionaler PV-Prognose). Erbt seit
+        2026-09-22 ueber usage_profile_tomorrow() die Bevorzugung des
+        Live-SoC-Profils (siehe dortigen Docstring)."""
         need = self.usage_profile_tomorrow()
         available = self.available_kwh()
         if need is None or available is None:
@@ -4512,13 +4521,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     # ----- evcc-Modus-/SoC-Steuerung (siehe CONF_EVCC_MODE_CONTROL_ENABLED) --
     #
-    # Nutzt dasselbe usage_profile() wie usage_profile_tomorrow()/
-    # charge_before_pv_recommended() oben (BEIDE bleiben unveraendert
-    # bestehen -- eine parallele, unabhaengige Anzeige-Empfehlung), rechnet
-    # daraus aber eine eigene, staerker vorausschauende Mindest-/Ziel-SoC-
-    # Schwelle (siehe engine.py::determine_evcc_mode()) und schreibt das
-    # Ergebnis tatsaechlich nach evcc zurueck (siehe
-    # _async_apply_evcc_mode_control()).
+    # Nutzt seit 2026-09-22 dasselbe _effective_vehicle_usage_profile() wie
+    # usage_profile_tomorrow()/charge_before_pv_recommended() oben (bis
+    # dahin nutzten beide unabhaengig voneinander das reine Fahrtenbuch-
+    # Profil -- vereinheitlicht, siehe Docstring dort), rechnet daraus aber
+    # eine eigene, staerker vorausschauende Mindest-/Ziel-SoC-Schwelle
+    # (siehe engine.py::determine_evcc_mode()) und schreibt das Ergebnis
+    # tatsaechlich nach evcc zurueck (siehe _async_apply_evcc_mode_control()).
 
     def _kwh_used_today(self) -> Optional[float]:
         """kWh, die seit Tagesbeginn bereits verbraucht wurden -- aus dem

@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.93.3] - 2026-09-22
+
+### Changed
+
+- **"Nutzungsprofil (morgen benötigt)" and the charge-before-PV recommendation now also use the effective (live-SoC-preferred) profile**: `usage_profile_tomorrow()`/`charge_before_pv_recommended()` were a separate, older advisory feature deliberately left on the plain trip log when the live-SoC profile preference was introduced for the evcc mode control. After unifying `UsageProfileSensor` in 0.93.2, this became the last inconsistency — the same weekday's number could differ between the "Nutzungsprofil" card and this recommendation. Unified per user request, since the live-SoC profile is simply more accurate wherever it has data for a given weekday.
+
 ## [0.93.2] - 2026-09-22
 
 ### Changed
