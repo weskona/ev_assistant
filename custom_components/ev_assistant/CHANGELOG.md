@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.93.4] - 2026-09-22
+
+### Fixed
+
+- **Opportunistic PV-surplus target-SoC extension (v0.93.1) could trigger real nighttime grid charging on zero PV**: its `pv_surplus_w` input is derived purely from `-gridPower`, which can stay slightly positive for minutes at a time from pure grid/battery balancing noise alone (production incident 2026-09-21, ~21:13–21:18: 3–13 W of "surplus" with genuine PV production at exactly 0 W, home load fully covered by battery discharge) — the extension can't tell that apart from a real, if tiny, solar surplus, so it raised `target_soc` to 100 and the vehicle charged for several minutes drawing over 1.5 kW straight from the grid, the opposite of its purpose. Now additionally requires real, positive PV production (`pvPower` from the evcc site state) before activating — pure balance noise around zero grid power with zero actual PV output no longer qualifies.
+
 ## [0.93.3] - 2026-09-22
 
 ### Changed

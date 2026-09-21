@@ -1069,6 +1069,7 @@ def apply_opportunistic_surplus_target(
     mode: str,
     target_soc: Optional[int],
     pv_surplus_w: Optional[float],
+    pv_power_w: Optional[float],
     was_active: bool,
     pending_since_ts: Optional[float],
     now_ts: float,
@@ -1116,13 +1117,28 @@ def apply_opportunistic_surplus_target(
     naechsten Aufruf zurueckzureichen (siehe coordinator.py::
     _evcc_mode_targets(), dort als Instanzattribut gehalten -- bewusst NICHT
     persistiert: ein Neustart faengt konservativ bei "nicht aktiv" an, das
-    ist der sichere Default, kein Datenverlust-Risiko)."""
+    ist der sichere Default, kein Datenverlust-Risiko).
+
+    `pv_power_w` (echte PV-Erzeugung, NICHT die aus gridPower abgeleitete
+    pv_surplus_w) ist ein zusaetzliches, notwendiges Gate: pv_surplus_w ist
+    lediglich -gridPower (siehe coordinator.py::_evcc_realtime_pv_surplus_w()-
+    Docstring) -- bei exakt 0 W echter PV-Erzeugung (Nacht) kann dieser
+    Wert trotzdem durch reines Mess-/Rundungsrauschen der Speicher-Haus-
+    Bilanz fuer Minuten am Stueck leicht positiv sein (Produktionsvorfall
+    2026-09-21, ca. 21:13-21:18 Uhr: 3-13W "Ueberschuss" bei tatsaechlich
+    0 W PV-Leistung, fuehrte zu einer echten Ladesession ueber >1,5kW
+    Netzbezug -- das genaue Gegenteil von "nur Solar-Ueberschuss nutzen").
+    Ohne dieses Gate wuerde reines Bilanzrauschen dieselbe Anhebung ausloesen
+    wie echter (wenn auch geringer) Solarertrag. None (kein evcc-State) wird
+    wie 0 behandelt -- konservativ nicht aktivieren."""
     raw_ok = (
         mode == "pv"
         and target_soc is not None
         and target_soc < ceiling_soc
         and pv_surplus_w is not None
         and pv_surplus_w > 0
+        and pv_power_w is not None
+        and pv_power_w > 0
     )
     if raw_ok == was_active:
         pending_since_ts = None  # im Einklang -- kein Wechsel ansteht

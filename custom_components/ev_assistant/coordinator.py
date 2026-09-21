@@ -4950,15 +4950,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # uebernimmt die obige apply_realtime_pv_override()-Hochstufung auf
         # "minpv" automatisch den kleinen Netz-Zuschuss zur Differenz --
         # dieselbe Kompromisslogik wie in der Vor-Ziel-Phase, kein separater
-        # Schwellenwert hier noetig. Debounce-Zustand (Instanzattribute,
-        # siehe __init__()) wird hier aktualisiert -- _evcc_mode_targets()
-        # wird sowohl vom Schreibpfad als auch vom Sensor aufgerufen, beide
-        # sollen denselben (bereits angehobenen) target_soc sehen.
+        # Schwellenwert hier noetig. pv_power_w (echte Erzeugung, siehe
+        # engine-Docstring) zusaetzlich uebergeben -- pv_surplus_w ist nur
+        # -gridPower und kann nachts bei 0W echter PV durch reines Bilanz-
+        # rauschen leicht positiv sein (Produktionsvorfall 2026-09-21).
+        # Debounce-Zustand (Instanzattribute, siehe __init__()) wird hier
+        # aktualisiert -- _evcc_mode_targets() wird sowohl vom Schreibpfad
+        # als auch vom Sensor aufgerufen, beide sollen denselben (bereits
+        # angehobenen) target_soc sehen.
+        pv_power_w = self._evcc_state.get("pvPower") if self._evcc_state is not None else None
         target_soc, self._ueberschuss_ziel_aktiv, self._ueberschuss_ziel_pending_seit_ts = (
             apply_opportunistic_surplus_target(
                 mode,
                 target_soc,
                 pv_surplus_w,
+                pv_power_w if isinstance(pv_power_w, (int, float)) else None,
                 self._ueberschuss_ziel_aktiv,
                 self._ueberschuss_ziel_pending_seit_ts,
                 dt_util.utcnow().timestamp(),
