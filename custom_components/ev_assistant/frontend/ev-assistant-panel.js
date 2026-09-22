@@ -4608,6 +4608,14 @@ class EVAssistantPanel extends HTMLElement {
     const { card } = this._card("Ladeplan", "mdi:calendar-clock");
     card.classList.add("beta-status-card", "hidden");
 
+    // Aktueller Stand (SoC + Restreichweite) -- immer sichtbar, unabhaengig
+    // von einem aktiven Plan, damit man beim Ausfuellen des Formulars weiss,
+    // wo man gerade steht (Nutzerwunsch 2026-09-22).
+    const current = document.createElement("div");
+    current.className = "beta-status-row beta-plan-current-row";
+    current.innerHTML = `<span class="bl">Aktuell</span><span class="bv" id="beta-plan-current">—</span>`;
+    card.appendChild(current);
+
     const status = document.createElement("div");
     status.className = "beta-plan-status hidden";
     status.innerHTML = `
@@ -4636,6 +4644,7 @@ class EVAssistantPanel extends HTMLElement {
 
     const q = (s) => card.querySelector(s);
     this._r.betaPlanCard       = card;
+    this._r.betaPlanCurrent    = q("#beta-plan-current");
     this._r.betaPlanStatus     = status;
     this._r.betaPlanTarget     = q("#beta-plan-target");
     this._r.betaPlanStartRow   = q("#beta-plan-start-row");
@@ -4692,6 +4701,16 @@ class EVAssistantPanel extends HTMLElement {
     const available = !!s && s.state !== "unavailable";
     r.betaPlanCard.classList.toggle("hidden", !available);
     if (!available) return;
+
+    // Aktueller Stand -- immer sichtbar, unabhaengig vom Plan-Status,
+    // dieselben Quellen wie _updateBetaSoc()/RangeEstimateSensor.
+    const socEid = this._eid("soc_entity");
+    const soc = socEid ? parseFloat(this._raw(socEid) ?? NaN) : NaN;
+    const rangeEid = this._eid("range_estimate");
+    const range = rangeEid ? parseFloat(this._raw(rangeEid) ?? NaN) : NaN;
+    const socText = isNaN(soc) ? "—" : `${Math.round(soc)}%`;
+    const rangeText = isNaN(range) ? "—" : `${this._fmtNum(range, 0)} km`;
+    r.betaPlanCurrent.textContent = `${socText} · ${rangeText}`;
 
     const hasPlan = s.state && s.state !== "unknown";
     r.betaPlanStatus.classList.toggle("hidden", !hasPlan);

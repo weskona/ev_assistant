@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.95.1] - 2026-09-22
+
+### Changed
+
+- **"Ladeplan" panel card now shows current SoC and remaining range**: a new "Aktuell" row (always visible, independent of whether a plan is active) shows the vehicle's current SoC% and `range_estimate` sensor value, so there's context for what target to enter into the form.
+
 ## [0.95.0] - 2026-09-22
 
 ### Added
