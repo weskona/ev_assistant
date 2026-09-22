@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.94.2] - 2026-09-22
+
+### Changed
+
+- **Panel mode labels updated to evcc 0.316.0's new naming**: "Nur PV"/"Nur Solar (PV)" → "Smart", "Min+PV" → "Smart + Immer laden", "Sofort (Netz)"/"Sofort" → "Schnell" — matches evcc's own renamed mode wording (`pv`→`smart`, `now`→`fast`/`schnell`) so the panel stays consistent with evcc's own UI. Internal values (`pv`/`minpv`/`now`) are unchanged, only the displayed labels.
+
 ## [0.94.1] - 2026-09-22
 
 ### Fixed

@@ -114,8 +114,13 @@ class EVAssistantPanel extends HTMLElement {
   // Anzeigen (Wallbox-Karte Aufgabe 3.3, evcc-Steuerung-Karte Aufgabe 3.7)
   // konsistent beschriften.
   _evccModeLabel(mode) {
+    // Beschriftung an evccs "Mode Redesign" (0.316.0, 2026-09-22, PR #32490)
+    // angepasst: "pv" heisst dort jetzt "Smart", "minpv" ist keine eigene
+    // Stufe mehr, sondern "Smart" + Always-Charge-Zusatzoption -- intern
+    // bleiben unsere Werte unveraendert pv/minpv/now (siehe coordinator.py::
+    // normalize_evcc_mode()), nur die Anzeige zieht nach.
     const LABELS = {
-      pv: "Nur Solar (PV)", minpv: "Min+PV", now: "Sofort (Netz)", off: "Aus",
+      pv: "Smart", minpv: "Smart + Immer laden", now: "Schnell", off: "Aus",
     };
     return LABELS[mode] || mode || "—";
   }
@@ -2821,7 +2826,10 @@ class EVAssistantPanel extends HTMLElement {
     }
 
     // ----- Diagnostics chips -----
-    const MODE_LABEL = { now: "Sofort", minpv: "Min+PV", pv: "Nur PV", off: "Aus" };
+    // Beschriftung an evccs "Mode Redesign" (0.316.0, siehe _evccModeLabel())
+    // angepasst -- separate Kopie hier, da dieser Chip absichtlich unabhaengig
+    // gehalten war, siehe Kartenkommentar oben.
+    const MODE_LABEL = { now: "Schnell", minpv: "Smart + Immer laden", pv: "Smart", off: "Aus" };
     this._setChip(r.dgMode, MODE_LABEL[mode] || mode || "—",
       mode === "off" ? "warn" : mode ? "good" : "");
 
