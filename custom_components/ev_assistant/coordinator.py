@@ -542,9 +542,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Cache fuer den Verbrauch je Temperaturband (siehe
         # _consumption_by_temp_bucket()) -- analog _trip_avg_cache.
         self._temp_bucket_cache: Optional[tuple[int, dict]] = None
-        # Cache fuer equivalent_full_cycles() -- haengt an BEIDEN Versionen
-        # (Fahrtenbuch UND Fremdladungs-Historie tragen beide dazu bei).
-        self._cycles_cache: Optional[tuple[tuple[int, int, int], float]] = None
+        # Cache fuer equivalent_full_cycles() -- Entladeseite haengt seit
+        # 2026-09-22 am Live-SoC-Ratchet (float, kein Versions-Zaehler) statt
+        # an _fahrten_version, Ladeseite weiterhin an _history_version/
+        # _home_capacity_version.
+        self._cycles_cache: Optional[tuple[tuple[float, int, int], float]] = None
         # Cache fuer home_session_stats() -- haengt am selben Zaehler wie
         # battery_capacity_kwh(), da beide am Session-Ende-Hook in
         # _set_home() aktualisiert werden.
@@ -3828,23 +3830,27 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return temperature_bucket(self._outside_temp, TEMP_BUCKET_BOUNDARIES)
 
     def equivalent_full_cycles(self) -> float:
-        """Aequivalente Vollzyklen aus Fahrtenbuch (Entladung), Fremd- und
-        Heim-Ladungen (Ladung), siehe engine.equivalent_full_cycles_from_totals().
-        Berechnet aus zwei laufend gepflegten Lebenszeit-Summen (siehe
-        _apply_trip_baselines()/_apply_charge_baselines()) statt aus den
-        vollen fahrten/history-Listen, bleibt also von einer Archivierung/
-        Kuerzung dieser Listen unberuehrt. Wird pro (_fahrten_version,
-        _history_version, _home_capacity_version) zwischengespeichert --
-        Letzteres, da home_charge_pct_total ueber _record_home_charge_pct()
-        denselben Zaehler wie die Kapazitaets-Stichproben mitbenutzt (siehe
-        dort)."""
-        cache_key = (self._fahrten_version, self._history_version, self._home_capacity_version)
+        """Aequivalente Vollzyklen aus Live-SoC-Entladung (siehe
+        engine.equivalent_full_cycles_from_totals()-Docstring fuer die
+        Umstellung von der Fahrtenbuch-Summe auf self.data["vehicle_
+        discharge_kwh_total"], 2026-09-22) plus Fremd- und Heim-Ladungen
+        (Ladung). Wird pro (vehicle_discharge_kwh_total, _history_version,
+        _home_capacity_version) zwischengespeichert -- ersteres statt
+        _fahrten_version, da die Entladeseite jetzt am kontinuierlichen
+        Live-SoC-Ratchet haengt, nicht mehr am Fahrtenbuch;
+        _home_capacity_version, da home_charge_pct_total ueber
+        _record_home_charge_pct() denselben Zaehler wie die Kapazitaets-
+        Stichproben mitbenutzt (siehe dort)."""
+        vehicle_discharge_kwh_total = self.data.get("vehicle_discharge_kwh_total", 0.0)
+        cache_key = (vehicle_discharge_kwh_total, self._history_version, self._home_capacity_version)
         if self._cycles_cache is not None and self._cycles_cache[0] == cache_key:
             return self._cycles_cache[1]
-        fahrten_discharge = self.data.get("fahrten_discharge_pct_total", 0.0)
         history_charge = self.data.get("history_charge_pct_total", 0.0)
         home_charge_pct_total = self.data.get("home_charge_pct_total", 0.0)
-        result = equivalent_full_cycles_from_totals(fahrten_discharge, history_charge, home_charge_pct_total)
+        usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+        result = equivalent_full_cycles_from_totals(
+            vehicle_discharge_kwh_total, history_charge, home_charge_pct_total, usable_kwh
+        )
         self._cycles_cache = (cache_key, result)
         return result
 

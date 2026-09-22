@@ -1665,20 +1665,41 @@ def charge_pct_of_history_entry(rec: dict) -> float:
 
 
 def equivalent_full_cycles_from_totals(
-    fahrten_discharge_pct_total: float,
+    vehicle_discharge_kwh_total: float,
     history_charge_pct_total: float,
-    home_charge_pct_total: float = 0.0,
+    home_charge_pct_total: float,
+    usable_kwh: float,
 ) -> float:
-    """Wie equivalent_full_cycles(), aber aus zwei laufend gepflegten
-    Lebenszeit-Summen (siehe trip_discharge_pct()/charge_pct_of_history_entry(),
-    inkrementell gepflegt in coordinator.py::_apply_trip_baselines()/
-    _apply_charge_baselines()) statt aus den vollen fahrten/history-Listen.
-    Liefert IDENTISCHE Ergebnisse, unabhaengig davon, ob/wie weit die
-    Detail-Listen inzwischen archiviert/gekuerzt wurden (siehe CHANGELOG zur
-    Fahrtenbuch/History-Archivierung) -- die beiden Summen selbst werden nie
-    rueckwirkend durch eine Kuerzung veraendert, nur durch echtes
-    Hinzufuegen/Bearbeiten/Loeschen einzelner Eintraege."""
-    discharge_pct = max(0.0, fahrten_discharge_pct_total)
+    """Wie equivalent_full_cycles(), aber die Entladeseite kommt seit
+    2026-09-22 aus dem Live-SoC-Ratchet (coordinator.py::self.data
+    ["vehicle_discharge_kwh_total"], siehe engine.vehicle_discharge_update())
+    statt aus der Fahrtenbuch-delta_soc-Summe -- Nutzerfeedback: Fahrten OHNE
+    delta_soc (z.B. durch eine WiCAN-Verbindungsluecke am Start/Ende einer
+    Fahrt, siehe is_plausible_trip_consumption()-Docstring) wurden bei der
+    alten fahrten-basierten Summe komplett uebersprungen (siehe
+    trip_discharge_pct()), obwohl real entladen wurde -- der Live-SoC-Ratchet
+    erfasst JEDE SoC-Abnahme kontinuierlich, unabhaengig von einzelnen
+    Fahrt-Grenzen, UND zusaetzlich Standby-Verluste zwischen Fahrten (die die
+    Fahrtenbuch-Summe ohnehin nie erfasst hat) -- beides zusammen macht die
+    Zyklenzaehlung vollstaendiger.
+
+    Umrechnung kWh -> Prozentpunkte ueber `usable_kwh` -- bewusst der FESTE,
+    konfigurierte Wert (CONF_USABLE_KWH), NICHT die geschaetzte tatsaechliche
+    Kapazitaet (battery_capacity_kwh(), altert mit der Zeit): ein Vollzyklus
+    soll ueber die Lebenszeit des Akkus konsistent gezaehlt werden, eine mit
+    der Alterung schrumpfende Kapazitaet wuerde sonst dieselbe reale Nutzung
+    im Lauf der Zeit als IMMER MEHR Zyklen zaehlen (Nutzerentscheidung
+    2026-09-22: "festen wert aus configflow nutzen").
+
+    Ladeseite unveraendert (Fremd-/Heim-Ladungen bleiben Session-basiert,
+    haben nicht dasselbe Fahrtgrenzen-Luecken-Problem). Liefert bei
+    unveraenderten Summen IDENTISCHE Ergebnisse, unabhaengig davon, ob/wie
+    weit die history-Detail-Liste inzwischen archiviert/gekuerzt wurde --
+    history_charge_pct_total wird nie rueckwirkend durch eine Kuerzung
+    veraendert, nur durch echtes Hinzufuegen/Bearbeiten/Loeschen einzelner
+    Eintraege. 0 Entladeanteil, wenn usable_kwh <= 0 (Konfigurationsfehler,
+    identisch zu kwh_to_soc_percent()'s Verhalten)."""
+    discharge_pct = max(0.0, vehicle_discharge_kwh_total) / usable_kwh * 100.0 if usable_kwh > 0 else 0.0
     charge_pct = max(0.0, history_charge_pct_total) + max(0.0, home_charge_pct_total)
     return round((discharge_pct + charge_pct) / 200.0, 2)
 

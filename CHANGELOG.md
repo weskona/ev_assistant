@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.94.0] - 2026-09-22
+
+### Changed
+
+- **Equivalent full-cycles sensor's discharge side now uses the Live-SoC ratchet instead of the trip log**: `equivalent_full_cycles_from_totals()` previously summed `|delta_soc|` from logged trips, which silently skips any trip missing a `delta_soc` (e.g. a WiCAN connectivity gap at trip start/end) — the same trip-log completeness gap already fixed for the usage-profile sensors in 0.93.2/0.93.3. Now uses the continuous Live-SoC discharge total (kWh), converted to percentage points via the fixed configured usable-battery-kWh (not the aging-sensitive estimated capacity, so a cycle counts the same over the battery's life) — also more complete going forward, since it captures standby/parasitic discharge between trips that the trip log never tracked at all. The charging side (foreign + home sessions) is unchanged. **Expect a one-time drop** in the displayed value on upgrade: the Live-SoC ratchet only started counting when that feature was introduced, so it doesn't cover the vehicle's earlier trip-log history — accepted deliberately (2026-09-22) as the more-correct baseline going forward, rather than papering over it with an estimated backfill offset.
+
 ## [0.93.4] - 2026-09-22
 
 ### Fixed

@@ -2047,27 +2047,36 @@ def test_trip_discharge_pct_und_charge_pct_of_history_entry():
     assert charge_pct_of_history_entry({}) == 0.0
 
 
-def test_equivalent_full_cycles_from_totals_entspricht_voller_liste_berechnung():
-    fahrten = [{"delta_soc": -60.0}, {"delta_soc": -40.0}]
-    history = [{"delta_soc": 90.0}, {"delta_soc": -5.0}]  # zweiter Wert wird geklemmt
-    erwartet = equivalent_full_cycles(fahrten, history, home_charge_pct_total=10.0)
-    discharge_total = sum(trip_discharge_pct(r) for r in fahrten)
-    charge_total = sum(charge_pct_of_history_entry(r) for r in history)
-    result = equivalent_full_cycles_from_totals(discharge_total, charge_total, home_charge_pct_total=10.0)
-    assert result == erwartet == 1.0  # (100 + 90 + 10) / 200
+def test_equivalent_full_cycles_from_totals_nutzt_live_soc_ratchet_statt_fahrtenbuch():
+    # Seit 2026-09-22 kommt die Entladeseite aus dem Live-SoC-Ratchet (kWh),
+    # umgerechnet ueber die FESTE konfigurierte nutzbare Kapazitaet -- nicht
+    # mehr aus der Fahrtenbuch-delta_soc-Summe (die Fahrten ohne delta_soc,
+    # z.B. durch eine WiCAN-Luecke, stillschweigend uebersprungen haette).
+    usable_kwh = 50.0
+    vehicle_discharge_kwh_total = 50.0  # = 100 Prozentpunkte bei 50 kWh nutzbar
+    result = equivalent_full_cycles_from_totals(
+        vehicle_discharge_kwh_total, history_charge_pct_total=90.0, home_charge_pct_total=10.0,
+        usable_kwh=usable_kwh,
+    )
+    assert result == 1.0  # (100 + 90 + 10) / 200
+
+
+def test_equivalent_full_cycles_from_totals_usable_kwh_null_gibt_null_entladeanteil():
+    result = equivalent_full_cycles_from_totals(
+        100.0, history_charge_pct_total=90.0, home_charge_pct_total=10.0, usable_kwh=0.0,
+    )
+    assert result == 0.5  # nur (90 + 10) / 200, Entladeseite faellt auf 0 zurueck
 
 
 def test_equivalent_full_cycles_from_totals_bleibt_unveraendert_wenn_alte_eintraege_verschwinden():
-    # Der ganze Sinn der Baseline: wird die Detail-Liste spaeter gekuerzt
-    # (siehe split_by_age()), bleibt equivalent_full_cycles_from_totals()
-    # trotzdem beim ALTEN (korrekten) Ergebnis -- die Summen selbst wurden
-    # nie rueckwirkend veraendert, nur die (hier gar nicht mehr verwendete)
-    # Detail-Liste.
-    result_vor_kuerzung = equivalent_full_cycles_from_totals(100.0, 90.0, home_charge_pct_total=10.0)
-    # Nach einer Kuerzung stuenden dieselben zwei Zahlen weiter unveraendert
-    # in self.data["fahrten_discharge_pct_total"]/["history_charge_pct_total"] --
-    # sie haengen nicht an der (jetzt kuerzeren) Liste.
-    result_nach_kuerzung = equivalent_full_cycles_from_totals(100.0, 90.0, home_charge_pct_total=10.0)
+    # Der ganze Sinn der Baseline: wird die history-Detail-Liste spaeter
+    # gekuerzt (siehe split_by_age()), bleibt equivalent_full_cycles_from_
+    # totals() trotzdem beim ALTEN (korrekten) Ergebnis -- die Summen selbst
+    # wurden nie rueckwirkend veraendert, nur die (hier gar nicht mehr
+    # verwendete) Detail-Liste. Der Live-SoC-Ratchet haengt ohnehin nie an
+    # dieser Liste.
+    result_vor_kuerzung = equivalent_full_cycles_from_totals(50.0, 90.0, home_charge_pct_total=10.0, usable_kwh=50.0)
+    result_nach_kuerzung = equivalent_full_cycles_from_totals(50.0, 90.0, home_charge_pct_total=10.0, usable_kwh=50.0)
     assert result_vor_kuerzung == result_nach_kuerzung == 1.0
 
 
@@ -3067,13 +3076,15 @@ def test_baselines_entsprechen_voller_liste_und_bleiben_nach_kuerzung_unveraende
     trip_avg_voll = _trip_avg_alt(fahrten)
 
     # --- 2. Baselines einmal record-fuer-record aus der VOLLEN Historie
-    # aufbauen (entspricht _migrate_lifetime_baselines()) ---
-    discharge_total = 0.0
+    # aufbauen (entspricht _migrate_lifetime_baselines()) --- Hinweis:
+    # equivalent_full_cycles_from_totals() wird hier bewusst NICHT mehr
+    # mitgeprueft -- seine Entladeseite haengt seit 2026-09-22 am Live-SoC-
+    # Ratchet, nicht mehr an dieser fahrten-Liste (siehe dedizierte Tests
+    # oben, test_equivalent_full_cycles_from_totals_*).
     exact_sum, exact_count = 0.0, 0
     deltasoc_sum, deltasoc_count = 0.0, 0
     temp_totals = {}
     for rec in fahrten:
-        discharge_total += trip_discharge_pct(rec)
         contribution = trip_consumption_contribution(rec)
         if contribution is not None:
             kind, value = contribution
@@ -3099,7 +3110,6 @@ def test_baselines_entsprechen_voller_liste_und_bleiben_nach_kuerzung_unveraende
         anbieter_totals = apply_anbieter_delta(anbieter_totals, rec, 1)
 
     # --- 3. Baseline-Ergebnisse muessen den Ausgangswerten entsprechen ---
-    assert equivalent_full_cycles_from_totals(discharge_total, charge_total, home_charge_pct_total) == cycles_voll
     assert ac_dc_breakdown_from_totals(ac_dc_totals) == ac_dc_voll
     assert anbieter_breakdown_from_totals(anbieter_totals) == anbieter_voll
     assert consumption_by_temp_bucket_from_totals(temp_totals) == temp_voll
@@ -3116,7 +3126,6 @@ def test_baselines_entsprechen_voller_liste_und_bleiben_nach_kuerzung_unveraende
 
     # --- 5. Baseline-Ergebnisse sind UNVERAENDERT -- sie haengen nicht an
     # der (jetzt kuerzeren) Liste, sondern an den bereits berechneten Summen ---
-    assert equivalent_full_cycles_from_totals(discharge_total, charge_total, home_charge_pct_total) == cycles_voll
     assert ac_dc_breakdown_from_totals(ac_dc_totals) == ac_dc_voll
     assert anbieter_breakdown_from_totals(anbieter_totals) == anbieter_voll
     assert consumption_by_temp_bucket_from_totals(temp_totals) == temp_voll

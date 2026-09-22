@@ -918,12 +918,13 @@ class BatteryCapacitySensor(EvAssistantEntity, SensorEntity):
 
 
 class EquivalentFullCyclesSensor(EvAssistantEntity, SensorEntity):
-    """Aequivalente Vollzyklen (0%->100%->0% waere 1 Zyklus) aus Fahrtenbuch
-    (Entladung), Fremd- und Heim-Ladungen (Ladung), siehe coordinator.py::
-    equivalent_full_cycles() -- ergaenzt battery_capacity um die zweite,
+    """Aequivalente Vollzyklen (0%->100%->0% waere 1 Zyklus) aus Live-SoC-
+    Entladung (seit 2026-09-22, siehe coordinator.py::equivalent_full_
+    cycles()/engine.equivalent_full_cycles_from_totals()-Docstring), Fremd-
+    und Heim-Ladungen (Ladung) -- ergaenzt battery_capacity um die zweite,
     bei realen Akku-Garantien uebliche Kennzahl (Zyklen zusaetzlich zu
-    Jahren). TOTAL statt TOTAL_INCREASING, da Fahrten/Fremdladungen
-    nachtraeglich geloescht werden koennen (siehe TotalKwhSensor-Kommentar)."""
+    Jahren). TOTAL statt TOTAL_INCREASING, da Fremdladungen nachtraeglich
+    geloescht werden koennen (siehe TotalKwhSensor-Kommentar)."""
 
     _attr_translation_key = "equivalent_full_cycles"
     _attr_state_class = SensorStateClass.TOTAL
