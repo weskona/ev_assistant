@@ -2,6 +2,20 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.97.0] - 2026-09-23
+
+### Added
+
+- **Ladeplan popup redesign**: the "Ladeplan" card's inline form is now a "Ladeplan anlegen" button that opens a centered popup, instead of an always-visible form on the card itself.
+- **Combined %/km slider**: target charge is now a single slider (backed by SoC%, the unit evcc actually uses) that displays the equivalent range in km alongside it, replacing the earlier separate %/km inputs — no more unit-toggle sync issues, since there's only one underlying value. The slider can't be dragged below the current SoC (charging can't reduce it) and starts at the current SoC on first open.
+- **Live reachability preview**: before submitting, the popup now shows a short, color-coded (green/orange/red) estimate of whether the target is reachable by the deadline — energy needed, estimated finish time, and buffer — recalculated on every slider or time change. Uses a new `max_charge_power_kw` field in `evcc_live_attrs()` so the client can replicate the server-side reachability calculation before the plan is actually set.
+- **Ready-to-charge status badge**: the popup's first row now shows whether the vehicle is connected/ready to charge (or already charging), based on the same connected/charging signals as the wallbox status card.
+
+### Fixed
+
+- **Popup slider stopped responding to any dynamic update after the first render**: its internal element references were stored in the same object that gets reset on every tab switch, so the min-clamp, current-position marker, and live feedback all silently stopped working right after the popup was first built — the popup itself kept working (its "open"/"close" state lives outside that object), but nothing dynamic inside it ever updated again.
+- **Reopening the popup reset an already-adjusted target value** back to a fixed default instead of keeping what was set.
+
 ## [0.96.2] - 2026-09-22
 
 ### Fixed

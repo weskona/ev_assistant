@@ -933,6 +933,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "stat_total_kwh": statistics.get("chargedKWh"),
             "stat_solar_pct": statistics.get("solarPercentage"),
             "stat_avg_price": statistics.get("avgPrice"),
+            # Fuer die Live-Erreichbarkeits-Voranzeige im Ladeplan-Popup
+            # (Nutzerwunsch 2026-09-23: "nachdem ich zeit und ziel soc
+            # eingestellt habe sollte ueber dem slider direkt die auswertung
+            # erscheinen ob die ladung so moeglich ist") -- das Panel-JS
+            # rechnet dieselbe Formel wie _evcc_charge_plan_feedback_text()
+            # click-fuer-click nach, ohne dafuer erst absenden zu muessen.
+            "max_charge_power_kw": self._evcc_max_charge_power_kw(),
         }
 
     def _evcc_realtime_pv_surplus_w(self) -> Optional[float]:

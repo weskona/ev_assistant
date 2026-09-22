@@ -18,6 +18,16 @@ class EVAssistantPanel extends HTMLElement {
     this._view = "uebersicht";
     this._tabs = {};
     this._r = {};
+    // Eigener, von _switchView()s "this._r = {}"-Reset UNBERUEHRTER Ref-
+    // Speicher fuer das Ladeplan-Popup (siehe _buildLadeplanModal()) --
+    // analog zu den direkten this._pendingModalXxx-Properties des Fahrten/
+    // Fremdladungen-Popups. Bug 2026-09-23: die Modal-Refs lagen zuerst in
+    // this._r, das aber bei JEDEM Tab-Wechsel (auch dem impliziten direkt
+    // nach dem ersten Rendern) geleert wird -- das Popup selbst wird aber
+    // nur EINMAL gebaut, also gingen alle seine Referenzen sofort verloren
+    // und jede dynamische Aktualisierung (Slider-Minimum, "Jetzt"-Marke)
+    // griff seitdem ins Leere, ohne Fehler (nur stille `if (!x) return`-Guards).
+    this._lp = {};
     this._main = null;
     this._edgeSig = {};
     this._formState = {};
@@ -229,6 +239,7 @@ class EVAssistantPanel extends HTMLElement {
     app.appendChild(main);
     this._main = main;
     app.appendChild(this._buildPendingModal());
+    app.appendChild(this._buildLadeplanModal());
     this.shadowRoot.appendChild(app);
     this._switchView(this._view);
   }
@@ -4626,22 +4637,17 @@ class EVAssistantPanel extends HTMLElement {
     `;
     card.appendChild(status);
 
-    const form = document.createElement("div");
-    form.className = "beta-plan-form";
-    form.innerHTML = `
-      <div class="beta-plan-unit-toggle">
-        <label><input type="radio" name="beta-plan-unit" value="pct" checked> %</label>
-        <label><input type="radio" name="beta-plan-unit" value="km"> km</label>
-      </div>
-      <label class="beta-plan-field">Zielzeit<input type="datetime-local" id="beta-plan-time-input"></label>
-      <label class="beta-plan-field" id="beta-plan-soc-field">Ziel-SoC<input type="number" id="beta-plan-soc-input" min="0" max="100" step="1" value="80">%</label>
-      <label class="beta-plan-field hidden" id="beta-plan-km-field">Ziel-Reichweite<input type="number" id="beta-plan-km-input" min="0" step="1" value="200">km</label>
-      <div class="beta-plan-buttons">
-        <button type="button" class="beta-plan-set-btn" id="beta-plan-set-btn">Plan setzen</button>
-        <button type="button" class="beta-plan-clear-btn hidden" id="beta-plan-clear-btn">Plan löschen</button>
-      </div>
+    // Formular selbst NICHT mehr fest auf der Karte (Nutzerwunsch
+    // 2026-09-22: "auf der karte einen button hinzufuegen mit ladeplan
+    // anlegen. dieser button oeffnet ein popup") -- stattdessen ein
+    // Button, der das Modal aus _buildLadeplanModal() oeffnet.
+    const actions = document.createElement("div");
+    actions.className = "beta-plan-actions";
+    actions.innerHTML = `
+      <button type="button" class="beta-plan-open-btn" id="beta-plan-open-btn">Ladeplan anlegen</button>
+      <button type="button" class="beta-plan-clear-btn hidden" id="beta-plan-clear-btn">Plan löschen</button>
     `;
-    card.appendChild(form);
+    card.appendChild(actions);
 
     const q = (s) => card.querySelector(s);
     this._r.betaPlanCard       = card;
@@ -4653,45 +4659,289 @@ class EVAssistantPanel extends HTMLElement {
     this._r.betaPlanActive     = q("#beta-plan-active");
     this._r.betaPlanErwartungRow = q("#beta-plan-erwartung-row");
     this._r.betaPlanErwartung  = q("#beta-plan-erwartung");
-    this._r.betaPlanTimeInput  = q("#beta-plan-time-input");
-    this._r.betaPlanSocField   = q("#beta-plan-soc-field");
-    this._r.betaPlanSocInput   = q("#beta-plan-soc-input");
-    this._r.betaPlanKmField    = q("#beta-plan-km-field");
-    this._r.betaPlanKmInput    = q("#beta-plan-km-input");
-    this._r.betaPlanSetBtn     = q("#beta-plan-set-btn");
+    this._r.betaPlanOpenBtn    = q("#beta-plan-open-btn");
     this._r.betaPlanClearBtn   = q("#beta-plan-clear-btn");
 
-    // %/km-Umschalter: blendet nur das jeweils passende Eingabefeld ein,
-    // welcher Service beim Absenden gerufen wird entscheidet sich am
-    // aktuell ausgewaehlten Radio-Button (siehe Klick-Handler unten).
-    form.querySelectorAll('input[name="beta-plan-unit"]').forEach((radio) => {
-      radio.addEventListener("change", () => {
-        const isKm = radio.value === "km" && radio.checked;
-        if (radio.checked) {
-          this._r.betaPlanSocField.classList.toggle("hidden", isKm);
-          this._r.betaPlanKmField.classList.toggle("hidden", !isKm);
-        }
-      });
-    });
-
-    this._r.betaPlanSetBtn.addEventListener("click", () => {
-      const targetTime = this._fromDatetimeLocal(this._r.betaPlanTimeInput.value);
-      if (targetTime === null) return;
-      const unitKm = form.querySelector('input[name="beta-plan-unit"]:checked').value === "km";
-      if (unitKm) {
-        const targetRangeKm = parseFloat(this._r.betaPlanKmInput.value);
-        if (isNaN(targetRangeKm)) return;
-        this._call("set_evcc_charge_plan_range_km", { target_time: targetTime, target_range_km: targetRangeKm });
-      } else {
-        const targetSoc = parseFloat(this._r.betaPlanSocInput.value);
-        if (isNaN(targetSoc)) return;
-        this._call("set_evcc_charge_plan", { target_time: targetTime, target_soc: targetSoc });
-      }
-    });
+    this._r.betaPlanOpenBtn.addEventListener("click", () => this._openLadeplanModal());
     this._r.betaPlanClearBtn.addEventListener("click", () => {
       this._call("clear_evcc_charge_plan", {});
     });
     return card;
+  }
+
+  // --- Popup: Ladeplan anlegen -------------------------------------------------
+  //
+  // Eigenes Overlay (analog _buildPendingModal()), ausserhalb von this._main
+  // in _renderShell() angehaengt, damit der "Ladeplan anlegen"-Button auf der
+  // Ladeplan-Karte (siehe _buildBetaEvccPlanCard()) es jederzeit oeffnen kann.
+  // EIGENE ladeplan-modal-*-CSS-Klassen statt der pending-modal-*-Klassen
+  // (Nutzerwunsch 2026-09-22: "popup mittig auf dem bildschirm oeffnen,
+  // nicht am unteren rand") -- das Fahrten/Fremdladungen-Popup wird auf
+  // schmalen Bildschirmen bewusst als Bottom-Sheet dargestellt, das soll
+  // hier NICHT gelten, unabhaengig von der Fensterbreite.
+  _buildLadeplanModal() {
+    const overlay = document.createElement("div");
+    overlay.className = "ladeplan-modal-overlay hidden";
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) this._closeLadeplanModal();
+    });
+    const modal = document.createElement("div");
+    modal.className = "ladeplan-modal";
+    modal.innerHTML = `
+      <div class="ladeplan-modal-head">
+        <span class="ic"><ha-icon icon="mdi:calendar-clock"></ha-icon></span>
+        <h2>Ladeplan anlegen</h2>
+        <button type="button" class="ladeplan-modal-close" aria-label="Schließen"><ha-icon icon="mdi:close"></ha-icon></button>
+      </div>
+      <div class="ladeplan-modal-body">
+        <div class="beta-plan-live-feedback beta-plan-status-badge hidden" id="ladeplan-status-badge"></div>
+        <div class="beta-status-row"><span class="bl">Aktuell</span><span class="bv" id="ladeplan-modal-current">—</span></div>
+        <label class="beta-plan-field">Zielzeit<input type="datetime-local" id="ladeplan-time-input"></label>
+        <div class="beta-plan-live-feedback hidden" id="ladeplan-live-feedback"></div>
+        <label class="beta-plan-field beta-plan-slider-field" id="ladeplan-soc-field">
+          <div class="beta-plan-slider-label"><span>Ziel</span><span class="beta-plan-slider-value" id="ladeplan-soc-value">80%</span></div>
+          <div class="beta-plan-slider-wrap">
+            <input type="range" id="ladeplan-soc-slider" min="0" max="100" step="1" value="80">
+            <div class="beta-plan-slider-mark hidden" id="ladeplan-soc-mark"></div>
+          </div>
+        </label>
+        <div class="beta-plan-buttons">
+          <button type="button" class="beta-plan-set-btn" id="ladeplan-set-btn">Plan setzen</button>
+        </div>
+      </div>`;
+    modal.querySelector(".ladeplan-modal-close").addEventListener("click", () => this._closeLadeplanModal());
+    overlay.appendChild(modal);
+    this._ladeplanModalEl = overlay;
+
+    // WICHTIG: in this._lp ablegen, NICHT this._r -- this._r wird von
+    // _switchView() bei jedem Tab-Wechsel (auch dem direkt auf das erste
+    // Rendern folgenden) auf {} zurueckgesetzt, dieses Popup aber nur
+    // EINMAL gebaut (siehe this._lp-Kommentar im Konstruktor). Genau das
+    // war der Bug, der alle Slider-Faelle wirkungslos gemacht hat.
+    const q = (s) => modal.querySelector(s);
+    this._lp.statusBadge  = q("#ladeplan-status-badge");
+    this._lp.modalCurrent = q("#ladeplan-modal-current");
+    this._lp.liveFeedback = q("#ladeplan-live-feedback");
+    this._lp.timeInput    = q("#ladeplan-time-input");
+    this._lp.socSlider    = q("#ladeplan-soc-slider");
+    this._lp.socMark      = q("#ladeplan-soc-mark");
+    this._lp.socValue     = q("#ladeplan-soc-value");
+    this._lp.setBtn       = q("#ladeplan-set-btn");
+
+    // NUR EIN Slider (%, die von evcc tatsaechlich verwendete Einheit) --
+    // km wird lediglich zur Anzeige mitgerechnet (Nutzerwunsch 2026-09-23:
+    // "km und soc zusammen im slider anzeigen" / "radiobuttons entfernen").
+    // Vorher gab es zwei separate Slider mit eigenem %/km-Umschalter, die
+    // beim Wechsel nicht synchron blieben -- mit nur einer Quelle entfaellt
+    // dieses Problem strukturell.
+    this._lp.socSlider.addEventListener("input", () => {
+      if (Number(this._lp.socSlider.value) < (this._lp.socMinVal ?? 0)) {
+        this._lp.socSlider.value = String(this._lp.socMinVal ?? 0);
+      }
+      this._updateLadeplanSocValueLabel();
+      this._updateLadeplanLiveFeedback();
+    });
+    // Nutzerwunsch 2026-09-23: "nachdem ich zeit und ziel soc eingestellt
+    // habe sollte ueber dem slider direkt die auswertung erscheinen ob die
+    // ladung so moeglich ist" -- Zielzeit-Aenderung loest dieselbe Live-
+    // Neuberechnung aus wie ein Slider-Dreh.
+    this._lp.timeInput.addEventListener("input", () => this._updateLadeplanLiveFeedback());
+
+    this._lp.setBtn.addEventListener("click", () => {
+      const targetTime = this._fromDatetimeLocal(this._lp.timeInput.value);
+      if (targetTime === null) return;
+      const targetSoc = parseFloat(this._lp.socSlider.value);
+      if (isNaN(targetSoc)) return;
+      this._call("set_evcc_charge_plan", { target_time: targetTime, target_soc: targetSoc });
+      this._closeLadeplanModal();
+    });
+    return overlay;
+  }
+
+  // Kombinierte "64% · 175 km"-Anzeige fuer den Slider-Wert (Nutzerwunsch
+  // 2026-09-23: "km und soc zusammen im slider anzeigen") -- km wird aus
+  // _ladeplanConversionInputs() abgeleitet, "—" ohne bekannten Verbrauch/
+  // verfuegbare kWh statt einer geratenen Zahl.
+  _updateLadeplanSocValueLabel() {
+    if (!this._lp.socValue) return;
+    const socVal = parseFloat(this._lp.socSlider.value);
+    let kmText = "—";
+    const conv = this._ladeplanConversionInputs();
+    if (conv && !isNaN(socVal)) {
+      const km = ((socVal / 100) * conv.usableKwh) / conv.consumption * 100;
+      kmText = `${Math.round(km)} km`;
+    }
+    this._lp.socValue.textContent = `${socVal}% · ${kmText}`;
+  }
+
+  // Ermittelt das MINIMUM (aktueller SoC, Nutzerwunsch 2026-09-22: "der
+  // slider darf nicht negativ verschoben werden koennen. man will ja laden
+  // und nicht entladen") und positioniert den senkrechten Strich auf dem
+  // Track an dieser Stelle (Slider bleibt visuell 0-100 -- Nutzerwunsch:
+  // "der slider startet bei 47 und nicht bei 0%"; KEINE Zahl/Zeile mehr
+  // dazu, Nutzerwunsch 2026-09-23: "entferne die zeile komplett"). Das
+  // Nicht-unter-den-Ist-Stand-Verschieben selbst wird ueber den 'input'-
+  // Handler in _buildLadeplanModal() durchgesetzt (Wert zurueckschnappen
+  // statt Track kappen).
+  _updateLadeplanSliderBounds(soc, range) {
+    const lp = this._lp;
+    if (!lp.socSlider) return;
+    const socMin = isNaN(soc) ? 0 : Math.round(Math.min(100, Math.max(0, soc)));
+    lp.socMinVal = socMin;
+    if (!isNaN(soc)) {
+      lp.socMark.style.left = `${socMin}%`;
+      lp.socMark.classList.remove("hidden");
+    } else {
+      lp.socMark.classList.add("hidden");
+    }
+    // Erstes Oeffnen (in dieser Seiten-Sitzung): Slider auf den aktuellen
+    // SoC setzen statt auf den statischen HTML-Default "80" stehenzulassen
+    // (Nutzerwunsch 2026-09-23: "der sliderbutton startet bzw steht nicht
+    // bei dem aktuellen soc, sondern auf 80"). Danach nur noch nach oben
+    // korrigieren, wenn ein bereits eingestellter Wert unter das (ggf.
+    // gestiegene) neue Minimum faellt -- NICHT bei jedem erneuten Oeffnen
+    // ueberschreiben, siehe Kommentar unten in _openLadeplanModal()/vorherige
+    // Fassung (sprang sonst wieder auf einen festen Wert zurueck).
+    if (!lp.initialized) {
+      lp.socSlider.value = String(socMin);
+      lp.initialized = true;
+    } else if (Number(lp.socSlider.value) < socMin) {
+      lp.socSlider.value = String(socMin);
+    }
+    this._updateLadeplanSocValueLabel();
+  }
+
+  _openLadeplanModal() {
+    if (!this._ladeplanModalEl) return;
+    this._updateLadeplanStatusBadge();
+    // Aktuellen Stand (SoC/Reichweite) im Modal aus derselben, bereits von
+    // _updateBetaEvccPlan() gepflegten Karten-Zeile uebernehmen, statt ihn
+    // hier ein zweites Mal zu berechnen.
+    if (this._r.betaPlanCurrent && this._lp.modalCurrent) {
+      this._lp.modalCurrent.textContent = this._r.betaPlanCurrent.textContent;
+    }
+    const socEid = this._eid("soc_entity");
+    const soc = socEid ? parseFloat(this._raw(socEid) ?? NaN) : NaN;
+    const rangeEid = this._eid("range_estimate");
+    const range = rangeEid ? parseFloat(this._raw(rangeEid) ?? NaN) : NaN;
+    this._updateLadeplanSliderBounds(soc, range);
+    this._updateLadeplanLiveFeedback();
+    this._ladeplanModalEl.classList.remove("hidden");
+  }
+
+  // Status-Badge in der ersten Zeile des Popups (Nutzerwunsch 2026-09-23:
+  // "in der ersten zeile eine statusanzeige einfuegen ob evcc bzw das auto
+  // ladebereit ist. zentriert") -- dieselbe connected/charging-Grundlage
+  // wie _updateBetaWallbox() (evcc_live_attrs().connected/charging), hier
+  // aber auf die Frage "ladebereit?" zugeschnitten statt der dortigen
+  // Lädt/Verbunden/Nicht-verbunden-Pille.
+  _updateLadeplanStatusBadge() {
+    if (!this._lp.statusBadge) return;
+    const live = this._evccLive();
+    const connected = live.connected;
+    if (connected == null) {
+      this._lp.statusBadge.classList.add("hidden");
+      return;
+    }
+    const charging = live.charging;
+    const power = parseFloat(live.charge_power ?? NaN);
+    const isCharging = charging === true && !isNaN(power) && power > 0.05;
+    this._lp.statusBadge.classList.remove("hidden", "lvl-ok", "lvl-warn", "lvl-bad");
+    if (!connected) {
+      this._lp.statusBadge.textContent = "Nicht angeschlossen";
+      this._lp.statusBadge.classList.add("lvl-bad");
+    } else if (isCharging) {
+      this._lp.statusBadge.textContent = "Ladebereit – lädt bereits";
+      this._lp.statusBadge.classList.add("lvl-ok");
+    } else {
+      this._lp.statusBadge.textContent = "Ladebereit";
+      this._lp.statusBadge.classList.add("lvl-ok");
+    }
+  }
+
+  // Gemeinsame Grundlage fuer die %<->km-Umrechnung: sowohl beim Umschalten
+  // des Einheiten-Radios (Slider-Sync, siehe _buildLadeplanModal()) als auch
+  // fuer _ladeplanFeedback() gebraucht. usable_kwh wird aus available_kwh/soc
+  // zurueckgerechnet (available_kwh = soc/100*usable_kwh, siehe
+  // coordinator.py::available_kwh()) statt separat exponiert. null, wenn
+  // SoC/verfuegbare kWh/Verbrauchsschnitt (noch) nicht bekannt sind.
+  _ladeplanConversionInputs() {
+    const socEid = this._eid("soc_entity");
+    const soc = socEid ? parseFloat(this._raw(socEid) ?? NaN) : NaN;
+    const availEid = this._eid("available_kwh");
+    const available = availEid ? parseFloat(this._raw(availEid) ?? NaN) : NaN;
+    if (isNaN(soc) || soc <= 0 || isNaN(available)) return null;
+    const usableKwh = available / (soc / 100);
+    if (!(usableKwh > 0)) return null;
+    const rangeEid = this._eid("range_estimate");
+    const rs = rangeEid && this._hass ? this._hass.states[rangeEid] : null;
+    const consumption = rs && rs.attributes ? parseFloat(rs.attributes.verbrauch_kwh_100km) : NaN;
+    if (isNaN(consumption) || consumption <= 0) return null;
+    return { usableKwh, consumption };
+  }
+
+  // Live-Erreichbarkeits-Einschaetzung im Popup, click-fuer-click
+  // nachgerechnet (Nutzerwunsch 2026-09-23, siehe Aufrufstellen in
+  // _buildLadeplanModal()/_openLadeplanModal()) -- gleiche Grundformel wie
+  // coordinator.py::_evcc_charge_plan_feedback_text(), hier in JS
+  // dupliziert, da das VOR dem Absenden greifen muss (mit Werten, die der
+  // Server noch gar nicht kennt). max_charge_power_kw kommt ueber
+  // evcc_live_attrs(). Kurzform statt Fliesstext (Nutzerwunsch: "text
+  // vereinfachen zu viel text") plus Ampel-Farbe (ok/warn/bad) statt
+  // reinem Text. Gibt {level, text} oder null (keine Aussage moeglich,
+  // z.B. max. Ladeleistung noch unbekannt) zurueck.
+  _ladeplanFeedback() {
+    if (!this._ladeplanModalEl) return null;
+    const targetTime = this._fromDatetimeLocal(this._lp.timeInput.value);
+    if (targetTime === null) return null;
+    const socEid = this._eid("soc_entity");
+    const soc = socEid ? parseFloat(this._raw(socEid) ?? NaN) : NaN;
+    const availEid = this._eid("available_kwh");
+    const available = availEid ? parseFloat(this._raw(availEid) ?? NaN) : NaN;
+    if (isNaN(soc) || soc <= 0 || isNaN(available)) return null;
+    const usableKwh = available / (soc / 100);
+    if (!(usableKwh > 0)) return null;
+
+    const targetSoc = parseFloat(this._lp.socSlider.value);
+    if (isNaN(targetSoc)) return null;
+
+    const neededKwh = (targetSoc / 100) * usableKwh - available;
+    if (neededKwh <= 0) return { level: "ok", text: "Ziel bereits erreicht" };
+    const maxPowerKw = this._evccLive().max_charge_power_kw;
+    if (!maxPowerKw || maxPowerKw <= 0) return null;
+
+    const hoursNeeded = neededKwh / maxPowerKw;
+    const nowTs = Date.now() / 1000;
+    const hoursAvailable = (targetTime - nowTs) / 3600;
+    const puffer = hoursAvailable - hoursNeeded;
+    const finishText = this._fmtTime(nowTs + hoursNeeded * 3600);
+    const kwhText = `${neededKwh.toFixed(1)} kWh nötig`;
+    if (puffer < 0) {
+      return { level: "bad", text: `Nicht rechtzeitig – ${kwhText}, fehlen ca. ${this._fmtDuration(Math.abs(puffer) * 60)}` };
+    }
+    // Schwelle wie bei coordinator.py::_evcc_charge_plan_feedback_text()
+    // (0.25h) -- ein Slider-Fall mit z.B. 36 min Puffer (< 1h, aber deutlich
+    // VOR der Zielzeit fertig) wirkte mit der vorherigen 1h-Schwelle
+    // unangebracht alarmierend orange (Nutzerwunsch 2026-09-23: "warum ist
+    // es orange wenn es vor der zielzeit ist?").
+    if (puffer < 0.25) {
+      return { level: "warn", text: `Knapp – ${kwhText}, fertig ca. ${finishText}` };
+    }
+    return { level: "ok", text: `Erreichbar – ${kwhText}, fertig ca. ${finishText}` };
+  }
+
+  _updateLadeplanLiveFeedback() {
+    if (!this._lp.liveFeedback) return;
+    const fb = this._ladeplanFeedback();
+    this._lp.liveFeedback.classList.toggle("hidden", !fb);
+    this._lp.liveFeedback.classList.remove("lvl-ok", "lvl-warn", "lvl-bad");
+    if (!fb) return;
+    this._lp.liveFeedback.textContent = fb.text;
+    this._lp.liveFeedback.classList.add(`lvl-${fb.level}`);
+  }
+
+  _closeLadeplanModal() {
+    if (this._ladeplanModalEl) this._ladeplanModalEl.classList.add("hidden");
   }
 
   _updateBetaEvccPlan() {
@@ -5730,6 +5980,63 @@ class EVAssistantPanel extends HTMLElement {
         .pending-modal-overlay { padding: 0; align-items: flex-end; }
         .pending-modal { max-width: none; max-height: 88vh; border-radius: var(--radius) var(--radius) 0 0; }
       }
+      /* Eigene Klassen statt pending-modal-* (Nutzerwunsch 2026-09-22:
+         immer mittig, auch auf schmalen Bildschirmen -- KEIN Bottom-Sheet
+         wie beim Fahrten/Fremdladungen-Popup). */
+      .ladeplan-modal-overlay {
+        position: fixed; inset: 0; z-index: 50; background: rgba(0,0,0,0.55);
+        display: flex; align-items: center; justify-content: center; padding: 16px;
+      }
+      .ladeplan-modal-overlay.hidden { display: none; }
+      .ladeplan-modal {
+        background: var(--bg-1); border: 1px solid var(--line); border-radius: var(--radius);
+        max-width: 420px; width: 100%; max-height: 85vh; overflow-y: auto; padding: 0 0 16px;
+      }
+      .ladeplan-modal-head {
+        display: flex; align-items: center; gap: 9px; padding: 14px var(--pad);
+        position: sticky; top: 0; background: var(--bg-1); border-bottom: 1px solid var(--line);
+        --mdc-icon-size: 17px;
+      }
+      .ladeplan-modal-head .ic { color: var(--ink-dim); display: grid; place-items: center; }
+      .ladeplan-modal-head h2 { flex: 1; margin: 0; font-size: 0.95rem; color: var(--ink); }
+      .ladeplan-modal-close {
+        border: none; background: none; color: var(--ink-mid); cursor: pointer;
+        display: flex; align-items: center; padding: 4px; --mdc-icon-size: 18px;
+      }
+      .ladeplan-modal-close:hover { color: var(--ink); }
+      .ladeplan-modal-body { padding: 14px var(--pad) 0; display: flex; flex-direction: column; gap: 14px; }
+      .beta-plan-slider-field { gap: 6px; }
+      .beta-plan-slider-label { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.78rem; color: var(--ink-mid); }
+      .beta-plan-slider-value { font-family: var(--font-mono); font-size: 0.9rem; color: var(--ink); }
+      .beta-plan-slider-wrap { position: relative; padding: 8px 0; }
+      .beta-plan-slider-wrap input[type="range"] {
+        width: 100%; margin: 0; accent-color: var(--accent-2); cursor: pointer;
+      }
+      /* Reiner senkrechter Strich, KEIN Label mehr (Nutzerwunsch 2026-09-23:
+         "entferne die zeile komplett") -- left wird per JS als Prozent-
+         position auf dem vollen 0-100-Track gesetzt (aktueller SoC). */
+      .beta-plan-slider-mark {
+        position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+        background: var(--ink-dim); pointer-events: none;
+      }
+      .beta-plan-slider-mark.hidden { display: none; }
+      .beta-plan-live-feedback {
+        font-size: 0.85rem; font-weight: 600; line-height: 1.4; text-align: center;
+        border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px;
+      }
+      .beta-plan-live-feedback.hidden { display: none; }
+      .beta-plan-live-feedback.lvl-ok {
+        color: #2e7d32; border-color: color-mix(in oklab, #2e7d32 55%, transparent);
+        background: color-mix(in oklab, #2e7d32 15%, var(--bg-0));
+      }
+      .beta-plan-live-feedback.lvl-warn {
+        color: #ef6c00; border-color: color-mix(in oklab, #ef6c00 55%, transparent);
+        background: color-mix(in oklab, #ef6c00 15%, var(--bg-0));
+      }
+      .beta-plan-live-feedback.lvl-bad {
+        color: #c62828; border-color: color-mix(in oklab, #c62828 55%, transparent);
+        background: color-mix(in oklab, #c62828 15%, var(--bg-0));
+      }
       .beta-grid { display: flex; flex-direction: column; gap: var(--gap); }
       .beta-hero-row { display: grid; grid-template-columns: 1.6fr 1fr; gap: var(--gap); align-items: stretch; }
       .beta-bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); align-items: start; }
@@ -5849,23 +6156,20 @@ class EVAssistantPanel extends HTMLElement {
       .beta-evcc-manual-status .bv { flex: 1; }
       .beta-evcc-manual-status button { border-color: var(--line); color: var(--ink); }
       .beta-plan-status { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
-      .beta-plan-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
-      .beta-plan-unit-toggle { display: flex; gap: 10px; font-size: 0.8rem; color: var(--ink-mid); align-items: center; }
-      .beta-plan-unit-toggle label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
-      .beta-plan-unit-toggle input { accent-color: var(--accent-2); cursor: pointer; }
+      .beta-plan-actions { display: flex; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
       .beta-plan-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--ink-mid); }
       .beta-plan-field input {
         border: 1px solid var(--line); background: var(--bg-0); color: var(--ink);
         border-radius: 8px; padding: 5px 8px; font-size: 0.85rem; font-family: var(--font-mono);
       }
       .beta-plan-field input[type="number"] { width: 70px; }
-      .beta-plan-buttons { display: flex; gap: 8px; margin-left: auto; }
-      .beta-plan-set-btn, .beta-plan-clear-btn {
+      .beta-plan-buttons { display: flex; gap: 8px; margin-left: auto; justify-content: flex-end; }
+      .beta-plan-open-btn, .beta-plan-set-btn, .beta-plan-clear-btn {
         border: 1px solid var(--line); background: var(--bg-0); color: var(--ink);
         font-size: 0.78rem; padding: 6px 12px; border-radius: 8px; cursor: pointer;
       }
-      .beta-plan-set-btn { color: var(--accent-2); border-color: var(--accent-2); }
-      .beta-plan-set-btn:hover, .beta-plan-clear-btn:hover { opacity: 0.8; }
+      .beta-plan-open-btn, .beta-plan-set-btn { color: var(--accent-2); border-color: var(--accent-2); }
+      .beta-plan-open-btn:hover, .beta-plan-set-btn:hover, .beta-plan-clear-btn:hover { opacity: 0.8; }
       @media (max-width: 900px) {
         .beta-hero-row { grid-template-columns: 1fr; }
         .beta-bottom-row { grid-template-columns: 1fr; }
