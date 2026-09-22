@@ -5469,10 +5469,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # zugrunde liegende Verbrauchsschnitt zwischen den Aufrufen
         # verschoben hatte -- ohne dieses Log war das im Nachhinein nicht
         # mehr rekonstruierbar, welcher Verbrauchswert tatsaechlich zum
-        # Einsatz kam. Bewusst INFO statt WARNING -- kein Fehlerfall, nur
-        # Nachvollziehbarkeit fuer eine Berechnung, die sonst unsichtbar im
-        # Hintergrund passiert.
-        _LOGGER.info(
+        # Einsatz kam. Bewusst WARNING statt INFO, obwohl kein Fehlerfall:
+        # HA filtert INFO fuer Custom Components standardmaessig ohne
+        # explizite logger-Konfiguration weg (live 2026-09-22 verifiziert --
+        # ein INFO-Log an genau dieser Stelle blieb unsichtbar), WARNING
+        # bleibt ohne Zusatzaufwand nachvollziehbar.
+        _LOGGER.warning(
             "evcc_charge_plan: %s km -> %s%% SoC (Verbrauchsschnitt %.2f kWh/100km, nutzbare Kapazitaet %.1f kWh)",
             target_range_km, target_soc, consumption, usable_kwh,
         )
