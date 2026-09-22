@@ -1316,3 +1316,82 @@ clear_evcc_charge_plan:
       selector:
         config_entry:
           integration: ev_assistant
+
+set_evcc_charge_plan_range_km:
+  name: evcc-Ladeplan setzen (Restreichweite)
+  description: >
+    Wie set_evcc_charge_plan, nimmt aber eine Ziel-Restreichweite in km
+    entgegen statt Ziel-SoC in % — rechnet intern mit dem aktuellen
+    Verbrauchsschnitt (derselbe wie bei der Restreichweite-Anzeige) in SoC%
+    um und setzt dann evccs Ladeplan wie gewohnt.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    target_range_km:
+      name: Ziel-Restreichweite (km)
+      description: Welche Restreichweite bis zur Zielzeit erreicht sein soll.
+      required: true
+      example: 250
+      selector:
+        number:
+          min: 0
+          step: 1
+          unit_of_measurement: "km"
+          mode: box
+    target_time:
+      name: Zielzeit (Unix)
+      description: Bis wann die Ziel-Restreichweite erreicht sein soll.
+      required: true
+      example: 1789780800
+      selector:
+        number:
+          mode: box
+
+set_evcc_manual_mode:
+  name: evcc-Modus manuell setzen
+  description: >
+    Setzt den evcc-Lademodus direkt und pausiert dadurch die
+    profilbasierte Modus-/SoC-Steuerung, bis das Fahrzeug den Ladepunkt
+    verlässt (danach automatisch zurückgesetzt, gilt also nur für die
+    aktuelle Ladesession). Min-/Ziel-SoC bleiben dabei unverändert stehen.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    mode:
+      name: Modus
+      description: Der zu setzende evcc-Lademodus.
+      required: true
+      selector:
+        select:
+          options:
+            - label: "Smart"
+              value: "pv"
+            - label: "Smart + Immer laden"
+              value: "minpv"
+            - label: "Schnell"
+              value: "now"
+
+clear_evcc_manual_mode:
+  name: Manuellen evcc-Modus beenden
+  description: >
+    Beendet einen über set_evcc_manual_mode gesetzten manuellen Modus
+    vorzeitig, ohne auf das Trennen des Fahrzeugs zu warten — die
+    profilbasierte Steuerung greift danach wieder normal.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant

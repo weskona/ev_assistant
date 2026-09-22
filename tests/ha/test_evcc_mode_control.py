@@ -64,6 +64,11 @@ def _fake_evcc_client(probe_result="loadpoint", mode_ok=True, min_soc_ok=True, l
     client.async_set_mode = AsyncMock(return_value=mode_ok)
     client.async_set_min_soc = AsyncMock(return_value=min_soc_ok)
     client.async_set_limit_soc = AsyncMock(return_value=limit_soc_ok)
+    # Wohlgeformter Default statt eines auto-generierten AsyncMock/MagicMock,
+    # das _current_loadpoint() (z.B. ueber _check_evcc_manual_mode_session_
+    # end(), von _refresh_evcc_state() nach jedem Schreibvorgang aufgerufen)
+    # nicht als echtes dict lesen koennte.
+    client.async_get_state = AsyncMock(return_value={"loadpoints": [], "vehicles": {}})
     return client
 
 
@@ -1218,6 +1223,147 @@ async def test_async_clear_evcc_charge_plan_ruft_client_auf(hass, coordinators):
 
     assert ok is True
     coordinator._evcc_client.async_clear_vehicle_plan_soc.assert_awaited_once_with("db:8")
+
+
+# ----- async_set_evcc_charge_plan_range_km -----------------------------------
+
+async def test_async_set_evcc_charge_plan_range_km_rechnet_um_und_ruft_client_auf(hass, coordinators):
+    from datetime import datetime, timezone
+
+    from custom_components.ev_assistant.const import (
+        CONF_USABLE_KWH,
+        CONF_VEHICLE_HERSTELLER,
+        CONF_VEHICLE_MODELL,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "ecpkm1",
+        options={CONF_VEHICLE_HERSTELLER: "Peugeot", CONF_VEHICLE_MODELL: "eRifter", CONF_USABLE_KWH: 50.0},
+    )
+    coordinator._evcc_state = {"vehicles": {"db:8": {"title": "eRifter"}}, "loadpoints": [{}]}
+    coordinator._evcc_client = _fake_evcc_client()
+    coordinator._evcc_client.async_set_vehicle_plan_soc = AsyncMock(return_value=True)
+    # 15 kWh/100km fest vorgeben -- 200 km -> 30 kWh -> bei 50 kWh nutzbar = 60%.
+    coordinator._current_consumption_estimate_kwh_per_100km = lambda: 15.0
+
+    target_time = datetime(2026, 9, 19, 12, 0, 0, tzinfo=timezone.utc).timestamp()
+    ok = await coordinator.async_set_evcc_charge_plan_range_km(200.0, target_time)
+
+    assert ok is True
+    coordinator._evcc_client.async_set_vehicle_plan_soc.assert_awaited_once_with(
+        "db:8", 60, "2026-09-19T12:00:00Z"
+    )
+
+
+async def test_async_set_evcc_charge_plan_range_km_ohne_verbrauchswert_gibt_false(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "ecpkm2",
+        options={CONF_VEHICLE_HERSTELLER: "Peugeot", CONF_VEHICLE_MODELL: "eRifter"},
+    )
+    coordinator._evcc_state = {"vehicles": {"db:8": {"title": "eRifter"}}, "loadpoints": [{}]}
+    coordinator._evcc_client = _fake_evcc_client()
+    coordinator._evcc_client.async_set_vehicle_plan_soc = AsyncMock(return_value=True)
+    coordinator._current_consumption_estimate_kwh_per_100km = lambda: None
+
+    ok = await coordinator.async_set_evcc_charge_plan_range_km(200.0, 1789833600.0)
+
+    assert ok is False
+    coordinator._evcc_client.async_set_vehicle_plan_soc.assert_not_called()
+
+
+# ----- async_set_evcc_manual_mode / _check_evcc_manual_mode_session_end ------
+
+async def test_async_set_evcc_manual_mode_schreibt_und_setzt_flag(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "emm1")
+    coordinator._evcc_state = {"loadpoints": [{}]}
+    coordinator._evcc_client = _fake_evcc_client()
+
+    ok = await coordinator.async_set_evcc_manual_mode("now")
+
+    assert ok is True
+    coordinator._evcc_client.async_set_mode.assert_awaited_once_with(1, "now")
+    assert coordinator.data["evcc_manual_mode_active"] is True
+    assert coordinator.data["evcc_manual_mode"] == "now"
+
+
+async def test_async_set_evcc_manual_mode_ohne_loadpoint_gibt_false(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "emm2")
+    coordinator._evcc_client = _fake_evcc_client()  # kein _evcc_state gesetzt
+
+    ok = await coordinator.async_set_evcc_manual_mode("now")
+
+    assert ok is False
+    assert not coordinator.data.get("evcc_manual_mode_active")
+
+
+async def test_async_set_evcc_manual_mode_schreibfehler_setzt_flag_nicht(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "emm3")
+    coordinator._evcc_state = {"loadpoints": [{}]}
+    coordinator._evcc_client = _fake_evcc_client(mode_ok=False)
+
+    ok = await coordinator.async_set_evcc_manual_mode("now")
+
+    assert ok is False
+    assert not coordinator.data.get("evcc_manual_mode_active")
+
+
+async def test_async_clear_evcc_manual_mode_setzt_flag_zurueck(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "emm4")
+    coordinator.data["evcc_manual_mode_active"] = True
+    coordinator.data["evcc_manual_mode"] = "now"
+
+    await coordinator.async_clear_evcc_manual_mode()
+
+    assert coordinator.data["evcc_manual_mode_active"] is False
+    assert coordinator.data["evcc_manual_mode"] is None
+
+
+async def test_apply_evcc_mode_control_manueller_modus_ueberspringt_schreibvorgang(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_MODE_CONTROL_ENABLED
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "emm5", options={CONF_EVCC_MODE_CONTROL_ENABLED: True},
+    )
+    coordinator._evcc_state = {"loadpoints": [{}]}
+    coordinator._evcc_client = _fake_evcc_client()
+    coordinator.data["evcc_manual_mode_active"] = True
+    _seed_usage_profile(coordinator)
+
+    await coordinator._async_apply_evcc_mode_control()
+
+    coordinator._evcc_client.async_set_mode.assert_not_called()
+
+
+async def test_check_evcc_manual_mode_session_end_setzt_bei_trennen_zurueck(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "emm6")
+    coordinator.data["evcc_manual_mode_active"] = True
+    coordinator.data["evcc_manual_mode"] = "now"
+
+    # Erst verbunden (Vorzustand setzen)...
+    coordinator._evcc_state = {"loadpoints": [{"connected": True}]}
+    coordinator._check_evcc_manual_mode_session_end()
+    assert coordinator.data["evcc_manual_mode_active"] is True  # noch verbunden, unveraendert
+
+    # ...dann getrennt -> Flanke loest Reset aus.
+    coordinator._evcc_state = {"loadpoints": [{"connected": False}]}
+    coordinator._check_evcc_manual_mode_session_end()
+    assert coordinator.data["evcc_manual_mode_active"] is False
+    assert coordinator.data["evcc_manual_mode"] is None
+
+
+async def test_check_evcc_manual_mode_session_end_kein_reset_ohne_vorherigen_connect(hass, coordinators):
+    # Direkt nach Neustart (_evcc_connected_prev noch None) darf ein
+    # "nicht verbunden" NICHT als Trenn-Flanke zaehlen.
+    coordinator, _ = await _make_coordinator(hass, coordinators, "emm7")
+    coordinator.data["evcc_manual_mode_active"] = True
+    coordinator.data["evcc_manual_mode"] = "now"
+
+    coordinator._evcc_state = {"loadpoints": [{"connected": False}]}
+    coordinator._check_evcc_manual_mode_session_end()
+
+    assert coordinator.data["evcc_manual_mode_active"] is True
 
 
 # ----- _evcc_vehicle_api_key --------------------------------------------------

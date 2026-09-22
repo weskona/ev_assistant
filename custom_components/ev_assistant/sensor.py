@@ -1558,7 +1558,12 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
     coordinator.py::async_set_evcc_mode_control_pause()) gerade aktiv ist.
     "target_soc" ist bereits inkl. der Ueberschuss-Zielanhebung (siehe
     engine.apply_opportunistic_surplus_target()) -- Attribut
-    "ueberschuss_ziel_erweitert_aktiv" zeigt, ob diese gerade greift."""
+    "ueberschuss_ziel_erweitert_aktiv" zeigt, ob diese gerade greift.
+    "manueller_modus_aktiv"/"manueller_modus" zeigen einen ueber
+    coordinator.py::async_set_evcc_manual_mode() gesetzten manuellen Modus
+    (session-scoped, endet automatisch beim Trennen des Fahrzeugs) -- wie
+    bei "pausiert" zeigt der Sensor auch dann weiter die rechnerische
+    Empfehlung, es wird aber nichts mehr automatisch geschrieben."""
 
     _attr_translation_key = "evcc_mode_control"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -1621,6 +1626,11 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             "balancing_aktiv": targets["balancing_faellig"],
             "naechste_vollladung_faellig_ts": targets["naechste_vollladung_faellig_ts"],
             "pausiert": bool(self.coordinator.data.get("evcc_mode_control_paused")),
+            # Manueller Modus (siehe coordinator.py::async_set_evcc_manual_
+            # mode()) -- session-scoped, siehe _check_evcc_manual_mode_
+            # session_end(). "manueller_modus" ist None, solange inaktiv.
+            "manueller_modus_aktiv": bool(self.coordinator.data.get("evcc_manual_mode_active")),
+            "manueller_modus": self.coordinator.data.get("evcc_manual_mode"),
         }
         written = self.coordinator.data.get("evcc_mode_control")
         if written and "geschrieben_ts" in written:

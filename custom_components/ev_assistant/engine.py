@@ -1435,6 +1435,23 @@ def calculate_range_km(
     return round(battery_kwh / consumption_kwh_per_100km * 100.0, 1)
 
 
+def range_km_to_soc_percent(
+    target_range_km: float, usable_kwh: float, consumption_kwh_per_100km: Optional[float],
+) -> Optional[int]:
+    """Kehrfunktion zu calculate_range_km(): welcher SoC% noetig ist, um
+    `target_range_km` mit demselben Verbrauchsschnitt zu erreichen -- fuer
+    ein Ziel-Restreichweite-in-km-Eingabefeld (siehe coordinator.py::
+    async_set_evcc_charge_plan_range_km()), das intern auf evccs
+    SoC-basierten Ladeplan umrechnet. None bei denselben Vorbedingungen wie
+    calculate_range_km() (kein Verbrauchswert) sowie bei usable_kwh <= 0
+    (identisch zu kwh_to_soc_percent()'s Verhalten, hier zusaetzlich noetig
+    da sonst durch 0 geteilt wuerde)."""
+    if consumption_kwh_per_100km is None or consumption_kwh_per_100km <= 0 or usable_kwh <= 0:
+        return None
+    target_kwh = target_range_km / 100.0 * consumption_kwh_per_100km
+    return kwh_to_soc_percent(target_kwh, usable_kwh)
+
+
 def is_plausible_trip_consumption(
     verbrauch_kwh: Optional[float],
     km: Optional[float],

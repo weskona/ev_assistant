@@ -4546,6 +4546,42 @@ class EVAssistantPanel extends HTMLElement {
       this._call("set_evcc_mode_control_pause", { paused: e.target.checked });
     });
 
+    // Manueller Modus (siehe coordinator.py::async_set_evcc_manual_mode()) --
+    // im Gegensatz zur Pause oben session-scoped (endet automatisch beim
+    // Trennen des Fahrzeugs, siehe _check_evcc_manual_mode_session_end()),
+    // daher eigener Bereich statt Wiederverwendung des Pause-Schalters
+    // (Nutzerentscheidung 2026-09-22).
+    const manual = document.createElement("div");
+    manual.className = "beta-evcc-manual";
+    manual.innerHTML = `
+      <div class="beta-evcc-manual-row">
+        <select id="beta-evcc-manual-select">
+          <option value="pv">Smart</option>
+          <option value="minpv">Smart + Immer laden</option>
+          <option value="now">Schnell</option>
+        </select>
+        <button type="button" id="beta-evcc-manual-set-btn">Manuell setzen</button>
+      </div>
+      <div class="beta-evcc-manual-status hidden" id="beta-evcc-manual-status">
+        <span class="bl">Manuell aktiv</span>
+        <span class="bv" id="beta-evcc-manual-status-text">—</span>
+        <button type="button" id="beta-evcc-manual-clear-btn">Beenden</button>
+      </div>
+    `;
+    card.appendChild(manual);
+    const qm = (s) => manual.querySelector(s);
+    this._r.betaEvccManualSelect  = qm("#beta-evcc-manual-select");
+    this._r.betaEvccManualSetBtn  = qm("#beta-evcc-manual-set-btn");
+    this._r.betaEvccManualStatus  = qm("#beta-evcc-manual-status");
+    this._r.betaEvccManualStatusText = qm("#beta-evcc-manual-status-text");
+    this._r.betaEvccManualClearBtn = qm("#beta-evcc-manual-clear-btn");
+    this._r.betaEvccManualSetBtn.addEventListener("click", () => {
+      this._call("set_evcc_manual_mode", { mode: this._r.betaEvccManualSelect.value });
+    });
+    this._r.betaEvccManualClearBtn.addEventListener("click", () => {
+      this._call("clear_evcc_manual_mode", {});
+    });
+
     const q = (s) => list.querySelector(s);
     this._r.betaEvccCard        = card;
     this._r.betaEvccModeLabel   = badge.querySelector("#beta-evcc-mode-label");
@@ -4584,8 +4620,13 @@ class EVAssistantPanel extends HTMLElement {
     const form = document.createElement("div");
     form.className = "beta-plan-form";
     form.innerHTML = `
+      <div class="beta-plan-unit-toggle">
+        <label><input type="radio" name="beta-plan-unit" value="pct" checked> %</label>
+        <label><input type="radio" name="beta-plan-unit" value="km"> km</label>
+      </div>
       <label class="beta-plan-field">Zielzeit<input type="datetime-local" id="beta-plan-time-input"></label>
-      <label class="beta-plan-field">Ziel-SoC<input type="number" id="beta-plan-soc-input" min="0" max="100" step="1" value="80">%</label>
+      <label class="beta-plan-field" id="beta-plan-soc-field">Ziel-SoC<input type="number" id="beta-plan-soc-input" min="0" max="100" step="1" value="80">%</label>
+      <label class="beta-plan-field hidden" id="beta-plan-km-field">Ziel-Reichweite<input type="number" id="beta-plan-km-input" min="0" step="1" value="200">km</label>
       <div class="beta-plan-buttons">
         <button type="button" class="beta-plan-set-btn" id="beta-plan-set-btn">Plan setzen</button>
         <button type="button" class="beta-plan-clear-btn hidden" id="beta-plan-clear-btn">Plan löschen</button>
@@ -4601,15 +4642,39 @@ class EVAssistantPanel extends HTMLElement {
     this._r.betaPlanStart      = q("#beta-plan-start");
     this._r.betaPlanActive     = q("#beta-plan-active");
     this._r.betaPlanTimeInput  = q("#beta-plan-time-input");
+    this._r.betaPlanSocField   = q("#beta-plan-soc-field");
     this._r.betaPlanSocInput   = q("#beta-plan-soc-input");
+    this._r.betaPlanKmField    = q("#beta-plan-km-field");
+    this._r.betaPlanKmInput    = q("#beta-plan-km-input");
     this._r.betaPlanSetBtn     = q("#beta-plan-set-btn");
     this._r.betaPlanClearBtn   = q("#beta-plan-clear-btn");
 
+    // %/km-Umschalter: blendet nur das jeweils passende Eingabefeld ein,
+    // welcher Service beim Absenden gerufen wird entscheidet sich am
+    // aktuell ausgewaehlten Radio-Button (siehe Klick-Handler unten).
+    form.querySelectorAll('input[name="beta-plan-unit"]').forEach((radio) => {
+      radio.addEventListener("change", () => {
+        const isKm = radio.value === "km" && radio.checked;
+        if (radio.checked) {
+          this._r.betaPlanSocField.classList.toggle("hidden", isKm);
+          this._r.betaPlanKmField.classList.toggle("hidden", !isKm);
+        }
+      });
+    });
+
     this._r.betaPlanSetBtn.addEventListener("click", () => {
       const targetTime = this._fromDatetimeLocal(this._r.betaPlanTimeInput.value);
-      const targetSoc = parseFloat(this._r.betaPlanSocInput.value);
-      if (targetTime === null || isNaN(targetSoc)) return;
-      this._call("set_evcc_charge_plan", { target_time: targetTime, target_soc: targetSoc });
+      if (targetTime === null) return;
+      const unitKm = form.querySelector('input[name="beta-plan-unit"]:checked').value === "km";
+      if (unitKm) {
+        const targetRangeKm = parseFloat(this._r.betaPlanKmInput.value);
+        if (isNaN(targetRangeKm)) return;
+        this._call("set_evcc_charge_plan_range_km", { target_time: targetTime, target_range_km: targetRangeKm });
+      } else {
+        const targetSoc = parseFloat(this._r.betaPlanSocInput.value);
+        if (isNaN(targetSoc)) return;
+        this._call("set_evcc_charge_plan", { target_time: targetTime, target_soc: targetSoc });
+      }
     });
     this._r.betaPlanClearBtn.addEventListener("click", () => {
       this._call("clear_evcc_charge_plan", {});
@@ -4818,6 +4883,16 @@ class EVAssistantPanel extends HTMLElement {
     // kein Sonderfall fuer "gerade angeklickt" noetig (einfacher Ein/Aus-
     // Schalter, kein Schieberegler mit Zwischenzustaenden).
     r.betaEvccPauseToggle.checked = !!attrs.pausiert;
+
+    // Manueller Modus (siehe coordinator.py::async_set_evcc_manual_mode()) --
+    // waehrend aktiv Auswahl/Setzen-Button ausblenden (nichts zum Setzen,
+    // solange schon einer laeuft), stattdessen Status + Beenden-Button.
+    const manualActive = !!attrs.manueller_modus_aktiv;
+    r.betaEvccManualSelect.closest(".beta-evcc-manual-row").classList.toggle("hidden", manualActive);
+    r.betaEvccManualStatus.classList.toggle("hidden", !manualActive);
+    if (manualActive) {
+      r.betaEvccManualStatusText.textContent = this._evccModeLabel(attrs.manueller_modus);
+    }
   }
 
   // Wallbox-Karte (Aufgabe 3.3) -- IMMER dieselbe Struktur, nur der
@@ -5731,8 +5806,28 @@ class EVAssistantPanel extends HTMLElement {
       .beta-evcc-pause-row { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; cursor: pointer; }
       .beta-evcc-pause-row .bl { color: var(--ink-mid); }
       .beta-evcc-pause-toggle { accent-color: var(--accent-2); cursor: pointer; }
+      .beta-evcc-manual { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+      .beta-evcc-manual-row { display: flex; align-items: center; gap: 8px; }
+      .beta-evcc-manual-row select {
+        flex: 1; border: 1px solid var(--line); background: var(--bg-0); color: var(--ink);
+        border-radius: 8px; padding: 5px 8px; font-size: 0.82rem;
+      }
+      .beta-evcc-manual-row button, .beta-evcc-manual-status button {
+        border: 1px solid var(--accent-2); background: var(--bg-0); color: var(--accent-2);
+        font-size: 0.78rem; padding: 6px 12px; border-radius: 8px; cursor: pointer; white-space: nowrap;
+      }
+      .beta-evcc-manual-row button:hover, .beta-evcc-manual-status button:hover { opacity: 0.8; }
+      .beta-evcc-manual-status {
+        display: flex; align-items: center; gap: 8px; font-size: 0.82rem;
+      }
+      .beta-evcc-manual-status .bl { color: var(--ink-mid); }
+      .beta-evcc-manual-status .bv { flex: 1; }
+      .beta-evcc-manual-status button { border-color: var(--line); color: var(--ink); }
       .beta-plan-status { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; }
       .beta-plan-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+      .beta-plan-unit-toggle { display: flex; gap: 10px; font-size: 0.8rem; color: var(--ink-mid); align-items: center; }
+      .beta-plan-unit-toggle label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
+      .beta-plan-unit-toggle input { accent-color: var(--accent-2); cursor: pointer; }
       .beta-plan-field { display: flex; flex-direction: column; gap: 4px; font-size: 0.78rem; color: var(--ink-mid); }
       .beta-plan-field input {
         border: 1px solid var(--line); background: var(--bg-0); color: var(--ink);

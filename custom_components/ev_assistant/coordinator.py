@@ -201,6 +201,7 @@ from .engine import (
     net_need_after_pv_kwh,
     normalize_evcc_mode,
     pop_pending,
+    range_km_to_soc_percent,
     remaining_today_kwh,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
@@ -593,6 +594,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # "nicht aktiv" an, das ist bereits der sichere Default.
         self._ueberschuss_ziel_aktiv: bool = False
         self._ueberschuss_ziel_pending_seit_ts: Optional[float] = None
+        # Letzter bekannter evcc-"connected"-Zustand des Loadpoints, fuer
+        # _check_evcc_manual_mode_session_end() (Erkennung des Trenn-
+        # Uebergangs True->False, um den manuellen Modus session-scoped
+        # zurueckzusetzen, siehe dort) -- rein im Arbeitsspeicher, ein
+        # Neustart faengt konservativ bei "noch kein Vorzustand bekannt" an
+        # (kein falscher Trenn-Trigger direkt nach dem Start).
+        self._evcc_connected_prev: Optional[bool] = None
         # Ob gerade ein Repair-Issue fuer eine fehlgeschlagene SoC-Scope-
         # Probe aktiv ist (siehe _update_soc_scope_issue()) -- rein im
         # Arbeitsspeicher, analog _entity_issue_active: ein Neustart faengt
@@ -792,6 +800,26 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     async def _refresh_evcc_state(self, _now=None) -> None:
         if self._evcc_client is not None:
             self._evcc_state = await self._evcc_client.async_get_state()
+            self._check_evcc_manual_mode_session_end()
+
+    def _check_evcc_manual_mode_session_end(self) -> None:
+        """Setzt einen ueber async_set_evcc_manual_mode() gesetzten
+        manuellen Modus zurueck, sobald das Fahrzeug den Loadpoint verlaesst
+        (evccs "connected" True->False) -- bewusst session-scoped statt
+        dauerhaft (Nutzerentscheidung 2026-09-22, analog evccs eigenem
+        "Always charge: once"), damit ein vergessener manueller Modus nicht
+        tagelang haengen bleibt. Reiner Flanken-Trigger: nur der Uebergang
+        von "war verbunden" auf "jetzt nicht mehr" loest aus, nicht schon
+        ein einzelnes "nicht verbunden" (z.B. beim allerersten Aufruf nach
+        Neustart, wo _evcc_connected_prev noch None ist)."""
+        loadpoint = self._current_loadpoint()
+        connected = loadpoint.get("connected") if loadpoint is not None else None
+        was_connected = self._evcc_connected_prev
+        self._evcc_connected_prev = connected
+        if was_connected and connected is False and self.data.get("evcc_manual_mode_active"):
+            self.data["evcc_manual_mode_active"] = False
+            self.data["evcc_manual_mode"] = None
+            self._save_soon()
 
     async def _refresh_evcc_sessions(self, _now=None) -> None:
         """evccs Ladelogbuch neu holen und je Fahrzeug aufsummieren (siehe
@@ -3871,12 +3899,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Jahreszeiten-Schwankungen (Kaelte-Malus), faellt sonst auf den
         rollierenden Schnitt zurueck."""
         usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+        return calculate_range_km(self._soc, usable_kwh, self._current_consumption_estimate_kwh_per_100km())
+
+    def _current_consumption_estimate_kwh_per_100km(self) -> Optional[float]:
+        """Aktuell anzunehmender Verbrauchsschnitt -- gemeinsam genutzt von
+        range_estimate_km() und async_set_evcc_charge_plan_range_km(), damit
+        beide (Anzeige und Ziel-Reichweite-Umrechnung) auf demselben Wert
+        beruhen. Bandspezifisch, wenn Aussentemperatur konfiguriert und genug
+        Fahrten fuers aktuelle Temperaturband vorliegen, sonst der
+        rollierende 30-Tage-Schnitt (siehe range_estimate_km()-Docstring)."""
         consumption = self._vehicle_avg_consumption_kwh_per_100km_rolling()
         bucket = temperature_bucket(self._outside_temp, TEMP_BUCKET_BOUNDARIES)
         bucket_consumption = self._consumption_by_temp_bucket().get(bucket)
         if bucket_consumption is not None:
             consumption = bucket_consumption
-        return calculate_range_km(self._soc, usable_kwh, consumption)
+        return consumption
 
     def battery_capacity_kwh(self) -> Optional[float]:
         """Rollierend geschaetzte tatsaechliche Akku-Gesamtkapazitaet aus
@@ -5117,6 +5154,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # wieder ausgeschaltet wird (Nutzerentscheidung, Produktions-
             # feedback 2026-09-18: einfacher Dauer-Schalter statt Zeitfenster).
             return
+        if self.data.get("evcc_manual_mode_active"):
+            # Manuell gesetzter Modus (siehe async_set_evcc_manual_mode()) --
+            # session-scoped, wird beim Trennen automatisch zurueckgesetzt
+            # (siehe _check_evcc_manual_mode_session_end()), nicht erst durch
+            # erneutes manuelles Ausschalten wie die Pause oben. Waehrend
+            # aktiv fasst diese Funktion Modus/Min-/Ziel-SoC komplett nicht
+            # an -- identisches Verhalten zur Pause, nur mit anderem
+            # Reset-Ausloeser (Nutzerentscheidung 2026-09-22).
+            return
         if self._evcc_charge_plan_active():
             # evcc verfolgt gerade einen eigenen Ladeplan (Zielzeit-Laden,
             # siehe async_set_evcc_charge_plan()/_evcc_charge_plan_active())
@@ -5226,6 +5272,48 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.async_set_updated_data(self.data)
         self._save_soon()
 
+    async def async_set_evcc_manual_mode(self, mode: str) -> bool:
+        """Setzt `mode` ("pv"/"minpv"/"now") direkt an evcc und pausiert
+        dadurch die profilbasierte Modus-/SoC-Steuerung, bis das Fahrzeug
+        den Loadpoint verlaesst (siehe _check_evcc_manual_mode_session_
+        end()) -- session-scoped statt dauerhaft wie async_set_evcc_mode_
+        control_pause() (Nutzerentscheidung 2026-09-22: "nur aktuelle
+        Session", analog evccs eigenem "Always charge: once"). Min-/Ziel-SoC
+        bleiben dabei unangetastet (identisches Verhalten zur Pause, siehe
+        dortigen Docstring) -- nur der Modus wird einmalig geschrieben, kein
+        laufender Abgleich waehrend die manuelle Ueberschreibung aktiv ist.
+        False, wenn evcc/Loadpoint nicht ermittelbar ist oder der
+        Schreibvorgang selbst fehlschlaegt (dann bleibt die vorherige
+        Steuerung unveraendert aktiv, kein halb gesetzter Zustand)."""
+        if self._evcc_client is None:
+            return False
+        loadpoint_id = self._current_loadpoint_index()
+        if loadpoint_id is None:
+            _LOGGER.warning("evcc_manual_mode: kein Loadpoint gefunden, ueberspringe")
+            return False
+        ok = await self._evcc_client.async_set_mode(loadpoint_id, mode)
+        if not ok:
+            _LOGGER.warning("evcc_manual_mode: Setzen fehlgeschlagen (mode=%s)", mode)
+            return False
+        self.data["evcc_manual_mode_active"] = True
+        self.data["evcc_manual_mode"] = mode
+        await self._refresh_evcc_state()
+        self.async_set_updated_data(self.data)
+        self._save_soon()
+        return True
+
+    async def async_clear_evcc_manual_mode(self) -> None:
+        """Beendet einen ueber async_set_evcc_manual_mode() gesetzten
+        manuellen Modus vorzeitig (ohne auf das Trennen des Fahrzeugs zu
+        warten, siehe _check_evcc_manual_mode_session_end()) -- die
+        profilbasierte Steuerung greift ab dem naechsten Zyklus wieder
+        normal (sofern nicht aus anderem Grund pausiert/im Urlaub/aktiver
+        Ladeplan)."""
+        self.data["evcc_manual_mode_active"] = False
+        self.data["evcc_manual_mode"] = None
+        self.async_set_updated_data(self.data)
+        self._save_soon()
+
     def _evcc_charge_plan_status(self) -> Optional[dict]:
         """Live-Status von evccs eigenem Ladeplan (Zielzeit-Laden, siehe
         evcc_client.py::async_set_vehicle_plan_soc()) fuer EvccChargePlanSensor
@@ -5284,6 +5372,24 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._refresh_evcc_state()
         self.async_set_updated_data(self.data)
         return True
+
+    async def async_set_evcc_charge_plan_range_km(self, target_range_km: float, target_time: float) -> bool:
+        """Wie async_set_evcc_charge_plan(), nimmt aber eine Ziel-
+        Restreichweite in km entgegen statt Ziel-SoC in % -- rechnet ueber
+        range_km_to_soc_percent() mit demselben Verbrauchsschnitt um, den
+        auch range_estimate_km() anzeigt (siehe _current_consumption_
+        estimate_kwh_per_100km()), dann identischer Ablauf. False (statt
+        eines geratenen SoC-Werts) ohne bekannten Verbrauchswert -- eine
+        Reichweitenangabe ohne Verbrauchsbezug waere reine Raterei."""
+        usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+        consumption = self._current_consumption_estimate_kwh_per_100km()
+        target_soc = range_km_to_soc_percent(target_range_km, usable_kwh, consumption)
+        if target_soc is None:
+            _LOGGER.warning(
+                "evcc_charge_plan: kein Verbrauchswert bekannt, kann %s km nicht in SoC umrechnen", target_range_km
+            )
+            return False
+        return await self.async_set_evcc_charge_plan(target_soc, target_time)
 
     async def async_clear_evcc_charge_plan(self) -> bool:
         """Loescht evccs Ladeplan wieder (siehe async_set_evcc_charge_plan()) --

@@ -54,6 +54,7 @@ from engine import (
     normalize_anbieter,
     normalize_evcc_mode,
     pop_pending,
+    range_km_to_soc_percent,
     remaining_today_kwh,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
@@ -1716,6 +1717,31 @@ def test_calculate_range_km_durchgerechnetes_beispiel():
 ])
 def test_calculate_range_km_fehlende_oder_unplausible_eingabe_liefert_none(soc_pct, consumption):
     assert calculate_range_km(soc_pct=soc_pct, usable_kwh=50.0, consumption_kwh_per_100km=consumption) is None
+
+
+# ----- range_km_to_soc_percent: Kehrfunktion zu calculate_range_km ----------
+
+def test_range_km_to_soc_percent_kehrt_calculate_range_km_um():
+    # 200 km bei 15 kWh/100km -> 30 kWh -> bei 50 kWh nutzbar = 60%.
+    assert range_km_to_soc_percent(target_range_km=200.0, usable_kwh=50.0, consumption_kwh_per_100km=15.0) == 60
+
+
+def test_range_km_to_soc_percent_klemmt_ueber_100():
+    # 500 km waeren 75 kWh -- mehr als die 50 kWh nutzbare Kapazitaet gibt her.
+    assert range_km_to_soc_percent(target_range_km=500.0, usable_kwh=50.0, consumption_kwh_per_100km=15.0) == 100
+
+
+@pytest.mark.parametrize("consumption,usable_kwh", [
+    (None, 50.0),
+    (0.0, 50.0),
+    (-5.0, 50.0),
+    (15.0, 0.0),
+    (15.0, -5.0),
+])
+def test_range_km_to_soc_percent_fehlende_oder_unplausible_eingabe_liefert_none(consumption, usable_kwh):
+    assert range_km_to_soc_percent(
+        target_range_km=100.0, usable_kwh=usable_kwh, consumption_kwh_per_100km=consumption
+    ) is None
 
 
 # ----- is_plausible_trip_consumption: Ausreisser aus SoC-Delta erkennen ----

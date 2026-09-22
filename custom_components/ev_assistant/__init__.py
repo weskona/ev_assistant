@@ -21,6 +21,7 @@ from .const import (
     SERVICE_ADD_LADEKARTE_PREISSTUFE,
     SERVICE_ADD_MAINTENANCE,
     SERVICE_CLEAR_EVCC_CHARGE_PLAN,
+    SERVICE_CLEAR_EVCC_MANUAL_MODE,
     SERVICE_DELETE,
     SERVICE_DELETE_LADEKARTE,
     SERVICE_DELETE_LADEKARTE_PREISSTUFE,
@@ -38,6 +39,8 @@ from .const import (
     SERVICE_LOG_TRIP,
     SERVICE_MARK_MAINTENANCE_DONE,
     SERVICE_SET_EVCC_CHARGE_PLAN,
+    SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM,
+    SERVICE_SET_EVCC_MANUAL_MODE,
     SERVICE_SET_EVCC_MODE_CONTROL_PAUSE,
     SERVICE_SET_USAGE_PROFILE_BUFFER_PCT,
     SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED,
@@ -426,6 +429,21 @@ CLEAR_EVCC_CHARGE_PLAN_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
 })
 
+SET_EVCC_CHARGE_PLAN_RANGE_KM_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("target_range_km"): vol.All(vol.Coerce(float), vol.Range(min=0)),
+    vol.Required("target_time"): vol.Coerce(float),
+})
+
+SET_EVCC_MANUAL_MODE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("mode"): vol.In(["pv", "minpv", "now"]),
+})
+
+CLEAR_EVCC_MANUAL_MODE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+})
+
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Version 1 -> 2: evcc_intg-Entity-Discovery entfernt (siehe
@@ -693,6 +711,23 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_clear_evcc_charge_plan()
 
+    async def _handle_set_evcc_charge_plan_range_km(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_set_evcc_charge_plan_range_km(
+                call.data["target_range_km"], call.data["target_time"]
+            )
+
+    async def _handle_set_evcc_manual_mode(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_set_evcc_manual_mode(call.data["mode"])
+
+    async def _handle_clear_evcc_manual_mode(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_clear_evcc_manual_mode()
+
     hass.services.async_register(DOMAIN, SERVICE_LOG, _handle_log, schema=LOG_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCARD, _handle_discard, schema=DISCARD_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE, _handle_simulate, schema=SIMULATE_SCHEMA)
@@ -750,6 +785,18 @@ def _register_services(hass: HomeAssistant) -> None:
         DOMAIN, SERVICE_CLEAR_EVCC_CHARGE_PLAN, _handle_clear_evcc_charge_plan,
         schema=CLEAR_EVCC_CHARGE_PLAN_SCHEMA,
     )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM, _handle_set_evcc_charge_plan_range_km,
+        schema=SET_EVCC_CHARGE_PLAN_RANGE_KM_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_EVCC_MANUAL_MODE, _handle_set_evcc_manual_mode,
+        schema=SET_EVCC_MANUAL_MODE_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_CLEAR_EVCC_MANUAL_MODE, _handle_clear_evcc_manual_mode,
+        schema=CLEAR_EVCC_MANUAL_MODE_SCHEMA,
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -773,6 +820,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_MARK_MAINTENANCE_DONE, SERVICE_URLAUB_SEIT,
                 SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED, SERVICE_SET_EVCC_MODE_CONTROL_PAUSE,
                 SERVICE_SET_EVCC_CHARGE_PLAN, SERVICE_CLEAR_EVCC_CHARGE_PLAN,
+                SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM, SERVICE_SET_EVCC_MANUAL_MODE,
+                SERVICE_CLEAR_EVCC_MANUAL_MODE,
             ):
                 hass.services.async_remove(DOMAIN, service)
         else:

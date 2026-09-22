@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.95.0] - 2026-09-22
+
+### Added
+
+- **Manual evcc mode override, scoped to the current session**: new `set_evcc_manual_mode` service (mode selector in the "Automatische Ladesteuerung" panel card) writes a chosen mode (`pv`/`minpv`/`now`) directly to evcc and pauses the profile-based mode/min/target-SoC control the same way the existing manual pause does — but unlike that pause, it resets automatically once the vehicle disconnects (`clear_evcc_manual_mode` also ends it early), instead of needing to be switched back off by hand. Mirrors evcc's own new "Always charge: once" semantics rather than the old persistent pause.
+- **Charge plan target as remaining range (km), not just SoC%**: new `set_evcc_charge_plan_range_km` service (with a %/km toggle in the "Ladeplan" panel card) converts a target range in km to the equivalent target SoC% — using the same consumption estimate the "Restreichweite" display already uses (temperature-band-specific where available, else the rolling 30-day average) — then sets evcc's own charge plan exactly as `set_evcc_charge_plan` already does with a direct SoC% input.
+
 ## [0.94.2] - 2026-09-22
 
 ### Changed
