@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.94.1] - 2026-09-22
+
+### Fixed
+
+- **evcc mode control's live-drift detection broke against evcc 0.316.0's "Mode Redesign"**: since that release (out today, our own evcc add-on already auto-updated), evcc's loadpoint state reports `mode: "smart"` instead of `"pv"`, and `"minpv"` no longer appears on the read path at all — replaced by a separate `alwaysCharge` (`off`/`on`/`once`) field. Writing `pv`/`minpv` still works (evcc keeps accepting them as deprecated aliases), but our own read-side comparison (self-heal drift check against evcc's live state, and the panel's live wallbox mode display) compared against the old `pv`/`minpv` strings directly, so every cycle looked like a mismatch — a working-but-noisy state that also lost the actual self-heal capability (it could no longer tell a genuine drift from evcc's own normal echo). New `engine.normalize_evcc_mode()` translates `smart`+`alwaysCharge` back into our `pv`/`minpv`/`now` vocabulary before comparing or displaying; falls through unchanged for older evcc versions that still report `pv`/`minpv` directly.
+
 ## [0.94.0] - 2026-09-22
 
 ### Changed

@@ -199,6 +199,7 @@ from .engine import (
     leasing_status,
     merge_pending,
     net_need_after_pv_kwh,
+    normalize_evcc_mode,
     pop_pending,
     remaining_today_kwh,
     rolling_consumption_kwh_per_100km,
@@ -868,7 +869,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # erreicht) -- fuers Panel (Uebersicht-Beta) die Grundlage fuer
             # die 3-Stufen-Unterscheidung Laedt/Verbunden/Nicht verbunden.
             "connected": loadpoint.get("connected"),
-            "mode": loadpoint.get("mode"),
+            # normalize_evcc_mode(): seit evcc 0.316.0 meldet der Loadpoint
+            # "smart" statt "pv"/"minpv" plus ein separates "alwaysCharge"-
+            # Feld (siehe dortigen Docstring) -- zurueckuebersetzt, damit die
+            # Panel-Anzeige (MODE_LABEL/_evccModeLabel()) unveraendert
+            # pv/minpv/now/off erwartet.
+            "mode": normalize_evcc_mode(loadpoint.get("mode"), loadpoint.get("alwaysCharge")),
             "phases_active": loadpoint.get("phasesActive"),
             "vehicle_soc": loadpoint.get("vehicleSoc"),
             # "effectiveLimitSoc"/"effectiveMinSoc" statt der rohen
@@ -5134,7 +5140,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         }
         loadpoint = self._current_loadpoint() or {}
         live = {
-            "modus": loadpoint.get("mode"),
+            # normalize_evcc_mode(): seit evcc 0.316.0 meldet der Loadpoint
+            # "smart" statt "pv"/"minpv" (siehe dortigen Docstring) -- ohne
+            # diese Ruecknormalisierung waere new_state["modus"] ("pv"/
+            # "minpv") NIE gleich live["modus"] ("smart"), der Drift-
+            # Vergleich weiter unten wuerde also JEDEN Zyklus faelschlich
+            # einen Unterschied erkennen und unnoetig neu schreiben.
+            "modus": normalize_evcc_mode(loadpoint.get("mode"), loadpoint.get("alwaysCharge")),
             "min_soc": loadpoint.get("effectiveMinSoc", loadpoint.get("minSoc")),
             "target_soc": loadpoint.get("effectiveLimitSoc", loadpoint.get("limitSoc")),
         }

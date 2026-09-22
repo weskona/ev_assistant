@@ -946,6 +946,33 @@ def weekday_usage_profile_window_kwh(
     return round(total, 2)
 
 
+def normalize_evcc_mode(raw_mode: Optional[str], always_charge: Optional[str]) -> Optional[str]:
+    """Uebersetzt evccs seit 0.316.0 (2026-09-22, "Mode Redesign: rename pv
+    to smart, replace minpv with always charge", PR #32490) neues Loadpoint-
+    Schema zurueck in unser eigenes pv/minpv/now-Vokabular. evcc meldet auf
+    dem LESE-Pfad (`/api/state`, dieselbe Quelle wie coordinator.py::
+    _current_loadpoint()) seitdem NIE MEHR "pv"/"minpv" -- "pv" wurde zu
+    "smart" umbenannt, "minpv" komplett entfernt und durch ein separates
+    Loadpoint-Feld `alwaysCharge` (off/on/once) ersetzt. Das SCHREIBEN von
+    "pv"/"minpv" bleibt laut PR abwaertskompatibel (wird automatisch auf
+    smart+alwaysCharge gemappt) -- nur der Lese-Vergleich (Self-Heal-Drift-
+    Erkennung in _async_apply_evcc_mode_control(), sowie die Panel-Anzeige
+    des LIVE-evcc-Modus) muss dem folgen, sonst wuerde jeder Vergleich gegen
+    unser eigenes geschriebenes "pv"/"minpv" faelschlich immer als
+    "unterschiedlich" gelten (evcc meldet ja immer "smart" zurueck).
+
+    "smart" + alwaysCharge "on"/"once" == das alte "minpv" (nie pausieren,
+    mindestens Mindestleistung). "smart" + alwaysCharge "off"/None == das
+    alte "pv" (reiner Solar-Ueberschuss). Alles andere (z.B. "now"/"off",
+    oder falls always_charge fehlt weil eine 0.316.0-Datenquelle das Feld
+    einmal nicht liefert) wird unveraendert durchgereicht -- inkl. einer
+    ALTEN evcc-Version, die noch direkt "pv"/"minpv" meldet (kein
+    always_charge-Feld vorhanden -> faellt auf raw_mode zurueck)."""
+    if raw_mode == "smart":
+        return "minpv" if always_charge in ("on", "once") else "pv"
+    return raw_mode
+
+
 def determine_evcc_mode(available_kwh: float, min_kwh: float, target_kwh: float) -> str:
     """3-Stufen-Dringlichkeit fuer den evcc-Lademodus, aus dem Vergleich der
     aktuell verfuegbaren Batteriekapazitaet mit dem Nutzungsprofil-basierten

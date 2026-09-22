@@ -52,6 +52,7 @@ from engine import (
     merge_pending,
     net_need_after_pv_kwh,
     normalize_anbieter,
+    normalize_evcc_mode,
     pop_pending,
     remaining_today_kwh,
     rolling_consumption_kwh_per_100km,
@@ -929,6 +930,42 @@ def test_weekday_usage_profile_window_kwh_unvollstaendiges_profil():
     profile = {0: 5.0, 1: 6.0}
     # Start Sonntag (6, fehlt im Profil -> 0.0) + Montag (0, Wraparound, 5.0).
     assert weekday_usage_profile_window_kwh(profile, start_weekday=6, num_days=2) == 5.0
+
+
+# ----- normalize_evcc_mode: evcc 0.316.0 "smart"/alwaysCharge Ruecknormalisierung --
+
+def test_normalize_evcc_mode_smart_mit_always_charge_on_gibt_minpv():
+    assert normalize_evcc_mode("smart", "on") == "minpv"
+
+
+def test_normalize_evcc_mode_smart_mit_always_charge_once_gibt_minpv():
+    assert normalize_evcc_mode("smart", "once") == "minpv"
+
+
+def test_normalize_evcc_mode_smart_mit_always_charge_off_gibt_pv():
+    assert normalize_evcc_mode("smart", "off") == "pv"
+
+
+def test_normalize_evcc_mode_smart_ohne_always_charge_gibt_pv():
+    # Fehlendes always_charge (None) -> wie "off" behandeln, nicht faelschlich
+    # als minpv interpretieren.
+    assert normalize_evcc_mode("smart", None) == "pv"
+
+
+def test_normalize_evcc_mode_now_und_off_unveraendert():
+    assert normalize_evcc_mode("now", None) == "now"
+    assert normalize_evcc_mode("off", None) == "off"
+
+
+def test_normalize_evcc_mode_alte_evcc_version_ohne_smart_unveraendert():
+    # Aeltere evcc-Versionen (vor 0.316.0) melden weiterhin direkt pv/minpv,
+    # kein always_charge-Feld vorhanden -- unveraendert durchreichen.
+    assert normalize_evcc_mode("pv", None) == "pv"
+    assert normalize_evcc_mode("minpv", None) == "minpv"
+
+
+def test_normalize_evcc_mode_none_gibt_none():
+    assert normalize_evcc_mode(None, None) is None
 
 
 # ----- determine_evcc_mode: 3-Stufen-Dringlichkeit -------------------------
