@@ -197,6 +197,7 @@ from .engine import (
     ladekarte_legacy_gebuehren,
     ladekarten_summary,
     leasing_status,
+    max_achievable_target_soc,
     merge_pending,
     net_need_after_pv_kwh,
     normalize_evcc_mode,
@@ -957,6 +958,31 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if not isinstance(grid_power, (int, float)):
             return None
         return -float(grid_power)
+
+    def _evcc_max_charge_power_kw(self) -> Optional[float]:
+        """Maximale Ladeleistung des aktuellen Loadpoints in kW -- fuer die
+        Erreichbarkeits-Plausibilitaetspruefung in async_set_evcc_charge_
+        plan() (siehe engine.max_achievable_target_soc()). Aus evccs live
+        "effectiveMaxCurrent" (faellt auf die rohe "maxCurrent" zurueck,
+        falls evcc noch keine effective*-Variante liefert, identisches
+        Muster wie bei min/limitSoc) mal aktiver Phasenzahl mal 230V --
+        dieselbe Spannungsannahme wie DEFAULT_WALLBOX_MIN_POWER_W (6A x
+        230V einphasig). "phasesActive" statt "phasesConfigured": waehrend
+        eines aktiven Phasenumschalt-Vorgangs oder bei (noch) unbekannter
+        Konfiguration ist das der zuverlaessigere Live-Wert; faellt auf 1
+        Phase zurueck, wenn evcc (noch) keine Angabe liefert (konservative
+        Unterschaetzung statt eines geratenen 3-Phasen-Werts). None ohne
+        Loadpoint oder ohne numerischen Strom-Wert."""
+        loadpoint = self._current_loadpoint()
+        if loadpoint is None:
+            return None
+        max_current = loadpoint.get("effectiveMaxCurrent", loadpoint.get("maxCurrent"))
+        if not isinstance(max_current, (int, float)):
+            return None
+        phases = loadpoint.get("phasesActive")
+        if not isinstance(phases, (int, float)) or phases <= 0:
+            phases = 1
+        return round(max_current * phases * 230.0 / 1000.0, 3)
 
     def _wire_home_price(self) -> None:
         """Heimstrompreis: optionale Live-Entitaet (z.B. ein dynamischer
@@ -5348,6 +5374,49 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         soll die Modus-Steuerung gleichermassen pausieren."""
         return self._evcc_charge_plan_status() is not None
 
+    async def _clamp_evcc_charge_plan_target_soc(self, requested_soc: int, target_time: float) -> int:
+        """Plausibilitaetspruefung fuer async_set_evcc_charge_plan() (siehe
+        engine.max_achievable_target_soc()-Docstring): klemmt ein
+        angefragtes Ziel-SoC auf das bis target_time maximal Erreichbare
+        (verfuegbare kWh + maximale Ladeleistung * Restzeit) und informiert
+        per persistent_notification, wenn das noetig war -- ein Ziel, das in
+        der verfuegbaren Zeit gar nicht erreichbar waere, soll nicht
+        kommentarlos an evcc weitergereicht werden (Nutzerwunsch
+        2026-09-22). Gibt requested_soc UNVERAENDERT zurueck, wenn
+        available_kwh()/die maximale Ladeleistung (noch) nicht bekannt sind
+        (z.B. kein evcc-State geladen) -- konservativ keine Pruefung statt
+        einer geratenen Kappung."""
+        available = self.available_kwh()
+        max_power_kw = self._evcc_max_charge_power_kw()
+        if available is None or max_power_kw is None:
+            return requested_soc
+        usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+        hours = (target_time - dt_util.utcnow().timestamp()) / 3600.0
+        max_soc = max_achievable_target_soc(available, usable_kwh, max_power_kw, hours)
+        if max_soc is None or requested_soc <= max_soc:
+            return requested_soc
+        target_time_local = dt_util.as_local(dt_util.utc_from_timestamp(target_time)).strftime("%d.%m.%Y %H:%M")
+        _LOGGER.warning(
+            "evcc_charge_plan: Ziel-SoC %s%% bis %s nicht erreichbar (max. ca. %s%% bei %.1f kW), setze %s%%",
+            requested_soc, target_time_local, max_soc, max_power_kw, max_soc,
+        )
+        try:
+            await self.hass.services.async_call(
+                "persistent_notification", "create",
+                {
+                    "notification_id": f"{self._notify_tag}_charge_plan_unreachable",
+                    "title": "Ladeplan-Ziel nicht erreichbar",
+                    "message": (
+                        f"{requested_soc}% bis {target_time_local} sind mit ca. {max_power_kw:.1f} kW "
+                        f"Ladeleistung nicht erreichbar. Stattdessen auf das maximal Mögliche gesetzt: {max_soc}%."
+                    ),
+                },
+                blocking=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return max_soc
+
     async def async_set_evcc_charge_plan(self, target_soc: int, target_time: float) -> bool:
         """Setzt evccs Ladeplan (siehe evcc_client.py::async_set_vehicle_
         plan_soc()) -- `target_time` als Unix-Zeitstempel (Sekunden, wie im
@@ -5357,13 +5426,18 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         control()). Stoesst nach Erfolg einen sofortigen evcc-State-Refresh
         an, damit Sensor/Panel den neuen Plan ohne Wartezeit auf den
         naechsten Poll-Zyklus zeigen (analog async_set_usage_profile_
-        buffer_pct())."""
+        buffer_pct()). Prueft vorher ueber _clamp_evcc_charge_plan_target_
+        soc(), ob target_soc bis target_time ueberhaupt erreichbar ist, und
+        kappt/informiert sonst (siehe dortigen Docstring) -- gilt daher
+        automatisch auch fuer async_set_evcc_charge_plan_range_km(), das
+        diese Methode intern aufruft."""
         if self._evcc_client is None:
             return False
         vehicle_name = self._evcc_vehicle_api_key()
         if not vehicle_name:
             _LOGGER.warning("evcc_charge_plan: kein evcc-Fahrzeugschluessel ermittelbar, ueberspringe")
             return False
+        target_soc = await self._clamp_evcc_charge_plan_target_soc(target_soc, target_time)
         target_time_iso = dt_util.utc_from_timestamp(target_time).strftime("%Y-%m-%dT%H:%M:%SZ")
         ok = await self._evcc_client.async_set_vehicle_plan_soc(vehicle_name, int(target_soc), target_time_iso)
         if not ok:

@@ -1452,6 +1452,36 @@ def range_km_to_soc_percent(
     return kwh_to_soc_percent(target_kwh, usable_kwh)
 
 
+def max_achievable_target_soc(
+    available_kwh: float,
+    usable_kwh: float,
+    max_charge_power_kw: float,
+    hours_available: float,
+) -> Optional[int]:
+    """Plausibilitaetspruefung fuer async_set_evcc_charge_plan(): welcher
+    SoC% bis zur Zielzeit MAXIMAL erreichbar ist, gegeben die aktuell
+    verfuegbare kWh, die maximale Ladeleistung des Loadpoints (siehe
+    coordinator.py::_evcc_max_charge_power_kw()) und die verbleibende Zeit
+    bis zur Zielzeit -- damit ein eingegebenes Ziel-SoC/eine Ziel-
+    Restreichweite nicht kommentarlos an evcc weitergereicht wird, obwohl es
+    in der verfuegbaren Zeit physikalisch gar nicht erreichbar waere
+    (Nutzerwunsch 2026-09-22). Bewusst eine einfache lineare Abschaetzung
+    (max_charge_power_kw * Stunden), keine Nachbildung von evccs eigener
+    Ladekurven-/Tarif-Optimierung -- fuer eine Erreichbarkeits-VORWARNUNG
+    reicht das, evcc selbst optimiert WANN innerhalb des Fensters geladen
+    wird, das hier nicht.
+
+    `hours_available` negativ (Zielzeit liegt in der Vergangenheit) wird wie
+    0 behandelt -- dann ist nur der Status quo (available_kwh) erreichbar,
+    kein Sonderfall noetig. None bei usable_kwh <= 0 (identisch zu
+    kwh_to_soc_percent()'s Verhalten)."""
+    if usable_kwh <= 0:
+        return None
+    hours = max(0.0, hours_available)
+    achievable_kwh = available_kwh + max(0.0, max_charge_power_kw) * hours
+    return kwh_to_soc_percent(achievable_kwh, usable_kwh)
+
+
 def is_plausible_trip_consumption(
     verbrauch_kwh: Optional[float],
     km: Optional[float],

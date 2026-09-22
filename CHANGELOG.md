@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.96.0] - 2026-09-22
+
+### Added
+
+- **Charge plan reachability check**: `async_set_evcc_charge_plan()` (and therefore `set_evcc_charge_plan_range_km()`, which calls it internally) now checks whether the requested target SoC is actually achievable by the deadline, given the currently available kWh and the loadpoint's live maximum charging power (`effectiveMaxCurrent` × active phases × 230V) — a simple linear estimate, not a reproduction of evcc's own tariff/plan optimization, but enough for a reachability warning. If not achievable, the target is clamped to the maximum reachable SoC instead of being silently forwarded to evcc, and a persistent notification explains what was requested vs. what's actually possible. No check (request passed through unchanged) when available kWh or max charging power aren't known yet.
+
 ## [0.95.1] - 2026-09-22
 
 ### Changed

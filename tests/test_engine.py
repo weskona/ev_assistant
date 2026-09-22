@@ -49,6 +49,7 @@ from engine import (
     ladekarte_current_fee,
     ladekarten_summary,
     leasing_status,
+    max_achievable_target_soc,
     merge_pending,
     net_need_after_pv_kwh,
     normalize_anbieter,
@@ -1741,6 +1742,35 @@ def test_range_km_to_soc_percent_klemmt_ueber_100():
 def test_range_km_to_soc_percent_fehlende_oder_unplausible_eingabe_liefert_none(consumption, usable_kwh):
     assert range_km_to_soc_percent(
         target_range_km=100.0, usable_kwh=usable_kwh, consumption_kwh_per_100km=consumption
+    ) is None
+
+
+# ----- max_achievable_target_soc: Erreichbarkeits-Plausibilitaetspruefung --
+
+def test_max_achievable_target_soc_durchgerechnetes_beispiel():
+    # 20 kWh verfuegbar + 3 Stunden bei 7 kW Ladeleistung = 41 kWh, bei
+    # 50 kWh nutzbar -> 82%.
+    assert max_achievable_target_soc(
+        available_kwh=20.0, usable_kwh=50.0, max_charge_power_kw=7.0, hours_available=3.0
+    ) == 82
+
+
+def test_max_achievable_target_soc_klemmt_auf_100():
+    assert max_achievable_target_soc(
+        available_kwh=45.0, usable_kwh=50.0, max_charge_power_kw=11.0, hours_available=5.0
+    ) == 100
+
+
+def test_max_achievable_target_soc_negative_stunden_wie_null_behandelt():
+    # Zielzeit in der Vergangenheit -- nur der Status quo ist "erreichbar".
+    assert max_achievable_target_soc(
+        available_kwh=25.0, usable_kwh=50.0, max_charge_power_kw=7.0, hours_available=-2.0
+    ) == 50
+
+
+def test_max_achievable_target_soc_usable_kwh_null_gibt_none():
+    assert max_achievable_target_soc(
+        available_kwh=20.0, usable_kwh=0.0, max_charge_power_kw=7.0, hours_available=3.0
     ) is None
 
 

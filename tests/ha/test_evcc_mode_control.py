@@ -1208,6 +1208,84 @@ async def test_async_set_evcc_charge_plan_ohne_vehicle_key_gibt_false(hass, coor
     coordinator._evcc_client.async_set_vehicle_plan_soc.assert_not_called()
 
 
+async def test_async_set_evcc_charge_plan_klemmt_unerreichbares_ziel(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_USABLE_KWH,
+        CONF_VEHICLE_HERSTELLER,
+        CONF_VEHICLE_MODELL,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "ecp7",
+        options={CONF_VEHICLE_HERSTELLER: "Peugeot", CONF_VEHICLE_MODELL: "eRifter", CONF_USABLE_KWH: 50.0},
+    )
+    coordinator._soc = 20.0  # 10 kWh verfuegbar
+    coordinator._evcc_state = {
+        "vehicles": {"db:8": {"title": "eRifter"}},
+        "loadpoints": [{"effectiveMaxCurrent": 16, "phasesActive": 1}],  # 3,68 kW
+    }
+    coordinator._evcc_client = _fake_evcc_client()
+    coordinator._evcc_client.async_set_vehicle_plan_soc = AsyncMock(return_value=True)
+
+    # Nur 1h Zeit -> max. 10 + 3,68 = 13,68 kWh -> 27% (bei 50 kWh nutzbar).
+    target_time = dt_util.utcnow().timestamp() + 3600
+    ok = await coordinator.async_set_evcc_charge_plan(90, target_time)
+
+    assert ok is True
+    args, _ = coordinator._evcc_client.async_set_vehicle_plan_soc.call_args
+    assert args[1] == 27  # gekappt statt der angefragten 90%
+
+
+async def test_async_set_evcc_charge_plan_erreichbares_ziel_bleibt_unveraendert(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_USABLE_KWH,
+        CONF_VEHICLE_HERSTELLER,
+        CONF_VEHICLE_MODELL,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "ecp8",
+        options={CONF_VEHICLE_HERSTELLER: "Peugeot", CONF_VEHICLE_MODELL: "eRifter", CONF_USABLE_KWH: 50.0},
+    )
+    coordinator._soc = 20.0
+    coordinator._evcc_state = {
+        "vehicles": {"db:8": {"title": "eRifter"}},
+        "loadpoints": [{"effectiveMaxCurrent": 16, "phasesActive": 3}],  # 11 kW
+    }
+    coordinator._evcc_client = _fake_evcc_client()
+    coordinator._evcc_client.async_set_vehicle_plan_soc = AsyncMock(return_value=True)
+
+    # 5h bei 11kW -> 55 kWh moeglich, mehr als genug fuer 80%.
+    target_time = dt_util.utcnow().timestamp() + 5 * 3600
+    ok = await coordinator.async_set_evcc_charge_plan(80, target_time)
+
+    assert ok is True
+    args, _ = coordinator._evcc_client.async_set_vehicle_plan_soc.call_args
+    assert args[1] == 80
+
+
+async def test_async_set_evcc_charge_plan_ohne_max_power_keine_pruefung(hass, coordinators):
+    # Loadpoint ohne effectiveMaxCurrent/maxCurrent (z.B. aeltere evcc-
+    # Version oder Feld noch nicht befuellt) -- konservativ KEINE Kappung.
+    from custom_components.ev_assistant.const import CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "ecp9",
+        options={CONF_VEHICLE_HERSTELLER: "Peugeot", CONF_VEHICLE_MODELL: "eRifter"},
+    )
+    coordinator._soc = 20.0
+    coordinator._evcc_state = {"vehicles": {"db:8": {"title": "eRifter"}}, "loadpoints": [{}]}
+    coordinator._evcc_client = _fake_evcc_client()
+    coordinator._evcc_client.async_set_vehicle_plan_soc = AsyncMock(return_value=True)
+
+    target_time = dt_util.utcnow().timestamp() + 3600
+    ok = await coordinator.async_set_evcc_charge_plan(90, target_time)
+
+    assert ok is True
+    args, _ = coordinator._evcc_client.async_set_vehicle_plan_soc.call_args
+    assert args[1] == 90
+
+
 async def test_async_clear_evcc_charge_plan_ruft_client_auf(hass, coordinators):
     from custom_components.ev_assistant.const import CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL
 
