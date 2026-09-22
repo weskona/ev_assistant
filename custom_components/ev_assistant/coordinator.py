@@ -5463,6 +5463,19 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 "evcc_charge_plan: kein Verbrauchswert bekannt, kann %s km nicht in SoC umrechnen", target_range_km
             )
             return False
+        # Info-Log fuer die Umrechnung selbst (Produktionsvorfall 2026-09-22:
+        # dieselbe Ziel-km-Eingabe ergab zu zwei nur Minuten auseinander-
+        # liegenden Zeitpunkten unterschiedliche SoC-Werte, weil sich der
+        # zugrunde liegende Verbrauchsschnitt zwischen den Aufrufen
+        # verschoben hatte -- ohne dieses Log war das im Nachhinein nicht
+        # mehr rekonstruierbar, welcher Verbrauchswert tatsaechlich zum
+        # Einsatz kam. Bewusst INFO statt WARNING -- kein Fehlerfall, nur
+        # Nachvollziehbarkeit fuer eine Berechnung, die sonst unsichtbar im
+        # Hintergrund passiert.
+        _LOGGER.info(
+            "evcc_charge_plan: %s km -> %s%% SoC (Verbrauchsschnitt %.2f kWh/100km, nutzbare Kapazitaet %.1f kWh)",
+            target_range_km, target_soc, consumption, usable_kwh,
+        )
         return await self.async_set_evcc_charge_plan(target_soc, target_time)
 
     async def async_clear_evcc_charge_plan(self) -> bool:

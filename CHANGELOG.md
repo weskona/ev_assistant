@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.96.1] - 2026-09-22
+
+### Added
+
+- **Log the consumption estimate used for km→SoC% charge-plan conversion**: `async_set_evcc_charge_plan_range_km()` now logs (INFO) the target range, resulting SoC%, consumption estimate and usable capacity it used — production incident: the same 150 km input produced two different SoC% results a few minutes apart, because the underlying (rolling/temperature-band) consumption estimate had shifted between calls; without this log, which exact value was actually used at the time couldn't be reconstructed afterward.
+
 ## [0.96.0] - 2026-09-22
 
 ### Added
