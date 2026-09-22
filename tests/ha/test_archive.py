@@ -61,7 +61,13 @@ async def test_archivierung_verschiebt_alte_eintraege_und_erhaelt_kennzahlen(has
     history = [_charge(int(alt_ts), 20.0, 10.0, delta_soc=50.0)]
 
     coordinator, entry = await _setup_with_data(hass, hass_storage, coordinators, "arch1", fahrten, history)
-    erwartete_cycles = equivalent_full_cycles(fahrten, history, 0.0)
+    # Entladeseite haengt seit 2026-09-22 am Live-SoC-Ratchet (coordinator.data
+    # ["vehicle_discharge_kwh_total"]), nicht mehr an "fahrten" -- der steht bei
+    # einer frischen Testinstallation ohne Live-SoC-Historie bei 0, nur die
+    # Ladeseite (aus "history") zaehlt hier (siehe engine.equivalent_full_
+    # cycles_from_totals()-Docstring).
+    assert coordinator.data.get("vehicle_discharge_kwh_total", 0.0) == 0.0
+    erwartete_cycles = equivalent_full_cycles([], history, 0.0)
     assert coordinator.equivalent_full_cycles() == erwartete_cycles
 
     await coordinator._async_truncate_lifetime_lists()

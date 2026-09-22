@@ -88,8 +88,12 @@ async def test_migration_backfill_entspricht_voller_liste_berechnung(hass, hass_
 
     assert coordinator.data["lifetime_baselines_migrated"] is True
 
-    # Vollzyklen: identisch zur direkten Berechnung auf denselben Rohdaten.
-    erwartete_cycles = equivalent_full_cycles(fahrten, history, 0.0)
+    # Vollzyklen: Entladeseite haengt seit 2026-09-22 am Live-SoC-Ratchet, der
+    # bei einer Migration von einer Alt-Installation (vor Einfuehrung dieses
+    # Trackers) noch bei 0 kWh steht -- nur die (migrierte) Ladeseite zaehlt
+    # hier (siehe engine.equivalent_full_cycles_from_totals()-Docstring).
+    assert coordinator.data.get("vehicle_discharge_kwh_total", 0.0) == 0.0
+    erwartete_cycles = equivalent_full_cycles([], history, 0.0)
     assert coordinator.equivalent_full_cycles() == erwartete_cycles
 
     # AC/DC-, Anbieter- und Temperaturband-Aufschluesselung ebenso.
