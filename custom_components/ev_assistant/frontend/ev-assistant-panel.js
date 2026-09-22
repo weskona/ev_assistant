@@ -4622,6 +4622,7 @@ class EVAssistantPanel extends HTMLElement {
       <div class="beta-status-row"><span class="bl">Ziel</span><span class="bv" id="beta-plan-target">—</span></div>
       <div class="beta-status-row" id="beta-plan-start-row"><span class="bl">Geplanter Start</span><span class="bv" id="beta-plan-start">—</span></div>
       <div class="beta-status-row"><span class="bl">Status</span><span class="bv" id="beta-plan-active">—</span></div>
+      <div class="beta-status-row beta-plan-erwartung-row hidden" id="beta-plan-erwartung-row"><span class="bl">Erwartung</span><span class="bv" id="beta-plan-erwartung">—</span></div>
     `;
     card.appendChild(status);
 
@@ -4650,6 +4651,8 @@ class EVAssistantPanel extends HTMLElement {
     this._r.betaPlanStartRow   = q("#beta-plan-start-row");
     this._r.betaPlanStart      = q("#beta-plan-start");
     this._r.betaPlanActive     = q("#beta-plan-active");
+    this._r.betaPlanErwartungRow = q("#beta-plan-erwartung-row");
+    this._r.betaPlanErwartung  = q("#beta-plan-erwartung");
     this._r.betaPlanTimeInput  = q("#beta-plan-time-input");
     this._r.betaPlanSocField   = q("#beta-plan-soc-field");
     this._r.betaPlanSocInput   = q("#beta-plan-soc-input");
@@ -4723,6 +4726,9 @@ class EVAssistantPanel extends HTMLElement {
       r.betaPlanStartRow.classList.toggle("hidden", !projStart);
       if (projStart) r.betaPlanStart.textContent = this._fmtDate(projStart);
       r.betaPlanActive.textContent = attrs.aktiv ? "Lädt gerade nach Plan" : "Geplant";
+      const erwartung = typeof attrs.erwartung === "string" ? attrs.erwartung : null;
+      r.betaPlanErwartungRow.classList.toggle("hidden", !erwartung);
+      if (erwartung) r.betaPlanErwartung.textContent = erwartung;
     }
   }
 

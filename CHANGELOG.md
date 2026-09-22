@@ -2,6 +2,16 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.96.2] - 2026-09-22
+
+### Fixed
+
+- **Charge plan reachability check used the wrong phase count**: the loadpoint's maximum charging power estimate (used by the reachability/clamping check added in 0.96.0) used `phasesActive`, the *momentary* number of active phases, which is `1` simply because the vehicle isn't actively charging right now — a forward-looking "what's achievable by the deadline" estimate needs the maximum *possible* phase count instead. Now prefers `phasesConfigured` when the installation is fixed to a specific phase count, falls back to 1 phase when the charger is hardware-limited to single-phase (`chargerSinglePhase`), and otherwise assumes 3 phases as the best case for an auto/1p3p-capable charger. Previously underestimated max charging power (e.g. 3.7 kW instead of 11 kW), causing unnecessarily conservative clamping.
+
+### Added
+
+- **Charge plan outcome estimate in the panel**: after setting a charge plan, the "Ladeplan" card now shows a live "Erwartung" (estimate) row: energy still needed, estimated charging duration and completion time at the loadpoint's current max power, and whether the deadline looks comfortable or tight — recalculated on every poll from the current SoC and charging power, not a one-time message. Deliberately not a persistent notification, just an in-panel attribute (`EvccChargePlanSensor`'s new `erwartung` attribute).
+
 ## [0.96.1] - 2026-09-22
 
 ### Added

@@ -960,18 +960,25 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return -float(grid_power)
 
     def _evcc_max_charge_power_kw(self) -> Optional[float]:
-        """Maximale Ladeleistung des aktuellen Loadpoints in kW -- fuer die
-        Erreichbarkeits-Plausibilitaetspruefung in async_set_evcc_charge_
-        plan() (siehe engine.max_achievable_target_soc()). Aus evccs live
-        "effectiveMaxCurrent" (faellt auf die rohe "maxCurrent" zurueck,
-        falls evcc noch keine effective*-Variante liefert, identisches
-        Muster wie bei min/limitSoc) mal aktiver Phasenzahl mal 230V --
-        dieselbe Spannungsannahme wie DEFAULT_WALLBOX_MIN_POWER_W (6A x
-        230V einphasig). "phasesActive" statt "phasesConfigured": waehrend
-        eines aktiven Phasenumschalt-Vorgangs oder bei (noch) unbekannter
-        Konfiguration ist das der zuverlaessigere Live-Wert; faellt auf 1
-        Phase zurueck, wenn evcc (noch) keine Angabe liefert (konservative
-        Unterschaetzung statt eines geratenen 3-Phasen-Werts). None ohne
+        """Maximale ERREICHBARE Ladeleistung des aktuellen Loadpoints in kW
+        -- fuer die Erreichbarkeits-Plausibilitaetspruefung in async_set_
+        evcc_charge_plan() (siehe engine.max_achievable_target_soc()). Aus
+        evccs live "effectiveMaxCurrent" (faellt auf die rohe "maxCurrent"
+        zurueck, identisches Muster wie bei min/limitSoc) mal 230V (gleiche
+        Spannungsannahme wie DEFAULT_WALLBOX_MIN_POWER_W) mal der Phasenzahl.
+
+        Phasenzahl bewusst NICHT "phasesActive" (Produktionsvorfall
+        2026-09-22: das ist der aktuelle MOMENTAN-Wert, der z.B. 1 zeigt,
+        einfach weil gerade nicht geladen wird -- fuer eine VORWAERTS-
+        gerichtete Erreichbarkeitspruefung ("was ist BIS ZUR ZIELZEIT
+        maximal moeglich") waere das eine unbegruendete Unterschaetzung).
+        Stattdessen: "phasesConfigured" (>0), wenn die Installation fest auf
+        eine bestimmte Phasenzahl eingestellt ist -- das ist eine echte
+        Hardware-/Konfigurationsgrenze. Sonst, wenn der Lader laut
+        "chargerSinglePhase" ohnehin nur einphasig kann, 1 Phase. Sonst
+        (1p3p-faehiger Lader ohne feste Konfiguration, wie bei uns: "auto")
+        3 Phasen als Best-Case annehmen -- die Wallbox KANN sie nutzen, auch
+        wenn gerade (mangels aktiver Ladung) nur 1 aktiv ist. None ohne
         Loadpoint oder ohne numerischen Strom-Wert."""
         loadpoint = self._current_loadpoint()
         if loadpoint is None:
@@ -979,9 +986,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         max_current = loadpoint.get("effectiveMaxCurrent", loadpoint.get("maxCurrent"))
         if not isinstance(max_current, (int, float)):
             return None
-        phases = loadpoint.get("phasesActive")
-        if not isinstance(phases, (int, float)) or phases <= 0:
+        phases_configured = loadpoint.get("phasesConfigured")
+        if isinstance(phases_configured, (int, float)) and phases_configured > 0:
+            phases = phases_configured
+        elif loadpoint.get("chargerSinglePhase"):
             phases = 1
+        else:
+            phases = 3
         return round(max_current * phases * 230.0 / 1000.0, 3)
 
     def _wire_home_price(self) -> None:
@@ -5416,6 +5427,46 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         except Exception:  # noqa: BLE001
             pass
         return max_soc
+
+    def _evcc_charge_plan_feedback_text(self, target_soc, target_time: float) -> Optional[str]:
+        """Live-Einschaetzung, wie der Ladeverlauf mit den aktuell gesetzten
+        Ladeplan-Parametern zu erwarten ist -- fuer EvccChargePlanSensor's
+        `erwartung`-Attribut, das ev-assistant-panel.js direkt in der
+        Ladeplan-Karte anzeigt (Nutzerwunsch 2026-09-22: "sollte nach
+        abschicken des gewuenschten ladestands eine offensichtliche meldung
+        erscheinen, wie die ladung zu erwarten ist"; danach praezisiert:
+        "keine dauerhafte benachrichtigung nur im panel" -- daher KEINE
+        persistent_notification, sondern ein live berechnetes Attribut, das
+        bei jedem Poll mit dem aktuellen SoC/Ladeleistung neu bewertet wird,
+        statt eines an der Absendezeit eingefrorenen Textes). None ohne
+        bekanntes target_soc/Restkapazitaet/max. Ladeleistung."""
+        if target_soc is None:
+            return None
+        available = self.available_kwh()
+        max_power_kw = self._evcc_max_charge_power_kw()
+        usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+        if available is None or usable_kwh <= 0:
+            return None
+        needed_kwh = (float(target_soc) / 100.0) * usable_kwh - available
+        if needed_kwh <= 0:
+            return "Ziel bereits erreicht bzw. Restkapazitaet reicht schon."
+        if not max_power_kw or max_power_kw <= 0:
+            return None
+        hours_needed = needed_kwh / max_power_kw
+        now_ts = dt_util.utcnow().timestamp()
+        finish_local = dt_util.as_local(
+            dt_util.utc_from_timestamp(now_ts + hours_needed * 3600)
+        ).strftime("%d.%m.%Y %H:%M")
+        hours_available = (target_time - now_ts) / 3600.0
+        puffer_h = hours_available - hours_needed
+        if puffer_h >= 0.25:
+            einschaetzung = f"komfortabel erreichbar, ca. {puffer_h:.1f} h Puffer"
+        else:
+            einschaetzung = "knapp, vsl. durchgehendes Laden bis kurz vor der Zielzeit noetig"
+        return (
+            f"Benoetigt ca. {needed_kwh:.1f} kWh, bei max. {max_power_kw:.1f} kW Ladeleistung etwa "
+            f"{hours_needed:.1f} h (vsl. fertig ca. {finish_local}) -- {einschaetzung}."
+        )
 
     async def async_set_evcc_charge_plan(self, target_soc: int, target_time: float) -> bool:
         """Setzt evccs Ladeplan (siehe evcc_client.py::async_set_vehicle_

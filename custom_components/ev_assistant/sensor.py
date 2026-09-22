@@ -1647,7 +1647,13 @@ class EvccChargePlanSensor(EvAssistantEntity, SensorEntity):
     CONF_EVCC_MODE_CONTROL_ENABLED -- braucht nur einen konfigurierten
     evcc_host, da es sich um eine reine evcc-eigene Funktion handelt, die
     ev_assistant lediglich fernsteuert. native_value ist die Zielzeit
-    (device_class TIMESTAMP), `unknown`/None ohne gesetzten Plan."""
+    (device_class TIMESTAMP), `unknown`/None ohne gesetzten Plan. Attribut
+    `erwartung`: live berechnete Texteinschaetzung (siehe coordinator.py::
+    _evcc_charge_plan_feedback_text()), wie die Ladung mit den aktuell
+    gesetzten Parametern zu erwarten ist -- vom Panel direkt in der
+    Ladeplan-Karte angezeigt, bewusst KEINE persistent_notification
+    (Nutzerwunsch 2026-09-22: "keine dauerhafte benachrichtigung nur im
+    panel")."""
 
     _attr_translation_key = "evcc_charge_plan"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -1669,9 +1675,16 @@ class EvccChargePlanSensor(EvAssistantEntity, SensorEntity):
         status = self.coordinator._evcc_charge_plan_status()
         if status is None:
             return {}
+        target_time = dt_util.parse_datetime(status["target_time"])
+        erwartung = None
+        if target_time is not None:
+            erwartung = self.coordinator._evcc_charge_plan_feedback_text(
+                status["target_soc"], target_time.timestamp()
+            )
         return {
             "target_soc": status["target_soc"],
             "projected_start": status["projected_start"],
             "projected_end": status["projected_end"],
             "aktiv": status["aktiv"],
+            "erwartung": erwartung,
         }

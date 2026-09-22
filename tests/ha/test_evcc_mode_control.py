@@ -8,6 +8,7 @@ Schreibaufrufe, Repair-Issues)."""
 from datetime import timedelta
 from unittest.mock import AsyncMock
 
+import pytest
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -1222,7 +1223,10 @@ async def test_async_set_evcc_charge_plan_klemmt_unerreichbares_ziel(hass, coord
     coordinator._soc = 20.0  # 10 kWh verfuegbar
     coordinator._evcc_state = {
         "vehicles": {"db:8": {"title": "eRifter"}},
-        "loadpoints": [{"effectiveMaxCurrent": 16, "phasesActive": 1}],  # 3,68 kW
+        # chargerSinglePhase: True -- echte 1-phasige Hardware-Grenze
+        # (siehe _evcc_max_charge_power_kw()-Docstring, sonst wuerde ein
+        # 1p3p-faehiger Lader mit 3 Phasen/Best-Case gerechnet).
+        "loadpoints": [{"effectiveMaxCurrent": 16, "chargerSinglePhase": True}],  # 3,68 kW
     }
     coordinator._evcc_client = _fake_evcc_client()
     coordinator._evcc_client.async_set_vehicle_plan_soc = AsyncMock(return_value=True)
@@ -1250,7 +1254,9 @@ async def test_async_set_evcc_charge_plan_erreichbares_ziel_bleibt_unveraendert(
     coordinator._soc = 20.0
     coordinator._evcc_state = {
         "vehicles": {"db:8": {"title": "eRifter"}},
-        "loadpoints": [{"effectiveMaxCurrent": 16, "phasesActive": 3}],  # 11 kW
+        # Kein phasesConfigured/chargerSinglePhase -- 1p3p-faehiger Lader
+        # ohne feste Konfiguration, also 3 Phasen als Best-Case (Default).
+        "loadpoints": [{"effectiveMaxCurrent": 16}],  # 11 kW
     }
     coordinator._evcc_client = _fake_evcc_client()
     coordinator._evcc_client.async_set_vehicle_plan_soc = AsyncMock(return_value=True)
@@ -1262,6 +1268,61 @@ async def test_async_set_evcc_charge_plan_erreichbares_ziel_bleibt_unveraendert(
     assert ok is True
     args, _ = coordinator._evcc_client.async_set_vehicle_plan_soc.call_args
     assert args[1] == 80
+
+
+async def test_evcc_max_charge_power_kw_phasenauswahl(hass, coordinators):
+    """_evcc_max_charge_power_kw(): phasesConfigured (fest) > chargerSinglePhase
+    (Hardware-Grenze) > Default 3 Phasen (1p3p-faehiger Lader ohne feste
+    Konfiguration) -- siehe Docstring / Produktionsvorfall 2026-09-22."""
+    from custom_components.ev_assistant.const import CONF_VEHICLE_HERSTELLER, CONF_VEHICLE_MODELL
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "ecp10",
+        options={CONF_VEHICLE_HERSTELLER: "Peugeot", CONF_VEHICLE_MODELL: "eRifter"},
+    )
+
+    # phasesConfigured fest auf 1 -> 16A * 1 * 230V = 3,68 kW, auch wenn
+    # chargerSinglePhase/phasesActive etwas anderes sagen wuerden.
+    coordinator._evcc_state = {
+        "loadpoints": [{
+            "effectiveMaxCurrent": 16,
+            "phasesConfigured": 1,
+            "chargerSinglePhase": False,
+            "phasesActive": 3,
+        }]
+    }
+    assert coordinator._evcc_max_charge_power_kw() == pytest.approx(3.68)
+
+    # phasesConfigured fest auf 3 -> 16A * 3 * 230V = 11,04 kW.
+    coordinator._evcc_state = {
+        "loadpoints": [{"effectiveMaxCurrent": 16, "phasesConfigured": 3}]
+    }
+    assert coordinator._evcc_max_charge_power_kw() == pytest.approx(11.04)
+
+    # phasesConfigured 0 (= auto/flexibel) + chargerSinglePhase True -> Lader
+    # kann hardwareseitig nur 1 Phase, unabhaengig vom momentanen phasesActive.
+    coordinator._evcc_state = {
+        "loadpoints": [{
+            "effectiveMaxCurrent": 16,
+            "phasesConfigured": 0,
+            "chargerSinglePhase": True,
+            "phasesActive": 1,
+        }]
+    }
+    assert coordinator._evcc_max_charge_power_kw() == pytest.approx(3.68)
+
+    # phasesConfigured 0, kein chargerSinglePhase (1p3p-faehig, "auto") ->
+    # Best-Case 3 Phasen, AUCH WENN phasesActive gerade nur 1 zeigt (weil
+    # momentan nicht geladen wird -- das war genau der Bug).
+    coordinator._evcc_state = {
+        "loadpoints": [{
+            "effectiveMaxCurrent": 16,
+            "phasesConfigured": 0,
+            "chargerSinglePhase": False,
+            "phasesActive": 1,
+        }]
+    }
+    assert coordinator._evcc_max_charge_power_kw() == pytest.approx(11.04)
 
 
 async def test_async_set_evcc_charge_plan_ohne_max_power_keine_pruefung(hass, coordinators):
