@@ -162,6 +162,7 @@
           "evcc_vehicle_name": "Vehicle name in evcc",
           "home_entity": "Wallbox charge power",
           "evcc_mode_control_enabled": "Automatically control evcc's charge mode/SoC from the usage profile",
+          "evcc_battery_priority_enabled": "Prioritize vehicle charging over the home battery while plugged in",
           "wallbox_min_power_w": "Wallbox minimum charge power (W, for the real-time PV override)",
           "pv_forecast_today_remaining_entity": "PV forecast remaining today (optional, any sensor entity, e.g. Solcast \"Forecast Remaining Today\")",
           "home_consumption_entity": "Home consumption (excluding vehicle/battery)",
@@ -174,6 +175,7 @@
           "evcc_host": "Optional — without it, charge power/mode/tariffs/PV in the panel simply stay empty; everything else keeps working as before.",
           "home_entity": "Just a yes/no threshold (>0.1 kW = 'currently charging at home') — not an energy value, and only reports anything while the vehicle is plugged into this wallbox.",
           "evcc_mode_control_enabled": "Off by default: only the existing display recommendations (Usage Profile tab, \"Charge Before Solar Recommended\") stay unchanged. On: evcc additionally gets an actual charge mode (pv/minpv/now) and min/target SoC written from the usage profile — whenever it differs from evcc's live state (not just from what was last written), so it self-corrects e.g. after an evcc restart. A manual override in the evcc UI therefore only holds until the next cycle (~1 min) — see the set_evcc_mode_control_pause service (also exposed as a toggle in the panel) to deliberately hold it off until switched back on.",
+          "evcc_battery_priority_enabled": "Off by default: no change — evcc's fixed battery priority threshold (prioritySoc) always applies as configured. On: while the vehicle is plugged in at the charge point, ev_assistant lowers prioritySoc so the vehicle gets full priority over the home battery for PV surplus (prevents e.g. the battery filling up completely in the morning while the vehicle waits, with the surplus then going to waste on the grid once the vehicle leaves). Once the vehicle is unplugged, the last observed own value is restored, not blindly reset.",
           "wallbox_min_power_w": "Only relevant while the evcc control above is enabled. If the current PV surplus (site PV minus grid export) is below this value, the wallbox wouldn't charge at all in \"pv\" mode and the surplus would go to waste on the grid — ev_assistant then upgrades the mode in real time (independent of the usage-profile logic above, pv→minpv only, never the other way) to \"minpv\", with hysteresis against flapping. Default 1380 W = 6A × 230V single-phase; for a three-phase connection it would be 6A × 3 × 230V ≈ 4140 W.",
           "pv_forecast_today_remaining_entity": "Optional, independent of the tomorrow PV forecast (step 7) — only relevant while the evcc control above is enabled.",
           "home_consumption_entity": "Optional, cumulative energy meter (kWh) — only relevant while the evcc control above is enabled. Without it, the PV forecast would incorrectly be credited entirely to the vehicle.",
@@ -458,6 +460,9 @@
       },
       "vehicle_discharge_total": {
         "name": "Live SoC Consumption Total"
+      },
+      "plug_window": {
+        "name": "Plug Time Window"
       },
       "usage_profile_tomorrow": {
         "name": "Usage Profile (Needed Tomorrow)"

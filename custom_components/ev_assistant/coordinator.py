@@ -29,6 +29,7 @@ from .const import (
     CONF_CO2_PER_KWH,
     CONF_DROP_ENDS,
     CONF_EFFICIENCY,
+    CONF_EVCC_BATTERY_PRIORITY_ENABLED,
     CONF_EVCC_HOST,
     CONF_EVCC_LOADPOINT_TITLE,
     CONF_EVCC_MODE_CONTROL_ENABLED,
@@ -86,6 +87,7 @@ from .const import (
     DEFAULT_CO2_PER_LITER_KG,
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY,
+    DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED,
     DEFAULT_EVCC_MODE_CONTROL_ENABLED,
     DEFAULT_IDLE_TIMEOUT,
     DEFAULT_MOTOR_DEBOUNCE,
@@ -110,6 +112,7 @@ from .const import (
     EFF_MIN_EFFICIENCY,
     EFF_MIN_SAMPLES,
     EFF_MIN_SOC_DELTA,
+    EVCC_BATTERY_PRIORITY_VEHICLE_SOC,
     EVCC_MODE_TARGET_DAYS,
     EVCC_UEBERSCHUSS_ZIEL_HOLD_S,
     EVENT_DELETED,
@@ -141,6 +144,8 @@ from .const import (
     NOTIFY_EVENT_WARTUNG,
     NOTIFY_TAG,
     OUTLIER_DAMPING_FACTOR,
+    PANEL_LAYOUT_KEYS,
+    PANEL_LAYOUT_SIZES,
     STORAGE_KEY,
     STORAGE_VERSION,
     TEMP_BUCKET_BOUNDARIES,
@@ -150,8 +155,8 @@ from .const import (
     TRIP_CONSUMPTION_MIN_KWH_100KM,
     TRIP_END_SOC_CORRECTION_MAX_DELTA,
     TRIP_END_SOC_CORRECTION_WINDOW_S,
+    USAGE_PROFILE_WINDOW_DAYS,
     VEHICLE_DISCHARGE_CONFIRM_SECONDS,
-    VEHICLE_DISCHARGE_EVENTS_MAX_DAYS,
     VOLLLADUNG_SOC_THRESHOLD,
     WARTUNG_BALD_FAELLIG_KM,
     WARTUNG_BALD_FAELLIG_TAGE,
@@ -170,6 +175,8 @@ from .engine import (
     ac_dc_breakdown_from_totals,
     aggregate_sessions_by_vehicle,
     anbieter_breakdown_from_totals,
+    append_recent_weekday_day,
+    append_recent_weekday_plug_window,
     apply_ac_dc_delta,
     apply_anbieter_delta,
     apply_opportunistic_surplus_target,
@@ -205,6 +212,7 @@ from .engine import (
     pop_pending,
     range_km_to_soc_percent,
     remaining_today_kwh,
+    remove_weekday_day,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
     soc_reached_full_charge,
@@ -220,6 +228,8 @@ from .engine import (
     vehicle_discharge_update,
     wartung_festes_datum_fortschreiben,
     wartung_uebersicht,
+    weekday_plug_window_profile_from_recent_days,
+    weekday_profile_from_recent_days,
     weekday_usage_profile_from_totals,
     weekday_usage_profile_window_kwh,
     weekly_balancing_due,
@@ -246,6 +256,13 @@ _HOME_POWER_THRESHOLD_KW = 0.1
 # einzelnen Update sofort synchron auf die Disk zu schreiben -- siehe
 # EvAssistantCoordinator._save_soon().
 _SAVE_DELAY = 10
+# Wie lange "vehicle_discharge_counted_dates" (siehe _update_vehicle_
+# discharge_profile()/async_apply_vehicle_discharge_urlaub_since()) einen
+# bereits ENDGUELTIG entschiedenen Kalendertag vorhaelt, bevor er
+# stillschweigend verworfen wird -- reiner Speicherschutz, deutlich
+# grosszuegiger als der realistische "Rollover/Korrektur nach Neustart
+# nachholen"-Anwendungsfall, den er abdeckt.
+_VEHICLE_DISCHARGE_RESOLVED_DATES_MAX_DAYS = 14
 # Index = date.weekday() (0=Montag..6=Sonntag), fuer usage_profile_tomorrow().
 _WEEKDAY_NAMES_DE = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 
@@ -319,6 +336,12 @@ def _empty_data() -> dict:
         "leasing_notified_rank": 0,
         "plug_debounce_state": None,
         "motor_debounce_state": None,
+        # Vom Nutzer gewaehlte Sichtbarkeit/Reihenfolge der Beta-Panel-Karten
+        # (siehe async_set_panel_layout()/panel_layout()) -- Liste aus
+        # {"key": <Karten-Schluessel>, "visible": bool}, Listenreihenfolge =
+        # Anzeigereihenfolge. Leer ohne gespeicherte Einstellung, das
+        # Panel-JS faellt dann auf seine eigene Standardreihenfolge zurueck.
+        "panel_layout": [],
         "verbrenner_price_last": None,
         "home_price_last": None,
         # Km-gewichtete Durchschnittsbildung fuer den schwankenden
@@ -386,14 +409,15 @@ def _empty_data() -> dict:
         "lifetime_baselines_migrated": False,
         # Haus-Nutzungsprofil (siehe _update_house_usage_profile()) fuer die
         # evcc-Modus-/SoC-Steuerung -- bewusst einfach gehalten, analog
-        # odo_periods/kwh_periods (nur die "day"-Periode wird gebraucht) bzw.
-        # weekday_kwh_exact_totals/weekday_km_est_totals (Fahrzeug-Pendant,
-        # hier ohne exact/estimate-Split, siehe engine.house_weekday_usage_
-        # profile()). Bleibt fuer immer kompakt (max. 7 Wochentags-Eintraege,
+        # odo_periods/kwh_periods (nur die "day"-Periode wird gebraucht).
+        # Sliding-Window je Wochentag (siehe engine.append_recent_weekday_
+        # day()/weekday_profile_from_recent_days(), USAGE_PROFILE_WINDOW_
+        # DAYS) statt eines Lebenszeit-Skalars -- gewichtet die letzten
+        # Vorkommen eines Wochentags staerker als sehr alte. Bleibt fuer
+        # immer kompakt (max. 7 * USAGE_PROFILE_WINDOW_DAYS Eintraege,
         # keine Archivierung/Kuerzung noetig).
         "house_periods": {},
-        "house_weekday_kwh_totals": {},
-        "house_weekday_day_counts": {},
+        "house_weekday_days": {},
         # Zuletzt tatsaechlich nach evcc geschriebener Steuerzustand (siehe
         # _async_apply_evcc_mode_control()) -- verhindert periodisches
         # Ueberschreiben, solange sich die berechnete Empfehlung nicht
@@ -427,14 +451,28 @@ def _empty_data() -> dict:
         "vehicle_discharge_reference_soc": None,
         "vehicle_discharge_kwh_total": 0.0,
         "vehicle_discharge_periods": {},
-        "vehicle_discharge_weekday_kwh_totals": {},
-        "vehicle_discharge_weekday_day_counts": {},
+        # Sliding-Window je Wochentag (siehe house_weekday_days oben,
+        # identisches Modell) statt Lebenszeit-Skalar.
+        "vehicle_discharge_weekday_days": {},
         # Bestaetigungsfenster fuer einen noch nicht gebuchten SoC-Rueckgangs-
         # Kandidaten (siehe engine.vehicle_discharge_update()) -- muss ueber
         # Neustarts hinweg persistieren, sonst wuerde ein Rueckgang, der
         # genau um einen Neustart herum bestaetigt werden sollte, verworfen.
         "vehicle_discharge_pending_soc": None,
         "vehicle_discharge_pending_since": None,
+        # Reines Beobachtungs-Feature (siehe coordinator.py::
+        # _update_plug_window(), Nutzerwunsch 2026-09-23: "wann und wie
+        # lange am tag das auto angeschlossen ist") -- Quelle ist evccs
+        # eigener Ladepunkt-Status ("connected"), NICHT CONF_PLUG_ENTITY
+        # (getrennter, optionaler HA-Sensor, siehe _wire_plug()).
+        # "plug_window_today": laufende, noch nicht abgeschlossene
+        # Tages-Zaehlung; "plug_window_weekday_days": das fertige
+        # Sliding-Window je Wochentag (gleiches Modell wie
+        # vehicle_discharge_weekday_days oben, siehe engine.py::
+        # append_recent_weekday_plug_window()).
+        "plug_window_today": {},
+        "plug_window_weekday_days": {},
+        "plug_window_prev_connected": False,
         # Laufzeit-Override fuer CONF_USAGE_PROFILE_BUFFER_PCT (siehe
         # _usage_profile_buffer_pct()/async_set_usage_profile_buffer_pct())
         # -- Schieberegler in der Wallbox-Karte (Uebersicht-Beta), damit
@@ -621,6 +659,43 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         hier defensiv "gemischt" -- identisch zum bisherigen Verhalten."""
         return resolve_lade_modus(self._opt(CONF_LADE_MODUS))
 
+    def panel_layout(self) -> list:
+        """Vom Nutzer gespeicherte Sichtbarkeit/Reihenfolge der Beta-Panel-
+        Karten (siehe async_set_panel_layout()) -- Liste aus {"key":...,
+        "visible": bool} in Anzeigereihenfolge. Leere Liste ohne
+        gespeicherte Einstellung; das Panel-JS faellt dann auf seine eigene
+        Standardreihenfolge zurueck (siehe _panelSectionBuilders())."""
+        return list(self.data.get("panel_layout") or [])
+
+    async def async_set_panel_layout(self, layout: list) -> None:
+        """Speichert die vom Nutzer im "Panel anpassen"-Popup gewaehlte
+        Sichtbarkeit/Reihenfolge der Beta-Panel-Karten (Nutzerwunsch
+        2026-09-23: "der nutzer bekommt eine auswahl von karten, die er
+        selber im panel anordnen oder auch auswaehlen kann, welche karten er
+        ueberhaupt angezeigt bekommen moechte") -- serverseitig statt per
+        localStorage gespeichert (Nutzerwunsch: "serverseitig speichern"),
+        damit die Anordnung geraeteuebergreifend erhalten bleibt. Reine
+        Praesentationseinstellung, kein Recompute noetig. Nur bekannte
+        Karten-Schluessel (siehe const.py::PANEL_LAYOUT_KEYS) werden
+        uebernommen, alles andere (z.B. aus einer alten Panel-Version)
+        stillschweigend verworfen statt eine kaputte/leere Karte zu
+        erzeugen. "size" (siehe const.py::PANEL_LAYOUT_SIZES, Nutzerwunsch
+        "vlt auch die groesse aendern kann") faellt bei fehlendem/
+        unbekanntem Wert defensiv auf "full" zurueck -- eine Karte lieber
+        zu breit als unsichtbar/kaputt darzustellen."""
+        clean = [
+            {
+                "key": item["key"],
+                "visible": bool(item.get("visible", True)),
+                "size": item.get("size") if item.get("size") in PANEL_LAYOUT_SIZES else "full",
+            }
+            for item in layout
+            if isinstance(item, dict) and item.get("key") in PANEL_LAYOUT_KEYS
+        ]
+        self.data["panel_layout"] = clean
+        self.async_set_updated_data(self.data)
+        self._save_soon()
+
     async def async_setup(self) -> None:
         stored = await self._store.async_load()
         if stored:
@@ -665,6 +740,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # (siehe _migrate_verbrenner_price_weighting()). Ebenfalls sofort
         # persistiert, aus demselben Grund wie oben.
         if self._migrate_verbrenner_price_weighting():
+            await self._save()
+        # Migration: Haus-/Fahrzeug-Nutzungsprofil von Lebenszeit-Skalaren
+        # (Summe + Tageszaehler je Wochentag) auf das Sliding-Window-Modell
+        # (siehe _migrate_weekday_usage_windows()). Ebenfalls sofort
+        # persistiert, aus demselben Grund wie oben.
+        if self._migrate_weekday_usage_windows():
             await self._save()
         # Letzter bekannter Kraftstoff-/Heimstrompreis der jeweiligen
         # Live-Entitaet als Fallback, bevor sich die Entitaet nach dem Start
@@ -804,6 +885,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if self._evcc_client is not None:
             self._evcc_state = await self._evcc_client.async_get_state()
             self._check_evcc_manual_mode_session_end()
+            if self._evcc_state is not None:
+                self._update_plug_window()
+                await self._apply_battery_priority_for_vehicle_presence()
 
     def _check_evcc_manual_mode_session_end(self) -> None:
         """Setzt einen ueber async_set_evcc_manual_mode() gesetzten
@@ -823,6 +907,125 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self.data["evcc_manual_mode_active"] = False
             self.data["evcc_manual_mode"] = None
             self._save_soon()
+
+    def _update_plug_window(self) -> None:
+        """Reines Beobachtungs-Feature (Nutzerwunsch 2026-09-23: 'wäre für
+        das nutzungsprofil nicht auch die zeiten wann und wie lange am tag
+        das auto angeschlossen ist ... sinnvoll ... um zu erkennen wie das
+        auto zuhause ist und wann fenster zum laden entstehen', explizit
+        'erstmal nur zur beobachtung'). Erfasst je Kalendertag, WANN und
+        WIE LANGE das Auto laut evccs Ladepunkt-Feld "connected" angesteckt
+        war -- bewusst NICHT ueber CONF_PLUG_ENTITY (separater, optionaler
+        HA-Sensor, siehe _wire_plug()), sondern direkt aus dem schon
+        gepollten evcc-Zustand, wie vom Nutzer vorgegeben ("steckersignal
+        kommt von evcc"). Beeinflusst (noch) NICHT die Modus-/SoC-
+        Steuerung (siehe _evcc_mode_targets()).
+
+        Bewusst POLLING-basiert (jeder _refresh_evcc_state()-Tick, alle
+        _EVCC_POLL_INTERVAL_S Sekunden) statt event-/intervall-basiert --
+        dadurch faellt die sonst noetige Aufteilung einer ueber Mitternacht
+        laufenden Steck-Sitzung auf zwei Kalendertage komplett weg: JEDER
+        Tick wird direkt dem Kalendertag zugeordnet, an dem er stattfand
+        (eine Quantisierungsungenauigkeit von bis zu _EVCC_POLL_INTERVAL_S
+        Sekunden je Flanke ist fuer ein reines Beobachtungsfeature
+        unerheblich)."""
+        loadpoint = self._current_loadpoint()
+        connected = bool(loadpoint.get("connected")) if loadpoint else False
+        now = dt_util.now()
+        today_key = now.date().isoformat()
+        today = dict(self.data.get("plug_window_today") or {})
+        if today.get("date") != today_key:
+            if today.get("date"):
+                self._finalize_plug_window_day(today)
+            today = {"date": today_key, "connected_seconds": 0.0, "erster_connect": None, "letzter_disconnect": None}
+        now_hhmm = now.strftime("%H:%M")
+        prev_connected = self.data.get("plug_window_prev_connected", False)
+        if connected:
+            today["connected_seconds"] = round(today.get("connected_seconds", 0.0) + _EVCC_POLL_INTERVAL_S, 1)
+            if today.get("erster_connect") is None:
+                today["erster_connect"] = now_hhmm
+        elif prev_connected:
+            today["letzter_disconnect"] = now_hhmm
+        self.data["plug_window_today"] = today
+        self.data["plug_window_prev_connected"] = connected
+
+    def _finalize_plug_window_day(self, day_entry: dict) -> None:
+        """Schreibt einen abgeschlossenen Kalendertag aus "plug_window_
+        today" (siehe _update_plug_window()) in das Sliding-Window je
+        Wochentag fort -- analog den taeglichen Rollover-Hooks der
+        Nutzungsprofile, hier aber beim naechsten Datumswechsel waehrend
+        des Pollings ausgeloest statt ueber _daily_lts_refresh(), da es
+        keinen separaten Mitternachts-Trigger braucht (siehe
+        _update_plug_window()-Docstring)."""
+        weekday = date.fromisoformat(day_entry["date"]).weekday()
+        self.data["plug_window_weekday_days"] = append_recent_weekday_plug_window(
+            self.data.get("plug_window_weekday_days") or {},
+            weekday,
+            day_entry["date"],
+            round(day_entry.get("connected_seconds", 0.0) / 3600.0, 2),
+            day_entry.get("erster_connect"),
+            day_entry.get("letzter_disconnect"),
+            USAGE_PROFILE_WINDOW_DAYS,
+        )
+
+    def plug_window_profile(self) -> Optional[dict]:
+        """Oeffentliches Pendant zu house_usage_profile()/vehicle_
+        discharge_usage_profile(), fuers Steck-Zeitfenster-Beobachtungs-
+        feature: durchschnittliche Steckdauer (Stunden) je Wochentag.
+        None ohne einen einzigen abgeschlossenen Beobachtungstag."""
+        return weekday_plug_window_profile_from_recent_days(self.data.get("plug_window_weekday_days") or {})
+
+    async def _apply_battery_priority_for_vehicle_presence(self) -> None:
+        """Nutzerentscheidung 2026-09-23 (siehe CONF_EVCC_BATTERY_PRIORITY_
+        ENABLED-Kommentar in const.py, Vorfall Montag: der Heimspeicher lud
+        im PV-Modus wegen fest prioritySoc=100 immer zuerst komplett voll,
+        das Auto fuhr genau in dem Moment leer los, der Rest-Ueberschuss
+        ging danach ungenutzt ins Netz statt zuerst dem Auto zu helfen).
+        Waehrend das Auto am Ladepunkt angesteckt ist (evccs "connected",
+        dieselbe Quelle wie _update_plug_window()), setzt ev_assistant
+        evccs site-weite "prioritySoc" auf EVCC_BATTERY_PRIORITY_VEHICLE_
+        SOC herunter -- das Auto bekommt dann vollen Vorrang vor dem
+        Speicher ("der speicher nimmt ja eh dann alles auf"). Sobald das
+        Auto abgesteckt wird, wird NICHT blind auf 100 zurueckgesetzt,
+        sondern auf den zuletzt beobachteten "Baseline"-Wert (siehe
+        "evcc_battery_priority_baseline_soc") -- respektiert so eine
+        eigene, spaeter in evccs UI geaenderte Nutzer-Praeferenz.
+
+        Schreibt nur bei tatsaechlichem Zustandswechsel (Override noch
+        nicht aktiv bzw. schon wieder inaktiv), kein Schreibversuch bei
+        jedem Poll-Tick -- analog _async_apply_evcc_mode_control(). Ohne
+        CONF_EVCC_BATTERY_PRIORITY_ENABLED (Default aus) komplett No-op,
+        am bisherigen (statischen) evcc-Verhalten aendert sich dann
+        nichts."""
+        if not self._opt(CONF_EVCC_BATTERY_PRIORITY_ENABLED, DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED):
+            return
+        if self._evcc_client is None or self._evcc_state is None:
+            return
+        loadpoint = self._current_loadpoint()
+        connected = bool(loadpoint.get("connected")) if loadpoint else False
+        override_active = self.data.get("evcc_battery_priority_override_active", False)
+        current_priority_soc = self._evcc_state.get("prioritySoc")
+
+        if connected:
+            if override_active:
+                return
+            if current_priority_soc is not None:
+                self.data["evcc_battery_priority_baseline_soc"] = int(current_priority_soc)
+            if await self._evcc_client.async_set_priority_soc(EVCC_BATTERY_PRIORITY_VEHICLE_SOC):
+                self.data["evcc_battery_priority_override_active"] = True
+                self._save_soon()
+            return
+
+        if override_active:
+            baseline = self.data.get("evcc_battery_priority_baseline_soc")
+            if baseline is not None and await self._evcc_client.async_set_priority_soc(baseline):
+                self.data["evcc_battery_priority_override_active"] = False
+                self._save_soon()
+        elif current_priority_soc is not None:
+            # Baseline unauffaellig nachfuehren, solange WIR keinen
+            # Override aktiv haben -- z.B. wenn der Nutzer seine eigene
+            # Praeferenz zwischenzeitlich direkt in evcc geaendert hat.
+            self.data["evcc_battery_priority_baseline_soc"] = int(current_priority_soc)
 
     async def _refresh_evcc_sessions(self, _now=None) -> None:
         """evccs Ladelogbuch neu holen und je Fahrzeug aufsummieren (siehe
@@ -1340,113 +1543,101 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._save_soon()
 
     def _book_vehicle_discharge_weekday(self, kwh: float, observed_ts: float) -> None:
-        """Bucht eine soeben bestaetigte Live-SoC-kWh-Menge in den
-        Wochentags-Eimer des Tages, an dem der Abfall ZUERST beobachtet
-        wurde (`observed_ts`, siehe _update_vehicle_discharge()) -- nicht
-        des Tages der Bestaetigung. Urlaubsausschluss und Ausreisser-
-        Daempfung greifen HIER (am tatsaechlichen Buchungszeitpunkt),
-        analog _apply_trip_baselines(). Der Urlaubs-Check bezieht sich
-        bewusst auf den AKTUELLEN Zeitpunkt (keine historische Zustands-
-        abfrage moeglich, siehe _urlaub_aktiv()) -- in dem seltenen Fall,
-        dass der Urlaub erst NACH der ersten Beobachtung, aber VOR der
-        Bestaetigung beginnt, kann ein eigentlich normaler Tag faelschlich
-        ausgeschlossen werden; umgekehrt genauso. Fuer die erste Richtung
-        (Urlaub vergessen zu aktivieren, ein Urlaubs-Abschnitt landet
-        faelschlich im normalen Topf, Produktionsvorfall 2026-09-11: Abfahrt
-        15:05 Uhr, Schalter erst spaeter waehrend der Fahrt umgelegt) gibt es
-        seit VEHICLE_DISCHARGE_EVENTS_MAX_DAYS eine nachtraegliche Korrektur
-        -- siehe async_apply_vehicle_discharge_urlaub_since(). Dafuer wird
-        JEDE Buchung zusaetzlich in "vehicle_discharge_events" protokolliert
-        (Zeitstempel, Wochentag, tatsaechlich gebuchter Betrag NACH
-        Daempfung -- exakt das, was eine Korrektur wieder abziehen muss,
-        analog dem "weekday_applied"-Freeze bei _apply_trip_baselines()).
-        Das Log ist bewusst kurzlebig (nur fuer den realistischen "heute/
-        gestern vergessen"-Anwendungsfall), keine Dauerhistorie wie
-        "fahrten"/"history" -- wird bei jedem Aufruf auf die letzten
-        VEHICLE_DISCHARGE_EVENTS_MAX_DAYS gekuerzt. Kein Tages-Zaehler-
-        Inkrement hier -- das macht ausschliesslich der taegliche Rollover
-        (_update_vehicle_discharge_profile()), unabhaengig davon, ob/wann
-        an diesem Tag etwas bestaetigt wird."""
+        """Bucht eine soeben bestaetigte Live-SoC-kWh-Menge in das Sliding-
+        Window (siehe engine.append_recent_weekday_day()/weekday_profile_
+        from_recent_days(), USAGE_PROFILE_WINDOW_DAYS) des Wochentags, an
+        dem der Abfall ZUERST beobachtet wurde (`observed_ts`, siehe
+        _update_vehicle_discharge()) -- nicht des Tages der Bestaetigung.
+        Urlaubsausschluss und Ausreisser-Daempfung greifen HIER (am
+        tatsaechlichen Buchungszeitpunkt), analog _apply_trip_baselines().
+        Der Urlaubs-Check bezieht sich bewusst auf den AKTUELLEN Zeitpunkt
+        (keine historische Zustandsabfrage moeglich, siehe
+        _urlaub_aktiv()) -- in dem seltenen Fall, dass der Urlaub erst NACH
+        der ersten Beobachtung, aber VOR der Bestaetigung beginnt, kann ein
+        eigentlich normaler Tag faelschlich ausgeschlossen werden;
+        umgekehrt genauso. Fuer die erste Richtung (Urlaub vergessen zu
+        aktivieren, ein Urlaubs-Abschnitt landet faelschlich im normalen
+        Fenster, Produktionsvorfall 2026-09-11: Abfahrt 15:05 Uhr, Schalter
+        erst spaeter waehrend der Fahrt umgelegt) gibt es eine nachtraeg-
+        liche Korrektur -- siehe async_apply_vehicle_discharge_urlaub_
+        since(), die den betroffenen Kalendertag direkt aus dem Fenster
+        entfernt.
+
+        Mehrere Bestaetigungen am selben Kalendertag werden im selben
+        Fenster-Eintrag aufsummiert (append_recent_weekday_day()) -- kein
+        separates Event-Log mehr noetig, der Fenster-Eintrag SELBST ist
+        die einzige Buchungsspur. Keine Tages-Zaehler-Pflege hier -- ein
+        Tag ganz ohne Bestaetigung bekommt seinen (dann Null-) Fenster-
+        Eintrag ausschliesslich vom taeglichen Rollover
+        (_update_vehicle_discharge_profile())."""
         if self._urlaub_aktiv():
             return
-        weekday = dt_util.as_local(dt_util.utc_from_timestamp(observed_ts)).date().weekday()
-        totals = dict(self.data.get("vehicle_discharge_weekday_kwh_totals") or {})
-        counts = self.data.get("vehicle_discharge_weekday_day_counts") or {}
-        wd_key = str(weekday)
-        avg_kwh = (house_weekday_usage_profile(totals, counts) or {}).get(weekday)
+        observed_date = dt_util.as_local(dt_util.utc_from_timestamp(observed_ts)).date()
+        weekday = observed_date.weekday()
+        weekday_days = dict(self.data.get("vehicle_discharge_weekday_days") or {})
+        avg_kwh = (weekday_profile_from_recent_days(weekday_days) or {}).get(weekday)
         applied_value = clamp_weekday_contribution("exact", kwh, avg_kwh, OUTLIER_DAMPING_FACTOR, None)
-        totals[wd_key] = round(totals.get(wd_key, 0.0) + applied_value, 2)
-        self.data["vehicle_discharge_weekday_kwh_totals"] = totals
-        events = list(self.data.get("vehicle_discharge_events") or [])
-        events.append({"ts": observed_ts, "weekday": weekday, "kwh_applied": applied_value})
-        cutoff = dt_util.utcnow().timestamp() - VEHICLE_DISCHARGE_EVENTS_MAX_DAYS * 86400
-        self.data["vehicle_discharge_events"] = [ev for ev in events if ev["ts"] >= cutoff]
+        self.data["vehicle_discharge_weekday_days"] = append_recent_weekday_day(
+            weekday_days, weekday, observed_date.isoformat(), applied_value, USAGE_PROFILE_WINDOW_DAYS
+        )
 
     async def async_apply_vehicle_discharge_urlaub_since(self, since_ts: float) -> dict:
-        """Bucht rueckwirkend alle seit `since_ts` bestaetigten Live-SoC-
-        Buchungen (siehe "vehicle_discharge_events" in
-        _book_vehicle_discharge_weekday()) aus ihrem Wochentags-Topf wieder
-        heraus -- fuer den Fall, dass CONF_URLAUB_ENTITY erst NACH Abfahrt
-        aktiviert wurde und der Anfang der Urlaubsfahrt faelschlich als
-        normaler Tag verbucht wurde (Produktionsvorfall 2026-09-11, siehe
-        _book_vehicle_discharge_weekday()-Docstring). Bewusst ohne
-        automatischen Trigger -- WANN der Nutzer eigentlich losgefahren ist,
-        weiss nur der Nutzer selbst (oder ein spaeterer Kalendereintrag/eine
-        Automatisierung ausserhalb von ev_assistant, siehe const.py-Kommentar
-        bei CONF_URLAUB_ENTITY); dieser Service liefert nur den Mechanismus,
-        nicht die Entscheidung.
+        """Entfernt rueckwirkend alle Fenster-Eintraege (siehe
+        vehicle_discharge_weekday_days/_book_vehicle_discharge_weekday())
+        ab `since_ts` (Kalendertag-genau, siehe unten) -- fuer den Fall,
+        dass CONF_URLAUB_ENTITY erst NACH Abfahrt aktiviert wurde und der
+        Anfang der Urlaubsfahrt faelschlich als normaler Tag verbucht wurde
+        (Produktionsvorfall 2026-09-11, siehe _book_vehicle_discharge_
+        weekday()-Docstring). Bewusst ohne automatischen Trigger -- WANN
+        der Nutzer eigentlich losgefahren ist, weiss nur der Nutzer selbst
+        (oder ein spaeterer Kalendereintrag/eine Automatisierung ausserhalb
+        von ev_assistant, siehe const.py-Kommentar bei CONF_URLAUB_ENTITY);
+        dieser Service liefert nur den Mechanismus, nicht die Entscheidung.
 
-        Pro betroffenem Kalendertag wird zusaetzlich der Tages-Zaehler
-        korrekt gesetzt: bleibt fuer diesen Tag (nach Abzug der Urlaubs-
-        Buchungen) noch ein normaler Rest-Verbrauch > 0 stehen, zaehlt er
-        weiterhin als beobachteter Tag (genau wie eine "echte" Fahrt vor der
-        Abfahrt) -- war der GESAMTE Tag betroffen, zaehlt er bewusst NICHT
-        (analog dem Urlaubs-Ausschluss in _update_vehicle_discharge_
-        profile()). Der Tag wird in "vehicle_discharge_counted_dates"
-        vermerkt, damit der naechtliche Rollover (_update_vehicle_discharge_
-        profile()) ihn nicht anhand des dann laengst aktiven Urlaubsschalters
-        ein zweites Mal (und diesmal falsch) bewertet.
+        Im Sliding-Window-Modell existiert je Kalendertag GENAU EIN
+        aufsummierter Fenster-Eintrag (append_recent_weekday_day()) --
+        anders als das fruehere Event-Log kann daher nicht mehr zwischen
+        "vor"/"nach" since_ts INNERHALB desselben Tages unterschieden
+        werden. since_ts wirkt deshalb kalendertag-genau: JEDER Tag von
+        since_ts bis heute (einschliesslich) wird komplett aus dem Fenster
+        entfernt, falls ein Eintrag existiert (siehe engine.remove_
+        weekday_day()) -- der in der Praxis relevante Fall ("Urlaub
+        gestern/heute vergessen einzuschalten") betrifft ohnehin fast
+        immer einen ganzen Tag.
+
+        Jeder tatsaechlich entfernte Tag wird zusaetzlich in
+        "vehicle_discharge_counted_dates" vermerkt, damit der naechtliche
+        Rollover (_update_vehicle_discharge_profile()) ihn nicht anhand
+        des dann laengst wieder inaktiven Urlaubsschalters ein zweites Mal
+        (und diesmal faelschlich als normalen Tag) bewertet.
 
         Gibt ein Dict mit den insgesamt umgebuchten kWh sowie einer
         Aufschluesselung je Wochentag zurueck (0=Montag..6=Sonntag als
-        String-Key, wie ueberall sonst in diesem Modul) -- leer, wenn kein
-        Event im Log seit `since_ts` liegt (z.B. ausserhalb von
-        VEHICLE_DISCHARGE_EVENTS_MAX_DAYS, oder es gab schlicht keins)."""
-        events = list(self.data.get("vehicle_discharge_events") or [])
-        remaining_events = []
+        String-Key, wie ueberall sonst in diesem Modul) -- leer, wenn im
+        Zeitraum kein Fenster-Eintrag existierte."""
+        since_date = dt_util.as_local(dt_util.utc_from_timestamp(since_ts)).date()
+        today = dt_util.now().date()
+        weekday_days = dict(self.data.get("vehicle_discharge_weekday_days") or {})
         reclassified_by_weekday: dict[str, float] = {}
-        remaining_by_date: dict[str, float] = {}
-        reclassified_dates: set[str] = set()
-        for ev in events:
-            ev_date = dt_util.as_local(dt_util.utc_from_timestamp(ev["ts"])).date().isoformat()
-            if ev["ts"] >= since_ts:
-                wd_key = str(ev["weekday"])
+        resolved = set(self.data.get("vehicle_discharge_counted_dates") or [])
+
+        current = since_date
+        while current <= today:
+            date_iso = current.isoformat()
+            wd_key = str(current.weekday())
+            match = next((d for d in weekday_days.get(wd_key, []) if d["date"] == date_iso), None)
+            if match is not None:
                 reclassified_by_weekday[wd_key] = round(
-                    reclassified_by_weekday.get(wd_key, 0.0) + ev["kwh_applied"], 2
+                    reclassified_by_weekday.get(wd_key, 0.0) + match["kwh"], 2
                 )
-                reclassified_dates.add(ev_date)
-            else:
-                remaining_events.append(ev)
-                remaining_by_date[ev_date] = remaining_by_date.get(ev_date, 0.0) + ev["kwh_applied"]
+                weekday_days = remove_weekday_day(weekday_days, date_iso)
+                resolved.add(date_iso)
+            current += timedelta(days=1)
+
         if not reclassified_by_weekday:
             return {"reclassified_kwh": 0.0, "wochentage": {}}
 
-        totals = dict(self.data.get("vehicle_discharge_weekday_kwh_totals") or {})
-        for wd_key, kwh in reclassified_by_weekday.items():
-            totals[wd_key] = round(max(0.0, totals.get(wd_key, 0.0) - kwh), 2)
-        self.data["vehicle_discharge_weekday_kwh_totals"] = totals
-        self.data["vehicle_discharge_events"] = remaining_events
-
-        counts = dict(self.data.get("vehicle_discharge_weekday_day_counts") or {})
-        resolved = set(self.data.get("vehicle_discharge_counted_dates") or [])
-        for date_key in reclassified_dates:
-            if date_key in resolved:
-                continue
-            wd_key = str(date.fromisoformat(date_key).weekday())
-            if remaining_by_date.get(date_key, 0.0) > 0:
-                counts[wd_key] = counts.get(wd_key, 0) + 1
-            resolved.add(date_key)
-        self.data["vehicle_discharge_weekday_day_counts"] = counts
+        self.data["vehicle_discharge_weekday_days"] = weekday_days
         self.data["vehicle_discharge_counted_dates"] = list(resolved)
 
         await self._save()
@@ -2837,6 +3028,59 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["verbrenner_price_weighted_sum"] = 0.0
         self.data["verbrenner_price_weighted_km"] = 0.0
         self.data["verbrenner_price_interval_start_km"] = self._km_driven()
+        return True
+
+    def _migrate_weekday_usage_windows(self) -> bool:
+        """Einmalige Migration von den alten Lebenszeit-Skalar-Akkumulatoren
+        (Summe + Tageszaehler je Wochentag, "*_weekday_kwh_totals"/
+        "*_weekday_day_counts") auf das Sliding-Window-Modell (siehe
+        engine.append_recent_weekday_day()/weekday_profile_from_recent_
+        days(), USAGE_PROFILE_WINDOW_DAYS) -- fuer sowohl das Haus- als
+        auch das Fahrzeug-(Live-SoC-)Nutzungsprofil. Der alte Lebenszeit-
+        Schnitt passte sich nur sehr langsam an geaendertes Nutzungs-
+        verhalten an (z.B. neuer Arbeitsweg, saisonale Aenderung); das neue
+        Fenster gewichtet die zuletzt beobachteten Vorkommen eines
+        Wochentags staerker.
+
+        Um bestehenden Installationen NICHT ihre gesamte Historie zu
+        nehmen (das waere ein unnoetiger, rein durch einen internen Umbau
+        verursachter Bootstrap-Gap -- anders als der bewusst akzeptierte
+        Fahrtenbuch-Fallback-Wegfall, siehe _effective_vehicle_usage_
+        profile()), wird je Wochentag mit vorhandenen Alt-Daten EIN
+        synthetischer Startwert (der alte Lebenszeit-Schnitt) als erster
+        Fenster-Eintrag uebernommen, datiert auf "gestern". So faellt er
+        als erstes aus dem Fenster, sobald genug echte neue Beobachtungen
+        vorliegen, statt dauerhaft mitzuwiegen.
+
+        Idempotent OHNE eigenes Flag: die alten Schluessel werden entfernt
+        (bzw. das durch das Sliding-Window ersetzte, nicht mehr gelesene
+        "vehicle_discharge_events"-Log ebenfalls, siehe
+        _book_vehicle_discharge_weekday()), ein zweiter Lauf findet sie
+        also nicht mehr vor."""
+        old_keys = (
+            "house_weekday_kwh_totals", "house_weekday_day_counts",
+            "vehicle_discharge_weekday_kwh_totals", "vehicle_discharge_weekday_day_counts",
+            "vehicle_discharge_events",
+        )
+        if not any(k in self.data for k in old_keys):
+            return False
+        marker_date = (dt_util.now().date() - timedelta(days=1)).isoformat()
+        for totals_key, counts_key, days_key in (
+            ("house_weekday_kwh_totals", "house_weekday_day_counts", "house_weekday_days"),
+            (
+                "vehicle_discharge_weekday_kwh_totals",
+                "vehicle_discharge_weekday_day_counts",
+                "vehicle_discharge_weekday_days",
+            ),
+        ):
+            totals = self.data.pop(totals_key, None) or {}
+            counts = self.data.pop(counts_key, None) or {}
+            avg_profile = house_weekday_usage_profile(totals, counts) or {}
+            days = dict(self.data.get(days_key) or {})
+            for weekday, avg_kwh in avg_profile.items():
+                days = append_recent_weekday_day(days, weekday, marker_date, avg_kwh, USAGE_PROFILE_WINDOW_DAYS)
+            self.data[days_key] = days
+        self.data.pop("vehicle_discharge_events", None)
         return True
 
     def _finalize_trip_record(self, rec: dict) -> None:
@@ -4727,7 +4971,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Perioden (eigenes Feld "house_periods", nur die "day"-Periode wird
         gebraucht), schreibt aber zusaetzlich bei jedem ECHTEN Rollover
         (erkennbar am neu erscheinenden "prev") den abgeschlossenen
-        GESTERN-Wert in einen Wochentags-Eimer fort. No-op ohne
+        GESTERN-Wert als neuen Fenster-Eintrag fort (siehe engine.append_
+        recent_weekday_day(), USAGE_PROFILE_WINDOW_DAYS). No-op ohne
         konfigurierten Hausverbrauchszaehler."""
         value = self._house_combined_reading_kwh()
         if value is None:
@@ -4740,26 +4985,24 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         new_entry = new_periods["day"]
         if old_entry is not None and old_entry.get("key") != key and "prev" in new_entry:
             # Bei aktivem Urlaub (siehe _urlaub_aktiv()) wird der abge-
-            # schlossene GESTERN-Tag GAR NICHT gebucht (weder Total noch
-            # Zaehler) statt als 0 kWh gezaehlt -- sonst wuerde ein
+            # schlossene GESTERN-Tag GAR NICHT gebucht (kein Fenster-
+            # Eintrag) statt als 0 kWh gezaehlt -- sonst wuerde ein
             # Urlaubstag den Schnitt kuenstlich nach unten ziehen. Kein
             # Retro-Abzug noetig: der Rollover-Moment IST der Buchungs-
             # zeitpunkt fuer diesen Tag, es gibt hier (anders als beim
             # Fahrtenbuch) keine spaetere Korrektur/Loeschung.
             if self._urlaub_aktiv():
                 return
-            yesterday_wd = (dt_util.now().date() - timedelta(days=1)).weekday()
-            totals = dict(self.data.get("house_weekday_kwh_totals") or {})
-            counts = dict(self.data.get("house_weekday_day_counts") or {})
-            wd_key = str(yesterday_wd)
-            avg_kwh = (house_weekday_usage_profile(totals, counts) or {}).get(yesterday_wd)
+            yesterday = dt_util.now().date() - timedelta(days=1)
+            yesterday_wd = yesterday.weekday()
+            house_days = dict(self.data.get("house_weekday_days") or {})
+            avg_kwh = (weekday_profile_from_recent_days(house_days) or {}).get(yesterday_wd)
             applied_value = clamp_weekday_contribution(
                 "exact", new_entry["prev"], avg_kwh, OUTLIER_DAMPING_FACTOR, None
             )
-            totals[wd_key] = round(totals.get(wd_key, 0.0) + applied_value, 2)
-            counts[wd_key] = counts.get(wd_key, 0) + 1
-            self.data["house_weekday_kwh_totals"] = totals
-            self.data["house_weekday_day_counts"] = counts
+            self.data["house_weekday_days"] = append_recent_weekday_day(
+                house_days, yesterday_wd, yesterday.isoformat(), applied_value, USAGE_PROFILE_WINDOW_DAYS
+            )
 
     def _house_kwh_used_today(self) -> Optional[float]:
         """Kombinierter Verbrauch (Haus + optionale Speicherladung) seit
@@ -4776,23 +5019,30 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     def house_usage_profile(self) -> Optional[dict]:
         """Oeffentliches Pendant zu usage_profile(), fuers Haus statt
-        Fahrzeug (siehe engine.py::house_weekday_usage_profile()) -- fuer
-        HouseUsageProfileSensor (Panel: Nutzungsprofil-Tab, Karte
+        Fahrzeug (siehe engine.py::weekday_profile_from_recent_days()) --
+        fuer HouseUsageProfileSensor (Panel: Nutzungsprofil-Tab, Karte
         "Hausnutzungsprofil", analog zur Fahrzeug-Karte darueber) sowie
         intern fuer _house_remaining_today_kwh(). None ohne konfigurierten
         Hausverbrauchszaehler oder ohne einen einzigen beobachteten
         Wochentag (z.B. direkt nach Aktivierung, vor dem ersten taeglichen
         Rollover)."""
-        return house_weekday_usage_profile(
-            self.data.get("house_weekday_kwh_totals") or {},
-            self.data.get("house_weekday_day_counts") or {},
-        )
+        return weekday_profile_from_recent_days(self.data.get("house_weekday_days") or {})
 
     def house_usage_profile_includes_battery(self) -> bool:
         """Ob das Hausnutzungsprofil Speicherladung mit einschliesst (siehe
         CONF_BATTERY_CHARGE_ENTITY) -- rein informativ fuers Panel (Label
         "inkl. Speicherladung"), keine Rechenlogik."""
         return bool(self._opt(CONF_BATTERY_CHARGE_ENTITY))
+
+    def _day_fraction_elapsed(self) -> float:
+        """Anteil des seit Mitternacht (Lokalzeit) vergangenen Kalendertages
+        (0.0-1.0) -- fuer den weichen Abbau des Tagesrestbedarfs in
+        remaining_today_kwh() (siehe dortigen Docstring), einheitlich fuer
+        Fahrzeug- UND Haus-Restbedarf verwendet (_evcc_mode_targets()/
+        _house_remaining_today_kwh())."""
+        now = dt_util.now()
+        seconds = now.hour * 3600 + now.minute * 60 + now.second
+        return seconds / 86400.0
 
     def _house_remaining_today_kwh(self) -> Optional[float]:
         """Erwarteter PV-konkurrierender Rest-Bedarf des Hauses (inkl.
@@ -4810,7 +5060,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if avg_today is None:
             return None
         used_today = self._house_kwh_used_today() or 0.0
-        return remaining_today_kwh(avg_today, used_today)
+        return remaining_today_kwh(avg_today, used_today, self._day_fraction_elapsed())
 
     def _update_vehicle_discharge_profile(self) -> None:
         """Taeglicher Rollover-Hook (aufgerufen aus _daily_lts_refresh(),
@@ -4825,16 +5075,19 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         das ist ohnehin Pflicht, siehe Schritt 1), daher kein fruehes
         return.
 
-        Pflegt NUR NOCH den Tages-Zaehler je Wochentag (fuer den Mittelwert-
-        Nenner) -- die eigentliche kWh-Buchung passiert seit der
+        Sorgt NUR NOCH dafuer, dass JEDER beobachtete Kalendertag einen
+        Fenster-Eintrag bekommt (siehe engine.append_recent_weekday_day()),
+        auch wenn an diesem Tag NICHTS bestaetigt wurde (dann ein Null-
+        Eintrag) -- die eigentliche kWh-Buchung passiert seit der
         Bestaetigungs-Haertung (siehe VEHICLE_DISCHARGE_CONFIRM_SECONDS)
         direkt bei _book_vehicle_discharge_weekday(), zugeordnet zum Tag
         der ERSTEN Beobachtung statt zum Tag dieses Rollovers -- sonst
         wuerde eine tagelang verzoegerte Bestaetigung dem falschen
-        Wochentag zugeschlagen (siehe dortiger Docstring). Der reine
-        Tageszaehler hier bleibt unabhaengig davon korrekt: "gestern" war
-        ein beobachteter Kalendertag, unabhaengig davon, ob/wann sein
-        Verbrauch bestaetigt wurde."""
+        Wochentag zugeschlagen (siehe dortiger Docstring). Ein Null-
+        Eintrag hier ist ein reiner "Tag beobachtet, nichts zu buchen"-
+        Marker: existiert fuer dieses Datum bereits ein echter Eintrag
+        (weil doch etwas bestaetigt wurde), addiert append_recent_
+        weekday_day() lediglich 0.0 dazu -- ein No-op."""
         value = self.data.get("vehicle_discharge_kwh_total", 0.0)
         periods = self.data.get("vehicle_discharge_periods") or {}
         old_entry = periods.get("day")
@@ -4848,13 +5101,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # laeuft nur einmal taeglich um 00:05 Uhr (siehe
             # _daily_lts_refresh()), OHNE Nachhol-Mechanismus, falls HA
             # genau dann neu startet/nicht laeuft: ein komplett
-            # uebersprungener Tag wuerde sonst NIE einen Tageszaehler
+            # uebersprungener Tag wuerde sonst NIE einen Fenster-Eintrag
             # bekommen, obwohl _book_vehicle_discharge_weekday() ihm zu dem
             # Zeitpunkt (bei Bestaetigung) schon kWh gutgeschrieben haben
-            # kann -- eine dauerhaft verwaiste Summe ohne Nenner (siehe
-            # Vorfall: Rollover am 2026-09-07/08 uebersprungen, "Montag"-
-            # Summe blieb ohne Tageszaehler, "Dienstag" bekam einen
-            # Tageszaehler ohne Summe).
+            # kann -- eine dauerhaft verwaiste Summe ohne Fenster-Eintrag
+            # (siehe Vorfall: Rollover am 2026-09-07/08 uebersprungen,
+            # "Montag"-Summe blieb ohne Tageszaehler, "Dienstag" bekam
+            # einen Tageszaehler ohne Summe).
             #
             # "vehicle_discharge_counted_dates" (statt hier bei JEDEM
             # Kalendertag blind den Live-Urlaubsstatus abzufragen, wie vor
@@ -4868,15 +5121,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # der Fahrt umgelegt -- ohne dieses Set wuerde der Rollover
             # denselben, schon korrigierten Tag anhand des dann laengst
             # aktiven Urlaubsschalters ERNEUT (und diesmal faelschlich als
-            # "ganzer Tag Urlaub") bewerten und den bereits korrekt
-            # gezaehlten Tageszaehler wieder verwerfen). Nur fuer Tage, die
-            # NICHT bereits entschieden sind, gilt weiterhin der bisherige
-            # Live-Check -- siehe _urlaub_aktiv()-Docstring fuer die
+            # "ganzer Tag Urlaub") bewerten und faelschlich einen normalen
+            # Fenster-Eintrag fuer ihn anlegen). Nur fuer Tage, die NICHT
+            # bereits entschieden sind, gilt weiterhin der bisherige Live-
+            # Check -- siehe _urlaub_aktiv()-Docstring fuer die
             # verbleibende (seltene, mehrtaegige Nachhol-) Einschraenkung
             # davon.
             old_date = date.fromisoformat(old_entry["key"])
             new_date = date.fromisoformat(key)
-            counts = dict(self.data.get("vehicle_discharge_weekday_day_counts") or {})
+            weekday_days = dict(self.data.get("vehicle_discharge_weekday_days") or {})
             resolved = set(self.data.get("vehicle_discharge_counted_dates") or [])
             d = old_date
             while d < new_date:
@@ -4887,15 +5140,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                     # gar nicht erst als beobachteter Tag, sonst wuerde er
                     # den Schnitt als "0 kWh Tag" trotzdem nach unten ziehen.
                     if not self._urlaub_aktiv():
-                        wd_key = str(d.weekday())
-                        counts[wd_key] = counts.get(wd_key, 0) + 1
+                        weekday_days = append_recent_weekday_day(
+                            weekday_days, d.weekday(), date_key, 0.0, USAGE_PROFILE_WINDOW_DAYS
+                        )
                     resolved.add(date_key)
                 d += timedelta(days=1)
-            self.data["vehicle_discharge_weekday_day_counts"] = counts
+            self.data["vehicle_discharge_weekday_days"] = weekday_days
             # Set kurz halten -- aeltere Tage sind fuer keinen zukuenftigen
-            # Rollover/keine Korrektur mehr relevant (analog dem Events-Log,
-            # siehe VEHICLE_DISCHARGE_EVENTS_MAX_DAYS).
-            resolved_cutoff = new_date - timedelta(days=VEHICLE_DISCHARGE_EVENTS_MAX_DAYS)
+            # Rollover/keine Korrektur mehr relevant.
+            resolved_cutoff = new_date - timedelta(days=_VEHICLE_DISCHARGE_RESOLVED_DATES_MAX_DAYS)
             self.data["vehicle_discharge_counted_dates"] = [
                 dk for dk in resolved if date.fromisoformat(dk) >= resolved_cutoff
             ]
@@ -4923,30 +5176,26 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         direkt in _evcc_mode_targets() verwendet. None ohne einen einzigen
         beobachteten Wochentag (z.B. direkt nach dem Update auf diese
         Version)."""
-        return house_weekday_usage_profile(
-            self.data.get("vehicle_discharge_weekday_kwh_totals") or {},
-            self.data.get("vehicle_discharge_weekday_day_counts") or {},
-        )
+        return weekday_profile_from_recent_days(self.data.get("vehicle_discharge_weekday_days") or {})
 
     def _effective_vehicle_usage_profile(self) -> Optional[dict]:
-        """Nutzungsprofil fuer _evcc_mode_targets(): je Wochentag bevorzugt
-        vehicle_discharge_usage_profile() (vollstaendiger, siehe dort), faellt
-        aber je Wochentag EINZELN auf usage_profile() (Fahrtenbuch-basiert)
-        zurueck, solange fuer diesen Wochentag noch keine Live-SoC-Daten
-        vorliegen -- ohne diesen Fallback wuerde die evcc-Steuerung direkt
-        nach dem Update auf diese Version fuer JEDEN Wochentag 0 kWh Bedarf
-        annehmen (das neue Profil startet leer, siehe dortigen Docstring),
-        bis sich der Live-Tracker ueber die naechsten 1-2 Wochen wieder
-        vollstaendig aufgebaut hat -- eine sonst gefaehrliche Uebergangs-
-        Regression fuer bereits aktive Installationen. None nur, wenn
-        BEIDE Quellen nichts liefern."""
-        trip_profile = self.usage_profile()
-        discharge_profile = self.vehicle_discharge_usage_profile()
-        if trip_profile is None and discharge_profile is None:
-            return None
-        merged = dict(trip_profile or {})
-        merged.update(discharge_profile or {})
-        return merged
+        """Nutzungsprofil fuer _evcc_mode_targets(): ausschliesslich
+        vehicle_discharge_usage_profile() (Live-SoC, erfasst Fahr- UND
+        Standby-Verbrauch). Bis 2026-09-23 fiel dies je Wochentag EINZELN
+        auf das (ungenauere) Fahrtenbuch-Profil zurueck, solange fuer
+        diesen Wochentag noch keine Live-SoC-Daten vorlagen -- das hat
+        Urlaubstage NICHT ausgeschlossen (anders als der Live-Tracker) und
+        haette so die allerersten Profilwerte einer Neuinstallation
+        verzerren koennen, faellt aber genau in dem Zeitraum an, den sie am
+        wenigsten braucht: waehrend der ersten 1-2 Wochen nach Einrichtung,
+        bis der Live-Tracker fuer jeden Wochentag mindestens einen Tag
+        gesehen hat. Nutzerentscheidung 2026-09-23: den ungenauen Fallback
+        ganz weglassen statt ihn ebenfalls urlaubs-bereinigt nachzubauen --
+        "der nutzer weiss ja, es dauert 2 wochen bis er die ersten werte
+        bekommt". None (bzw. ein je Wochentag unvollstaendiges Dict) bis
+        dahin ist bewusst in Kauf genommen; _evcc_mode_targets() behandelt
+        einen fehlenden Wochentag konservativ als 0 kWh Bedarf."""
+        return self.vehicle_discharge_usage_profile()
 
     def _evcc_mode_targets(self) -> Optional[dict]:
         """Berechnet Ziel-Modus + Min-/Ziel-SoC fuer die evcc-Schreib-
@@ -4984,7 +5233,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         used_today = self._vehicle_discharge_kwh_used_today()
         if used_today is None:
             used_today = self._kwh_used_today() or 0.0
-        rest_heute_roh = remaining_today_kwh(profile.get(today_wd, 0.0), used_today)
+        rest_heute_roh = remaining_today_kwh(profile.get(today_wd, 0.0), used_today, self._day_fraction_elapsed())
         pv_rest_heute_roh = self._pv_forecast_today_remaining_kwh() or 0.0
         # Die Haus-/Speicher-PV-Konkurrenz wird ZUERST von der PV-Prognose
         # abgezogen, nicht vom Fahrzeug-Restbedarf -- die rohe PV-Prognose

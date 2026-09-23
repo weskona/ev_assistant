@@ -85,6 +85,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         UsageProfileTomorrowSensor(coordinator, entry),
         HouseUsageProfileSensor(coordinator, entry),
         VehicleDischargeSensor(coordinator, entry),
+        PlugWindowSensor(coordinator, entry),
         AvailableKwhSensor(coordinator, entry),
         EvccModeControlSensor(coordinator, entry),
         EvccChargePlanSensor(coordinator, entry),
@@ -208,12 +209,13 @@ class TotalCostSensor(EvAssistantEntity, SensorEntity):
 
 
 class CountSensor(EvAssistantEntity, SensorEntity):
-    """Fremdladung-Anzahl -- traegt zusaetzlich "lade_modus" als Attribut
-    (siehe coordinator.py::lade_modus()), damit das Panel den Modus lesen
-    kann, ohne einen neuen Netzwerkweg/Sensor dafuer zu brauchen (dieselbe
-    Entitaet wird ohnehin schon fuer die Fahrzeuge-Tab-KPI aufgeloest).
-    Bewusst hier statt an einer neuen dedizierten Entitaet, um keine
-    zusaetzliche Sensor-Entitaet nur fuer ein Sichtbarkeits-Flag anzulegen."""
+    """Fremdladung-Anzahl -- traegt zusaetzlich "lade_modus" und
+    "panel_layout" als Attribute (siehe coordinator.py::lade_modus()/
+    panel_layout()), damit das Panel beides lesen kann, ohne einen neuen
+    Netzwerkweg/Sensor dafuer zu brauchen (dieselbe Entitaet wird ohnehin
+    schon fuer die Fahrzeuge-Tab-KPI aufgeloest). Bewusst hier statt an
+    einer neuen dedizierten Entitaet, um keine zusaetzliche Sensor-Entitaet
+    nur fuer solche Sichtbarkeits-/Einstellungs-Flags anzulegen."""
 
     _attr_translation_key = "count"
     # Siehe Kommentar bei TotalKwhSensor -- totals["count"] kann durch
@@ -230,7 +232,10 @@ class CountSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        return {"lade_modus": self.coordinator.lade_modus()}
+        return {
+            "lade_modus": self.coordinator.lade_modus(),
+            "panel_layout": self.coordinator.panel_layout(),
+        }
 
 
 class LastPriceSensor(EvAssistantEntity, SensorEntity):
@@ -1356,21 +1361,14 @@ class KwhYearSensor(_KwhPeriodSensor):
 class UsageProfileSensor(EvAssistantEntity, SensorEntity):
     """Durchschnittlicher kWh-Bedarf pro Wochentag -- native_value ist der
     heutige Wochentag, alle 7 Werte stehen als Attribute zur Verfuegung
-    (z.B. fuer das Nutzungsprofil-Tab im Panel). Zeigt seit 2026-09-22 das
-    EFFEKTIVE Profil (coordinator.py::_effective_vehicle_usage_profile()),
-    nicht mehr nur das reine Fahrtenbuch (coordinator.py::usage_profile())
-    -- Nutzer-Feedback: der Sensor hiess "Nutzungsprofil", zeigte aber
-    weiterhin den laengst ueberholten Fahrtenbuch-Wert, waehrend die
-    evcc-Steuerung selbst schon laengst das genauere Live-SoC-Profil
-    (coordinator.py::vehicle_discharge_usage_profile()) nutzte, sobald fuer
-    einen Wochentag Live-SoC-Daten vorliegen -- "total verwirrend", weil der
-    prominenteste Sensor nicht das zeigte, was tatsaechlich zaehlte. Neues
-    Attribut "quelle" zeigt PRO Wochentag, ob "live_soc" oder "fahrtenbuch"
-    gerade massgeblich ist -- die reinen Fahrtenbuch-Werte bleiben weiterhin
-    unter sensor.*_live_soc_verbrauch_gesamt (vehicle_discharge_usage_
-    profile()) einsehbar. unknown nur noch, wenn WEDER Fahrtenbuch noch
-    Live-SoC-Profil ueberhaupt Daten liefern (siehe _effective_vehicle_
-    usage_profile()-Docstring)."""
+    (z.B. fuer das Nutzungsprofil-Tab im Panel). Zeigt das EFFEKTIVE Profil
+    (coordinator.py::_effective_vehicle_usage_profile()), seit 2026-09-23
+    identisch zum reinen Live-SoC-Profil (vehicle_discharge_usage_profile())
+    -- das vormals hier zusaetzlich gemischte, ungenauere Fahrtenbuch-
+    Profil als Uebergangs-Fallback fuer neue Installationen wurde bewusst
+    entfernt (siehe dortigen Docstring). unknown fuer einen Wochentag, fuer
+    den der Live-Tracker noch keinen einzigen Tag beobachtet hat -- typisch
+    nur in den ersten 1-2 Wochen nach Einrichtung."""
 
     _attr_translation_key = "usage_profile"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
@@ -1395,13 +1393,7 @@ class UsageProfileSensor(EvAssistantEntity, SensorEntity):
         profile = self.coordinator._effective_vehicle_usage_profile()
         if not profile:
             return {}
-        discharge_profile = self.coordinator.vehicle_discharge_usage_profile() or {}
-        attrs = {self._WEEKDAY_KEYS[wd]: kwh for wd, kwh in profile.items()}
-        attrs["quelle"] = {
-            self._WEEKDAY_KEYS[wd]: ("live_soc" if wd in discharge_profile else "fahrtenbuch")
-            for wd in profile
-        }
-        return attrs
+        return {self._WEEKDAY_KEYS[wd]: kwh for wd, kwh in profile.items()}
 
 
 class UsageProfileTomorrowSensor(EvAssistantEntity, SensorEntity):
@@ -1479,11 +1471,13 @@ class VehicleDischargeSensor(EvAssistantEntity, SensorEntity):
     stark abweichende SoC-Ausreisser, Produktionsvorfall 2026-09-02ff).
     TOTAL statt TOTAL_INCREASING, da der Zaehler bei Bedarf manuell
     zurueckgesetzt werden kann (analog EquivalentFullCyclesSensor). Macht
-    zusaetzlich "vehicle_discharge_events" sichtbar (Attribut
-    "live_soc_events") -- das Log, aus dem der Service urlaub_seit
-    (siehe coordinator.py::async_apply_vehicle_discharge_urlaub_since())
-    rueckwirkend Buchungen herausrechnet; hilft beim Ablesen eines
-    passenden seit_ts-Werts fuer den Service-Aufruf. Zusaetzlich
+    zusaetzlich "vehicle_discharge_weekday_days" sichtbar (Attribut
+    "live_soc_days") -- das Sliding-Window je Wochentag (siehe engine.py::
+    append_recent_weekday_day()), aus dem der Service urlaub_seit (siehe
+    coordinator.py::async_apply_vehicle_discharge_urlaub_since())
+    rueckwirkend Kalendertage entfernt; hilft beim Ablesen eines
+    passenden seit_ts-Werts fuer den Service-Aufruf (jeder Eintrag traegt
+    sein Datum). Zusaetzlich
     "vollladung_letzter_ts" (siehe coordinator.py::_maybe_mark_vollladung_
     erreicht()/VOLLLADUNG_SOC_THRESHOLD) -- thematisch hier statt eines
     eigenen Sensors, da ebenfalls reines Live-SoC-Bookkeeping."""
@@ -1511,8 +1505,45 @@ class VehicleDischargeSensor(EvAssistantEntity, SensorEntity):
         attrs["reference_soc"] = self.coordinator.data.get("vehicle_discharge_reference_soc")
         attrs["pending_soc"] = self.coordinator.data.get("vehicle_discharge_pending_soc")
         attrs["pending_since"] = self.coordinator.data.get("vehicle_discharge_pending_since")
-        attrs["live_soc_events"] = self.coordinator.data.get("vehicle_discharge_events")
+        attrs["live_soc_days"] = self.coordinator.data.get("vehicle_discharge_weekday_days")
         attrs["vollladung_letzter_ts"] = self.coordinator.data.get("vollladung_letzter_ts")
+        return attrs
+
+
+class PlugWindowSensor(EvAssistantEntity, SensorEntity):
+    """Reines Beobachtungs-Feature (siehe coordinator.py::_update_plug_
+    window(), Nutzerwunsch 2026-09-23: 'wäre für das nutzungsprofil nicht
+    auch die zeiten wann und wie lange am tag das auto angeschlossen ist
+    ... sinnvoll ... um zu erkennen wie das auto zuhause ist und wann
+    fenster zum laden entstehen'; bewusst 'erstmal nur zur beobachtung').
+    Quelle ist evccs eigener Ladepunkt-Status ('connected'), NICHT
+    CONF_PLUG_ENTITY (separater, optionaler HA-Sensor). Beeinflusst
+    (noch) NICHT die Modus-/SoC-Steuerung (siehe _evcc_mode_targets())."""
+
+    _attr_translation_key = "plug_window"
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:ev-plug-type2"
+    _attr_suggested_display_precision = 2
+
+    _WEEKDAY_KEYS = ["montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag"]
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "plug_window")
+
+    @property
+    def native_value(self):
+        today_wd = dt_util.now().date().weekday()
+        profile = self.coordinator.plug_window_profile()
+        return profile.get(today_wd) if profile else None
+
+    @property
+    def extra_state_attributes(self):
+        profile = self.coordinator.plug_window_profile() or {}
+        attrs = {wd_key: profile[wd] for wd, wd_key in enumerate(self._WEEKDAY_KEYS) if wd in profile}
+        attrs["heute"] = self.coordinator.data.get("plug_window_today")
+        attrs["tage"] = self.coordinator.data.get("plug_window_weekday_days")
         return attrs
 
 

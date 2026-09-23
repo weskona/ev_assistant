@@ -2,6 +2,43 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.98.5] - 2026-09-23
+
+### Added
+
+- **Optional: prioritize vehicle charging over the home battery while plugged in** (`evcc_battery_priority_enabled` option, off by default): production incident — with evcc's home-battery priority threshold (`prioritySoc`) fixed at 100%, the battery always charged to full first on any PV-surplus day. On a day the vehicle left right as the battery reached 100%, it got essentially no charge, and the leftover surplus after that went to the grid instead of ever reaching the vehicle. When enabled, ev_assistant now lowers evcc's site-wide `prioritySoc` while the vehicle is connected (new `EvccClient.async_set_priority_soc()`), giving it full priority over the battery for PV surplus — and restores the previously observed threshold once the vehicle disconnects, rather than resetting to a hardcoded value, so a preference set directly in evcc's own UI is respected. Only affects how PV *charging* surplus is split between wallbox and battery — does not touch battery discharge behavior at all (controlled separately, e.g. by a household's own battery-dispatch automation).
+
+## [0.98.4] - 2026-09-23
+
+### Added
+
+- **Plug-in time window tracking (observation only)**: new diagnostic sensor and panel card ("Steckerprofil", in the Usage Profile tab) showing, per weekday, the average duration the vehicle is plugged in at the wallbox, plus the raw window of recent days (first-connect/last-disconnect times, capped to the last 8 observed days). Sourced from evcc's own loadpoint `connected` state (not the separate, optional `plug_entity` config), polled on the existing evcc state-refresh cycle — a plug-in session spanning midnight is split across the two calendar days automatically, since each poll tick is attributed to whichever day it actually occurs in. Purely informational for now; does not influence charge mode/SoC control.
+
+## [0.98.3] - 2026-09-23
+
+### Changed
+
+- **Vehicle and house usage profiles now use a recency-weighted sliding window instead of a lifetime average**: both were previously a simple cumulative total ÷ day count since setup, which adapts very slowly to a genuinely changed usage pattern (new commute, seasonal change, ...) the longer an installation has been running. Each weekday now keeps only the last 8 observed calendar days (`USAGE_PROFILE_WINDOW_DAYS`) instead of the full history, so recent behavior dominates the average within weeks rather than years. Existing installations are migrated automatically on first startup after this update: the previous lifetime average per weekday becomes a single seed entry in the new window (dated "yesterday"), so nobody's profile resets to empty — it's gradually replaced by real recent data as the window fills.
+- **Vacation correction (`urlaub_seit` service) simplified**: with the sliding-window model, retroactively excluding a day wrongly booked as normal (e.g. vacation started mid-drive, before the vacation switch was flipped) is now a straightforward removal of that calendar day's window entry, replacing the previous event-log-replay mechanism. This makes the correction calendar-day-granular instead of exact-timestamp-granular (a day with multiple bookings is now excluded as a whole rather than split at the exact vacation-start moment) — a minor precision tradeoff in a rare edge case, in exchange for substantially simpler logic.
+
+## [0.98.2] - 2026-09-23
+
+### Changed
+
+- **Vehicle usage profile for evcc control no longer falls back to the trip log**: `_effective_vehicle_usage_profile()` previously filled in any weekday still missing Live-SoC discharge data (typically only during the first 1-2 weeks after installation) with the less accurate trip-log-based estimate, which — unlike the Live-SoC tracker — didn't exclude vacation days from its own average. Removed rather than fixed, since a fresh installation is expected to take about two weeks to build a reliable profile anyway; a weekday with no Live-SoC data yet is now simply treated as 0 kWh need (conservative) until real data accumulates.
+
+## [0.98.1] - 2026-09-23
+
+### Changed
+
+- **Vehicle/house remaining-today-kWh calculation now tapers by time of day**: previously compared today's already-used kWh against a flat full-day weekday average regardless of the current time, so e.g. at 44% SoC and 8pm the profile could still recommend topping up, even though the typical weekday need was already effectively covered by that point in the day. `remaining_today_kwh()` now scales the weekday average down proportional to the elapsed fraction of the day before subtracting today's usage (a soft decay), so the recommended remaining need for today naturally approaches zero as the day progresses.
+
+## [0.98.0] - 2026-09-23
+
+### Added
+
+- **Beta panel card customization**: users can now choose which cards appear on the Beta panel (intended to become the final panel) and in what order/size, via a new "Anpassen" (gear) button — cards can be hidden/shown, reordered by drag-and-drop, and resized to 1/3, 1/2, 2/3 or full width, allowing side-by-side layouts. Persisted server-side (new `set_panel_layout` service, exposed via the `count` sensor's `panel_layout` attribute) so the layout is the same across devices/sessions instead of a local browser preference. Hiding a card keeps it available in the customize list for later re-adding, rather than removing it permanently. Drag-and-drop uses a pointer-events-based ghost+placeholder implementation (not native HTML5 drag-and-drop, which lacks touch support), so reordering works the same on touch and mouse.
+
 ## [0.97.1] - 2026-09-23
 
 ### Fixed

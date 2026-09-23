@@ -1395,3 +1395,27 @@ clear_evcc_manual_mode:
       selector:
         config_entry:
           integration: ev_assistant
+
+set_panel_layout:
+  name: Panel-Layout speichern
+  description: >
+    Speichert Sichtbarkeit und Reihenfolge der Beta-Panel-Karten. Wird vom
+    Panel selbst über das "Panel anpassen"-Popup aufgerufen, nicht für die
+    manuelle Nutzung gedacht.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    layout:
+      name: Layout
+      description: >
+        Liste aus {key, visible, size} in Anzeigereihenfolge, z.B.
+        [{"key": "hero_cost", "visible": true, "size": "half"}, ...].
+        size: third/half/twothirds/full.
+      required: true
+      selector:
+        object:

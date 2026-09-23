@@ -321,6 +321,20 @@ CONF_EVCC_MODE_CONTROL_ENABLED = "evcc_mode_control_enabled"
 # ist. Rein additiv, wirkt nur ueber apply_realtime_pv_override(), aendert
 # nichts, solange CONF_EVCC_MODE_CONTROL_ENABLED aus ist.
 CONF_WALLBOX_MIN_POWER_W = "wallbox_min_power_w"
+# Optional, Default aus (siehe DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED):
+# schaltet die dynamische Steuerung von evccs "prioritySoc" (Speicher-
+# Vorrang-Schwelle beim PV-Ueberschuss) anhand der Steckpraesenz des
+# Fahrzeugs frei (siehe coordinator.py::_apply_battery_priority_for_
+# vehicle_presence()). Nutzerbeobachtung 2026-09-23 (Vorfall Montag):
+# mit fest prioritySoc=100 laedt evcc den Heimspeicher im PV-Modus IMMER
+# zuerst komplett voll, bevor das Auto ueberhaupt Ueberschuss bekommt --
+# fuhr das Auto (wie an dem Tag) genau dann los, wenn der Speicher voll
+# wurde, bekam es praktisch nichts ab, und der Rest-Ueberschuss ging
+# danach ungenutzt ins Netz. Nutzerentscheidung: waehrend das Auto
+# angesteckt ist, soll ES Vorrang vor dem Speicher bekommen ("der
+# speicher nimmt ja eh dann alles auf") -- rein additiv, ohne diese
+# Option aendert sich am bisherigen (statischen) evcc-Verhalten nichts.
+CONF_EVCC_BATTERY_PRIORITY_ENABLED = "evcc_battery_priority_enabled"
 # Optional, Default aus (siehe DEFAULT_WEEKLY_FULL_CHARGE_ENABLED): woechentliche
 # Vollladung fuers Zellbalancing -- ist sie aktiv und seit der letzten erreichten
 # Vollladung (siehe VOLLLADUNG_SOC_THRESHOLD, coordinator.py::_maybe_mark_
@@ -359,15 +373,16 @@ DEFAULT_NOISE = 0.5
 # weit unter der Dauer eines echten Standby-Rueckgangs.
 VEHICLE_DISCHARGE_CONFIRM_SECONDS = 60.0
 
-# Aufbewahrungsfenster fuer "vehicle_discharge_events" (siehe coordinator.py::
-# _book_vehicle_discharge_weekday()/async_apply_vehicle_discharge_urlaub_
-# since()) -- das Log existiert NUR, damit ein vergessenes Aktivieren von
-# CONF_URLAUB_ENTITY rueckwirkend korrigiert werden kann (Service
-# SERVICE_URLAUB_SEIT), keine dauerhafte Historie wie "fahrten"/"history".
-# 7 Tage sind grosszuegig fuer den realistischen Anwendungsfall ("heute oder
-# gestern vergessen"), ohne self.data mit einer weiteren unbegrenzt
-# wachsenden Liste zu belasten.
-VEHICLE_DISCHARGE_EVENTS_MAX_DAYS = 7
+# Fenstergroesse (Anzahl letzter Vorkommen JE Wochentag) fuer das
+# Nutzungsprofil (Fahrzeug: engine.py::append_recent_weekday_day()/
+# weekday_profile_from_recent_days(), analog fuers Haus) -- Nutzerwunsch
+# 2026-09-23: "recency-gewichtung ... passt sich schneller an geaendertes
+# fahrverhalten an" statt eines traege reagierenden Lebenszeit-Durchschnitts.
+# 8 (~2 Monate je Wochentag) gewaehlt statt z.B. 4 (~1 Monat): bei nur 4
+# macht ein einzelner ungewoehnlicher Tag schon 25% des Schnitts aus,
+# spuerbar wackelig -- 8 glaettet das deutlich, reagiert aber immer noch
+# innerhalb weniger Wochen auf eine echte Verhaltensaenderung.
+USAGE_PROFILE_WINDOW_DAYS = 8
 DEFAULT_IDLE_TIMEOUT = 600.0
 DEFAULT_DROP_ENDS = 1.0
 
@@ -460,6 +475,17 @@ MIN_USAGE_PROFILE_DAYS = 7
 DEFAULT_EVCC_MODE_CONTROL_ENABLED = False
 # Siehe CONF_WALLBOX_MIN_POWER_W-Kommentar oben: 6A x 230V einphasig.
 DEFAULT_WALLBOX_MIN_POWER_W = 1380.0
+# Feature komplett deaktiviert, bis aktiv per CONF_EVCC_BATTERY_PRIORITY_
+# ENABLED freigeschaltet (siehe dortigen Kommentar).
+DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED = False
+# prioritySoc-Wert, den _apply_battery_priority_for_vehicle_presence()
+# waehrend das Auto angesteckt ist setzt: 0 gibt dem Auto vollen Vorrang
+# vor dem Speicher (siehe CONF_EVCC_BATTERY_PRIORITY_ENABLED-Kommentar) --
+# sobald der Ladebedarf des Autos gedeckt ist (Modus-/SoC-Ziel erreicht),
+# fliesst ungenutzter Ueberschuss ohnehin ganz normal weiter in den
+# Speicher, ein hoeherer Wert wuerde also keinen zusaetzlichen Nutzen
+# bringen, nur die Auto-Ladung unnoetig bremsen.
+EVCC_BATTERY_PRIORITY_VEHICLE_SOC = 0
 # Wie viele Tage (ab dem Tag NACH heute) der evcc-Ziel-SoC abdeckt (siehe
 # engine.py::determine_evcc_mode()/coordinator.py::_evcc_mode_targets()) --
 # der Mindest-SoC deckt dagegen nur den naechsten einzelnen Tag ab. 2 Tage
@@ -558,6 +584,34 @@ SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM = "set_evcc_charge_plan_range_km"
 SERVICE_SET_EVCC_MANUAL_MODE = "set_evcc_manual_mode"
 SERVICE_CLEAR_EVCC_MANUAL_MODE = "clear_evcc_manual_mode"
 SERVICE_URLAUB_SEIT = "urlaub_seit"
+SERVICE_SET_PANEL_LAYOUT = "set_panel_layout"
+
+# Bekannte Karten-Schluessel fuer das anpassbare Beta-Panel-Layout (Nutzerwunsch
+# 2026-09-23: "der nutzer bekommt eine auswahl von karten, die er selber im
+# panel anordnen oder auch auswaehlen kann" / "ich wuerde das panel gerne in
+# grids aufteilen, so das der nutzer auch karten nebeneinander anordnen
+# kann") -- siehe coordinator.py::async_set_panel_layout()/panel_layout()
+# sowie frontend/ev-assistant-panel.js::_panelSectionBuilders(). Die
+# vormals festen 2-Spalten-Paare ("hero"/"bottom") sind hier in ihre
+# Einzelkarten aufgetrennt (hero_cost/hero_secondary, comparison/location),
+# damit wirklich jede Karte mit jeder anderen frei kombinierbar ist -- auf
+# Kosten des vorher bewusst ungleichen Spaltenverhaeltnisses der Hero-Zeile
+# (Nutzerentscheidung 2026-09-23). Nur hier gelistete Schluessel werden von
+# async_set_panel_layout() uebernommen -- ein unbekannter/veralteter Wert
+# (z.B. aus einer alten Panel-Version) wird stillschweigend verworfen statt
+# eine kaputte Karte zu erzeugen.
+PANEL_LAYOUT_KEYS = (
+    "hero_cost", "hero_secondary", "wallbox", "kpi",
+    "comparison", "location", "evcc_mode", "evcc_plan",
+)
+
+# Erlaubte Groessenstufen je Karte (Nutzerwunsch: "vlt auch die groesse
+# aendern kann") -- feste Stufen statt freiem Ziehen/Resize (aufwaendiger,
+# fehleranfaelliger, siehe Chatverlauf), als Bruchteil der Grid-Breite.
+# "full" ist der Default fuer unbekannte/fehlende Werte (siehe
+# async_set_panel_layout()) -- eine Karte lieber zu breit als unsichtbar
+# darzustellen.
+PANEL_LAYOUT_SIZES = ("third", "half", "twothirds", "full")
 
 NOTIFY_TAG = "ev_assistant"
 

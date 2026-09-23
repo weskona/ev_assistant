@@ -180,6 +180,17 @@ async def test_async_set_limit_soc_vehicle_scope():
     assert session.calls == [("POST", "http://evcc.local/api/vehicles/mein_auto/limitsoc/90")]
 
 
+async def test_async_set_priority_soc_erfolgreich():
+    client, session = _client({"http://evcc.local/api/prioritysoc/0": _FakeResponse(200)})
+    assert await client.async_set_priority_soc(0) is True
+    assert session.calls == [("POST", "http://evcc.local/api/prioritysoc/0")]
+
+
+async def test_async_set_priority_soc_http_fehler_gibt_false():
+    client, _ = _client({"http://evcc.local/api/prioritysoc/100": _FakeResponse(500)})
+    assert await client.async_set_priority_soc(100) is False
+
+
 async def test_post_loggt_warning_bei_http_fehler(caplog):
     client, _ = _client({"http://evcc.local/api/loadpoints/1/mode/now": _FakeResponse(503)})
     with caplog.at_level("WARNING"):

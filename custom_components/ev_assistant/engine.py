@@ -960,7 +960,9 @@ def charge_before_pv_decision(
     return (available_kwh + pv_forecast_kwh) < needed_kwh
 
 
-def remaining_today_kwh(weekday_avg_kwh: float, kwh_used_today: float) -> float:
+def remaining_today_kwh(
+    weekday_avg_kwh: float, kwh_used_today: float, day_fraction_elapsed: float = 0.0,
+) -> float:
     """Rest-Bedarf fuer den heutigen Tag: der Wochentags-Durchschnitt fuer
     HEUTE (siehe weekday_usage_profile_from_totals()) abzueglich der bereits
     heute gefahrenen kWh -- wie viel vom TYPISCHEN Tagesbedarf noch vor einem
@@ -969,8 +971,24 @@ def remaining_today_kwh(weekday_avg_kwh: float, kwh_used_today: float) -> float:
     Nie negativ -- ein Tag, an dem schon mehr als der Schnitt gefahren wurde,
     braucht rechnerisch keinen weiteren Rest (0.0), nicht einen negativen
     "Ueberschuss" (der wuerde in der Summe mit morgen/uebermorgen faelschlich
-    den Gesamtbedarf senken)."""
-    return round(max(0.0, weekday_avg_kwh - kwh_used_today), 2)
+    den Gesamtbedarf senken).
+
+    `day_fraction_elapsed` (0.0-1.0, Anteil des seit Mitternacht Lokalzeit
+    vergangenen Kalendertages, siehe coordinator.py::_day_fraction_
+    elapsed()) skaliert den Durchschnitt SELBST mit (1 - day_fraction_
+    elapsed), VOR dem Abzug des bereits Verbrauchten -- weicher Abbau ueber
+    den Tagesverlauf statt eines fix bis 23:59 geltenden Durchschnitts.
+    Produktionsfall 2026-09-23: SoC ~44%, 20 Uhr, bereits 12,5 von
+    durchschnittlich 15 kWh Mittwochsbedarf verbraucht -- der flache
+    Vergleich zeigte noch 2,5 kWh Restbedarf (loeste unnoetiges Nachladen
+    aus), obwohl der Tag praktisch vorbei war. Mit Taper: 15 kWh * (1 -
+    20/24) = 2,5 kWh skalierter Durchschnitt, davon 12,5 kWh bereits
+    verbraucht abgezogen -> 0 kWh Rest (auf 0 geklammert statt negativ).
+    Default 0.0 (kein Abbau) haelt das alte Verhalten bei, wenn keine
+    Tageszeit uebergeben wird."""
+    day_fraction_elapsed = max(0.0, min(1.0, day_fraction_elapsed))
+    tapered_avg = weekday_avg_kwh * (1.0 - day_fraction_elapsed)
+    return round(max(0.0, tapered_avg - kwh_used_today), 2)
 
 
 def net_need_after_pv_kwh(need_kwh: float, pv_forecast_kwh: float) -> float:
@@ -1339,6 +1357,160 @@ def house_weekday_usage_profile(weekday_kwh_totals: dict, weekday_day_counts: di
         count = weekday_day_counts.get(key, 0)
         if count > 0:
             result[wd] = round(weekday_kwh_totals.get(key, 0.0) / count, 2)
+    return result or None
+
+
+# ----- Gleitendes Fenster der letzten N Tage je Wochentag ------------------
+# Ersetzt fuer NEUE Buchungen den Lebenszeit-Durchschnitt oben (Nutzerwunsch
+# 2026-09-23: "recency-gewichtung ... passt sich schneller an geaendertes
+# fahrverhalten an" -- ein reiner Lebenszeit-Schnitt bewegt sich nach
+# Monaten Laufzeit kaum noch). Datenmodell: {"0".."6": [{"date":
+# "YYYY-MM-DD", "kwh": float}, ...]}, aufsteigend nach Datum, auf die
+# letzten `window` Eintraege gekappt -- die Liste selbst ist gleichzeitig
+# Summe UND Nenner (kein separater Tageszaehler mehr noetig), und macht die
+# rueckwirkende Urlaubskorrektur trivial (siehe remove_weekday_day():
+# einzelnen Eintrag per Datum entfernen statt eine Lebenszeit-Summe
+# zurueckzurechnen).
+
+def weekday_profile_from_recent_days(weekday_days: dict) -> Optional[dict]:
+    """Durchschnitt je Wochentag aus dem gleitenden Fenster (siehe oben)
+    statt eines Lebenszeit-Durchschnitts. Ein noch nie beobachteter
+    Wochentag fehlt im Ergebnis (analog house_weekday_usage_profile()),
+    statt 0 kWh anzunehmen. None, wenn ueberhaupt kein Wochentag
+    Eintraege hat."""
+    if not weekday_days:
+        return None
+    result = {}
+    for wd in range(7):
+        days = weekday_days.get(str(wd)) or []
+        if days:
+            result[wd] = round(sum(d["kwh"] for d in days) / len(days), 2)
+    return result or None
+
+
+def append_recent_weekday_day(
+    weekday_days: dict, weekday: int, date_iso: str, kwh: float, window: int,
+) -> dict:
+    """Bucht `kwh` fuer `date_iso` in die Liste seines Wochentags --
+    ADDIERT zu einem bereits vorhandenen Eintrag fuer DASSELBE Datum
+    (statt ihn zu ersetzen oder zu duplizieren), damit mehrere Buchungen
+    am selben Tag (z.B. mehrere bestaetigte Live-SoC-Abfaelle, siehe
+    coordinator.py::_book_vehicle_discharge_weekday()) korrekt aufsummiert
+    werden. Kappt danach auf die letzten `window` Eintraege (aelteste
+    zuerst verworfen) -- das IST die Recency-Gewichtung. `kwh=0.0` fuer ein
+    noch nicht vorhandenes Datum legt einen leeren Beobachtungstag an
+    (siehe coordinator.py::_finalize_vehicle_discharge_days() -- ein Tag
+    ohne jede Buchung zaehlt trotzdem als beobachteter "0 kWh"-Tag, sonst
+    wuerde er im Fenster fehlen statt es korrekt nach unten zu ziehen)."""
+    result = {k: list(v) for k, v in (weekday_days or {}).items()}
+    key = str(weekday)
+    days = list(result.get(key, []))
+    for entry in days:
+        if entry["date"] == date_iso:
+            entry["kwh"] = round(entry["kwh"] + kwh, 2)
+            break
+    else:
+        days.append({"date": date_iso, "kwh": round(kwh, 2)})
+    days.sort(key=lambda d: d["date"])
+    result[key] = days[-window:]
+    return result
+
+
+def remove_weekday_day(weekday_days: dict, date_iso: str) -> dict:
+    """Entfernt (falls vorhanden) den Eintrag zu `date_iso` aus ALLEN
+    Wochentags-Listen -- fuer die rueckwirkende Urlaubskorrektur (siehe
+    coordinator.py::async_apply_vehicle_discharge_urlaub_since()): ein
+    nachtraeglich als Urlaub erkannter Tag wird einfach aus seiner Liste
+    entfernt, statt (wie beim Lebenszeit-Modell noetig) eine Betrags-
+    Korrektur zu buchen. Es wird nicht geprueft, zu welchem Wochentag
+    date_iso "eigentlich" gehoert -- ein Datum kann ohnehin nur in
+    hoechstens einer der 7 Listen vorkommen, ein Scan aller (kurzen)
+    Listen ist billig genug."""
+    result = {}
+    for key, days in (weekday_days or {}).items():
+        filtered = [d for d in days if d["date"] != date_iso]
+        if filtered:
+            result[key] = filtered
+    return result
+
+
+# ----- Steck-Zeitfenster-Beobachtung (rein informativ) ---------------------
+# Nutzerwunsch 2026-09-23: "wäre für das nutzungsprofil nicht auch die
+# zeiten wann und wie lange am tag das auto angeschlossen ist an die
+# wallbox sinnvoll ... um besser zu erkennen wie das auto zuhause ist und
+# wie/wann fenster zum laden entstehen um die ladesteuerung zu verbessern".
+# Bewusst "erstmal nur zur beobachtung" (Nutzerentscheidung) -- beeinflusst
+# noch NICHT determine_evcc_mode()/_evcc_mode_targets(), nur ein neuer
+# Diagnose-Sensor (siehe coordinator.py::_update_plug_window()). Eigenes,
+# etwas reichhaltigeres Eintragsformat als das kWh-Sliding-Window oben
+# ("stunden"/"erster_connect"/"letzter_disconnect" statt nur "kwh"), daher
+# eigene (kleine) Funktionen statt Wiederverwendung von
+# append_recent_weekday_day() -- gleiches Grundprinzip (gleitendes Fenster
+# der letzten `window` Kalendertage je Wochentag).
+
+def append_recent_weekday_plug_window(
+    weekday_days: dict,
+    weekday: int,
+    date_iso: str,
+    connected_hours: float,
+    erster_connect: Optional[str],
+    letzter_disconnect: Optional[str],
+    window: int,
+) -> dict:
+    """Bucht die Steck-Beobachtung eines Kalendertages (Gesamtdauer in
+    Stunden, erste Connect-/letzte Disconnect-Uhrzeit als "HH:MM") in die
+    Liste seines Wochentags -- ADDIERT die Stunden zu einem bereits
+    vorhandenen Eintrag fuer DASSELBE Datum (falls der Tag zwischenzeitlich
+    schon einmal, z.B. vor einem HA-Neustart, teilweise gebucht wurde),
+    behaelt dabei aber die jeweils fruehere Connect- bzw. spaetere
+    Disconnect-Uhrzeit. `connected_hours=0.0` fuer ein noch nicht
+    vorhandenes Datum legt einen leeren "gar nicht angesteckt"-Beobachtungs-
+    tag an, analog append_recent_weekday_day(). Kappt danach auf die
+    letzten `window` Eintraege (aelteste zuerst verworfen)."""
+    result = {k: list(v) for k, v in (weekday_days or {}).items()}
+    key = str(weekday)
+    days = list(result.get(key, []))
+    for entry in days:
+        if entry["date"] == date_iso:
+            entry["stunden"] = round(entry["stunden"] + connected_hours, 2)
+            if erster_connect and (entry.get("erster_connect") is None or erster_connect < entry["erster_connect"]):
+                entry["erster_connect"] = erster_connect
+            if letzter_disconnect and (
+                entry.get("letzter_disconnect") is None or letzter_disconnect > entry["letzter_disconnect"]
+            ):
+                entry["letzter_disconnect"] = letzter_disconnect
+            break
+    else:
+        days.append({
+            "date": date_iso,
+            "stunden": round(connected_hours, 2),
+            "erster_connect": erster_connect,
+            "letzter_disconnect": letzter_disconnect,
+        })
+    days.sort(key=lambda d: d["date"])
+    result[key] = days[-window:]
+    return result
+
+
+def weekday_plug_window_profile_from_recent_days(weekday_days: dict) -> Optional[dict]:
+    """Durchschnittliche Steckdauer (Stunden) je Wochentag aus dem
+    gleitenden Fenster (siehe append_recent_weekday_plug_window()) -- reine
+    Rundungs-/Mittelwert-Funktion fuer den Sensor-Zustand, analog
+    weekday_profile_from_recent_days(). Die vollen Rohdaten (inkl. je Tag
+    typischer Connect-/Disconnect-Uhrzeit) bleiben unveraendert ueber die
+    Sensor-Attribute einsehbar -- HIER wird bewusst NICHT versucht, daraus
+    eine "durchschnittliche Uhrzeit" zu errechnen (eine simple Mittelung
+    von Uhrzeiten kaeme z.B. bei ueber Mitternacht verteilten Werten zu
+    einem irrefuehrenden Ergebnis; fuer ein reines Beobachtungsfeature
+    reicht die einsehbare Rohliste). None, wenn ueberhaupt kein Wochentag
+    Eintraege hat."""
+    if not weekday_days:
+        return None
+    result = {}
+    for wd in range(7):
+        days = weekday_days.get(str(wd)) or []
+        if days:
+            result[wd] = round(sum(d["stunden"] for d in days) / len(days), 2)
     return result or None
 
 

@@ -116,6 +116,17 @@ class EvccClient:
     async def async_clear_vehicle_plan_soc(self, vehicle_name: str) -> bool:
         return await self._delete(f"{self._host}/api/vehicles/{vehicle_name}/plan/soc")
 
+    async def async_set_priority_soc(self, soc: int) -> bool:
+        """Setzt evccs site-weite Speicher-Vorrang-Schwelle ("prioritySoc",
+        siehe /api/state) -- bis zu diesem Speicher-SoC bekommt der
+        Heimspeicher im PV-Modus IMMER den kompletten Ueberschuss vor
+        Ladepunkten (siehe coordinator.py::_apply_battery_priority_for_
+        vehicle_presence()). Site-Ebene, kein Loadpoint-/Fahrzeug-Scope
+        wie bei async_set_min_soc()/async_set_limit_soc() noetig -- live
+        gegen die evcc-REST-API verifiziert (idempotenter Test-Post mit dem
+        bereits aktiven Wert, Stand 0.315.2)."""
+        return await self._post(f"{self._host}/api/prioritysoc/{soc}")
+
     async def _delete(self, url: str) -> bool:
         """Wie _post(), aber fuer DELETE-Endpunkte (aktuell nur der
         Ladeplan-Loeschung, siehe async_clear_vehicle_plan_soc())."""

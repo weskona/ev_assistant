@@ -28,6 +28,10 @@ class EVAssistantPanel extends HTMLElement {
     // und jede dynamische Aktualisierung (Slider-Minimum, "Jetzt"-Marke)
     // griff seitdem ins Leere, ohne Fehler (nur stille `if (!x) return`-Guards).
     this._lp = {};
+    // Ref-Speicher fuer das "Panel anpassen"-Popup (siehe
+    // _buildPanelLayoutModal()) -- aus demselben Grund wie this._lp NICHT
+    // in this._r.
+    this._pl = {};
     this._main = null;
     this._edgeSig = {};
     this._formState = {};
@@ -113,6 +117,28 @@ class EVAssistantPanel extends HTMLElement {
     const eid = this._eid("count");
     const s = eid && this._hass ? this._hass.states[eid] : null;
     return (s && s.attributes && s.attributes.lade_modus) || "gemischt";
+  }
+
+  // Vom Nutzer im "Panel anpassen"-Popup gewaehlte Sichtbarkeit/Reihenfolge
+  // der Beta-Panel-Karten (Nutzerwunsch 2026-09-23: "der nutzer bekommt
+  // eine auswahl von karten, die er selber im panel anordnen oder auch
+  // auswaehlen kann") -- als Attribut am "count"-Sensor mitgeliefert
+  // (coordinator.py::panel_layout(), analog _ladeModus() oben). []
+  // (unbekannt/leer) faellt in _panelLayoutOrder() auf die Standard-
+  // reihenfolge zurueck. this._panelLayoutOverride: optimistisches lokales
+  // Update direkt nach dem Speichern (siehe _openPanelLayoutModal()), noch
+  // bevor der Server-Roundtrip die Live-Attribute aktualisiert hat --
+  // einmalig konsumiert, danach zaehlt wieder die Live-Entitaet.
+  _panelLayout() {
+    if (this._panelLayoutOverride) {
+      const ov = this._panelLayoutOverride;
+      this._panelLayoutOverride = null;
+      return ov;
+    }
+    const eid = this._eid("count");
+    const s = eid && this._hass ? this._hass.states[eid] : null;
+    const raw = s && s.attributes && s.attributes.panel_layout;
+    return Array.isArray(raw) ? raw : [];
   }
 
   // Gemeinsames Label/Farbe fuer einen evcc-Lademodus-String -- verwendet
@@ -240,6 +266,7 @@ class EVAssistantPanel extends HTMLElement {
     this._main = main;
     app.appendChild(this._buildPendingModal());
     app.appendChild(this._buildLadeplanModal());
+    app.appendChild(this._buildPanelLayoutModal());
     this.shadowRoot.appendChild(app);
     this._switchView(this._view);
   }
@@ -1408,6 +1435,16 @@ class EVAssistantPanel extends HTMLElement {
           <div class="sub-head" id="house-profil-subhead">Ø kWh-Verbrauch pro Wochentag</div>
           <div class="weekday-chart" id="house-profil-weekday-chart"></div>
         </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:ev-plug-type2"></ha-icon></span><h2>Steckerprofil</h2>
+        </div>
+        <div class="profil-empty hidden" id="plug-profil-empty">—</div>
+        <div class="hidden" id="plug-profil-content">
+          <div class="sub-head">Ø Steckdauer pro Wochentag (Std.)</div>
+          <div class="weekday-chart" id="plug-profil-weekday-chart"></div>
+        </div>
       </div>`;
 
     const q = (s) => wrap.querySelector(s);
@@ -1427,6 +1464,9 @@ class EVAssistantPanel extends HTMLElement {
       houseProfilContent:      q("#house-profil-content"),
       houseProfilSubhead:      q("#house-profil-subhead"),
       houseProfilWeekdayChart: q("#house-profil-weekday-chart"),
+      plugProfilEmpty:        q("#plug-profil-empty"),
+      plugProfilContent:      q("#plug-profil-content"),
+      plugProfilWeekdayChart: q("#plug-profil-weekday-chart"),
     };
     return wrap;
   }
@@ -1652,6 +1692,7 @@ class EVAssistantPanel extends HTMLElement {
     }
 
     this._updateHouseProfil();
+    this._updatePlugProfil();
   }
 
   // Haus-Nutzungsprofil (siehe coordinator.py::house_usage_profile(), fuer
@@ -1697,6 +1738,55 @@ class EVAssistantPanel extends HTMLElement {
     const tomorrowIdx = (todayIdx + 1) % 7;
 
     r.houseProfilWeekdayChart.innerHTML = WEEKDAYS.map(([, label], i) => {
+      const v = values[i];
+      const noData = v === null;
+      const pct = noData ? 2 : Math.max(2, Math.round((v / maxVal) * 100));
+      let cls = noData ? "wd-bar no-data" : "wd-bar";
+      if (!noData) cls += i === tomorrowIdx ? " tomorrow" : (i === todayIdx ? " today" : "");
+      return `
+        <div class="wd-col">
+          <div class="wd-val">${noData ? "–" : this._fmtNum(v, 1)}</div>
+          <div class="wd-bar-track"><div class="${cls}" style="height:${pct}%"></div></div>
+          <div class="wd-label">${label}</div>
+        </div>`;
+    }).join("");
+  }
+
+  // Steckerprofil (siehe coordinator.py::plug_window_profile(), rein
+  // informatives Beobachtungsfeature -- Nutzerwunsch 2026-09-23: "wann und
+  // wie lange am tag das auto angeschlossen ist ... um zu erkennen wie das
+  // auto zuhause ist und wann fenster zum laden entstehen"). Analog
+  // _updateHouseProfil(): eigene Karte, gleicher Wochentags-Chart, einzelne
+  // fehlende Wochentage als "noch keine Daten" statt 0 Std. Beeinflusst
+  // (noch) NICHT die Modus-/SoC-Steuerung, rein zur Beobachtung.
+  _updatePlugProfil() {
+    const r = this._r;
+    if (!r.plugProfilEmpty) return;
+    const eid = this._eid("plug_window");
+    const state = eid ? this._hass.states[eid] : null;
+    const attrs = state ? state.attributes || {} : {};
+    const WEEKDAYS = [
+      ["montag", "Mo"], ["dienstag", "Di"], ["mittwoch", "Mi"], ["donnerstag", "Do"],
+      ["freitag", "Fr"], ["samstag", "Sa"], ["sonntag", "So"],
+    ];
+    const hasAnyDay = WEEKDAYS.some(([key]) => attrs[key] !== undefined);
+
+    if (!eid || !hasAnyDay) {
+      r.plugProfilEmpty.textContent = "Noch keine Tage gesammelt. Das Profil füllt sich automatisch über die nächsten Tage.";
+      r.plugProfilEmpty.classList.remove("hidden");
+      r.plugProfilContent.classList.add("hidden");
+      return;
+    }
+    r.plugProfilEmpty.classList.add("hidden");
+    r.plugProfilContent.classList.remove("hidden");
+
+    const values = WEEKDAYS.map(([key]) => (attrs[key] !== undefined ? parseFloat(attrs[key]) : null));
+    const maxVal = Math.max(...values.filter((v) => v !== null), 0.1);
+    const todayWd = new Date().getDay();
+    const todayIdx = todayWd === 0 ? 6 : todayWd - 1;
+    const tomorrowIdx = (todayIdx + 1) % 7;
+
+    r.plugProfilWeekdayChart.innerHTML = WEEKDAYS.map(([, label], i) => {
       const v = values[i];
       const noData = v === null;
       const pct = noData ? 2 : Math.max(2, Math.round((v / maxVal) * 100));
@@ -4169,6 +4259,90 @@ class EVAssistantPanel extends HTMLElement {
   // -- Status-/Ladeort-Karten sind bewusst NEU statt aus _updateOverview()/
   // _buildAnalyse() extrahiert, um dort keine Zeile anzufassen.
 
+  // Baufunktion je EINZELKARTE, passend zum aktuellen Lademodus (siehe
+  // const.py::PANEL_LAYOUT_KEYS fuer die gueltigen Schluessel). null fuer
+  // eine Karte, die im aktuellen Modus gar nicht existiert (z.B. Wallbox
+  // bei "nur_auswaerts") -- die wird in _buildUebersichtBeta()/
+  // _openPanelLayoutModal() dann auch nicht als waehlbar angeboten.
+  // Vormals feste 2-Spalten-Paare ("hero"/"bottom") sind hier bewusst in
+  // ihre Einzelkarten aufgetrennt (Nutzerwunsch 2026-09-23: "ich wuerde das
+  // panel gerne in grids aufteilen, so das der nutzer auch karten
+  // nebeneinander anordnen kann"), damit jede Karte frei mit jeder anderen
+  // kombinierbar ist -- auf Kosten des vorher ungleichen Spaltenverhaeltnisses
+  // der Hero-Zeile (jetzt zwei gleichwertige Karten statt gross+klein).
+  _panelSectionBuilders(modus) {
+    return {
+      hero_cost: () => this._buildBetaHeroCard(),
+      // "nur_auswaerts" behaelt bewusst den bisherigen zweiten Hero-Slot
+      // (letzte Fremdladung statt Fahrzeug-SoC, das dort strukturell nicht
+      // zutrifft).
+      hero_secondary: modus === "nur_auswaerts"
+        ? () => this._buildBetaLastChargeCard()
+        : () => this._buildBetaSocCard(),
+      // Nur wo ueberhaupt eine eigene Wallbox relevant ist -- in
+      // "nur_auswaerts" komplett weggelassen statt leer/mit Nur-Nullen
+      // gerendert (siehe Kartenkopf-Kommentar dort).
+      wallbox: modus !== "nur_auswaerts" ? () => this._buildBetaWallboxCard() : null,
+      kpi: () => this._buildBetaKpiCard(),
+      comparison: () => this._buildBetaComparisonBarsCard(),
+      location: modus === "nur_auswaerts"
+        ? () => this._buildBetaAcDcCard()
+        : () => this._buildBetaLadeortBarsCard(),
+      evcc_mode: () => this._buildBetaEvccModeCard(),
+      evcc_plan: modus !== "nur_auswaerts" ? () => this._buildBetaEvccPlanCard() : null,
+    };
+  }
+
+  // Default-Groesse je Karte, wenn der Nutzer noch keine eigene gewaehlt
+  // hat (siehe _panelLayoutSize()) -- ergibt in etwa das bisherige, vor der
+  // freien Anordenbarkeit gewohnte Bild (Karten paarweise nebeneinander),
+  // ohne dass es eine harte Vorgabe waere.
+  _panelLayoutDefaultSize(key) {
+    return (key === "evcc_mode" || key === "evcc_plan") ? "full" : "half";
+  }
+
+  // Kombiniert die im aktuellen Modus verfuegbaren Sektions-Schluessel mit
+  // der vom Nutzer gespeicherten Sichtbarkeit/Reihenfolge: gespeicherte, im
+  // aktuellen Modus noch verfuegbare Schluessel zuerst (in ihrer
+  // gespeicherten Reihenfolge, nur sichtbare), danach alle DEM NUTZER NOCH
+  // UNBEKANNTEN Schluessel (z.B. neu in einer spaeteren Version) als
+  // sichtbar angehaengt -- so verschwindet eine neue Karte nie einfach
+  // kommentarlos, nur weil eine alte gespeicherte Einstellung sie noch
+  // nicht kennt. `layout` wird als Parameter uebergeben statt hier selbst
+  // per _panelLayout() geholt, da dessen einmalig konsumiertes
+  // this._panelLayoutOverride (siehe dort) sonst bei einem zweiten Aufruf
+  // im selben Ablauf (siehe _openPanelLayoutModal()) bereits verbraucht
+  // waere.
+  _panelLayoutOrder(available, layout) {
+    const saved = layout.filter((e) => available.includes(e.key));
+    const savedKeys = saved.map((e) => e.key);
+    return [
+      ...saved.filter((e) => e.visible).map((e) => e.key),
+      ...available.filter((k) => !savedKeys.includes(k)),
+    ];
+  }
+
+  // Wie _panelLayoutOrder(), aber fuer das "Panel anpassen"-Popup: dort
+  // muessen auch AUSGEBLENDETE Karten in der Liste erscheinen (nur mit
+  // leerem Haekchen), sonst kann man eine einmal ausgeblendete Karte nie
+  // wieder einblenden (Nutzerfehler 2026-09-23: "sobald ich was abhake,
+  // verschwindet es aus der liste. ich kann es auch nicht erneut...
+  // auswaehlen"). _panelLayoutOrder() liess unsichtbare Karten absichtlich
+  // weg (fuers eigentliche Panel-Grid korrekt), war hier aber die falsche
+  // Wahl.
+  _panelLayoutFullOrder(available, layout) {
+    const saved = layout.filter((e) => available.includes(e.key));
+    const savedKeys = saved.map((e) => e.key);
+    return [...savedKeys, ...available.filter((k) => !savedKeys.includes(k))];
+  }
+
+  // Gespeicherte Groessenstufe fuer eine Karte (third/half/twothirds/full,
+  // siehe const.py::PANEL_LAYOUT_SIZES), sonst _panelLayoutDefaultSize().
+  _panelLayoutSize(key, layout) {
+    const entry = layout.find((e) => e.key === key);
+    return (entry && entry.size) || this._panelLayoutDefaultSize(key);
+  }
+
   _buildUebersichtBeta() {
     const div = (cls) => { const d = document.createElement("div"); d.className = cls; return d; };
     const modus = this._ladeModus();
@@ -4186,7 +4360,13 @@ class EVAssistantPanel extends HTMLElement {
     tripPill.className = "beta-pending-pill beta-pending-pill-trip hidden";
     tripPill.innerHTML = `<ha-icon icon="mdi:road-variant"></ha-icon><span class="beta-pending-pill-text">—</span>`;
     tripPill.addEventListener("click", () => this._openPendingModal("trips"));
-    pillRow.append(chargePill, tripPill);
+    const layoutBtn = document.createElement("button");
+    layoutBtn.type = "button";
+    layoutBtn.className = "beta-layout-btn";
+    layoutBtn.title = "Panel anpassen";
+    layoutBtn.innerHTML = `<ha-icon icon="mdi:view-dashboard-edit-outline"></ha-icon>`;
+    layoutBtn.addEventListener("click", () => this._openPanelLayoutModal(modus));
+    pillRow.append(chargePill, tripPill, layoutBtn);
     wrap.appendChild(pillRow);
     this._r.betaPendingChargePill = chargePill;
     this._r.betaPendingChargePillText = chargePill.querySelector(".beta-pending-pill-text");
@@ -4195,42 +4375,19 @@ class EVAssistantPanel extends HTMLElement {
 
     const grid = div("beta-grid");
 
-    // Hero+SoC nebeneinander (gemischt/nur_zuhause) -- "nur_auswaerts"
-    // behaelt bewusst den bisherigen zweiten Hero-Slot (letzte Fremdladung
-    // statt Fahrzeug-SoC/Wallbox, die dort strukturell nicht zutreffen).
-    const heroRow = div("beta-hero-row");
-    if (modus === "nur_auswaerts") {
-      heroRow.append(this._buildBetaHeroCard(), this._buildBetaLastChargeCard());
-    } else {
-      heroRow.append(this._buildBetaHeroCard(), this._buildBetaSocCard());
-    }
-    grid.appendChild(heroRow);
-
-    // Wallbox-Karte nur wo ueberhaupt eine eigene Wallbox relevant ist --
-    // in "nur_auswaerts" komplett weggelassen statt leer/mit Nur-Nullen
-    // gerendert (siehe Kartenkopf-Kommentar dort).
-    if (modus !== "nur_auswaerts") {
-      grid.appendChild(this._buildBetaWallboxCard());
-    }
-
-    grid.appendChild(this._buildBetaKpiCard());
-
     // "Ausgaben ueber die letzten Monate" (echte Monatshistorie) bewusst
     // NICHT gebaut -- cost_periods traegt nur die aktuelle Periode plus
     // GENAU einen Vormonatswert (siehe _buildBetaHeroCard()), keine
     // Mehrmonats-Reihe. Ohne neue Aggregation aus den Rohdaten (history/
     // evcc-Sessions) waere das nur erfunden -- offener Punkt fuer einen
     // Folge-Prompt, siehe CHANGELOG.
-
-    const bottomRow = div("beta-bottom-row");
-    bottomRow.append(
-      this._buildBetaComparisonBarsCard(),
-      modus === "nur_auswaerts" ? this._buildBetaAcDcCard() : this._buildBetaLadeortBarsCard()
-    );
-    grid.appendChild(bottomRow);
-    grid.appendChild(this._buildBetaEvccModeCard());
-    if (modus !== "nur_auswaerts") {
-      grid.appendChild(this._buildBetaEvccPlanCard());
+    const builders = this._panelSectionBuilders(modus);
+    const available = Object.keys(builders).filter((k) => builders[k]);
+    const layout = this._panelLayout();
+    for (const key of this._panelLayoutOrder(available, layout)) {
+      const card = builders[key]();
+      card.classList.add(`panel-card-size-${this._panelLayoutSize(key, layout)}`);
+      grid.appendChild(card);
     }
 
     wrap.appendChild(grid);
@@ -4970,6 +5127,199 @@ class EVAssistantPanel extends HTMLElement {
     if (this._ladeplanModalEl) this._ladeplanModalEl.classList.add("hidden");
   }
 
+  // --- Popup: Panel anpassen (Beta-Karten Sichtbarkeit/Reihenfolge) -----------
+  //
+  // Nutzerwunsch 2026-09-23: "der nutzer bekommt eine auswahl von karten,
+  // die er selber im panel anordnen oder auch auswaehlen kann, welche
+  // karten er ueberhaupt angezeigt bekommen moechte" -- "serverseitig
+  // speichern, mit drag & drop". Eigenes Overlay analog _buildLadeplanModal()
+  // (zentriert, ausserhalb von this._main), Refs bewusst in this._pl statt
+  // this._r (siehe Konstruktor-Kommentar).
+
+  _panelLayoutLabel(key, modus) {
+    const labels = {
+      hero_cost: "Kosten (diesen Monat)",
+      hero_secondary: modus === "nur_auswaerts" ? "Letzte Fremdladung" : "Fahrzeug-SoC",
+      wallbox: "Wallbox",
+      kpi: "Kennzahlen",
+      comparison: "Vergleich ggü. Verbrenner",
+      location: modus === "nur_auswaerts" ? "AC/DC-Aufschlüsselung" : "Ladeorte",
+      evcc_mode: "Automatische Ladesteuerung",
+      evcc_plan: "Ladeplan",
+    };
+    return labels[key] || key;
+  }
+
+  _buildPanelLayoutModal() {
+    const overlay = document.createElement("div");
+    overlay.className = "ladeplan-modal-overlay hidden";
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) this._closePanelLayoutModal();
+    });
+    const modal = document.createElement("div");
+    modal.className = "ladeplan-modal";
+    modal.innerHTML = `
+      <div class="ladeplan-modal-head">
+        <span class="ic"><ha-icon icon="mdi:view-dashboard-edit-outline"></ha-icon></span>
+        <h2>Panel anpassen</h2>
+        <button type="button" class="ladeplan-modal-close" aria-label="Schließen"><ha-icon icon="mdi:close"></ha-icon></button>
+      </div>
+      <div class="ladeplan-modal-body">
+        <div class="panel-layout-hint">Häkchen = sichtbar. Zum Umsortieren am Griff ziehen.</div>
+        <div class="panel-layout-list" id="panel-layout-list"></div>
+        <div class="beta-plan-buttons">
+          <button type="button" class="beta-plan-set-btn" id="panel-layout-save-btn">Speichern</button>
+        </div>
+      </div>`;
+    modal.querySelector(".ladeplan-modal-close").addEventListener("click", () => this._closePanelLayoutModal());
+    overlay.appendChild(modal);
+    this._panelLayoutModalEl = overlay;
+
+    this._pl.list = modal.querySelector("#panel-layout-list");
+    this._pl.saveBtn = modal.querySelector("#panel-layout-save-btn");
+
+    this._pl.saveBtn.addEventListener("click", () => {
+      const rows = Array.from(this._pl.list.querySelectorAll(".panel-layout-row"));
+      const layout = rows.map((row) => ({
+        key: row.dataset.key,
+        visible: row.querySelector("input[type=checkbox]").checked,
+        size: row.dataset.size,
+      }));
+      this._call("set_panel_layout", { layout });
+      // Optimistisches lokales Update (siehe _panelLayout()) statt auf den
+      // Server-Roundtrip zu warten -- _switchView() baut den aktuellen Tab
+      // (hier immer "uebersicht_beta", da nur von dort oeffenbar) komplett
+      // neu auf.
+      this._panelLayoutOverride = layout;
+      this._closePanelLayoutModal();
+      this._switchView(this._view);
+    });
+    return overlay;
+  }
+
+  // Reine Zeigergesten-basierte Umsortierung (Pointer Events statt
+  // HTML5-Drag&Drop, das auf Touch-Geraeten nicht funktioniert -- das Panel
+  // muss geraeteadaptiv/responsiv sein, siehe Projektziel) -- beim Ziehen
+  // wird die gezogene Zeile einfach mit der Nachbarzeile vertauscht, sobald
+  // der Zeiger deren Mittelpunkt ueberquert, kein schwebendes Duplikat/keine
+  // absolute Positionierung noetig.
+  // Nutzerfeedback 2026-09-23: "waehrend des ziehens sehr ungenau und die
+  // liste flackert. man sieht nicht richtig wohin man was zieht" -- die
+  // erste Fassung hat die gezogene Zeile bei jedem Pointer-Move direkt in
+  // den echten Listenfluss einsortiert; da sich dadurch bei jedem Tick die
+  // Nachbar-Positionen selbst mitverschoben haben, konnte derselbe
+  // Pointer-Y-Wert abwechselnd beide Richtungen der Swap-Bedingung
+  // erfuellen (Oszillation/Flackern). Jetzt der uebliche Ghost+Platzhalter-
+  // Ansatz: die gezogene Zeile wird waehrend des Ziehens `position: fixed`
+  // (folgt dem Zeiger 1:1, komplett aus dem Layoutfluss der Liste heraus,
+  // dadurch keine Rueckkopplung mehr moeglich), ein leerer Platzhalter
+  // gleicher Hoehe zeigt an, wo sie beim Loslassen landen wuerde und wird
+  // nur anhand der Positionen der UEBRIGEN (nicht der gezogenen) Zeilen
+  // verschoben.
+  _makeReorderable(listEl) {
+    let dragRow = null;
+    let placeholder = null;
+    let offsetY = 0;
+
+    const onPointerMove = (e) => {
+      if (!dragRow) return;
+      dragRow.style.top = `${e.clientY - offsetY}px`;
+      const rows = Array.from(listEl.children).filter((r) => r !== dragRow && r !== placeholder);
+      let target = null;
+      for (const r of rows) {
+        const rect = r.getBoundingClientRect();
+        if (e.clientY < rect.top + rect.height / 2) { target = r; break; }
+      }
+      if (target) {
+        if (placeholder.nextElementSibling !== target) listEl.insertBefore(placeholder, target);
+      } else if (placeholder !== listEl.lastElementChild) {
+        listEl.appendChild(placeholder);
+      }
+    };
+    const onPointerUp = () => {
+      if (!dragRow) return;
+      listEl.insertBefore(dragRow, placeholder);
+      placeholder.remove();
+      dragRow.classList.remove("dragging");
+      dragRow.style.position = "";
+      dragRow.style.top = "";
+      dragRow.style.left = "";
+      dragRow.style.width = "";
+      dragRow = null;
+      placeholder = null;
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+    };
+    listEl.querySelectorAll(".panel-layout-handle").forEach((handle) => {
+      handle.addEventListener("pointerdown", (e) => {
+        e.preventDefault();
+        const row = handle.closest(".panel-layout-row");
+        const rect = row.getBoundingClientRect();
+        offsetY = e.clientY - rect.top;
+
+        placeholder = document.createElement("div");
+        placeholder.className = "panel-layout-placeholder";
+        placeholder.style.height = `${rect.height}px`;
+        row.after(placeholder);
+
+        dragRow = row;
+        dragRow.classList.add("dragging");
+        dragRow.style.width = `${rect.width}px`;
+        dragRow.style.left = `${rect.left}px`;
+        dragRow.style.top = `${rect.top}px`;
+
+        window.addEventListener("pointermove", onPointerMove);
+        window.addEventListener("pointerup", onPointerUp);
+      });
+    });
+  }
+
+  _openPanelLayoutModal(modus) {
+    if (!this._panelLayoutModalEl) return;
+    const builders = this._panelSectionBuilders(modus);
+    const available = Object.keys(builders).filter((k) => builders[k]);
+    const layout = this._panelLayout();
+    const saved = layout.filter((e) => available.includes(e.key));
+    const visibleMap = new Map(saved.map((e) => [e.key, e.visible]));
+    const order = this._panelLayoutFullOrder(available, layout);
+
+    const SIZE_LABELS = { third: "⅓", half: "½", twothirds: "⅔", full: "▭" };
+    this._pl.list.innerHTML = "";
+    for (const key of order) {
+      const visible = visibleMap.has(key) ? visibleMap.get(key) : true;
+      const size = this._panelLayoutSize(key, layout);
+      const row = document.createElement("div");
+      row.className = "panel-layout-row";
+      row.dataset.key = key;
+      row.dataset.size = size;
+      row.innerHTML = `
+        <span class="panel-layout-handle"><ha-icon icon="mdi:drag"></ha-icon></span>
+        <label class="panel-layout-label">
+          <input type="checkbox" ${visible ? "checked" : ""}>
+          <span>${this._panelLayoutLabel(key, modus)}</span>
+        </label>
+        <div class="panel-layout-sizes">
+          ${Object.entries(SIZE_LABELS).map(([s, label]) => `
+            <button type="button" class="panel-layout-size-btn${s === size ? " active" : ""}" data-size="${s}" title="${s}">${label}</button>
+          `).join("")}
+        </div>
+      `;
+      row.querySelectorAll(".panel-layout-size-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          row.dataset.size = btn.dataset.size;
+          row.querySelectorAll(".panel-layout-size-btn").forEach((b) => b.classList.toggle("active", b === btn));
+        });
+      });
+      this._pl.list.appendChild(row);
+    }
+    this._makeReorderable(this._pl.list);
+    this._panelLayoutModalEl.classList.remove("hidden");
+  }
+
+  _closePanelLayoutModal() {
+    if (this._panelLayoutModalEl) this._panelLayoutModalEl.classList.add("hidden");
+  }
+
   _updateBetaEvccPlan() {
     const r = this._r;
     if (!r.betaPlanCard) return;
@@ -5010,7 +5360,20 @@ class EVAssistantPanel extends HTMLElement {
 
   _updateUebersichtBeta() {
     const r = this._r;
-    if (!r.betaHeroCost) return;
+    // Nutzerfehler 2026-09-23: "ladeplan wird allerdings wenn man die karte
+    // einzeln auswaehlt nicht angezeigt" -- Ursache war zweigeteilt: (1)
+    // dieser Guard hing an r.betaHeroCost, das es nur noch gibt, wenn die
+    // Nutzer:in "hero" ueberhaupt eingeblendet hat -- war sie ausgeblendet,
+    // brach die GESAMTE Funktion hier sofort ab, noch bevor irgendeine
+    // andere (sichtbare!) Karte aktualisiert wurde. r.betaPendingChargePill
+    // wird dagegen IMMER gebaut (Pending-Pill-Zeile ist nie Teil des
+    // anpassbaren Layouts), also ein verlaesslicher Indikator "wurde
+    // _buildUebersichtBeta() ueberhaupt schon aufgerufen". (2) siehe die
+    // beiden neuen if(r.betaHeroCost)/if(r.betaKpiEur100)-Bloecke weiter
+    // unten -- die griffen vorher ungeschuetzt auf ggf. gar nicht gebaute
+    // Karten zu, was mit einer TypeError die Funktion an genau dieser
+    // Stelle abbrach (u.a. VOR dem _updateBetaEvccPlan()-Aufruf ganz unten).
+    if (!r.betaPendingChargePill) return;
     const modus = this._ladeModus();
 
     // Getrennte blinkende Pills fuer offene Fremdladungen/Fahrten -- oeffnen
@@ -5043,28 +5406,32 @@ class EVAssistantPanel extends HTMLElement {
     this._renderPendingCharges(pendingCharges, this._pendingModalCharges);
     this._renderPendingTrips(pendingTrips, this._pendingModalTrips);
 
-    r.betaHeroCost.textContent = this._num("cost_month", 2);
+    // "hero"-Sektion kann jetzt ausgeblendet sein (siehe Panel-Layout) --
+    // eigener Guard statt Annahme, dass r.betaHeroCost immer existiert.
+    if (r.betaHeroCost) {
+      r.betaHeroCost.textContent = this._num("cost_month", 2);
 
-    // Hero-Untertitel: NUR "Vormonat X EUR". "differenz_vorperiode" ist,
-    // trotz des Namens, KEINE Differenz zwischen den Monaten, sondern
-    // bereits der komplette Vormonats-Betrag selbst -- siehe sensor.py::
-    // _CostPeriodSensor.native_value() (cost - baseline = Verbrauch seit
-    // Periodenbeginn) vs. engine.update_period_baseline()'s "prev"
-    // (= Baseline-Differenz zum ROLLOVER-Zeitpunkt = exakt der Verbrauch
-    // der GESAMTEN abgeschlossenen Vorperiode, dieselbe Formel nur fuer
-    // die alte statt die laufende Periode ausgewertet). KEIN "Ø"-Wert:
-    // dafuer braeuchte es eine echte Mehrmonats-Reihe, die es (noch) nicht
-    // gibt -- siehe Kommentar in _buildUebersichtBeta() zur
-    // zurueckgestellten Monatshistorie. Fehlt der Vormonats-Datenpunkt
-    // (allererster Monat seit Einrichtung), entfaellt die Zeile komplett
-    // statt einen Fantasiewert zu zeigen.
-    const costEid = this._eid("cost_month");
-    const costState = costEid ? this._hass.states[costEid] : null;
-    const vormonat = costState && costState.attributes ? costState.attributes.differenz_vorperiode : null;
-    const hasVormonat = typeof vormonat === "number";
-    r.betaHeroSub.classList.toggle("hidden", !hasVormonat);
-    if (hasVormonat) {
-      r.betaHeroSub.innerHTML = `Vormonat <span class="mono">${this._fmtNum(vormonat, 2)}</span> €`;
+      // Hero-Untertitel: NUR "Vormonat X EUR". "differenz_vorperiode" ist,
+      // trotz des Namens, KEINE Differenz zwischen den Monaten, sondern
+      // bereits der komplette Vormonats-Betrag selbst -- siehe sensor.py::
+      // _CostPeriodSensor.native_value() (cost - baseline = Verbrauch seit
+      // Periodenbeginn) vs. engine.update_period_baseline()'s "prev"
+      // (= Baseline-Differenz zum ROLLOVER-Zeitpunkt = exakt der Verbrauch
+      // der GESAMTEN abgeschlossenen Vorperiode, dieselbe Formel nur fuer
+      // die alte statt die laufende Periode ausgewertet). KEIN "Ø"-Wert:
+      // dafuer braeuchte es eine echte Mehrmonats-Reihe, die es (noch) nicht
+      // gibt -- siehe Kommentar in _buildUebersichtBeta() zur
+      // zurueckgestellten Monatshistorie. Fehlt der Vormonats-Datenpunkt
+      // (allererster Monat seit Einrichtung), entfaellt die Zeile komplett
+      // statt einen Fantasiewert zu zeigen.
+      const costEid = this._eid("cost_month");
+      const costState = costEid ? this._hass.states[costEid] : null;
+      const vormonat = costState && costState.attributes ? costState.attributes.differenz_vorperiode : null;
+      const hasVormonat = typeof vormonat === "number";
+      r.betaHeroSub.classList.toggle("hidden", !hasVormonat);
+      if (hasVormonat) {
+        r.betaHeroSub.innerHTML = `Vormonat <span class="mono">${this._fmtNum(vormonat, 2)}</span> €`;
+      }
     }
 
     const locEid = this._eid("charging_location_breakdown");
@@ -5072,9 +5439,15 @@ class EVAssistantPanel extends HTMLElement {
     const locAttrs = (locState && locState.attributes) || {};
     const fmt = (v, decimals = 1) => (typeof v === "number" ? this._fmtNum(v, decimals) : "—");
 
-    r.betaKpiEur100.textContent  = fmt(locAttrs.eur_je_100km, 2);
-    r.betaKpiSavings.textContent = this._num("savings", 2);
-    r.betaKpiCo2.textContent     = this._num("co2_savings", 1);
+    // "kpi"-Sektion kann jetzt ausgeblendet sein (siehe Panel-Layout) --
+    // locEid/locState/locAttrs/fmt bleiben trotzdem oben unbedingt berechnet,
+    // die braucht _updateBetaLadeortBars()/_updateBetaAcDc() weiter unten
+    // unabhaengig von der KPI-Sichtbarkeit.
+    if (r.betaKpiEur100) {
+      r.betaKpiEur100.textContent  = fmt(locAttrs.eur_je_100km, 2);
+      r.betaKpiSavings.textContent = this._num("savings", 2);
+      r.betaKpiCo2.textContent     = this._num("co2_savings", 1);
+    }
 
     this._updateBetaComparisonBars();
 
@@ -5959,7 +6332,42 @@ class EVAssistantPanel extends HTMLElement {
       .hist-delete-text { font-size: 12px; color: var(--ink-mid); }
 
       /* Uebersicht (Beta) -- Konzept A */
-      .beta-pending-row { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+      .beta-pending-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }
+      .beta-layout-btn {
+        margin-left: auto; border: 1px solid var(--line); background: var(--bg-0); color: var(--ink-mid);
+        border-radius: 8px; padding: 6px 8px; cursor: pointer; display: flex; align-items: center;
+        --mdc-icon-size: 18px;
+      }
+      .beta-layout-btn:hover { color: var(--ink); }
+      .panel-layout-hint { font-size: 0.78rem; color: var(--ink-mid); margin-bottom: 4px; }
+      .panel-layout-list { display: flex; flex-direction: column; gap: 6px; position: relative; }
+      .panel-layout-row {
+        display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; border: 1px solid var(--line);
+        border-radius: 8px; padding: 8px 10px; background: var(--bg-0);
+      }
+      /* Ghost+Platzhalter-Drag (siehe _makeReorderable()): die gezogene
+         Zeile wird komplett aus dem Listenfluss herausgeloest und folgt dem
+         Zeiger 1:1, statt bei jedem Tick im echten Listenfluss verschoben
+         zu werden (das flackerte vorher). */
+      .panel-layout-row.dragging {
+        position: fixed; z-index: 1000; box-shadow: 0 4px 16px rgba(0,0,0,0.35);
+        opacity: 0.97; pointer-events: none;
+      }
+      .panel-layout-placeholder {
+        border: 2px dashed var(--line); border-radius: 8px; background: transparent;
+      }
+      .panel-layout-handle {
+        display: flex; align-items: center; color: var(--ink-dim); cursor: grab;
+        touch-action: none; --mdc-icon-size: 20px;
+      }
+      .panel-layout-label { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; color: var(--ink); cursor: pointer; flex: 1 1 140px; }
+      .panel-layout-label input { accent-color: var(--accent-2); cursor: pointer; }
+      .panel-layout-sizes { display: flex; gap: 4px; margin-left: auto; }
+      .panel-layout-size-btn {
+        border: 1px solid var(--line); background: var(--bg-1); color: var(--ink-mid);
+        border-radius: 6px; width: 28px; height: 28px; font-size: 0.85rem; cursor: pointer;
+      }
+      .panel-layout-size-btn.active { border-color: var(--accent-2); color: var(--accent-2); }
       .beta-pending-pill {
         display: inline-flex; align-items: center; gap: 6px;
         padding: 6px 14px; border-radius: 9999px;
@@ -6070,9 +6478,20 @@ class EVAssistantPanel extends HTMLElement {
         color: #c62828; border-color: color-mix(in oklab, #c62828 55%, transparent);
         background: color-mix(in oklab, #c62828 15%, var(--bg-0));
       }
-      .beta-grid { display: flex; flex-direction: column; gap: var(--gap); }
-      .beta-hero-row { display: grid; grid-template-columns: 1.6fr 1fr; gap: var(--gap); align-items: stretch; }
-      .beta-bottom-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap); align-items: start; }
+      /* Frei kombinierbares Karten-Grid (Nutzerwunsch 2026-09-23: "ich
+         wuerde das panel gerne in grids aufteilen, so das der nutzer auch
+         karten nebeneinander anordnen kann" / "vlt auch die groesse
+         aendern kann") -- flex-wrap statt der vorherigen festen 2-Spalten-
+         Grids, jede Karte traegt ihre eigene panel-card-size-*-Klasse
+         (siehe _buildUebersichtBeta()/_panelLayoutSize()). Feste
+         Groessenstufen statt freiem Ziehen/Resize (aufwaendiger,
+         fehleranfaelliger). */
+      .beta-grid { display: flex; flex-wrap: wrap; gap: var(--gap); align-items: stretch; }
+      .beta-grid > * { min-width: 0; }
+      .panel-card-size-third     { flex: 0 0 auto; width: calc(33.333% - var(--gap) * 2 / 3); }
+      .panel-card-size-half      { flex: 0 0 auto; width: calc(50% - var(--gap) / 2); }
+      .panel-card-size-twothirds { flex: 0 0 auto; width: calc(66.666% - var(--gap) / 3); }
+      .panel-card-size-full      { flex: 0 0 auto; width: 100%; }
       .hero-card { display: flex; flex-direction: column; justify-content: center; }
       .hero-value { font-size: 2.6rem; font-weight: 800; line-height: 1.1; margin-top: 6px; color: var(--ink); }
       .hero-value .hero-unit { font-size: 1.1rem; font-weight: 600; margin-left: 6px; color: var(--ink-mid); }
@@ -6204,12 +6623,10 @@ class EVAssistantPanel extends HTMLElement {
       .beta-plan-open-btn, .beta-plan-set-btn { color: var(--accent-2); border-color: var(--accent-2); }
       .beta-plan-open-btn:hover, .beta-plan-set-btn:hover, .beta-plan-clear-btn:hover { opacity: 0.8; }
       @media (max-width: 900px) {
-        .beta-hero-row { grid-template-columns: 1fr; }
-        .beta-bottom-row { grid-template-columns: 1fr; }
+        .panel-card-size-third, .panel-card-size-half, .panel-card-size-twothirds { width: 100%; }
       }
       @container panel (max-width: 900px) {
-        .beta-hero-row { grid-template-columns: 1fr; }
-        .beta-bottom-row { grid-template-columns: 1fr; }
+        .panel-card-size-third, .panel-card-size-half, .panel-card-size-twothirds { width: 100%; }
       }
 
       @media (max-width: 700px) {

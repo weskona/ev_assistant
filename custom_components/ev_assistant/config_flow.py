@@ -18,6 +18,7 @@ from .const import (
     CONF_DROP_ENDS,
     CONF_EFFICIENCY,
     CONF_ERSTZULASSUNG,
+    CONF_EVCC_BATTERY_PRIORITY_ENABLED,
     CONF_EVCC_HOST,
     CONF_EVCC_LOADPOINT_TITLE,
     CONF_EVCC_MODE_CONTROL_ENABLED,
@@ -70,6 +71,7 @@ from .const import (
     DEFAULT_CO2_PER_KWH_G,
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY,
+    DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED,
     DEFAULT_EVCC_MODE_CONTROL_ENABLED,
     DEFAULT_IDLE_TIMEOUT,
     DEFAULT_LADE_MODUS,
@@ -248,7 +250,10 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
     Haus-Nutzungsprofil (PV-Restprognose heute, Hausverbrauch, Speicher-
     ladung), die Wallbox-Mindestladeleistung fuer die Echtzeit-PV-Über-
     steuerung (siehe engine.apply_realtime_pv_override()/const.py::
-    CONF_WALLBOX_MIN_POWER_W) und eine optionale Urlaubs-Entität (siehe coordinator.py::
+    CONF_WALLBOX_MIN_POWER_W), die dynamische Speicher-Vorrang-Steuerung
+    waehrend das Auto angesteckt ist (siehe coordinator.py::
+    _apply_battery_priority_for_vehicle_presence(), Default aus) und eine
+    optionale Urlaubs-Entität (siehe coordinator.py::
     _urlaub_aktiv() -- pausiert die Steuerung und schließt betroffene Tage
     aus den Wochentags-Nutzungsprofilen aus). Ebenfalls additiv: die
     woechentliche Vollladung fuers Zellbalancing (siehe coordinator.py::
@@ -267,6 +272,10 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
         vol.Optional(
             CONF_EVCC_MODE_CONTROL_ENABLED,
             default=cur.get(CONF_EVCC_MODE_CONTROL_ENABLED, DEFAULT_EVCC_MODE_CONTROL_ENABLED),
+        ): bool,
+        vol.Optional(
+            CONF_EVCC_BATTERY_PRIORITY_ENABLED,
+            default=cur.get(CONF_EVCC_BATTERY_PRIORITY_ENABLED, DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED),
         ): bool,
         vol.Optional(
             CONF_WALLBOX_MIN_POWER_W,

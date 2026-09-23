@@ -27,15 +27,27 @@ async def _make_coordinator(hass, coordinators, entry_id="evcc_mc", options=None
 
 
 def _seed_usage_profile(coordinator, weekday_kwh=10.0, avg_consumption=20.0):
-    """Fuellt usage_profile() mit einem kontrollierbaren, vollstaendigen
+    """Fuellt usage_profile() (Fahrtenbuch) UND vehicle_discharge_usage_
+    profile() (Live-SoC) mit einem kontrollierbaren, vollstaendigen
     7-Tage-Profil (identischer Bedarf an jedem Wochentag) -- first_ts genau
     6 Tage in der Vergangenheit ergibt eine 7-Kalendertage-Spanne, in der
     jeder Wochentag GENAU EINMAL vorkommt, unabhaengig vom aktuellen
     Wochentag -- dadurch entspricht weekday_kwh_exact_totals direkt dem
-    Ergebnis, ohne die Anzahl Vorkommen je Wochentag ausrechnen zu muessen."""
+    Ergebnis, ohne die Anzahl Vorkommen je Wochentag ausrechnen zu muessen.
+    Seit der Entfernung des Fahrtenbuch-Fallbacks aus _effective_vehicle_
+    usage_profile() (2026-09-23, siehe dortigen Docstring) braucht
+    _evcc_mode_targets() zwingend das Live-SoC-Profil -- ohne das hier
+    ebenfalls zu seeden, wuerde jeder Test, der sich (wie frueher genuegend)
+    nur auf das Fahrtenbuch-Profil verlaesst, ploetzlich ins Leere laufen.
+    usage_profile() bleibt zusaetzlich gefuellt, weil es unabhaengig davon
+    noch fuer die fahrtenbuch-interne Ausreisser-Daempfung gebraucht wird
+    (siehe coordinator.py::_apply_trip_baselines())."""
     coordinator.data["fahrtenbuch_first_ts"] = (dt_util.now() - timedelta(days=6)).timestamp()
     coordinator.data["weekday_kwh_exact_totals"] = {str(wd): weekday_kwh for wd in range(7)}
     coordinator.data["weekday_km_est_totals"] = {}
+    coordinator.data["vehicle_discharge_weekday_days"] = {
+        str(wd): [{"date": f"2020-01-{wd + 1:02d}", "kwh": weekday_kwh}] for wd in range(7)
+    }
     coordinator._usage_profile_cache = None
     # Monkeypatch statt echter Fahrzeug-/Kosten-Historie -- _kwh_used_today()
     # braucht nur einen festen Wert, kein realistisches Zusammenspiel aus
@@ -203,8 +215,7 @@ async def test_update_house_usage_profile_erster_aufruf_setzt_nur_baseline(hass,
     hass.states.async_set("sensor.haus", "1000.0")
     coordinator._update_house_usage_profile()
     assert coordinator.data["house_periods"]["day"]["kwh"] == 1000.0
-    assert coordinator.data["house_weekday_kwh_totals"] == {}
-    assert coordinator.data["house_weekday_day_counts"] == {}
+    assert coordinator.data["house_weekday_days"] == {}
 
 
 async def test_update_house_usage_profile_rollover_fuellt_genau_einen_wochentags_eimer(hass, coordinators):
@@ -220,8 +231,10 @@ async def test_update_house_usage_profile_rollover_fuellt_genau_einen_wochentags
     coordinator.data["house_periods"]["day"]["key"] = "ein-anderer-tag"
     hass.states.async_set("sensor.haus", "1015.0")
     coordinator._update_house_usage_profile()
-    assert coordinator.data["house_weekday_kwh_totals"] == {str(yesterday_wd): 15.0}
-    assert coordinator.data["house_weekday_day_counts"] == {str(yesterday_wd): 1}
+    yesterday_iso = (dt_util.now().date() - timedelta(days=1)).isoformat()
+    assert coordinator.data["house_weekday_days"] == {
+        str(yesterday_wd): [{"date": yesterday_iso, "kwh": 15.0}],
+    }
 
 
 async def test_update_house_usage_profile_unveraenderter_schluessel_aendert_eimer_nicht(hass, coordinators):
@@ -234,8 +247,7 @@ async def test_update_house_usage_profile_unveraenderter_schluessel_aendert_eime
     coordinator._update_house_usage_profile()
     hass.states.async_set("sensor.haus", "1005.0")
     coordinator._update_house_usage_profile()  # gleicher Perioden-Schluessel -- kein Rollover
-    assert coordinator.data["house_weekday_kwh_totals"] == {}
-    assert coordinator.data["house_weekday_day_counts"] == {}
+    assert coordinator.data["house_weekday_days"] == {}
     assert coordinator.data["house_periods"]["day"]["kwh"] == 1000.0
 
 
@@ -282,10 +294,14 @@ async def test_house_remaining_today_kwh_mit_vollstaendigem_profil(hass, coordin
         hass, coordinators, "hrt1", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
     today_wd = dt_util.now().date().weekday()
-    coordinator.data["house_weekday_kwh_totals"] = {str(today_wd): 12.0}
-    coordinator.data["house_weekday_day_counts"] = {str(today_wd): 1}
+    coordinator.data["house_weekday_days"] = {str(today_wd): [{"date": "2020-01-01", "kwh": 12.0}]}
     coordinator.data["house_periods"] = {"day": {"key": "x", "kwh": 100.0}}
     hass.states.async_set("sensor.haus", "104.0")
+    # Fixe Tageszeit statt der echten Wanduhrzeit -- sonst waere die
+    # Erwartung vom weichen Abbau (siehe engine.py::remaining_today_kwh())
+    # abhaengig davon, wann genau der Test laeuft. 0.0 = alter, flacher
+    # Vergleich (kein Abbau).
+    coordinator._day_fraction_elapsed = lambda: 0.0
     assert coordinator._house_remaining_today_kwh() == 8.0  # 12 - 4 bereits verbraucht
 
 
@@ -306,8 +322,7 @@ async def test_house_remaining_today_kwh_heutiger_wochentag_fehlt_gibt_none(hass
     )
     today_wd = dt_util.now().date().weekday()
     other_wd = (today_wd + 1) % 7
-    coordinator.data["house_weekday_kwh_totals"] = {str(other_wd): 12.0}
-    coordinator.data["house_weekday_day_counts"] = {str(other_wd): 1}
+    coordinator.data["house_weekday_days"] = {str(other_wd): [{"date": "2020-01-01", "kwh": 12.0}]}
     assert coordinator._house_remaining_today_kwh() is None
 
 
@@ -320,8 +335,7 @@ async def test_house_usage_profile_oeffentliche_methode_liefert_dasselbe_wie_int
         hass, coordinators, "hup1", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
     today_wd = dt_util.now().date().weekday()
-    coordinator.data["house_weekday_kwh_totals"] = {str(today_wd): 9.0}
-    coordinator.data["house_weekday_day_counts"] = {str(today_wd): 1}
+    coordinator.data["house_weekday_days"] = {str(today_wd): [{"date": "2020-01-01", "kwh": 9.0}]}
     profile = coordinator.house_usage_profile()
     assert profile == {today_wd: 9.0}
 
@@ -492,16 +506,15 @@ async def test_update_vehicle_discharge_profile_erster_aufruf_setzt_nur_baseline
     coordinator.data["vehicle_discharge_kwh_total"] = 5.0
     coordinator._update_vehicle_discharge_profile()
     assert coordinator.data["vehicle_discharge_periods"]["day"]["kwh"] == 5.0
-    assert coordinator.data["vehicle_discharge_weekday_kwh_totals"] == {}
-    assert coordinator.data["vehicle_discharge_weekday_day_counts"] == {}
+    assert coordinator.data["vehicle_discharge_weekday_days"] == {}
 
 
 async def test_update_vehicle_discharge_profile_rollover_zaehlt_nur_den_tag_keine_kwh(hass, coordinators):
     """Seit der Bestaetigungs-Haertung (siehe VEHICLE_DISCHARGE_CONFIRM_
-    SECONDS) bucht der taegliche Rollover KEINE kWh mehr um -- das
+    SECONDS) bucht der taegliche Rollover KEINE echten kWh mehr um -- das
     passiert direkt bei Bestaetigung (siehe _book_vehicle_discharge_
-    weekday() in test_urlaub_ausreisser.py) -- sondern zaehlt nur noch
-    den beobachteten Kalendertag je Wochentag."""
+    weekday() in test_urlaub_ausreisser.py) -- sondern legt nur noch
+    einen Null-Fenster-Eintrag fuer den beobachteten Kalendertag an."""
     from datetime import timedelta
 
     from homeassistant.util import dt as dt_util
@@ -509,12 +522,14 @@ async def test_update_vehicle_discharge_profile_rollover_zaehlt_nur_den_tag_kein
     coordinator, _ = await _make_coordinator(hass, coordinators, "uvdp2")
     coordinator.data["vehicle_discharge_kwh_total"] = 5.0
     coordinator._update_vehicle_discharge_profile()
-    yesterday_wd = (dt_util.now().date() - timedelta(days=1)).weekday()
-    coordinator.data["vehicle_discharge_periods"]["day"]["key"] = str(dt_util.now().date() - timedelta(days=1))
+    yesterday = dt_util.now().date() - timedelta(days=1)
+    yesterday_wd = yesterday.weekday()
+    coordinator.data["vehicle_discharge_periods"]["day"]["key"] = str(yesterday)
     coordinator.data["vehicle_discharge_kwh_total"] = 6.5
     coordinator._update_vehicle_discharge_profile()
-    assert coordinator.data["vehicle_discharge_weekday_kwh_totals"] == {}
-    assert coordinator.data["vehicle_discharge_weekday_day_counts"] == {str(yesterday_wd): 1}
+    assert coordinator.data["vehicle_discharge_weekday_days"] == {
+        str(yesterday_wd): [{"date": yesterday.isoformat(), "kwh": 0.0}],
+    }
 
 
 async def test_update_vehicle_discharge_profile_holt_uebersprungenen_tag_nach(hass, coordinators):
@@ -524,7 +539,7 @@ async def test_update_vehicle_discharge_profile_holt_uebersprungenen_tag_nach(ha
     uebersprungen. Der naechste Rollover muss ALLE dazwischenliegenden
     Tage nachtragen, nicht nur den unmittelbar vorherigen, sonst bekommt
     ein Wochentag, dem _book_vehicle_discharge_weekday() bereits kWh
-    gutgeschrieben hat, nie einen passenden Tageszaehler (dauerhaft
+    gutgeschrieben hat, nie einen passenden Fenster-Eintrag (dauerhaft
     verwaiste Summe)."""
     from datetime import timedelta
 
@@ -538,11 +553,16 @@ async def test_update_vehicle_discharge_profile_holt_uebersprungenen_tag_nach(ha
     coordinator.data["vehicle_discharge_periods"]["day"]["key"] = str(drei_tage_zurueck)
     coordinator.data["vehicle_discharge_kwh_total"] = 6.5
     coordinator._update_vehicle_discharge_profile()
-    counts = coordinator.data["vehicle_discharge_weekday_day_counts"]
+    weekday_days = coordinator.data["vehicle_discharge_weekday_days"]
     erwartete_tage = [drei_tage_zurueck + timedelta(days=i) for i in range(3)]
+    gefundene_tage = 0
     for tag in erwartete_tage:
-        assert counts.get(str(tag.weekday())) == 1
-    assert sum(counts.values()) == 3
+        eintraege = weekday_days.get(str(tag.weekday()), [])
+        match = next((e for e in eintraege if e["date"] == tag.isoformat()), None)
+        assert match is not None
+        assert match["kwh"] == 0.0
+        gefundene_tage += 1
+    assert gefundene_tage == 3
 
 
 async def test_vehicle_discharge_usage_profile_ohne_beobachteten_tag_gibt_none(hass, coordinators):
@@ -552,8 +572,9 @@ async def test_vehicle_discharge_usage_profile_ohne_beobachteten_tag_gibt_none(h
 
 async def test_vehicle_discharge_usage_profile_normale_durchschnittsbildung(hass, coordinators):
     coordinator, _ = await _make_coordinator(hass, coordinators, "vdup2")
-    coordinator.data["vehicle_discharge_weekday_kwh_totals"] = {"2": 4.0}
-    coordinator.data["vehicle_discharge_weekday_day_counts"] = {"2": 2}
+    coordinator.data["vehicle_discharge_weekday_days"] = {
+        "2": [{"date": "2020-01-01", "kwh": 4.0}, {"date": "2020-01-08", "kwh": 0.0}],
+    }
     assert coordinator.vehicle_discharge_usage_profile() == {2: 2.0}
 
 
@@ -573,29 +594,35 @@ async def test_vehicle_discharge_kwh_used_today_ohne_baseline_gibt_none(hass, co
 
 
 # ----- _effective_vehicle_usage_profile ---------------------------------------
+# Nutzerentscheidung 2026-09-23: der vormalige Fahrtenbuch-Fallback (fuer
+# Wochentage ohne Live-SoC-Daten, z.B. in den ersten 1-2 Wochen nach
+# Einrichtung) wurde ersatzlos gestrichen -- er schloss Urlaubstage nicht
+# aus (anders als der Live-Tracker) und haette so ausgerechnet die
+# allerersten Profilwerte verzerren koennen. "der nutzer weiss ja, es
+# dauert 2 wochen bis er die ersten werte bekommt". _effective_vehicle_
+# usage_profile() ist seitdem ein reines Pass-Through auf
+# vehicle_discharge_usage_profile().
 
-async def test_effective_vehicle_usage_profile_bevorzugt_discharge_profil(hass, coordinators):
+async def test_effective_vehicle_usage_profile_ist_reines_discharge_profil(hass, coordinators):
     coordinator, _ = await _make_coordinator(hass, coordinators, "evup1")
-    _seed_usage_profile(coordinator, weekday_kwh=10.0)  # jeder Wochentag = 10.0 kWh (Fahrtenbuch)
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)  # Fahrtenbuch, darf keine Rolle mehr spielen
     today_wd = dt_util.now().date().weekday()
-    coordinator.data["vehicle_discharge_weekday_kwh_totals"] = {str(today_wd): 3.0}
-    coordinator.data["vehicle_discharge_weekday_day_counts"] = {str(today_wd): 1}
+    coordinator.data["vehicle_discharge_weekday_days"] = {str(today_wd): [{"date": "2020-01-01", "kwh": 3.0}]}
     profile = coordinator._effective_vehicle_usage_profile()
-    assert profile[today_wd] == 3.0  # Live-SoC-Wert gewinnt fuer heute
-    other_wd = (today_wd + 1) % 7
-    assert profile[other_wd] == 10.0  # Fahrtenbuch-Fallback fuer noch nicht beobachtete Tage
+    assert profile == {today_wd: 3.0}  # NUR der beobachtete Wochentag, kein Fahrtenbuch-Fallback
 
 
-async def test_effective_vehicle_usage_profile_ohne_discharge_faellt_komplett_auf_fahrtenbuch_zurueck(
-    hass, coordinators,
-):
+async def test_effective_vehicle_usage_profile_ohne_discharge_gibt_none_trotz_fahrtenbuch(hass, coordinators):
     coordinator, _ = await _make_coordinator(hass, coordinators, "evup2")
     _seed_usage_profile(coordinator, weekday_kwh=10.0)
-    profile = coordinator._effective_vehicle_usage_profile()
-    assert all(v == 10.0 for v in profile.values())
+    # _seed_usage_profile() seedet standardmaessig BEIDE Quellen -- hier
+    # gezielt nur das Live-SoC-Profil wieder leeren, um "Fahrtenbuch hat
+    # Daten, Live-Tracker (noch) nicht" zu simulieren.
+    coordinator.data["vehicle_discharge_weekday_days"] = {}
+    assert coordinator._effective_vehicle_usage_profile() is None
 
 
-async def test_effective_vehicle_usage_profile_ohne_beide_quellen_gibt_none(hass, coordinators):
+async def test_effective_vehicle_usage_profile_ohne_jede_quelle_gibt_none(hass, coordinators):
     coordinator, _ = await _make_coordinator(hass, coordinators, "evup3")
     assert coordinator._effective_vehicle_usage_profile() is None
 
@@ -608,6 +635,11 @@ async def test_evcc_mode_targets_ohne_jede_entitaet_roh_und_netto_identisch(hass
     coordinator, _ = await _make_coordinator(hass, coordinators, "emt1", options={CONF_USABLE_KWH: 50.0})
     _seed_usage_profile(coordinator, weekday_kwh=10.0)
     coordinator._soc = 50.0
+    # Fixe Tageszeit statt echter Wanduhrzeit (siehe engine.py::
+    # remaining_today_kwh()-Abbau) -- sonst waeren absolute Erwartungen in
+    # diesem und den folgenden _evcc_mode_targets()-Tests vom Testzeitpunkt
+    # abhaengig.
+    coordinator._day_fraction_elapsed = lambda: 0.0
     targets = coordinator._evcc_mode_targets()
     assert targets is not None
     assert targets["rest_heute_kwh"] == targets["rest_heute_roh_kwh"]
@@ -627,6 +659,7 @@ async def test_evcc_mode_targets_mit_pv_rest_reduziert_netto_bedarf(hass, coordi
     )
     _seed_usage_profile(coordinator, weekday_kwh=10.0)
     coordinator._soc = 50.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
     hass.states.async_set("sensor.pv_rest", "4.0", {"unit_of_measurement": "kWh"})
     targets = coordinator._evcc_mode_targets()
     assert targets["pv_rest_heute_roh_kwh"] == 4.0
@@ -650,10 +683,10 @@ async def test_evcc_mode_targets_mit_hausverbrauch_reduziert_pv_fuer_auto(hass, 
     )
     _seed_usage_profile(coordinator, weekday_kwh=10.0)
     coordinator._soc = 50.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
     hass.states.async_set("sensor.pv_rest", "4.0", {"unit_of_measurement": "kWh"})
     today_wd = dt_util.now().date().weekday()
-    coordinator.data["house_weekday_kwh_totals"] = {str(today_wd): 3.0}
-    coordinator.data["house_weekday_day_counts"] = {str(today_wd): 1}
+    coordinator.data["house_weekday_days"] = {str(today_wd): [{"date": "2020-01-01", "kwh": 3.0}]}
     coordinator.data["house_periods"] = {"day": {"key": "x", "kwh": 100.0}}
     hass.states.async_set("sensor.haus", "100.0")
     targets = coordinator._evcc_mode_targets()
@@ -671,6 +704,7 @@ async def test_evcc_mode_targets_bevorzugt_discharge_basiertes_used_today(hass, 
     coordinator, _ = await _make_coordinator(hass, coordinators, "emt_disc1", options={CONF_USABLE_KWH: 50.0})
     _seed_usage_profile(coordinator, weekday_kwh=10.0)
     coordinator._soc = 50.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
     coordinator.data["vehicle_discharge_periods"] = {"day": {"key": "x", "kwh": 5.0}}
     coordinator.data["vehicle_discharge_kwh_total"] = 7.0  # 2.0 kWh heute schon verbraucht
     targets = coordinator._evcc_mode_targets()
@@ -681,6 +715,28 @@ async def test_evcc_mode_targets_ohne_usage_profile_gibt_none(hass, coordinators
     coordinator, _ = await _make_coordinator(hass, coordinators, "emt4")
     coordinator._soc = 50.0
     assert coordinator._evcc_mode_targets() is None
+
+
+async def test_evcc_mode_targets_nutzt_day_fraction_elapsed_fuer_weichen_abbau(hass, coordinators):
+    """Produktionsfall 2026-09-23: "der soc ist bei knapp 44%. haben 20:00
+    uhr. da muss doch nix mehr nachgeladen werden" -- _evcc_mode_targets()
+    muss _day_fraction_elapsed() tatsaechlich an remaining_today_kwh()
+    durchreichen, nicht nur pur in engine.py vorhanden sein."""
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "emt_taper", options={CONF_USABLE_KWH: 50.0})
+    _seed_usage_profile(coordinator, weekday_kwh=15.0)
+    coordinator._soc = 50.0
+    coordinator.data["vehicle_discharge_periods"] = {"day": {"key": "x", "kwh": 5.0}}
+    coordinator.data["vehicle_discharge_kwh_total"] = 17.5  # 17.5 - 5.0 = 12.5 kWh heute schon verbraucht
+
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    targets_frueh = coordinator._evcc_mode_targets()
+    assert targets_frueh["rest_heute_roh_kwh"] == 2.5  # 15 - 12.5, kein Abbau
+
+    coordinator._day_fraction_elapsed = lambda: 20 / 24  # 20 Uhr
+    targets_abends = coordinator._evcc_mode_targets()
+    assert targets_abends["rest_heute_roh_kwh"] == 0.0  # 15*4/24=2.5, minus 12.5 -> geklammert
 
 
 # ----- _usage_profile_buffer_pct / async_set_usage_profile_buffer_pct ------
@@ -1565,3 +1621,57 @@ async def test_evcc_vehicle_api_key_ohne_treffer_gibt_none(hass, coordinators):
 async def test_evcc_vehicle_api_key_ohne_evcc_state_gibt_none(hass, coordinators):
     coordinator, _ = await _make_coordinator(hass, coordinators, "evak5")
     assert coordinator._evcc_vehicle_api_key() is None
+
+
+# ----- _migrate_weekday_usage_windows -----------------------------------------
+# Migration von den Lebenszeit-Skalar-Akkumulatoren (Summe + Tageszaehler je
+# Wochentag) auf das Sliding-Window-Modell (siehe engine.append_recent_
+# weekday_day()/weekday_profile_from_recent_days(), USAGE_PROFILE_WINDOW_DAYS,
+# Nutzerentscheidung 2026-09-23 "ja mach das" zur Recency-Gewichtung).
+
+async def test_migrate_weekday_usage_windows_konvertiert_skalare_in_fenster_eintrag(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "mwuw1")
+    coordinator.data["house_weekday_kwh_totals"] = {"2": 20.0}
+    coordinator.data["house_weekday_day_counts"] = {"2": 2}
+    coordinator.data["vehicle_discharge_weekday_kwh_totals"] = {"3": 9.0}
+    coordinator.data["vehicle_discharge_weekday_day_counts"] = {"3": 3}
+
+    geaendert = coordinator._migrate_weekday_usage_windows()
+    assert geaendert is True
+    assert "house_weekday_kwh_totals" not in coordinator.data
+    assert "house_weekday_day_counts" not in coordinator.data
+    assert "vehicle_discharge_weekday_kwh_totals" not in coordinator.data
+    assert "vehicle_discharge_weekday_day_counts" not in coordinator.data
+
+    house_days = coordinator.data["house_weekday_days"]["2"]
+    assert len(house_days) == 1
+    assert house_days[0]["kwh"] == 10.0  # 20 / 2, alter Lebenszeit-Schnitt
+
+    vehicle_days = coordinator.data["vehicle_discharge_weekday_days"]["3"]
+    assert len(vehicle_days) == 1
+    assert vehicle_days[0]["kwh"] == 3.0  # 9 / 3
+
+    assert coordinator.house_usage_profile() == {2: 10.0}
+    assert coordinator.vehicle_discharge_usage_profile() == {3: 3.0}
+
+
+async def test_migrate_weekday_usage_windows_loescht_veraltetes_event_log(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "mwuw2")
+    coordinator.data["vehicle_discharge_events"] = [{"ts": 1.0, "weekday": 0, "kwh_applied": 1.0}]
+    geaendert = coordinator._migrate_weekday_usage_windows()
+    assert geaendert is True
+    assert "vehicle_discharge_events" not in coordinator.data
+
+
+async def test_migrate_weekday_usage_windows_ohne_alte_daten_ist_no_op(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "mwuw3")
+    geaendert = coordinator._migrate_weekday_usage_windows()
+    assert geaendert is False
+
+
+async def test_migrate_weekday_usage_windows_ist_idempotent(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "mwuw4")
+    coordinator.data["house_weekday_kwh_totals"] = {"2": 20.0}
+    coordinator.data["house_weekday_day_counts"] = {"2": 2}
+    assert coordinator._migrate_weekday_usage_windows() is True
+    assert coordinator._migrate_weekday_usage_windows() is False

@@ -18,6 +18,8 @@ from engine import (
     aggregate_sessions_by_vehicle,
     anbieter_breakdown,
     anbieter_breakdown_from_totals,
+    append_recent_weekday_day,
+    append_recent_weekday_plug_window,
     apply_ac_dc_delta,
     apply_anbieter_delta,
     apply_opportunistic_surplus_target,
@@ -57,6 +59,7 @@ from engine import (
     pop_pending,
     range_km_to_soc_percent,
     remaining_today_kwh,
+    remove_weekday_day,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
     soc_reached_full_charge,
@@ -73,6 +76,8 @@ from engine import (
     wartung_festes_datum_fortschreiben,
     wartung_status,
     wartung_uebersicht,
+    weekday_plug_window_profile_from_recent_days,
+    weekday_profile_from_recent_days,
     weekday_usage_profile,
     weekday_usage_profile_from_totals,
     weekday_usage_profile_window_kwh,
@@ -987,6 +992,42 @@ def test_remaining_today_kwh_noch_nichts_gefahren():
     assert remaining_today_kwh(weekday_avg_kwh=10.0, kwh_used_today=0.0) == 10.0
 
 
+# ----- remaining_today_kwh: weicher Abbau ueber den Tagesverlauf -----------
+# Nutzerwunsch 2026-09-23: "der soc ist bei knapp 44%. haben 20:00 uhr. da
+# muss doch nix mehr nachgeladen werden" -- Option 2 ("weicher Abbau").
+
+def test_remaining_today_kwh_ohne_tageszeit_unveraendert():
+    # day_fraction_elapsed default 0.0 -> identisch zum alten, flachen
+    # Verhalten (Rueckwaertskompatibilitaet fuer evtl. andere Aufrufer).
+    assert remaining_today_kwh(10.0, 4.0) == 6.0
+
+
+def test_remaining_today_kwh_produktionsfall_20_uhr_kein_rest_mehr():
+    # Realer Fall: Mittwochsschnitt 15 kWh, 12,5 kWh bereits verbraucht,
+    # 20 Uhr (20/24 des Tages vergangen). Skalierter Durchschnitt 15 * 4/24
+    # = 2,5 kWh, davon 12,5 kWh abgezogen -> auf 0 geklammert statt negativ.
+    assert remaining_today_kwh(15.0, 12.5, day_fraction_elapsed=20 / 24) == 0.0
+
+
+def test_remaining_today_kwh_mittags_noch_teilrest():
+    # 12 Uhr (halber Tag vergangen), nichts verbraucht -> nur die Haelfte
+    # des Durchschnitts gilt noch als moeglicher Rest.
+    assert remaining_today_kwh(10.0, 0.0, day_fraction_elapsed=0.5) == 5.0
+
+
+def test_remaining_today_kwh_tag_praktisch_vorbei_clamped_auf_null():
+    # Kurz vor Mitternacht: nahezu der gesamte Durchschnitt ist "abgebaut",
+    # unabhaengig davon, ob heute ueberhaupt schon gefahren wurde.
+    assert remaining_today_kwh(10.0, 0.0, day_fraction_elapsed=0.99) == pytest.approx(0.1, abs=0.01)
+
+
+def test_remaining_today_kwh_day_fraction_wird_auf_0_1_geklammert():
+    # Ausserhalb des gueltigen Bereichs uebergebene Werte (z.B. durch einen
+    # Rundungsfehler) duerfen nicht zu negativem oder > 100% Abbau fuehren.
+    assert remaining_today_kwh(10.0, 0.0, day_fraction_elapsed=1.5) == 0.0
+    assert remaining_today_kwh(10.0, 4.0, day_fraction_elapsed=-0.5) == 6.0
+
+
 # ----- net_need_after_pv_kwh: Bedarf abzueglich erwarteter PV --------------
 
 def test_net_need_after_pv_kwh_normalfall():
@@ -1397,6 +1438,139 @@ def test_house_weekday_usage_profile_unbeobachtete_wochentage_fehlen_statt_null(
     assert result == {0: 10.0}
     assert 1 not in result
     assert 6 not in result
+
+
+# ----- weekday_profile_from_recent_days / append_recent_weekday_day /
+# remove_weekday_day: gleitendes Fenster statt Lebenszeit-Durchschnitt
+# (Nutzerwunsch 2026-09-23: "recency-gewichtung ... passt sich schneller an
+# geaendertes fahrverhalten an").
+
+def test_weekday_profile_from_recent_days_normale_durchschnittsbildung():
+    days = {"0": [{"date": "2026-09-01", "kwh": 10.0}, {"date": "2026-09-08", "kwh": 20.0}]}
+    assert weekday_profile_from_recent_days(days) == {0: 15.0}
+
+
+def test_weekday_profile_from_recent_days_unbeobachtete_wochentage_fehlen():
+    days = {"0": [{"date": "2026-09-01", "kwh": 10.0}]}
+    result = weekday_profile_from_recent_days(days)
+    assert result == {0: 10.0}
+    assert 1 not in result
+
+
+def test_weekday_profile_from_recent_days_leer_oder_none_gibt_none():
+    assert weekday_profile_from_recent_days({}) is None
+    assert weekday_profile_from_recent_days(None) is None
+
+
+def test_append_recent_weekday_day_neuer_tag_wird_angehaengt():
+    days = {"0": [{"date": "2026-09-01", "kwh": 10.0}]}
+    result = append_recent_weekday_day(days, weekday=0, date_iso="2026-09-08", kwh=20.0, window=8)
+    assert result["0"] == [{"date": "2026-09-01", "kwh": 10.0}, {"date": "2026-09-08", "kwh": 20.0}]
+
+
+def test_append_recent_weekday_day_addiert_zu_selbem_datum_statt_zu_duplizieren():
+    # Mehrere Buchungen am selben Tag (z.B. mehrere bestaetigte Live-SoC-
+    # Abfaelle) muessen sich aufsummieren, nicht den Eintrag ersetzen.
+    days = {"0": [{"date": "2026-09-01", "kwh": 3.0}]}
+    result = append_recent_weekday_day(days, weekday=0, date_iso="2026-09-01", kwh=2.0, window=8)
+    assert result["0"] == [{"date": "2026-09-01", "kwh": 5.0}]
+
+
+def test_append_recent_weekday_day_kappt_auf_fenstergroesse():
+    days = {"0": [{"date": f"2026-08-{d:02d}", "kwh": 1.0} for d in range(1, 9)]}  # 8 Eintraege
+    result = append_recent_weekday_day(days, weekday=0, date_iso="2026-09-01", kwh=5.0, window=8)
+    assert len(result["0"]) == 8
+    assert result["0"][0]["date"] == "2026-08-02"  # aeltester (08-01) rausgefallen
+    assert result["0"][-1] == {"date": "2026-09-01", "kwh": 5.0}
+
+
+def test_append_recent_weekday_day_leere_liste_wird_neu_angelegt():
+    result = append_recent_weekday_day({}, weekday=3, date_iso="2026-09-01", kwh=7.0, window=8)
+    assert result == {"3": [{"date": "2026-09-01", "kwh": 7.0}]}
+
+
+def test_append_recent_weekday_day_aendert_andere_wochentage_nicht():
+    days = {"1": [{"date": "2026-09-02", "kwh": 4.0}]}
+    result = append_recent_weekday_day(days, weekday=0, date_iso="2026-09-01", kwh=1.0, window=8)
+    assert result["1"] == [{"date": "2026-09-02", "kwh": 4.0}]
+
+
+def test_remove_weekday_day_entfernt_passenden_eintrag():
+    days = {
+        "0": [{"date": "2026-09-01", "kwh": 10.0}, {"date": "2026-09-08", "kwh": 20.0}],
+        "1": [{"date": "2026-09-02", "kwh": 5.0}],
+    }
+    result = remove_weekday_day(days, "2026-09-01")
+    assert result["0"] == [{"date": "2026-09-08", "kwh": 20.0}]
+    assert result["1"] == [{"date": "2026-09-02", "kwh": 5.0}]
+
+
+def test_remove_weekday_day_ohne_treffer_unveraendert():
+    days = {"0": [{"date": "2026-09-01", "kwh": 10.0}]}
+    assert remove_weekday_day(days, "2026-01-01") == days
+
+
+# ----- weekday_plug_window_profile_from_recent_days / append_recent_
+# weekday_plug_window: Steck-Zeitfenster-Beobachtungsfeature (Nutzerwunsch
+# 2026-09-23: "wann und wie lange am tag das auto angeschlossen ist",
+# bewusst "erstmal nur zur beobachtung").
+
+def test_weekday_plug_window_profile_from_recent_days_normale_durchschnittsbildung():
+    days = {"0": [
+        {"date": "2026-09-01", "stunden": 8.0, "erster_connect": "18:00", "letzter_disconnect": "07:00"},
+        {"date": "2026-09-08", "stunden": 10.0, "erster_connect": "17:00", "letzter_disconnect": "07:30"},
+    ]}
+    assert weekday_plug_window_profile_from_recent_days(days) == {0: 9.0}
+
+
+def test_weekday_plug_window_profile_from_recent_days_leer_oder_none_gibt_none():
+    assert weekday_plug_window_profile_from_recent_days({}) is None
+    assert weekday_plug_window_profile_from_recent_days(None) is None
+
+
+def test_append_recent_weekday_plug_window_neuer_tag_wird_angehaengt():
+    result = append_recent_weekday_plug_window(
+        {}, weekday=0, date_iso="2026-09-01", connected_hours=8.5,
+        erster_connect="18:15", letzter_disconnect="07:02", window=8,
+    )
+    assert result["0"] == [{
+        "date": "2026-09-01", "stunden": 8.5, "erster_connect": "18:15", "letzter_disconnect": "07:02",
+    }]
+
+
+def test_append_recent_weekday_plug_window_addiert_stunden_zu_selbem_datum():
+    # Simuliert einen HA-Neustart mitten am Tag: derselbe Kalendertag wird
+    # ein zweites Mal (teilweise) gebucht, statt den ersten Teil zu
+    # verlieren.
+    days = {"0": [{"date": "2026-09-01", "stunden": 3.0, "erster_connect": "18:00", "letzter_disconnect": None}]}
+    result = append_recent_weekday_plug_window(
+        days, weekday=0, date_iso="2026-09-01", connected_hours=2.0,
+        erster_connect="20:00", letzter_disconnect="23:00", window=8,
+    )
+    # Fruehere Connect-Zeit bleibt (18:00 < 20:00), Disconnect wird uebernommen.
+    assert result["0"] == [{
+        "date": "2026-09-01", "stunden": 5.0, "erster_connect": "18:00", "letzter_disconnect": "23:00",
+    }]
+
+
+def test_append_recent_weekday_plug_window_kappt_auf_fenstergroesse():
+    days = {"0": [
+        {"date": f"2026-08-{d:02d}", "stunden": 1.0, "erster_connect": None, "letzter_disconnect": None}
+        for d in range(1, 9)
+    ]}
+    result = append_recent_weekday_plug_window(
+        days, weekday=0, date_iso="2026-09-01", connected_hours=5.0,
+        erster_connect=None, letzter_disconnect=None, window=8,
+    )
+    assert len(result["0"]) == 8
+    assert result["0"][0]["date"] == "2026-08-02"  # aeltester (08-01) rausgefallen
+    assert result["0"][-1]["date"] == "2026-09-01"
+
+
+def test_remove_weekday_day_letzter_eintrag_entfernt_ganzen_wochentag():
+    days = {"0": [{"date": "2026-09-01", "kwh": 10.0}]}
+    result = remove_weekday_day(days, "2026-09-01")
+    assert "0" not in result
 
 
 # ----- vehicle_discharge_update: Live-SoC-Ratchet fuer Gesamt-Netto-Verbrauch --

@@ -199,8 +199,7 @@ async def test_update_house_usage_profile_urlaub_aktiv_schliesst_tag_aus(hass, c
     hass.states.async_set("input_boolean.urlaub", "on")
     hass.states.async_set("sensor.haus", "1015.0")
     coordinator._update_house_usage_profile()
-    assert coordinator.data.get("house_weekday_kwh_totals", {}) == {}
-    assert coordinator.data.get("house_weekday_day_counts", {}) == {}
+    assert coordinator.data.get("house_weekday_days", {}) == {}
 
 
 async def test_update_house_usage_profile_ausreisser_wird_gedaempft(hass, coordinators):
@@ -209,16 +208,21 @@ async def test_update_house_usage_profile_ausreisser_wird_gedaempft(hass, coordi
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "huup_u2", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
-    yesterday_wd = (dt_util.now().date() - timedelta(days=1)).weekday()
-    coordinator.data["house_weekday_kwh_totals"] = {str(yesterday_wd): 20.0}
-    coordinator.data["house_weekday_day_counts"] = {str(yesterday_wd): 2}
+    yesterday = dt_util.now().date() - timedelta(days=1)
+    yesterday_wd = yesterday.weekday()
+    coordinator.data["house_weekday_days"] = {
+        str(yesterday_wd): [{"date": "2020-01-01", "kwh": 10.0}, {"date": "2020-01-08", "kwh": 10.0}],
+    }
     hass.states.async_set("sensor.haus", "1000.0")
     coordinator._update_house_usage_profile()
     coordinator.data["house_periods"]["day"]["key"] = "ein-anderer-tag"
     hass.states.async_set("sensor.haus", "1100.0")  # 100 kWh -- 10x Schnitt (10 kWh)
     coordinator._update_house_usage_profile()
-    assert coordinator.data["house_weekday_kwh_totals"][str(yesterday_wd)] == 50.0  # 20 + 30 (gekappt)
-    assert coordinator.data["house_weekday_day_counts"][str(yesterday_wd)] == 3
+    days = coordinator.data["house_weekday_days"][str(yesterday_wd)]
+    assert len(days) == 3
+    assert round(sum(d["kwh"] for d in days), 2) == 50.0  # 20 alt + 30 (gekappt)
+    neuer_eintrag = next(d for d in days if d["date"] == yesterday.isoformat())
+    assert neuer_eintrag["kwh"] == 30.0
 
 
 # ----- _update_vehicle_discharge_profile: nur noch Tageszaehler, Urlaub ---
@@ -243,7 +247,7 @@ async def test_update_vehicle_discharge_profile_urlaub_aktiv_schliesst_tag_aus(h
     hass.states.async_set("input_boolean.urlaub", "on")
     coordinator.data["vehicle_discharge_kwh_total"] = 115.0
     coordinator._update_vehicle_discharge_profile()
-    assert coordinator.data.get("vehicle_discharge_weekday_day_counts", {}) == {}
+    assert coordinator.data.get("vehicle_discharge_weekday_days", {}) == {}
 
 
 # ----- _book_vehicle_discharge_weekday: korrekte Zuordnung, Urlaub/Daempfung -
@@ -256,7 +260,7 @@ async def test_book_vehicle_discharge_weekday_urlaub_aktiv_bucht_nicht(hass, coo
     )
     hass.states.async_set("input_boolean.urlaub", "on")
     coordinator._book_vehicle_discharge_weekday(5.0, dt_util.now().timestamp())
-    assert coordinator.data.get("vehicle_discharge_weekday_kwh_totals", {}) == {}
+    assert coordinator.data.get("vehicle_discharge_weekday_days", {}) == {}
 
 
 async def test_book_vehicle_discharge_weekday_ordnet_dem_tag_der_beobachtung_zu(hass, coordinators):
@@ -270,17 +274,25 @@ async def test_book_vehicle_discharge_weekday_ordnet_dem_tag_der_beobachtung_zu(
     heute_wd = dt_util.now().date().weekday()
     assert beobachtet_wd != heute_wd
     coordinator._book_vehicle_discharge_weekday(5.0, beobachtet_ts)
-    assert coordinator.data["vehicle_discharge_weekday_kwh_totals"] == {str(beobachtet_wd): 5.0}
+    beobachtet_date = dt_util.as_local(dt_util.utc_from_timestamp(beobachtet_ts)).date().isoformat()
+    assert coordinator.data["vehicle_discharge_weekday_days"] == {
+        str(beobachtet_wd): [{"date": beobachtet_date, "kwh": 5.0}],
+    }
 
 
 async def test_book_vehicle_discharge_weekday_ausreisser_wird_gedaempft(hass, coordinators):
     coordinator, _ = await _make_coordinator(hass, coordinators, "bvdw3")
     ts = dt_util.now().timestamp()
     weekday = dt_util.now().date().weekday()
-    coordinator.data["vehicle_discharge_weekday_kwh_totals"] = {str(weekday): 20.0}
-    coordinator.data["vehicle_discharge_weekday_day_counts"] = {str(weekday): 2}
+    coordinator.data["vehicle_discharge_weekday_days"] = {
+        str(weekday): [{"date": "2020-01-01", "kwh": 10.0}, {"date": "2020-01-08", "kwh": 10.0}],
+    }
     coordinator._book_vehicle_discharge_weekday(100.0, ts)  # 10x Schnitt (10 kWh)
-    assert coordinator.data["vehicle_discharge_weekday_kwh_totals"][str(weekday)] == 50.0  # 20 + 30 (gekappt)
+    days = coordinator.data["vehicle_discharge_weekday_days"][str(weekday)]
+    assert round(sum(d["kwh"] for d in days), 2) == 50.0  # 20 alt + 30 (gekappt)
+    heute = dt_util.now().date().isoformat()
+    neuer_eintrag = next(d for d in days if d["date"] == heute)
+    assert neuer_eintrag["kwh"] == 30.0
 
 
 async def test_update_vehicle_discharge_end_to_end_verzoegerte_bestaetigung_landet_auf_richtigem_tag(hass, coordinators):
@@ -303,7 +315,73 @@ async def test_update_vehicle_discharge_end_to_end_verzoegerte_bestaetigung_land
     assert beobachtet_wd != heute_wd  # Testvoraussetzung: 3 Tage verschieben den Wochentag garantiert
     coordinator._update_vehicle_discharge(82.0)  # Bestaetigung "heute"
     assert coordinator.data["vehicle_discharge_kwh_total"] == 1.0  # 2% von 50 kWh
-    assert coordinator.data["vehicle_discharge_weekday_kwh_totals"] == {str(beobachtet_wd): 1.0}
+    beobachtet_date = dt_util.as_local(dt_util.utc_from_timestamp(beobachtet_ts)).date().isoformat()
+    assert coordinator.data["vehicle_discharge_weekday_days"] == {
+        str(beobachtet_wd): [{"date": beobachtet_date, "kwh": 1.0}],
+    }
+
+
+# ----- async_apply_vehicle_discharge_urlaub_since ---------------------------
+
+async def test_async_apply_vehicle_discharge_urlaub_since_entfernt_kalendertag(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "auds1")
+    today = dt_util.now().date()
+    wd = today.weekday()
+    coordinator.data["vehicle_discharge_weekday_days"] = {
+        str(wd): [{"date": today.isoformat(), "kwh": 5.0}],
+    }
+    since_ts = dt_util.start_of_local_day().timestamp()
+    result = await coordinator.async_apply_vehicle_discharge_urlaub_since(since_ts)
+    assert result["reclassified_kwh"] == 5.0
+    assert result["wochentage"] == {str(wd): 5.0}
+    assert coordinator.data["vehicle_discharge_weekday_days"].get(str(wd), []) == []
+    assert today.isoformat() in coordinator.data["vehicle_discharge_counted_dates"]
+
+
+async def test_async_apply_vehicle_discharge_urlaub_since_ohne_eintrag_gibt_leeres_ergebnis(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "auds2")
+    since_ts = dt_util.start_of_local_day().timestamp()
+    result = await coordinator.async_apply_vehicle_discharge_urlaub_since(since_ts)
+    assert result == {"reclassified_kwh": 0.0, "wochentage": {}}
+
+
+async def test_async_apply_vehicle_discharge_urlaub_since_verhindert_erneute_zaehlung_durch_rollover(
+    hass, coordinators,
+):
+    """Nach einer rueckwirkenden Korrektur darf der naechtliche Rollover
+    (_update_vehicle_discharge_profile()) denselben Tag NICHT anhand des
+    dann laengst wieder inaktiven Urlaubsschalters ein zweites Mal (und
+    diesmal faelschlich als normalen 0-kWh-Tag) zaehlen -- siehe
+    "vehicle_discharge_counted_dates" im Docstring beider Funktionen."""
+    coordinator, _ = await _make_coordinator(hass, coordinators, "auds3")
+    yesterday = dt_util.now().date() - timedelta(days=1)
+    wd = yesterday.weekday()
+    coordinator.data["vehicle_discharge_weekday_days"] = {
+        str(wd): [{"date": yesterday.isoformat(), "kwh": 5.0}],
+    }
+    since_ts = dt_util.start_of_local_day(yesterday).timestamp()
+    result = await coordinator.async_apply_vehicle_discharge_urlaub_since(since_ts)
+    assert result["reclassified_kwh"] == 5.0
+
+    # Rollover hat seit vorgestern nicht mehr gelaufen (Baseline zwei Tage
+    # alt) -- holt also sowohl "vorgestern" als auch "gestern" nach.
+    vorgestern = yesterday - timedelta(days=1)
+    coordinator.data["vehicle_discharge_periods"] = {
+        "day": {"key": str(vorgestern), "kwh": coordinator.data.get("vehicle_discharge_kwh_total", 0.0)},
+    }
+    coordinator._update_vehicle_discharge_profile()
+
+    # "gestern" bleibt wie von der Korrektur entschieden -- kein neuer
+    # (faelschlich normaler) Eintrag, obwohl der Urlaubsschalter (den es in
+    # diesem Test nie gab bzw. der hier "aus" ist) das jetzt zulassen wuerde.
+    assert coordinator.data["vehicle_discharge_weekday_days"].get(str(wd), []) == []
+    # "vorgestern" war nie Teil der Korrektur -- der Rollover zaehlt ihn ganz
+    # normal (anderer Wochentag als "gestern").
+    other_wd = vorgestern.weekday()
+    assert any(
+        e["date"] == vorgestern.isoformat()
+        for e in coordinator.data["vehicle_discharge_weekday_days"].get(str(other_wd), [])
+    )
 
 
 # ----- _async_apply_evcc_mode_control: Urlaubs-Pause ------------------------
