@@ -92,8 +92,12 @@ def run(det, samples):
 
 
 def test_soc_pfad_ac_inkl_verluste():
-    det = ChargeDetector(usable_kwh=45, charge_efficiency=0.88, idle_timeout_s=120)
-    ev = run(det, stream([30, 30, 45, 60, 70, 70, 70]))[0]
+    # step/idle_timeout_s hochskaliert (statt Default 60s/120s), damit die
+    # implizite Ladeleistung nicht als unplausibel gilt (siehe
+    # const.py::MAX_PLAUSIBLE_CHARGE_KW) -- reine Testbequemlichkeit vorher,
+    # kein beabsichtigter Sekunden-Ladevorgang.
+    det = ChargeDetector(usable_kwh=45, charge_efficiency=0.88, idle_timeout_s=1200)
+    ev = run(det, stream([30, 30, 45, 60, 70, 70, 70], step=600))[0]
     assert ev.delta_soc == 40
     assert ev.energy_source == "soc"
     assert round(ev.energy_batt_kwh, 2) == 18.0
@@ -205,18 +209,23 @@ def test_heimladen_wird_ignoriert():
 
 
 def test_heimladen_beendet_fremdsession():
+    # step/start_ts hochskaliert (Faktor 10 ggue. vorher), damit die implizite
+    # Ladeleistung nicht als unplausibel gilt (siehe const.py::
+    # MAX_PLAUSIBLE_CHARGE_KW) -- reine Testbequemlichkeit vorher.
     det = ChargeDetector(usable_kwh=45, idle_timeout_s=9999)
-    samples = stream([30, 45, 60], start_ts=0) + stream([65], start_ts=180, home=True)
+    samples = stream([30, 45, 60], start_ts=0, step=600) + stream([65], start_ts=1800, home=True)
     ev = run(det, samples)[0]
     assert (ev.soc_start, ev.soc_end) == (30, 60)
 
 
 def test_zwei_sessions():
-    det = ChargeDetector(usable_kwh=45, idle_timeout_s=120)
+    # step/start_ts/idle_timeout_s hochskaliert (Faktor 10), siehe Kommentar
+    # in test_heimladen_beendet_fremdsession().
+    det = ChargeDetector(usable_kwh=45, idle_timeout_s=1200)
     samples = (
-        stream([30, 30, 50, 60, 60, 60], start_ts=0)
-        + stream([45, 40], start_ts=400)
-        + stream([40, 55, 70, 70, 70], start_ts=600)
+        stream([30, 30, 50, 60, 60, 60], start_ts=0, step=600)
+        + stream([45, 40], start_ts=4000, step=600)
+        + stream([40, 55, 70, 70, 70], start_ts=6000, step=600)
     )
     evs = run(det, samples)
     assert len(evs) == 2
@@ -237,18 +246,23 @@ def test_plugged_in_true_verhindert_idle_timeout_split():
 
 
 def test_plugged_in_false_beendet_sofort_trotz_kurzer_standzeit():
+    # step/start_ts hochskaliert (Faktor 10), siehe Kommentar in
+    # test_heimladen_beendet_fremdsession() -- die implizite Ladeleistung
+    # war sonst unplausibel hoch (siehe const.py::MAX_PLAUSIBLE_CHARGE_KW).
     det = ChargeDetector(idle_timeout_s=9999)
-    samples = stream([30, 40, 50], start_ts=0, step=60, plug=True)
+    samples = stream([30, 40, 50], start_ts=0, step=600, plug=True)
     assert run(det, samples) == []
-    ev = run(det, stream([50], start_ts=180, step=60, plug=False))[0]
+    ev = run(det, stream([50], start_ts=1800, step=600, plug=False))[0]
     assert (ev.soc_start, ev.soc_end) == (30, 50)
 
 
 def test_plugged_in_none_faellt_auf_idle_timeout_zurueck():
     # Kein Steckersensor konfiguriert (plugged_in immer None) -- unveraendertes
-    # Verhalten wie vor Einfuehrung des Signals.
-    det = ChargeDetector(idle_timeout_s=120)
-    samples = stream([30, 40, 50], start_ts=0, step=60) + stream([50], start_ts=300)
+    # Verhalten wie vor Einfuehrung des Signals. step/start_ts/idle_timeout_s
+    # hochskaliert (Faktor 10), siehe Kommentar in
+    # test_heimladen_beendet_fremdsession().
+    det = ChargeDetector(idle_timeout_s=1200)
+    samples = stream([30, 40, 50], start_ts=0, step=600) + stream([50], start_ts=3000)
     ev = run(det, samples)[0]
     assert (ev.soc_start, ev.soc_end) == (30, 50)
 
@@ -273,10 +287,12 @@ def test_soc_anstieg_bei_ausgesteckt_verschiebt_anker_statt_erneut_zu_triggern()
 
 def test_soc_anstieg_bei_eingesteckt_startet_ladung_normal():
     # Gegenprobe: mit bestaetigt eingestecktem Stecker startet derselbe
-    # SoC-Anstieg ganz normal eine Fremdladung.
-    det = ChargeDetector(start_delta=3.0, idle_timeout_s=60)
-    run(det, stream([70, 73], start_ts=0, step=30, plug=True))
-    ev = run(det, stream([73], start_ts=200, plug=False))[0]
+    # SoC-Anstieg ganz normal eine Fremdladung. step/start_ts/idle_timeout_s
+    # hochskaliert (Faktor 10), siehe Kommentar in
+    # test_heimladen_beendet_fremdsession().
+    det = ChargeDetector(start_delta=3.0, idle_timeout_s=600)
+    run(det, stream([70, 73], start_ts=0, step=300, plug=True))
+    ev = run(det, stream([73], start_ts=2000, plug=False))[0]
     assert (ev.soc_start, ev.soc_end) == (70, 73)
 
 
@@ -284,10 +300,15 @@ def test_unplausibel_grosser_sprung_bei_ausgesteckt_startet_trotzdem_ladung():
     # Ein SoC-Sprung >= regen_implausible_delta_pct ist trotz bestaetigt
     # ausgestecktem Fahrzeug KEINE plausible Rekuperation mehr, sondern eine
     # waehrend einer Erkennungsluecke (z.B. mehrtaegiger Telemetrie-Ausfall)
-    # verpasste Fremdladung -- muss trotzdem eine Erkennung starten.
+    # verpasste Fremdladung -- muss trotzdem eine Erkennung starten. step
+    # zwischen den beiden Samples ist deshalb bewusst auf realistische 3 Tage
+    # gesetzt (statt vorher 30s) -- sonst waere die implizite Ladeleistung
+    # selbst unplausibel und wuerde von MAX_PLAUSIBLE_CHARGE_KW verworfen,
+    # obwohl genau dieser Fall (grosse Luecke, daher geringe rechnerische
+    # Rate) davon ausgenommen bleiben soll.
     det = ChargeDetector(start_delta=3.0, idle_timeout_s=60, regen_implausible_delta_pct=15.0)
-    run(det, stream([59, 98], start_ts=0, step=30, plug=False))
-    ev = run(det, stream([98], start_ts=200, plug=False))[0]
+    run(det, stream([59, 98], start_ts=0, step=259200, plug=False))
+    ev = run(det, stream([98], start_ts=259500, plug=False))[0]
     assert (ev.soc_start, ev.soc_end) == (59, 98)
 
 
@@ -301,10 +322,13 @@ def test_sprung_knapp_unter_der_schwelle_bleibt_regen():
 
 def test_sprung_genau_auf_der_schwelle_startet_ladung():
     # Grenzfall: genau die Schwelle selbst zaehlt schon als unplausibel
-    # (">=", siehe _update_idle()).
+    # (">=", siehe _update_idle()). step wie bei test_unplausibel_grosser_
+    # sprung_bei_ausgesteckt_startet_trotzdem_ladung() auf realistische 3
+    # Tage gesetzt, sonst waere die implizite Ladeleistung selbst
+    # unplausibel (siehe const.py::MAX_PLAUSIBLE_CHARGE_KW).
     det = ChargeDetector(start_delta=3.0, idle_timeout_s=60, regen_implausible_delta_pct=15.0)
-    run(det, stream([70, 85], start_ts=0, step=30, plug=False))
-    ev = run(det, stream([85], start_ts=200, plug=False))[0]
+    run(det, stream([70, 85], start_ts=0, step=259200, plug=False))
+    ev = run(det, stream([85], start_ts=259500, plug=False))[0]
     assert (ev.soc_start, ev.soc_end) == (70, 85)
 
 
@@ -386,20 +410,84 @@ def test_plug_debouncer_get_load_state_roundtrip():
 
 
 def test_fahrt_beendet_ladung():
+    # step hochskaliert (Faktor 10), siehe Kommentar in
+    # test_heimladen_beendet_fremdsession().
     det = ChargeDetector(usable_kwh=45, idle_timeout_s=9999, drop_ends=1.0)
-    ev = run(det, stream([30, 50, 65, 62]))[0]
+    ev = run(det, stream([30, 50, 65, 62], step=600))[0]
     assert ev.soc_end == 65
 
 
 def test_as_dict_schema():
-    det = ChargeDetector(usable_kwh=45, idle_timeout_s=120)
-    d = run(det, stream([20, 20, 40, 60, 60, 60]))[0].as_dict()
+    # step/idle_timeout_s hochskaliert (Faktor 10), siehe Kommentar in
+    # test_heimladen_beendet_fremdsession().
+    det = ChargeDetector(usable_kwh=45, idle_timeout_s=1200)
+    d = run(det, stream([20, 20, 40, 60, 60, 60], step=600))[0].as_dict()
     assert set(d) == {
         "start_ts", "end_ts", "soc_start", "soc_end", "delta_soc",
         "energy_kwh", "energy_batt_kwh", "losses_kwh",
         "energy_source", "duration_min", "kind",
     }
     assert d["energy_kwh"] >= d["energy_batt_kwh"]
+
+
+# ----- Plausibilitaets-Check auf die implizite Ladeleistung ----------------
+# (const.py::MAX_PLAUSIBLE_CHARGE_KW, siehe ChargeDetector._finalize()) --
+# Produktionsfall 2026-09-23: rohe SoC-Sensor-Spikes (siehe packages/eauto/
+# soc.yaml) wurden faelschlich als abgeschlossene Fremdladung gemeldet, z.B.
+# 3 Prozentpunkte in 12 Millisekunden und 23 Prozentpunkte in 7 Sekunden --
+# beides physikalisch unmoeglich.
+
+def test_instantaner_soc_spike_wird_als_unplausibel_verworfen():
+    # Reproduziert den realen Produktionsfall: 3 Prozentpunkte praktisch
+    # augenblicklich (12ms) -- keine Ladung, ein Sensor-Glitch.
+    det = ChargeDetector(usable_kwh=50, start_delta=3.0, idle_timeout_s=9999)
+    samples = [
+        ChargeSample(ts=0.0, soc=47.0, home_charging=False),
+        ChargeSample(ts=0.012, soc=50.0, home_charging=False),
+        ChargeSample(ts=0.024, soc=47.0, home_charging=False),  # sofortige Korrektur -> finalize
+    ]
+    assert run(det, samples) == []
+
+
+def test_kurzer_grosser_sprung_wird_als_unplausibel_verworfen():
+    # Zweiter realer Produktionsfall: 23 Prozentpunkte in 7 Sekunden.
+    det = ChargeDetector(usable_kwh=50, start_delta=3.0, idle_timeout_s=9999)
+    samples = [
+        ChargeSample(ts=0.0, soc=26.0, home_charging=False),
+        ChargeSample(ts=3.5, soc=49.0, home_charging=False),
+        ChargeSample(ts=7.0, soc=26.0, home_charging=False),  # sofortige Korrektur -> finalize
+    ]
+    assert run(det, samples) == []
+
+
+def test_realistische_dc_schnellladung_bleibt_plausibel():
+    # Gegenprobe: 30 Prozentpunkte in 15 Minuten (~68 kW effektiv) ist echte,
+    # schnelle DC-Ladung -- darf NICHT durch MAX_PLAUSIBLE_CHARGE_KW verworfen
+    # werden.
+    det = ChargeDetector(usable_kwh=50, start_delta=3.0, idle_timeout_s=9999)
+    ev = run(det, stream([20, 35, 50, 48], start_ts=0, step=450))[0]
+    assert (ev.soc_start, ev.soc_end) == (20, 50)
+
+
+def test_spike_mitten_in_laufender_ladung_wird_ignoriert():
+    # Nutzerfrage 2026-09-23: "spikes nach oben werden genauso abgefangen?"
+    # -- ein Spike MITTEN in einer schon laenger laufenden, echten Ladung
+    # wuerde von der bereits verstrichenen echten Ladezeit "verduennt" und
+    # die _finalize()-Durchschnittsrate bliebe unauffaellig, obwohl der
+    # einzelne Sprung selbst unmoeglich ist (siehe _update_charging()).
+    # Peak/Ladeende muessen den fuer sich unplausiblen Spike (40->95 in nur
+    # 1s) ignorieren, nicht als tatsaechlichen neuen Peak uebernehmen.
+    det = ChargeDetector(usable_kwh=50, start_delta=3.0, idle_timeout_s=9999, drop_ends=1.0)
+    samples = [
+        ChargeSample(ts=0, soc=20, home_charging=False),
+        ChargeSample(ts=1800, soc=30, home_charging=False),
+        ChargeSample(ts=3600, soc=40, home_charging=False),
+        ChargeSample(ts=3601, soc=95, home_charging=False),  # unplausibler Spike
+        ChargeSample(ts=4500, soc=41, home_charging=False),  # echte Fortsetzung
+        ChargeSample(ts=5400, soc=38, home_charging=False),  # Abfall -> finalize
+    ]
+    ev = run(det, samples)[0]
+    assert (ev.soc_start, ev.soc_end) == (20, 41)
 
 
 def test_charge_get_state_load_state_ueberlebt_simulierten_neustart():

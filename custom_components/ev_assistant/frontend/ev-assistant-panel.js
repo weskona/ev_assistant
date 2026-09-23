@@ -264,7 +264,7 @@ class EVAssistantPanel extends HTMLElement {
     modal.innerHTML = `
       <div class="pending-modal-head">
         <span class="ic"><ha-icon icon="mdi:motion-sensor"></ha-icon></span>
-        <h2>Offene Fahrten &amp; Fremdladungen</h2>
+        <h2 id="pending-modal-title">Offene Fahrten &amp; Fremdladungen</h2>
         <button type="button" class="pending-modal-close" aria-label="Schließen"><ha-icon icon="mdi:close"></ha-icon></button>
       </div>
       <div class="pending-modal-body">
@@ -274,23 +274,49 @@ class EVAssistantPanel extends HTMLElement {
     modal.querySelector(".pending-modal-close").addEventListener("click", () => this._closePendingModal());
     overlay.appendChild(modal);
     this._pendingModalEl = overlay;
+    this._pendingModalTitle = modal.querySelector("#pending-modal-title");
     this._pendingModalCharges = modal.querySelector("#pending-modal-charges");
     this._pendingModalTrips = modal.querySelector("#pending-modal-trips");
     return overlay;
   }
 
-  // `focusSection` ("charges"/"trips") scrollt bei getrennten Ladung-/
-  // Fahrt-Pills (siehe _buildUebersichtBeta()) direkt zur gemeinten Liste,
-  // falls (selten) beide Arten gleichzeitig offen sind.
+  // Zeigt NUR die Art, deren Pill angeklickt wurde (Nutzerwunsch 2026-09-23:
+  // "in den jeweiligen popups sind fahrten und fremdladungen zu sehen. nicht
+  // nur jeweils das, auf dessen pill man geklickt hat") -- vorher blendete
+  // _updateUebersichtBeta() beide Listen ein, sobald beide Arten gleichzeitig
+  // offen waren, unabhaengig davon, welche Pill gedrueckt wurde. Wird sowohl
+  // beim Oeffnen (_openPendingModal()) als auch bei jedem Update waehrend das
+  // Popup offen ist (_updateUebersichtBeta()) angewendet, damit ein
+  // zwischenzeitliches Bestaetigen/Verwerfen die Filterung nicht aufhebt.
+  _applyPendingModalFilter(pendingCharges, pendingTrips) {
+    const focus = this._pendingModalFocus;
+    const showCharges = focus === "trips" ? false : pendingCharges.length > 0;
+    const showTrips = focus === "charges" ? false : pendingTrips.length > 0;
+    this._pendingModalCharges.classList.toggle("hidden", !showCharges);
+    this._pendingModalTrips.classList.toggle("hidden", !showTrips);
+    return { showCharges, showTrips };
+  }
+
+  // `focusSection` ("charges"/"trips") legt fest, welche der beiden Listen
+  // gezeigt wird (siehe _applyPendingModalFilter()) -- exklusiv, nicht nur
+  // ein Scroll-Ziel bei ansonsten weiterhin beiden sichtbaren Listen.
   _openPendingModal(focusSection) {
     if (!this._pendingModalEl) return;
+    this._pendingModalFocus = focusSection;
+    this._pendingModalTitle.textContent = focusSection === "trips"
+      ? "Offene Fahrten"
+      : focusSection === "charges"
+        ? "Offene Fremdladungen"
+        : "Offene Fahrten & Fremdladungen";
+    const pendingCharges = this._pendingList("pending", "offene_ladungen");
+    const pendingTrips = this._pendingList("trip_pending", "offene_fahrten");
+    this._applyPendingModalFilter(pendingCharges, pendingTrips);
     this._pendingModalEl.classList.remove("hidden");
-    const target = focusSection === "trips" ? this._pendingModalTrips : focusSection === "charges" ? this._pendingModalCharges : null;
-    if (target && !target.classList.contains("hidden")) target.scrollIntoView({ block: "nearest" });
   }
 
   _closePendingModal() {
     if (this._pendingModalEl) this._pendingModalEl.classList.add("hidden");
+    this._pendingModalFocus = null;
   }
 
   _buildAppbar() {
@@ -5004,9 +5030,16 @@ class EVAssistantPanel extends HTMLElement {
         ? "1 offene Fahrt"
         : `${pendingTrips.length} offene Fahrten`;
     }
-    if (pendingCharges.length === 0 && pendingTrips.length === 0) this._closePendingModal();
-    this._pendingModalCharges.classList.toggle("hidden", pendingCharges.length === 0);
-    this._pendingModalTrips.classList.toggle("hidden", pendingTrips.length === 0);
+    // Wenn die aktuell fokussierte Art (siehe _openPendingModal()) waehrend
+    // das Popup offen ist leer laeuft (z.B. letzte Fremdladung bestaetigt),
+    // schliessen -- auch wenn die JEWEILS ANDERE Art noch offene Eintraege
+    // hat, denn die wird ja gerade ausgeblendet gezeigt.
+    const focus = this._pendingModalFocus;
+    const focusedEmpty = focus === "charges" ? pendingCharges.length === 0
+      : focus === "trips" ? pendingTrips.length === 0
+      : pendingCharges.length === 0 && pendingTrips.length === 0;
+    if (focusedEmpty) this._closePendingModal();
+    this._applyPendingModalFilter(pendingCharges, pendingTrips);
     this._renderPendingCharges(pendingCharges, this._pendingModalCharges);
     this._renderPendingTrips(pendingTrips, this._pendingModalTrips);
 

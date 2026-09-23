@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.97.1] - 2026-09-23
+
+### Fixed
+
+- **External-charge detection had no plausibility check on the implied charging rate**: raw SoC readings from some vehicle sources (e.g. WiCAN/CAN-bus) occasionally spike (documented, known tradeoff — not filtered at the sensor). Two production cases were logged as completed external charges despite being physically impossible: a 3 percentage-point jump in 12 milliseconds, and a 23 percentage-point jump in 7 seconds. `ChargeDetector` now discards a detected charge if its implied charging power (energy / duration) exceeds 150 kW (`MAX_PLAUSIBLE_CHARGE_KW`) — both for the session as a whole and for each individual rise step while a session is already active (so a spike mid-session can't hide behind time already spent charging legitimately). A genuine charge missed during a real multi-day telemetry gap stays unaffected, since its long real duration keeps the computed rate low; a pure SoC drop (e.g. sensor freezing then reporting a real lower value later) was already unaffected by this detector (it doesn't watch decreases at all).
+- **Pending charges/trips popup showed both categories together**: clicking the "external charges" pill or the "trips" pill opened the same popup showing whichever categories currently had open items, regardless of which pill was clicked. Each pill now shows only its own category, with a matching popup title.
+
 ## [0.97.0] - 2026-09-23
 
 ### Added

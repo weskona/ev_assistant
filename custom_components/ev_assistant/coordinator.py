@@ -129,6 +129,7 @@ from .const import (
     LADEKARTE_AVG_DAYS_PER_MONTH,
     LEASING_KNAPP_SCHWELLE_PCT,
     LEASING_TOLERANZ_PCT,
+    MAX_PLAUSIBLE_CHARGE_KW,
     MAX_POWER_GAP_S,
     MILES_TO_KM,
     MIN_USAGE_PROFILE_DAYS,
@@ -718,6 +719,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             regen_implausible_delta_pct=IMPLAUSIBLE_REGEN_DELTA_PCT,
             implausible_power_ratio=IMPLAUSIBLE_POWER_RATIO,
             max_power_gap_s=MAX_POWER_GAP_S,
+            max_plausible_charge_kw=MAX_PLAUSIBLE_CHARGE_KW,
         )
         # Stellt eine ggf. laufende (noch nicht abgeschlossene) Fremdladung
         # ueber einen HA-Neustart hinweg wieder her -- ohne das wuerde jeder

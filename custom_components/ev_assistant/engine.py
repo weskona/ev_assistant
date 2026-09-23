@@ -92,6 +92,7 @@ class ChargeDetector:
         regen_implausible_delta_pct: float = 15.0,
         implausible_power_ratio: float = 0.6,
         max_power_gap_s: float = 3600.0,
+        max_plausible_charge_kw: float = 150.0,
     ):
         self.usable_kwh = usable_kwh
         self.charge_efficiency = charge_efficiency
@@ -114,6 +115,16 @@ class ChargeDetector:
         # Deckel fuer die Trapez-Integration in _integrate_power() -- Default
         # identisch zu const.py::MAX_POWER_GAP_S.
         self.max_power_gap_s = max_power_gap_s
+        # Ab dieser impliziten Ladeleistung (erkannte kWh / Dauer in Stunden)
+        # gilt eine erkannte Ladung als physikalisch unplausibel und wird in
+        # _finalize() verworfen statt als (Fremd-)Ladung gemeldet -- siehe
+        # dortigen Kommentar sowie const.py::MAX_PLAUSIBLE_CHARGE_KW (Default
+        # identisch dazu). Faengt SoC-Sensor-Spikes ab (z.B. rohe CAN-Bus-
+        # Werte, siehe packages/eauto/soc.yaml), OHNE echte, aber ueber eine
+        # lange Telemetrie-Luecke verpasste Ladungen zu verwerfen (siehe
+        # regen_implausible_delta_pct-Kommentar) -- deren Dauer ist gross
+        # genug, dass die implizite Rate klein bleibt.
+        self.max_plausible_charge_kw = max_plausible_charge_kw
 
         self._active = False
         self._anchor_soc: Optional[float] = None
@@ -241,11 +252,43 @@ class ChargeDetector:
         self._last_power = s.power_kw
         self._last_power_ts = s.ts
 
+    def _implied_soc_kw(self, delta_soc_pct: float, dt_h: float) -> float:
+        """Grobe, rein SoC-basierte AC-aequivalente Ladeleistung fuer einen
+        SoC-Sprung ueber dt_h Stunden -- gemeinsame Grundlage fuer die
+        Plausibilitaets-Checks in _update_charging() (pro Einzelschritt,
+        siehe dort) und _finalize() (gesamte Session). Bewusst OHNE die
+        Leistungs-/_energy()-Schaetzung (die ist fuer die tatsaechliche
+        Energiebilanz der Session gedacht, hier reicht eine schnelle
+        Sanity-Pruefung). dt_h <= 0 gilt automatisch als unplausibel
+        (unendliche Rate) -- ein realer SoC-Sprung braucht immer messbare
+        Zeit."""
+        if dt_h <= 0:
+            return float("inf")
+        e_batt = delta_soc_pct / 100.0 * self.usable_kwh
+        e_ac = e_batt / self.charge_efficiency
+        return e_ac / dt_h
+
     def _update_charging(self, s: ChargeSample) -> Optional[ChargeEvent]:
         self._integrate_power(s)
         if s.home_charging:
             return self._finalize(s)
         if s.soc > self._peak_soc + self.noise:
+            # Plausibilitaets-Check auf DIESEN EINEN Anstiegsschritt (nicht
+            # nur auf die gesamte Session in _finalize()) -- Nutzerfrage
+            # 2026-09-23 "spikes nach oben werden genauso abgefangen?": ohne
+            # das wuerde ein Sensor-Spike MITTEN in einer schon laenger
+            # laufenden, echten Ladung von der bereits verstrichenen echten
+            # Ladezeit "verduennt" und die _finalize()-Durchschnittsrate
+            # bliebe trotz eines fuer sich genommen unmoeglichen Sprungs
+            # unauffaellig. Ein unplausibler Schritt wird ignoriert (kein
+            # neuer Peak, Zustand bleibt unveraendert) statt uebernommen --
+            # eine spaetere Korrektur zurueck auf einen echten Wert faellt
+            # dann einfach unter den (unveraenderten, echten) Peak und wird
+            # ganz normal als Ladeende erkannt, statt selbst wie ein Abfall
+            # auszusehen.
+            step_kw = self._implied_soc_kw(s.soc - self._peak_soc, (s.ts - self._last_rise_ts) / 3600.0)
+            if step_kw > self.max_plausible_charge_kw:
+                return None
             self._peak_soc = s.soc
             self._last_rise_ts = s.ts
             return None
@@ -319,7 +362,19 @@ class ChargeDetector:
         self._have_power = False
         self._last_power = None
         self._last_power_ts = None
-        return ev if delta >= self.start_delta else None
+        if delta < self.start_delta:
+            return None
+        # Plausibilitaets-Check auf die IMPLIZITE Ladeleistung (siehe
+        # const.py::MAX_PLAUSIBLE_CHARGE_KW) -- ein SoC-Sensor-Spike (z.B.
+        # rohes CAN-Bus-Signal, siehe packages/eauto/soc.yaml) kann einen
+        # grossen Sprung in Millisekunden/wenigen Sekunden erzeugen, was
+        # physikalisch keine echte Ladung sein kann. Dauer <= 0 (identische
+        # oder invertierte Zeitstempel) gilt automatisch als unplausibel.
+        duration_h = (self._last_rise_ts - self._start_ts) / 3600.0
+        implied_kw = e_ac / duration_h if duration_h > 0 else float("inf")
+        if implied_kw > self.max_plausible_charge_kw:
+            return None
+        return ev
 
 
 class SignalDebouncer:

@@ -127,6 +127,29 @@ IMPLAUSIBLE_POWER_RATIO = 0.6
 # aber noch brauchbare Meldefrequenzen (z.B. alle 15-20 Min.) nicht zu
 # treffen -- wirkt nur bei echten Ausfaellen/sehr seltenen Updates.
 MAX_POWER_GAP_S = 3600.0
+# Rohe SoC-Werte mancher Fahrzeug-Quellen (z.B. WiCAN/CAN-Bus, siehe
+# packages/eauto/soc.yaml) spiken gelegentlich (Wach-Fenster-Glitches,
+# DC-Schnellladen zerlegt das Signal zeitweise) -- diese Spikes werden dort
+# BEWUSST NICHT gefiltert, mit dem Kommentar "Die Absicherung gegen falsche
+# Fremdladung passiert in ev_assistant (Anstiegsraten-Pruefung)". Bisher gab
+# es diese allgemeine Pruefung tatsaechlich nicht -- nur den Spezialfall
+# IMPLAUSIBLE_REGEN_DELTA_PCT (nur bei bestaetigt ausgestecktem Fahrzeug).
+# Produktionsfall 2026-09-23: ein SoC-Sprung von 3 Prozentpunkten in 12
+# Millisekunden und einer von 23 Prozentpunkten in 7 Sekunden wurden beide
+# als abgeschlossene Fremdladung gewertet -- physikalisch unmoeglich (siehe
+# engine.py::ChargeDetector._finalize()). Ab dieser impliziten Ladeleistung
+# (kWh der erkannten Ladung / Dauer in Stunden) gilt eine Ladung als
+# unplausibel und wird verworfen statt als Fremdladung gemeldet. 150 kW ist
+# grosszuegig ueber jeder realistischen AC/DC-Ladeleistung fuer die hier
+# unterstuetzten Fahrzeuge gewaehlt (>10x der schnellsten heute ueblichen
+# DC-Ladeleistung), um KEINE echte, nur ungewoehnlich schnelle Ladung
+# faelschlich zu verwerfen -- insbesondere nicht den in
+# IMPLAUSIBLE_REGEN_DELTA_PCT dokumentierten Fall einer waehrend einer
+# echten (Stunden langen) Telemetrie-Luecke verpassten, aber realen
+# Fremdladung (dort ist die Dauer groß genug, dass die implizite Rate klein
+# bleibt). Interne Heuristik, kein Config-Flow-Feld, analog
+# IMPLAUSIBLE_REGEN_DELTA_PCT.
+MAX_PLAUSIBLE_CHARGE_KW = 150.0
 
 # Fahrzeug-Eckdaten
 CONF_VEHICLE_HERSTELLER = "vehicle_hersteller"
