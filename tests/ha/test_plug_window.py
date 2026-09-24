@@ -12,10 +12,6 @@ from datetime import timedelta
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-import custom_components.ev_assistant.coordinator as coordinator_module
-
-_POLL_S = coordinator_module._EVCC_POLL_INTERVAL_S
-
 
 async def _make_coordinator(hass, coordinators, entry_id="pw1"):
     from custom_components.ev_assistant.const import DOMAIN
@@ -42,12 +38,14 @@ async def test_update_plug_window_ohne_verbindung_legt_leeren_tag_an(hass, coord
 
 
 async def test_update_plug_window_verbunden_erhoeht_sekunden_und_setzt_ersten_connect(hass, coordinators):
+    import custom_components.ev_assistant.coordinator as coordinator_module
+
     coordinator, _ = await _make_coordinator(hass, coordinators, "pw2")
     coordinator._evcc_state = {"loadpoints": [{"connected": True}]}
     coordinator._update_plug_window()
     coordinator._update_plug_window()
     today = coordinator.data["plug_window_today"]
-    assert today["connected_seconds"] == round(2 * _POLL_S, 1)
+    assert today["connected_seconds"] == round(2 * coordinator_module._EVCC_POLL_INTERVAL_S, 1)
     assert today["erster_connect"] == dt_util.now().strftime("%H:%M")
     assert today["letzter_disconnect"] is None
 
