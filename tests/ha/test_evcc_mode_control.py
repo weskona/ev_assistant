@@ -671,8 +671,7 @@ async def test_evcc_mode_targets_pv_ueberschuss_reduziert_min_und_target(hass, c
     """Produktionsvorfall 2026-09-24: Fahrzeug lud nachts durch, obwohl
     tagsueber reichlich PV fuer den kompletten Rest-Bedarf zu erwarten war
     -- der heutige PV-Ueberschuss (ueber den heutigen Bedarf hinaus) muss
-    auch min_kwh/target_kwh (morgen/uebermorgen) reduzieren, nicht nur
-    rest_heute."""
+    auch min_kwh/target_kwh (morgen) reduzieren, nicht nur rest_heute."""
     from custom_components.ev_assistant.const import (
         CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
         CONF_USABLE_KWH,
@@ -692,17 +691,19 @@ async def test_evcc_mode_targets_pv_ueberschuss_reduziert_min_und_target(hass, c
     assert targets["pv_ueberschuss_puffer_kwh"] == 5.0
     # min_raw = (0 + morgen 10) - 5 Ueberschuss = 5 -> * 1.2 Puffer = 6.0
     assert targets["min_kwh"] == 6.0
-    # target_raw = (0 + morgen+uebermorgen 20) - 5 Ueberschuss = 15 -> * 1.2 = 18.0
-    assert targets["target_kwh"] == 18.0
+    # target_raw = (0 + morgen 10, EVCC_MODE_TARGET_DAYS=1) - 5 Ueberschuss
+    # = 5 -> * 1.2 = 6.0 -- identisch zu min_kwh (siehe const.py-Kommentar zu
+    # EVCC_MODE_TARGET_DAYS: die "minpv"-Zwischenstufe faellt damit weg).
+    assert targets["target_kwh"] == 6.0
     assert targets["min_kwh"] <= targets["target_kwh"]
 
 
 async def test_evcc_mode_targets_grosser_pv_ueberschuss_deckt_gesamten_puffer(hass, coordinators):
-    """Reicht der heutige PV-Ueberschuss fuer den kompletten Zwei-Tage-
-    Puffer, faellt der Modus zurueck auf "pv" statt "minpv"/"now" -- exakt
-    das eigentliche Nutzer-Szenario (Speicher/Auto luden nachts durch,
-    obwohl tagsueber genug PV fuer Rest-Bedarf inkl. eines
-    verbrauchsstarken Tages im Fenster zu erwarten war)."""
+    """Reicht der heutige PV-Ueberschuss fuer den kompletten Puffer (siehe
+    EVCC_MODE_TARGET_DAYS), faellt der Modus zurueck auf "pv" statt
+    "minpv"/"now" -- exakt das eigentliche Nutzer-Szenario (Speicher/Auto
+    luden nachts durch, obwohl tagsueber genug PV fuer den Rest-Bedarf zu
+    erwarten war)."""
     from custom_components.ev_assistant.const import (
         CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
         CONF_USABLE_KWH,

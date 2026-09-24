@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.98.9] - 2026-09-24
+
+### Changed
+
+- **Day-ahead forward buffer (`EVCC_MODE_TARGET_DAYS`) reduced from 2 days to 1**: production incident — the vehicle grid-charged overnight even though tomorrow's own need (`min_kwh`, 12.68 kWh) was comfortably covered by the forecast (32.5 kWh); the shortfall (1.62 kWh) was only against the *day-after-tomorrow's* estimate baked into the 2-day `target_kwh` (34.12 kWh). That second day gets re-assessed with a fresher, more accurate forecast once it's actually the next day, so pre-charging for it a full day early trades a small, still-uncertain forecast gap for real, immediate grid usage. `target_kwh` now covers the same next-day window as `min_kwh`, so on a typical day the two coincide and the mode decision collapses to a simple `now`/`pv` choice — the anticipatory `minpv` nudge based on a future day's forecast is gone. The moment-to-moment `minpv` behavior (the real-time PV-surplus override that tops up with grid power whenever live solar surplus is positive but below the wallbox's minimum power, e.g. towards evening or on a low-PV day) is a separate mechanism (`engine.apply_realtime_pv_override()`) and is unaffected.
+
+## [0.98.8] - 2026-09-24
+
+### Removed
+
+- **Classic "Übersicht" panel tab removed**: superseded by "Übersicht (Beta)", which has covered the same ground (and more) since 0.98.0. The removed source is kept for reference in `archive/legacy-overview-panel.js` (not shipped with the integration). No config or entities are affected — this only changes the panel's tab bar.
+
 ## [0.98.7] - 2026-09-24
 
 ### Added

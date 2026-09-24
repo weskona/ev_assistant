@@ -1598,7 +1598,7 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
     "pv_ueberschuss_puffer_kwh" zeigt den heutigen PV-Ueberschuss (ueber den
     heutigen Bedarf hinaus), der zusaetzlich von "min_kwh"/"target_kwh"
     abgezogen wurde (siehe coordinator.py::_evcc_mode_targets()) -- macht
-    sichtbar, warum der Zwei-Tage-Puffer trotz eines einzelnen
+    sichtbar, warum der EVCC_MODE_TARGET_DAYS-Puffer trotz eines
     verbrauchsstarken Tages im Fenster ggf. schon gedeckt ist.
     "pv_override_mischpreis_kwh" zeigt (sobald ein "minpv"-Kandidat
     vorliegt, siehe engine.blended_charge_price()) den Mischpreis eines

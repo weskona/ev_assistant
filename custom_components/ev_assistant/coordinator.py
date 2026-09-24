@@ -5253,15 +5253,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Akkustand und steht damit auch fuer die naechsten Tage zur
         # Verfuegung. Ohne diesen Schritt wuerde ein sonniger Tag mit viel
         # Ueberschuss dafuer ungenutzt verworfen, waehrend fuers Erreichen des
-        # Zwei-Tage-Puffers (z.B. wegen eines einzelnen verbrauchsstarken
-        # Tages im EVCC_MODE_TARGET_DAYS-Fenster, etwa ein Wochenend-
-        # Ausflug) trotzdem sofort Netzladen erzwungen wuerde
-        # (Produktionsvorfall 2026-09-24: Fahrzeug lud nachts durch, obwohl
-        # tagsueber reichlich PV fuer den kompletten Rest-Bedarf inkl. eines
-        # verbrauchsstarken Samstags zu erwarten war). Nutzerentscheidung
-        # 2026-09-24: der Zwei-Tage-Vorlauf selbst bleibt (Sicherheitspuffer
-        # fuer einen tatsaechlich schlechten PV-Tag), nur die fehlende
-        # PV-Ueberschuss-Anrechnung wird behoben.
+        # EVCC_MODE_TARGET_DAYS-Puffers trotzdem sofort Netzladen erzwungen
+        # wuerde (Produktionsvorfall 2026-09-24: Fahrzeug lud nachts durch,
+        # obwohl tagsueber reichlich PV fuer den kompletten Rest-Bedarf zu
+        # erwarten war). EVCC_MODE_TARGET_DAYS wurde am selben Tag noch von 2
+        # auf 1 zurueckgenommen (zweiter Produktionsvorfall, siehe dortigen
+        # Kommentar in const.py) -- diese PV-Ueberschuss-Anrechnung bleibt
+        # trotzdem sinnvoll, da rest_heute (s.o.) weiterhin vom heutigen
+        # Ueberschuss profitiert.
         pv_ueberschuss_nach_heute = net_need_after_pv_kwh(pv_fuer_auto, rest_heute_roh)
         buffer_pct = self._usage_profile_buffer_pct()
         min_raw = net_need_after_pv_kwh(rest_heute + profile.get(tomorrow_wd, 0.0), pv_ueberschuss_nach_heute)

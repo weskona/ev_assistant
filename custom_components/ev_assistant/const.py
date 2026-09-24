@@ -509,10 +509,18 @@ DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED = False
 EVCC_BATTERY_PRIORITY_VEHICLE_SOC = 0
 # Wie viele Tage (ab dem Tag NACH heute) der evcc-Ziel-SoC abdeckt (siehe
 # engine.py::determine_evcc_mode()/coordinator.py::_evcc_mode_targets()) --
-# der Mindest-SoC deckt dagegen nur den naechsten einzelnen Tag ab. 2 Tage
-# Puffer verhindern, dass ein einzelner ungewoehnlich verbrauchsstarker Tag
-# nach dem naechsten sofort wieder Netzladen erzwingt.
-EVCC_MODE_TARGET_DAYS = 2
+# der Mindest-SoC deckt (bei diesem Wert von 1) denselben Zeitraum ab, d.h.
+# min_kwh und target_kwh fallen praktisch zusammen und die "minpv"-
+# Zwischenstufe verschwindet faktisch (nur noch "now" vs. "pv").
+# War frueher 2 (Puffer gegen einen verbrauchsstarken Tag UEBERMORGEN),
+# wurde aber am selben Tag wieder auf 1 zurueckgenommen (Nutzerentscheidung
+# 2026-09-24 abends, Produktionsvorfall): ein 2-Tage-Vorlauf loeste
+# vorsorgliches Netzladen HEUTE NACHT allein wegen des Bedarfs von UEBERMORGEN
+# aus, obwohl dessen PV-Prognose morgen ohnehin mit aktuelleren Daten neu
+# bewertet wird -- der Vorteil (fruehere Reaktion auf einen schlechten PV-Tag)
+# ueberwog nicht den Nachteil (unnoetiges Netzladen bei einer knappen, sich
+# oft noch aendernden Prognose fuer einen Tag, der noch gar nicht ansteht).
+EVCC_MODE_TARGET_DAYS = 1
 
 # Mindest-Haltezeit (Sekunden) fuer engine.apply_opportunistic_surplus_target()
 # bevor ein Aktiv/Inaktiv-Wechsel der PV-Ueberschuss-Zielanhebung uebernommen
