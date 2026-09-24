@@ -1565,6 +1565,26 @@ class EVAssistantPanel extends HTMLElement {
           direkte AC/DC-Messung. Grenzfälle möglich, insbesondere bei abgeregelten Schnellladungen.
         </div>
       </div>
+      <div class="card hidden" id="analyse-mischpreis-card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:cash-sync"></ha-icon></span><h2>Wirtschaftlichkeit Netz-Zuschuss</h2>
+        </div>
+        <div class="mischpreis-scale-wrap">
+          <div class="mischpreis-scale" id="analyse-mischpreis-scale">
+            <div class="mischpreis-marker mischpreis-marker-schwelle hidden" id="analyse-mischpreis-schwelle-marker" title="Konfigurierte Schwelle (Mindest-Solaranteil)"></div>
+            <div class="mischpreis-marker mischpreis-marker-aktuell hidden" id="analyse-mischpreis-aktuell-marker" title="Aktueller Mischpreis"></div>
+          </div>
+          <div class="mischpreis-scale-labels">
+            <span id="analyse-mischpreis-feedin-label">—</span>
+            <span id="analyse-mischpreis-grid-label">—</span>
+          </div>
+        </div>
+        <div class="kpi-row">
+          <div class="kpi"><div class="kv" id="analyse-mischpreis-aktuell">—</div><div class="kl">EUR/kWh aktueller Mischpreis</div></div>
+          <div class="kpi"><div class="kv" id="analyse-mischpreis-schwelle">—</div><div class="kl">EUR/kWh Schwelle (Mindest-Solaranteil)</div></div>
+        </div>
+        <div class="profil-empty" id="analyse-mischpreis-note">—</div>
+      </div>
       <div class="card hidden" id="analyse-anbieter-card">
         <div class="card-head">
           <span class="ic"><ha-icon icon="mdi:map-marker-radius"></ha-icon></span><h2>Verteilung nach Anbieter</h2>
@@ -1613,6 +1633,14 @@ class EVAssistantPanel extends HTMLElement {
       analyseAcdcNote:    q("#analyse-acdc-note"),
       analyseAnbieterCard: q("#analyse-anbieter-card"),
       analyseAnbieterList: q("#analyse-anbieter-list"),
+      analyseMischpreisCard:      q("#analyse-mischpreis-card"),
+      analyseMischpreisSchwelleMarker: q("#analyse-mischpreis-schwelle-marker"),
+      analyseMischpreisAktuellMarker:  q("#analyse-mischpreis-aktuell-marker"),
+      analyseMischpreisFeedinLabel:    q("#analyse-mischpreis-feedin-label"),
+      analyseMischpreisGridLabel:      q("#analyse-mischpreis-grid-label"),
+      analyseMischpreisAktuell:  q("#analyse-mischpreis-aktuell"),
+      analyseMischpreisSchwelle: q("#analyse-mischpreis-schwelle"),
+      analyseMischpreisNote:     q("#analyse-mischpreis-note"),
     };
     return wrap;
   }
@@ -1894,6 +1922,8 @@ class EVAssistantPanel extends HTMLElement {
       }).join("");
     }
 
+    this._updateAnalyseMischpreis();
+
     const rangeEid = this._eid("range_estimate");
     const rangeState = rangeEid ? this._hass.states[rangeEid] : null;
     const attrs = (rangeState && rangeState.attributes) || {};
@@ -1921,6 +1951,76 @@ class EVAssistantPanel extends HTMLElement {
           <div class="wd-label">${label}</div>
         </div>`;
     }).join("");
+  }
+
+  // Wirtschaftlichkeit Netz-Zuschuss (Analyse-Tab, Nutzerwunsch 2026-09-24:
+  // "stelle das auch grafisch im analysetab dar", zur wirtschaftlichen
+  // Kappung der Echtzeit-PV-Uebersteuerung, siehe coordinator.py::
+  // _evcc_mode_targets()/engine.blended_charge_price()). Skala von der
+  // Einspeiseverguetung (guenstig) bis zum Netzpreis (teuer), mit Markern
+  // fuer die konfigurierte Schwelle (Mindest-Solaranteil) und den gerade
+  // aktuellen Mischpreis. Nur sichtbar, wenn evcc ueberhaupt Tarife meldet
+  // -- ohne die ist weder eine Skala noch ein Mischpreis moeglich.
+  //
+  // Der "aktuell"-Marker wird bewusst NICHT aus "pv_override_mischpreis_
+  // kwh" abgeleitet (Nutzerbeobachtung 2026-09-24: "daten werden gezeigt,
+  // und dann wieder nicht, dann wieder ... marker bleibt nicht auf der
+  // skala sichtbar") -- dieses Attribut ist serverseitig bewusst nur
+  // innerhalb des schmalen 0 < Ueberschuss < Mindestleistung-Fensters
+  // gesetzt (siehe coordinator.py-Docstring), verschwindet also bei jedem
+  // kurzen Ueber-/Unterschreiten der Schwelle (Wolken, Verbraucher-
+  // Spitzen) komplett. Stattdessen wird der Mischpreis HIER selbst
+  // kontinuierlich aus dem immer vorhandenen "pv_ueberschuss_w" und
+  // "wallbox_min_power_w" nachgerechnet (identische Formel wie engine.
+  // blended_charge_price(), Ueberschuss auf [0, Mindestleistung]
+  // geklemmt) -- der Marker gleitet dadurch stetig ueber die Skala statt
+  // zu blinken, auch ausserhalb des schmalen Kandidaten-Fensters (dort
+  // zeigt er dann einfach reinen Netz- bzw. reinen Einspeisepreis).
+  _updateAnalyseMischpreis() {
+    const r = this._r;
+    if (!r.analyseMischpreisCard) return;
+    const live = this._evccLive();
+    const feedin = parseFloat(live.tariff_feedin);
+    const grid = parseFloat(live.tariff_grid);
+    const hasTariffs = !isNaN(feedin) && !isNaN(grid) && grid > feedin;
+    r.analyseMischpreisCard.classList.toggle("hidden", !hasTariffs);
+    if (!hasTariffs) return;
+
+    const modeCtrlEid = this._eid("evcc_mode_control");
+    const modeCtrlState = modeCtrlEid ? this._hass.states[modeCtrlEid] : null;
+    const a = (modeCtrlState && modeCtrlState.attributes) || {};
+    const surplus = typeof a.pv_ueberschuss_w === "number" ? a.pv_ueberschuss_w : null;
+    const minPower = typeof a.wallbox_min_power_w === "number" ? a.wallbox_min_power_w : null;
+    const schwelle = typeof a.pv_override_max_mischpreis_kwh === "number" ? a.pv_override_max_mischpreis_kwh : null;
+    let aktuell = null;
+    if (surplus !== null && minPower !== null && minPower > 0) {
+      const clamped = Math.max(0, Math.min(surplus, minPower));
+      const gridTopupW = minPower - clamped;
+      aktuell = (clamped * feedin + gridTopupW * grid) / minPower;
+    }
+    const pct = (v) => Math.max(0, Math.min(100, ((v - feedin) / (grid - feedin)) * 100));
+
+    r.analyseMischpreisFeedinLabel.textContent = `${this._fmtNum(feedin, 3)} €/kWh Einspeisung`;
+    r.analyseMischpreisGridLabel.textContent = `${this._fmtNum(grid, 3)} €/kWh Netz`;
+
+    r.analyseMischpreisSchwelleMarker.classList.toggle("hidden", schwelle === null);
+    if (schwelle !== null) r.analyseMischpreisSchwelleMarker.style.left = `${pct(schwelle)}%`;
+
+    r.analyseMischpreisAktuellMarker.classList.toggle("hidden", aktuell === null);
+    if (aktuell !== null) r.analyseMischpreisAktuellMarker.style.left = `${pct(aktuell)}%`;
+
+    r.analyseMischpreisAktuell.textContent = aktuell !== null ? this._fmtNum(aktuell, 3) : "—";
+    r.analyseMischpreisSchwelle.textContent = schwelle !== null ? this._fmtNum(schwelle, 3) : "—";
+
+    if (aktuell === null) {
+      r.analyseMischpreisNote.textContent = "Noch keine Live-Daten von evcc.";
+    } else if (schwelle === null) {
+      r.analyseMischpreisNote.textContent = "Kein Mindest-Solaranteil konfiguriert (Einstellungen → evcc & Wallbox) — jeder PV-Überschuss unter der Mindestladeleistung wird derzeit durch Netzstrom ergänzt.";
+    } else if (aktuell <= schwelle) {
+      r.analyseMischpreisNote.textContent = "Aktueller Mischpreis liegt innerhalb der Schwelle — ein Netz-Zuschuss würde genutzt.";
+    } else {
+      r.analyseMischpreisNote.textContent = "Aktueller Mischpreis liegt über der Schwelle — ein Überschuss wird stattdessen eingespeist statt teuren Netzstrom zuzukaufen.";
+    }
   }
 
   // --- Tab: Leasing --------------------------------------------------------
@@ -6068,6 +6168,23 @@ class EVAssistantPanel extends HTMLElement {
       .wd-bar.tomorrow { background: #4ade80; }
       .wd-bar.no-data  { background: transparent; border: 1px dashed var(--line-s); }
       .wd-label { font-size: 0.7rem; color: var(--ink-dim); margin-top: 6px; font-weight: 600; }
+
+      /* Mischpreis-Skala (Analyse-Tab: Wirtschaftlichkeit Netz-Zuschuss) --
+         horizontaler Farbverlauf guenstig (Einspeisung) -> teuer (Netz),
+         mit Markern fuer die konfigurierte Schwelle und den aktuellen
+         Mischpreis, siehe _updateAnalyseMischpreis(). */
+      .mischpreis-scale-wrap { margin: 10px 0 4px; }
+      .mischpreis-scale {
+        position: relative; height: 10px; border-radius: 5px; margin-bottom: 6px;
+        background: linear-gradient(to right, #4ade80, #f97316, #ef4444);
+      }
+      .mischpreis-marker {
+        position: absolute; top: -4px; width: 2px; height: 18px;
+        background: var(--ink); transform: translateX(-1px); transition: left 0.4s ease;
+      }
+      .mischpreis-marker-schwelle { background: var(--ink-mid); opacity: 0.85; }
+      .mischpreis-marker-aktuell { width: 3px; background: var(--ink); box-shadow: 0 0 0 1px var(--bg-1); }
+      .mischpreis-scale-labels { display: flex; justify-content: space-between; font-size: 0.72rem; color: var(--ink-dim); }
 
       /* Farbige Summary-Cards — HA Energiedashboard-Farben */
       :host { --c-home: #ff9800; --c-ext: #488fc2; --c-trip: #14b8a6; --c-solar: #4ade80; }

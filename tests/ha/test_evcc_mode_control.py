@@ -645,6 +645,7 @@ async def test_evcc_mode_targets_ohne_jede_entitaet_roh_und_netto_identisch(hass
     assert targets["rest_heute_kwh"] == targets["rest_heute_roh_kwh"]
     assert targets["pv_fuer_auto_kwh"] == targets["pv_rest_heute_roh_kwh"] == 0.0
     assert targets["haus_rest_heute_kwh"] == 0.0
+    assert targets["pv_ueberschuss_puffer_kwh"] == 0.0
 
 
 async def test_evcc_mode_targets_mit_pv_rest_reduziert_netto_bedarf(hass, coordinators):
@@ -664,6 +665,63 @@ async def test_evcc_mode_targets_mit_pv_rest_reduziert_netto_bedarf(hass, coordi
     targets = coordinator._evcc_mode_targets()
     assert targets["pv_rest_heute_roh_kwh"] == 4.0
     assert targets["rest_heute_kwh"] < targets["rest_heute_roh_kwh"]
+
+
+async def test_evcc_mode_targets_pv_ueberschuss_reduziert_min_und_target(hass, coordinators):
+    """Produktionsvorfall 2026-09-24: Fahrzeug lud nachts durch, obwohl
+    tagsueber reichlich PV fuer den kompletten Rest-Bedarf zu erwarten war
+    -- der heutige PV-Ueberschuss (ueber den heutigen Bedarf hinaus) muss
+    auch min_kwh/target_kwh (morgen/uebermorgen) reduzieren, nicht nur
+    rest_heute."""
+    from custom_components.ev_assistant.const import (
+        CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
+        CONF_USABLE_KWH,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "emt_ueberschuss1",
+        options={CONF_USABLE_KWH: 50.0, CONF_PV_FORECAST_TODAY_REMAINING_ENTITY: "sensor.pv_rest"},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)  # jeder Wochentag 10 kWh
+    coordinator._soc = 50.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    # Heutiger Bedarf 10 kWh, PV-Prognose 15 kWh -> 5 kWh Ueberschuss uebrig.
+    hass.states.async_set("sensor.pv_rest", "15.0", {"unit_of_measurement": "kWh"})
+    targets = coordinator._evcc_mode_targets()
+    assert targets["rest_heute_kwh"] == 0.0  # heutiger Bedarf schon gedeckt
+    assert targets["pv_ueberschuss_puffer_kwh"] == 5.0
+    # min_raw = (0 + morgen 10) - 5 Ueberschuss = 5 -> * 1.2 Puffer = 6.0
+    assert targets["min_kwh"] == 6.0
+    # target_raw = (0 + morgen+uebermorgen 20) - 5 Ueberschuss = 15 -> * 1.2 = 18.0
+    assert targets["target_kwh"] == 18.0
+    assert targets["min_kwh"] <= targets["target_kwh"]
+
+
+async def test_evcc_mode_targets_grosser_pv_ueberschuss_deckt_gesamten_puffer(hass, coordinators):
+    """Reicht der heutige PV-Ueberschuss fuer den kompletten Zwei-Tage-
+    Puffer, faellt der Modus zurueck auf "pv" statt "minpv"/"now" -- exakt
+    das eigentliche Nutzer-Szenario (Speicher/Auto luden nachts durch,
+    obwohl tagsueber genug PV fuer Rest-Bedarf inkl. eines
+    verbrauchsstarken Tages im Fenster zu erwarten war)."""
+    from custom_components.ev_assistant.const import (
+        CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
+        CONF_USABLE_KWH,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "emt_ueberschuss2",
+        options={CONF_USABLE_KWH: 50.0, CONF_PV_FORECAST_TODAY_REMAINING_ENTITY: "sensor.pv_rest"},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    # 50 kWh PV-Prognose decken heute (10) + den kompletten Zwei-Tage-Puffer
+    # (20) locker ab.
+    hass.states.async_set("sensor.pv_rest", "50.0", {"unit_of_measurement": "kWh"})
+    targets = coordinator._evcc_mode_targets()
+    assert targets["min_kwh"] == 0.0
+    assert targets["target_kwh"] == 0.0
+    assert targets["modus"] == "pv"
 
 
 async def test_evcc_mode_targets_mit_hausverbrauch_reduziert_pv_fuer_auto(hass, coordinators):
@@ -737,6 +795,126 @@ async def test_evcc_mode_targets_nutzt_day_fraction_elapsed_fuer_weichen_abbau(h
     coordinator._day_fraction_elapsed = lambda: 20 / 24  # 20 Uhr
     targets_abends = coordinator._evcc_mode_targets()
     assert targets_abends["rest_heute_roh_kwh"] == 0.0  # 15*4/24=2.5, minus 12.5 -> geklammert
+
+
+# ----- _evcc_mode_targets: wirtschaftliche Kappung der Echtzeit-PV-
+# Uebersteuerung (Nutzerwunsch 2026-09-24: "ich würde schon netzstrom dazu
+# nehmen, aber nur wenn wirtschaftlich passt") -----------------------------
+
+async def test_evcc_mode_targets_wirtschaftliche_kappung_verhindert_minpv(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
+        CONF_USABLE_KWH,
+        CONF_WALLBOX_MIN_POWER_W,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "emt_kappung1",
+        options={
+            CONF_USABLE_KWH: 50.0,
+            CONF_WALLBOX_MIN_POWER_W: 1380.0,
+            CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE: 50.0,
+        },
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=1.0)  # winziger Bedarf -> Tageslogik bleibt "pv"
+    coordinator._soc = 90.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    coordinator._evcc_state = {
+        "loadpoints": [{}],
+        "gridPower": -500.0,  # 500 W Ueberschuss
+        "tariffFeedIn": 0.081,
+        "tariffGrid": 0.298,
+    }
+    targets = coordinator._evcc_mode_targets()
+    assert targets["modus"] == "pv"
+    # Ohne Kappung waere 500W < 1380W ein "minpv"-Kandidat -- der Mischpreis
+    # (~0.2194, ~36% Solaranteil) liegt aber unter der bei 50% Mindest-
+    # Solaranteil live berechneten Obergrenze (0.1895).
+    assert targets["modus_effektiv"] == "pv"
+    assert targets["pv_override_mischpreis_kwh"] == round((500 * 0.081 + 880 * 0.298) / 1380.0, 4)
+    assert targets["pv_override_max_mischpreis_kwh"] == round((0.081 + 0.298) / 2, 4)
+    assert targets["wallbox_min_power_w"] == 1380.0
+
+
+async def test_evcc_mode_targets_wirtschaftliche_kappung_erlaubt_minpv(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
+        CONF_USABLE_KWH,
+        CONF_WALLBOX_MIN_POWER_W,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "emt_kappung2",
+        options={
+            CONF_USABLE_KWH: 50.0,
+            CONF_WALLBOX_MIN_POWER_W: 1380.0,
+            CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE: 20.0,
+        },
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=1.0)
+    coordinator._soc = 90.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    coordinator._evcc_state = {
+        "loadpoints": [{}],
+        "gridPower": -500.0,
+        "tariffFeedIn": 0.081,
+        "tariffGrid": 0.298,
+    }
+    targets = coordinator._evcc_mode_targets()
+    # 20% Mindest-Solaranteil -> Obergrenze 0.2546, der tatsaechliche
+    # Mischpreis (~0.2194, ~36% Solaranteil) liegt darunter -> erlaubt.
+    assert targets["modus_effektiv"] == "minpv"
+
+
+async def test_evcc_mode_targets_ohne_kappungswert_bleibt_reine_watt_schwelle(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH, CONF_WALLBOX_MIN_POWER_W
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "emt_kappung3",
+        options={CONF_USABLE_KWH: 50.0, CONF_WALLBOX_MIN_POWER_W: 1380.0},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=1.0)
+    coordinator._soc = 90.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    coordinator._evcc_state = {
+        "loadpoints": [{}],
+        "gridPower": -500.0,
+        "tariffFeedIn": 0.081,
+        "tariffGrid": 0.298,
+    }
+    targets = coordinator._evcc_mode_targets()
+    # Keine Kappung konfiguriert -- unveraendertes Watt-Verhalten (minpv),
+    # der Mischpreis wird aber trotzdem zur Transparenz mit ausgegeben.
+    assert targets["modus_effektiv"] == "minpv"
+    assert targets["pv_override_mischpreis_kwh"] == round((500 * 0.081 + 880 * 0.298) / 1380.0, 4)
+    assert targets["pv_override_max_mischpreis_kwh"] is None
+
+
+async def test_evcc_mode_targets_ohne_tarife_kein_mischpreis(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
+        CONF_USABLE_KWH,
+        CONF_WALLBOX_MIN_POWER_W,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "emt_kappung4",
+        options={
+            CONF_USABLE_KWH: 50.0,
+            CONF_WALLBOX_MIN_POWER_W: 1380.0,
+            CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE: 50.0,
+        },
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=1.0)
+    coordinator._soc = 90.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    # evcc meldet keine Tarife -- Kappung kann nicht greifen, reine
+    # Watt-Schwelle bleibt wirksam, kein Mischpreis anzeigbar.
+    coordinator._evcc_state = {"loadpoints": [{}], "gridPower": -500.0}
+    targets = coordinator._evcc_mode_targets()
+    assert targets["modus_effektiv"] == "minpv"
+    assert targets["pv_override_mischpreis_kwh"] is None
+    assert targets["pv_override_max_mischpreis_kwh"] is None
 
 
 # ----- _usage_profile_buffer_pct / async_set_usage_profile_buffer_pct ------

@@ -22,6 +22,7 @@ from .const import (
     CONF_EVCC_HOST,
     CONF_EVCC_LOADPOINT_TITLE,
     CONF_EVCC_MODE_CONTROL_ENABLED,
+    CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
     CONF_EVCC_VEHICLE_NAME,
     CONF_GPS_ENTITY,
     CONF_HOME_CONSUMPTION_ENTITY,
@@ -280,6 +281,10 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
         vol.Optional(
             CONF_WALLBOX_MIN_POWER_W,
             default=cur.get(CONF_WALLBOX_MIN_POWER_W, DEFAULT_WALLBOX_MIN_POWER_W),
+        ): vol.Coerce(float),
+        vol.Optional(
+            CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
+            description=sv(CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE),
         ): vol.Coerce(float),
         vol.Optional(
             CONF_WEEKLY_FULL_CHARGE_ENABLED,

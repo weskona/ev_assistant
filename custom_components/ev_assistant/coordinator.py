@@ -33,6 +33,7 @@ from .const import (
     CONF_EVCC_HOST,
     CONF_EVCC_LOADPOINT_TITLE,
     CONF_EVCC_MODE_CONTROL_ENABLED,
+    CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
     CONF_EVCC_VEHICLE_NAME,
     CONF_GPS_ENTITY,
     CONF_HOME_CONSUMPTION_ENTITY,
@@ -185,6 +186,7 @@ from .engine import (
     average_efficiency,
     battery_capacity_samples,
     bekannte_anbieter,
+    blended_charge_price,
     calculate_co2_savings,
     calculate_range_km,
     calculate_savings,
@@ -207,6 +209,7 @@ from .engine import (
     leasing_status,
     max_achievable_target_soc,
     merge_pending,
+    min_solar_share_price_ceiling,
     net_need_after_pv_kwh,
     normalize_evcc_mode,
     pop_pending,
@@ -5242,10 +5245,31 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         haus_rest_heute = self._house_remaining_today_kwh() or 0.0
         pv_fuer_auto = net_need_after_pv_kwh(pv_rest_heute_roh, haus_rest_heute)
         rest_heute = net_need_after_pv_kwh(rest_heute_roh, pv_fuer_auto)
+        # PV-Ueberschuss, der nach Deckung des heutigen Rohbedarfs von der
+        # heutigen PV-Prognose noch uebrig bleibt -- reduziert nicht nur
+        # "rest_heute" (s.o.), sondern zusaetzlich den morgigen/uebermorgigen
+        # Rohbedarf (min_raw/target_raw unten): wird der heutige Ueberschuss
+        # tatsaechlich eingefangen (normaler "pv"-Modus), erhoeht er den
+        # Akkustand und steht damit auch fuer die naechsten Tage zur
+        # Verfuegung. Ohne diesen Schritt wuerde ein sonniger Tag mit viel
+        # Ueberschuss dafuer ungenutzt verworfen, waehrend fuers Erreichen des
+        # Zwei-Tage-Puffers (z.B. wegen eines einzelnen verbrauchsstarken
+        # Tages im EVCC_MODE_TARGET_DAYS-Fenster, etwa ein Wochenend-
+        # Ausflug) trotzdem sofort Netzladen erzwungen wuerde
+        # (Produktionsvorfall 2026-09-24: Fahrzeug lud nachts durch, obwohl
+        # tagsueber reichlich PV fuer den kompletten Rest-Bedarf inkl. eines
+        # verbrauchsstarken Samstags zu erwarten war). Nutzerentscheidung
+        # 2026-09-24: der Zwei-Tage-Vorlauf selbst bleibt (Sicherheitspuffer
+        # fuer einen tatsaechlich schlechten PV-Tag), nur die fehlende
+        # PV-Ueberschuss-Anrechnung wird behoben.
+        pv_ueberschuss_nach_heute = net_need_after_pv_kwh(pv_fuer_auto, rest_heute_roh)
         buffer_pct = self._usage_profile_buffer_pct()
-        min_raw = rest_heute + profile.get(tomorrow_wd, 0.0)
+        min_raw = net_need_after_pv_kwh(rest_heute + profile.get(tomorrow_wd, 0.0), pv_ueberschuss_nach_heute)
         min_kwh = round(min_raw * (1.0 + buffer_pct / 100.0), 2)
-        target_raw = rest_heute + weekday_usage_profile_window_kwh(profile, tomorrow_wd, EVCC_MODE_TARGET_DAYS)
+        target_raw = net_need_after_pv_kwh(
+            rest_heute + weekday_usage_profile_window_kwh(profile, tomorrow_wd, EVCC_MODE_TARGET_DAYS),
+            pv_ueberschuss_nach_heute,
+        )
         target_kwh = round(target_raw * (1.0 + buffer_pct / 100.0), 2)
         usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
         mode = determine_evcc_mode(available, min_kwh, target_kwh)
@@ -5276,6 +5300,24 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         pv_surplus_w = self._evcc_realtime_pv_surplus_w()
         wallbox_min_power_w = float(self._opt(CONF_WALLBOX_MIN_POWER_W, DEFAULT_WALLBOX_MIN_POWER_W))
         last_effective_mode = (self.data.get("evcc_mode_control") or {}).get("modus")
+        # Wirtschaftliche Kappung (siehe CONF_EVCC_REALTIME_OVERRIDE_MIN_
+        # SOLAR_SHARE-Kommentar in const.py, Nutzerwunsch 2026-09-24: "ich
+        # würde schon netzstrom dazu nehmen, aber nur wenn wirtschaftlich
+        # passt", praezisiert: "dann kann es doch automatisch berechnet
+        # werden ... bleibt es dynamisch, wenn man den netzkostensensor
+        # zentral aendert") -- die Mischpreis-Obergrenze wird bei JEDEM
+        # Zyklus live aus evccs eigenen Tarifen neu berechnet, kein fester
+        # eingetragener Preis. Fehlt einer der Werte, bleibt apply_
+        # realtime_pv_override() bei der reinen Watt-Schwelle (siehe
+        # dortigen Docstring).
+        feedin_price = self._evcc_state.get("tariffFeedIn") if self._evcc_state is not None else None
+        grid_price = self._evcc_state.get("tariffGrid") if self._evcc_state is not None else None
+        feedin_price = feedin_price if isinstance(feedin_price, (int, float)) else None
+        grid_price = grid_price if isinstance(grid_price, (int, float)) else None
+        min_solar_share_pct = self._opt(CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE)
+        max_blended_price = None
+        if min_solar_share_pct is not None and feedin_price is not None and grid_price is not None:
+            max_blended_price = min_solar_share_price_ceiling(float(min_solar_share_pct), feedin_price, grid_price)
         if pv_surplus_w is None:
             # Kein evcc-State (noch) verfuegbar -- konservativ die Tages-
             # Logik unveraendert lassen statt mit einem Platzhalterwert
@@ -5283,8 +5325,26 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             effective_mode = mode
         else:
             effective_mode = apply_realtime_pv_override(
-                mode, pv_surplus_w, wallbox_min_power_w, last_effective_mode=last_effective_mode
+                mode, pv_surplus_w, wallbox_min_power_w,
+                last_effective_mode=last_effective_mode,
+                feedin_price=feedin_price,
+                grid_price=grid_price,
+                max_blended_price=max_blended_price,
             )
+        # Transparenz-Attribut (siehe EvccModeControlSensor-Docstring):
+        # zeigt den Mischpreis eines Netz-Zuschusses IMMER, wenn gerade
+        # ein "minpv"-Kandidat vorliegt (0 < Ueberschuss < Mindestleistung)
+        # UND Tarife bekannt sind -- unabhaengig davon, ob die Kappung
+        # oben ueberhaupt konfiguriert ist, damit sich ein sinnvoller
+        # Schwellwert dafuer erst beobachten laesst.
+        pv_override_mischpreis_kwh = None
+        if (
+            pv_surplus_w is not None
+            and 0 < pv_surplus_w < wallbox_min_power_w
+            and feedin_price is not None
+            and grid_price is not None
+        ):
+            pv_override_mischpreis_kwh = blended_charge_price(pv_surplus_w, wallbox_min_power_w, feedin_price, grid_price)
         # Ueberschuss-Zielanhebung (siehe engine.apply_opportunistic_surplus_
         # target()-Docstring): hebt target_soc auf 100 an, solange ueberhaupt
         # echter positiver Ueberschuss anliegt und der Tagesbedarf laut
@@ -5331,6 +5391,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "pv_rest_heute_roh_kwh": pv_rest_heute_roh,
             "haus_rest_heute_kwh": haus_rest_heute,
             "pv_fuer_auto_kwh": pv_fuer_auto,
+            "pv_ueberschuss_puffer_kwh": pv_ueberschuss_nach_heute,
+            "pv_override_mischpreis_kwh": pv_override_mischpreis_kwh,
+            "pv_override_max_mischpreis_kwh": max_blended_price,
+            "wallbox_min_power_w": wallbox_min_power_w,
             "balancing_enabled": balancing_enabled,
             "balancing_faellig": balancing_due,
             "naechste_vollladung_faellig_ts": naechste_vollladung_faellig_ts,

@@ -28,6 +28,7 @@ from engine import (
     average_efficiency,
     battery_capacity_samples,
     bekannte_anbieter,
+    blended_charge_price,
     calculate_co2_savings,
     calculate_range_km,
     calculate_savings,
@@ -53,6 +54,7 @@ from engine import (
     leasing_status,
     max_achievable_target_soc,
     merge_pending,
+    min_solar_share_price_ceiling,
     net_need_after_pv_kwh,
     normalize_anbieter,
     normalize_evcc_mode,
@@ -1259,6 +1261,89 @@ def test_apply_realtime_pv_override_base_mode_now_bleibt_immer_now():
     assert apply_realtime_pv_override(
         base_mode="now", pv_surplus_w=0.0, wallbox_min_power_w=1380.0
     ) == "now"
+
+
+# ----- blended_charge_price / wirtschaftliche Kappung (Nutzerwunsch
+# 2026-09-24: "ich würde schon netzstrom dazu nehmen, aber nur wenn
+# wirtschaftlich passt") -- PV-Strom ist NICHT kostenlos, er kostet die
+# entgangene Einspeiseverguetung.
+
+def test_blended_charge_price_reiner_netzbezug_bei_null_ueberschuss():
+    assert blended_charge_price(0.0, 1380.0, feedin_price=0.081, grid_price=0.298) == 0.298
+
+
+def test_blended_charge_price_reine_pv_ab_schwelle():
+    assert blended_charge_price(1380.0, 1380.0, feedin_price=0.081, grid_price=0.298) == 0.081
+    # Ueberschuss ueber der Mindestleistung wird gekappt, kein Effekt mehr.
+    assert blended_charge_price(5000.0, 1380.0, feedin_price=0.081, grid_price=0.298) == 0.081
+
+
+def test_blended_charge_price_gemischt():
+    # 500W PV (0.081) + 880W Netz (0.298) von 1380W gesamt.
+    price = blended_charge_price(500.0, 1380.0, feedin_price=0.081, grid_price=0.298)
+    assert price == round((500 * 0.081 + 880 * 0.298) / 1380.0, 4)
+
+
+def test_min_solar_share_price_ceiling_grenzfaelle():
+    # 0% Solaranteil -> reiner Netzpreis, 100% -> reine Einspeiseverguetung.
+    assert min_solar_share_price_ceiling(0.0, feedin_price=0.081, grid_price=0.298) == 0.298
+    assert min_solar_share_price_ceiling(100.0, feedin_price=0.081, grid_price=0.298) == 0.081
+
+
+def test_min_solar_share_price_ceiling_50_prozent_ist_mittelwert():
+    assert min_solar_share_price_ceiling(50.0, feedin_price=0.081, grid_price=0.298) == round(
+        (0.081 + 0.298) / 2, 4
+    )
+
+
+def test_min_solar_share_price_ceiling_klemmt_ausserhalb_0_bis_100():
+    assert min_solar_share_price_ceiling(-10.0, feedin_price=0.081, grid_price=0.298) == 0.298
+    assert min_solar_share_price_ceiling(150.0, feedin_price=0.081, grid_price=0.298) == 0.081
+
+
+def test_apply_realtime_pv_override_kappung_verhindert_minpv_bei_zu_teurem_mischpreis():
+    # Mischpreis bei 500W/1380W/0.081/0.298 liegt bei ~0.2194 -- eine
+    # Obergrenze knapp darunter darf NICHT auf minpv hochstufen.
+    assert apply_realtime_pv_override(
+        base_mode="pv", pv_surplus_w=500.0, wallbox_min_power_w=1380.0,
+        feedin_price=0.081, grid_price=0.298, max_blended_price=0.20,
+    ) == "pv"
+
+
+def test_apply_realtime_pv_override_kappung_erlaubt_minpv_bei_akzeptablem_mischpreis():
+    assert apply_realtime_pv_override(
+        base_mode="pv", pv_surplus_w=500.0, wallbox_min_power_w=1380.0,
+        feedin_price=0.081, grid_price=0.298, max_blended_price=0.25,
+    ) == "minpv"
+
+
+def test_apply_realtime_pv_override_ohne_kappungswert_bleibt_reine_watt_schwelle():
+    # feedin_price/grid_price gesetzt, aber KEIN max_blended_price -- die
+    # Kappung greift nicht, reines Watt-Verhalten wie zuvor.
+    assert apply_realtime_pv_override(
+        base_mode="pv", pv_surplus_w=500.0, wallbox_min_power_w=1380.0,
+        feedin_price=0.081, grid_price=0.298, max_blended_price=None,
+    ) == "minpv"
+
+
+def test_apply_realtime_pv_override_ohne_tarife_bleibt_reine_watt_schwelle():
+    # max_blended_price gesetzt, aber KEINE Tarife bekannt -- Kappung kann
+    # nicht greifen, reines Watt-Verhalten.
+    assert apply_realtime_pv_override(
+        base_mode="pv", pv_surplus_w=500.0, wallbox_min_power_w=1380.0,
+        feedin_price=None, grid_price=None, max_blended_price=0.01,
+    ) == "minpv"
+
+
+def test_apply_realtime_pv_override_kappung_wirkt_auch_im_hysterese_haltezustand():
+    # last_effective_mode == "minpv" UND Ueberschuss im Totband (bliebe
+    # ohne Kappung bei "minpv") -- die wirtschaftliche Kappung greift
+    # trotzdem und faellt auf "pv" zurueck.
+    assert apply_realtime_pv_override(
+        base_mode="pv", pv_surplus_w=1400.0, wallbox_min_power_w=1380.0,
+        hysteresis_w=100.0, last_effective_mode="minpv",
+        feedin_price=0.081, grid_price=0.298, max_blended_price=0.01,
+    ) == "pv"
 
 
 # ----- apply_opportunistic_surplus_target: Ziel-Anhebung bei Ueberschuss --

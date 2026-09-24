@@ -1594,7 +1594,28 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
     coordinator.py::async_set_evcc_manual_mode() gesetzten manuellen Modus
     (session-scoped, endet automatisch beim Trennen des Fahrzeugs) -- wie
     bei "pausiert" zeigt der Sensor auch dann weiter die rechnerische
-    Empfehlung, es wird aber nichts mehr automatisch geschrieben."""
+    Empfehlung, es wird aber nichts mehr automatisch geschrieben.
+    "pv_ueberschuss_puffer_kwh" zeigt den heutigen PV-Ueberschuss (ueber den
+    heutigen Bedarf hinaus), der zusaetzlich von "min_kwh"/"target_kwh"
+    abgezogen wurde (siehe coordinator.py::_evcc_mode_targets()) -- macht
+    sichtbar, warum der Zwei-Tage-Puffer trotz eines einzelnen
+    verbrauchsstarken Tages im Fenster ggf. schon gedeckt ist.
+    "pv_override_mischpreis_kwh" zeigt (sobald ein "minpv"-Kandidat
+    vorliegt, siehe engine.blended_charge_price()) den Mischpreis eines
+    Netz-Zuschusses aus evccs eigenen Live-Tarifen -- unabhaengig davon,
+    ob CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE ueberhaupt konfiguriert
+    ist, hilft zur Einschaetzung eines sinnvollen Schwellwerts dafuer.
+    "pv_override_max_mischpreis_kwh" ist die aus dieser Option live
+    berechnete Mischpreis-Obergrenze (siehe engine.min_solar_share_price_
+    ceiling()) -- None ohne konfigurierten Mindest-Solaranteil oder ohne
+    bekannte evcc-Tarife, fuers Panel (Analyse-Tab: Mischpreis-Skala).
+    "wallbox_min_power_w" (der konfigurierte oder Default-Wert, siehe
+    CONF_WALLBOX_MIN_POWER_W) wird zusaetzlich mitgegeben, damit das
+    Panel dort einen KONTINUIERLICHEN Mischpreis aus dem ebenfalls immer
+    vorhandenen "pv_ueberschuss_w" nachrechnen kann -- anders als
+    "pv_override_mischpreis_kwh" (nur innerhalb des schmalen 0 < Ueber-
+    schuss < Mindestleistung-Fensters gesetzt) verschwindet dieser fuers
+    Panel nicht bei jedem kurzen Ueber-/Unterschreiten der Schwelle."""
 
     _attr_translation_key = "evcc_mode_control"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
@@ -1638,6 +1659,9 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             # (noch kein evcc-State geladen) oder negativ (Netzbezug).
             "pv_override_aktiv": targets["pv_override_aktiv"],
             "pv_ueberschuss_w": targets["pv_ueberschuss_w"],
+            "pv_override_mischpreis_kwh": targets["pv_override_mischpreis_kwh"],
+            "pv_override_max_mischpreis_kwh": targets["pv_override_max_mischpreis_kwh"],
+            "wallbox_min_power_w": targets["wallbox_min_power_w"],
             # Ueberschuss-Zielanhebung (siehe engine.apply_opportunistic_
             # surplus_target()) -- target_soc oben ist bereits inkl. dieser
             # Anhebung, dieses Flag zeigt nur ob/warum.
@@ -1650,6 +1674,7 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             "pv_rest_heute_roh_kwh": targets["pv_rest_heute_roh_kwh"],
             "haus_rest_heute_kwh": targets["haus_rest_heute_kwh"],
             "pv_fuer_auto_kwh": targets["pv_fuer_auto_kwh"],
+            "pv_ueberschuss_puffer_kwh": targets["pv_ueberschuss_puffer_kwh"],
             "aktiv": True,
             "min_soc_scope": self.coordinator.data.get("evcc_min_soc_scope"),
             "limit_soc_scope": self.coordinator.data.get("evcc_limit_soc_scope"),

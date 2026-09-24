@@ -2,6 +2,19 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.98.7] - 2026-09-24
+
+### Added
+
+- **Optional economic cap on the real-time PV-surplus override** (`evcc_realtime_override_min_solar_share`, a minimum solar share in %, off by default): the existing real-time override (upgrades `pv` to `minpv` when there's a real but sub-threshold PV surplus, so it isn't wasted to the grid) previously did this unconditionally for any positive surplus, however small — but solar power used for charging isn't actually free, since every kWh not exported instead forgoes the feed-in tariff. Filling most of the gap with grid power at the (much higher) grid price is a worse trade the smaller the surplus gets. Setting a minimum acceptable solar share now gates the upgrade: the equivalent blended-price ceiling (`engine.blended_charge_price()`/`min_solar_share_price_ceiling()`) is computed fresh every cycle from evcc's own live tariffs (`tariffFeedIn`/`tariffGrid`) rather than stored as a fixed price, so it stays correct automatically if the tariff changes (provider switch, dynamic pricing). The `evcc_mode_control` sensor's new `pv_override_mischpreis_kwh`/`pv_override_max_mischpreis_kwh` attributes show the current blended price and the configured ceiling.
+- **New "Wirtschaftlichkeit Netz-Zuschuss" card in the Analyse panel tab**: visualizes the above as a scale from the feed-in tariff to the grid price, with markers for the current blended price and the configured threshold. The current-price marker is computed continuously in the panel itself from the always-present `pv_ueberschuss_w`/`wallbox_min_power_w` attributes rather than from `pv_override_mischpreis_kwh` (which is only set within the narrow real-surplus-below-threshold window) — an earlier version tied directly to that attribute made the marker disappear and reappear with every brief crossing of the threshold.
+
+## [0.98.6] - 2026-09-24
+
+### Changed
+
+- **Day-ahead buffer now credits leftover PV surplus forecasted for today**: `min_kwh`/`target_kwh` (tomorrow's/the buffer window's requirement) previously only compared today's own already-PV-adjusted need against future days' full historical average, ignoring that any of today's forecasted solar beyond today's own need would, once captured, also raise the battery's starting balance for tomorrow. A single unusually high-consumption day inside the 2-day buffer window (e.g. a planned weekend trip) could therefore force overnight grid pre-charging well in advance, even on a day with abundant solar forecast that alone would cover the whole window (production incident: the vehicle charged from the grid all night ahead of a high-usage Saturday, despite a full day of solar ahead that would have covered it). `_evcc_mode_targets()` now also subtracts today's leftover forecasted surplus from the buffer requirement before applying it. The new `pv_ueberschuss_puffer_kwh` attribute on the `evcc_mode_control` sensor shows how much surplus was credited this way.
+
 ## [0.98.5] - 2026-09-23
 
 ### Added

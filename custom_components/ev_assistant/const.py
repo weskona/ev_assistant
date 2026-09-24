@@ -321,6 +321,27 @@ CONF_EVCC_MODE_CONTROL_ENABLED = "evcc_mode_control_enabled"
 # ist. Rein additiv, wirkt nur ueber apply_realtime_pv_override(), aendert
 # nichts, solange CONF_EVCC_MODE_CONTROL_ENABLED aus ist.
 CONF_WALLBOX_MIN_POWER_W = "wallbox_min_power_w"
+# Optional, nur relevant bei aktiver evcc-Steuerung UND gesetztem
+# CONF_WALLBOX_MIN_POWER_W oben: wirtschaftliche Kappung fuer genau diese
+# Echtzeit-Hochstufung auf "minpv" (siehe engine.apply_realtime_pv_
+# override()/blended_charge_price()/min_solar_share_price_ceiling()) --
+# als Mindest-Solaranteil in Prozent (0-100), NICHT als fester EUR/kWh-
+# Wert. Nutzerwunsch 2026-09-24: "ich würde schon netzstrom dazu nehmen,
+# aber nur wenn wirtschaftlich passt", dann praezisiert: "wenn doch die
+# einspeiseverguetung und netzbezugskosten vorhanden sind, dann kann es
+# doch automatisch berechnet werden ... bleibt es dynamisch, wenn man den
+# netzkostensensor zentral aendert" -- die Mischpreis-Obergrenze wird
+# daher bei JEDEM Zyklus live aus evccs eigenen Tarifen (tariffFeedIn/
+# tariffGrid aus /api/state) neu berechnet, statt einmalig als Preis
+# eingetragen zu werden; aendert sich der Tarif (z.B. Anbieterwechsel,
+# dynamischer Tarif), passt sich die Schwelle automatisch mit an. Ohne
+# diese Option (Default: nicht gesetzt) wird JEDER positive PV-
+# Ueberschuss unter der Mindestladeleistung durch einen Netz-Zuschuss
+# ergaenzt, unabhaengig vom Mischpreis -- PV-Strom ist dabei NICHT
+# kostenlos, er kostet die entgangene Einspeiseverguetung. Braucht evccs
+# eigene Live-Tarife -- fehlen die, bleibt die reine Watt-Schwelle von
+# CONF_WALLBOX_MIN_POWER_W unveraendert wirksam.
+CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE = "evcc_realtime_override_min_solar_share"
 # Optional, Default aus (siehe DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED):
 # schaltet die dynamische Steuerung von evccs "prioritySoc" (Speicher-
 # Vorrang-Schwelle beim PV-Ueberschuss) anhand der Steckpraesenz des

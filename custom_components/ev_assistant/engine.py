@@ -1121,12 +1121,56 @@ def apply_weekly_balancing_override(
     return "minpv", 100
 
 
+def blended_charge_price(
+    surplus_w: float, wallbox_min_power_w: float, feedin_price: float, grid_price: float,
+) -> float:
+    """Mischpreis (pro kWh, dieselbe Waehrung/Einheit wie `feedin_price`/
+    `grid_price`, i.d.R. EUR/kWh) einer Mindestleistungs-Ladesession, bei
+    der `surplus_w` aus PV-Ueberschuss kommt und der Rest bis zur
+    Mindestladeleistung aus dem Netz zugeschossen wird (siehe
+    apply_realtime_pv_override()). PV-Strom ist dabei NICHT kostenlos --
+    er kostet die entgangene Einspeiseverguetung (`feedin_price`), die man
+    stattdessen fuer den eingespeisten Ueberschuss bekommen haette
+    (Nutzerkorrektur 2026-09-24: "kostenlos aus pv ist ja nicht richtig,
+    auch pv strom kosten die verlorene einspeiseverguetung"). `surplus_w`
+    wird auf [0, wallbox_min_power_w] geklemmt -- ueberschuessiger
+    Ueberschuss darueber hinaus zaehlt fuer DIESE Session nicht mit (siehe
+    Aufrufer, der ohnehin nur bei surplus_w < wallbox_min_power_w
+    aufruft)."""
+    surplus_w = max(0.0, min(surplus_w, wallbox_min_power_w))
+    grid_topup_w = wallbox_min_power_w - surplus_w
+    return round((surplus_w * feedin_price + grid_topup_w * grid_price) / wallbox_min_power_w, 4)
+
+
+def min_solar_share_price_ceiling(
+    min_solar_share_pct: float, feedin_price: float, grid_price: float,
+) -> float:
+    """Uebersetzt einen Mindest-Solaranteil (Prozent, 0-100) in die
+    entsprechende Mischpreis-Obergrenze fuer apply_realtime_pv_override()
+    (siehe blended_charge_price()) -- DYNAMISCH aus evccs eigenen LIVE-
+    Tarifen berechnet, nicht als einmalig eingetragener EUR/kWh-Wert
+    (Nutzerwunsch 2026-09-24: "wenn doch die einspeiseverguetung und
+    netzbezugskosten vorhanden sind, dann kann es doch automatisch
+    berechnet werden ... bleibt es dynamisch, wenn man den
+    netzkostensensor zentral aendert" -- siehe CONF_EVCC_REALTIME_
+    OVERRIDE_MIN_SOLAR_SHARE-Kommentar in const.py). Ein Mindest-
+    Solaranteil von z.B. 50% heisst: der Mischpreis darf hoechstens dem
+    Preis bei GENAU 50% Solaranteil entsprechen -- linear interpoliert
+    zwischen `grid_price` (0% Solaranteil) und `feedin_price` (100%
+    Solaranteil). `min_solar_share_pct` wird auf [0, 100] geklemmt."""
+    share = max(0.0, min(100.0, min_solar_share_pct)) / 100.0
+    return round(grid_price - share * (grid_price - feedin_price), 4)
+
+
 def apply_realtime_pv_override(
     base_mode: str,
     pv_surplus_w: float,
     wallbox_min_power_w: float,
     hysteresis_w: float = 100.0,
     last_effective_mode: Optional[str] = None,
+    feedin_price: Optional[float] = None,
+    grid_price: Optional[float] = None,
+    max_blended_price: Optional[float] = None,
 ) -> str:
     """Zweite, schnellere Entscheidungsebene ueber determine_evcc_mode()/
     apply_weekly_balancing_override() (deren Ergebnis hier als `base_mode`
@@ -1151,18 +1195,37 @@ def apply_realtime_pv_override(
       zuletzt aktive Zustand einfach bestehen -- ohne dieses Totband
       wuerde ein PV-Ueberschuss, der knapp um die Schwelle schwankt
       (Wolken, kurze Verbraucher-Spitzen im Haus), den Modus im
-      Minutentakt hin- und herspringen lassen."""
+      Minutentakt hin- und herspringen lassen.
+
+    Optionale wirtschaftliche Kappung (Nutzerwunsch 2026-09-24: "ich
+    würde schon netzstrom dazu nehmen, aber nur wenn wirtschaftlich
+    passt"): wird ein Netz-Zuschuss noetig (jeder ansonsten "minpv"-
+    Kandidat), UND sind alle drei `feedin_price`/`grid_price`/
+    `max_blended_price` gesetzt, wird der resultierende Mischpreis (siehe
+    blended_charge_price()) gegen `max_blended_price` geprueft -- liegt
+    er darueber, bleibt es bei "pv" (Ueberschuss wird stattdessen
+    eingespeist), statt trotzdem teuren Netzstrom zuzukaufen. Fehlt
+    einer der drei Werte (z.B. evcc meldet gerade keine Tarife, oder die
+    Option ist nicht konfiguriert), bleibt das Verhalten unveraendert
+    (reine Watt-Schwelle wie zuvor) -- rein additiv, Default aus."""
     if base_mode != "pv":
         return base_mode
     if pv_surplus_w <= 0:
         return "pv"
     if last_effective_mode == "minpv":
-        if pv_surplus_w >= wallbox_min_power_w + hysteresis_w:
+        candidate = "pv" if pv_surplus_w >= wallbox_min_power_w + hysteresis_w else "minpv"
+    else:
+        candidate = "pv" if pv_surplus_w >= wallbox_min_power_w else "minpv"
+    if (
+        candidate == "minpv"
+        and feedin_price is not None
+        and grid_price is not None
+        and max_blended_price is not None
+    ):
+        price = blended_charge_price(pv_surplus_w, wallbox_min_power_w, feedin_price, grid_price)
+        if price > max_blended_price:
             return "pv"
-        return "minpv"
-    if pv_surplus_w >= wallbox_min_power_w:
-        return "pv"
-    return "minpv"
+    return candidate
 
 
 def apply_opportunistic_surplus_target(
