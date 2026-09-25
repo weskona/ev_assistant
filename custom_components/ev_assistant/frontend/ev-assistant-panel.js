@@ -1,9 +1,5 @@
 /*
  * EV Assistant — custom sidebar panel.
- * Übersicht modelled after the omnibattery Resumen layout:
- *   top: full-width status card (ring + diagnostics grid)
- *   lower: energy-flow diagram (left) + 2×2 bar-chart cards (right)
- * Fahrzeuge tab unchanged.
  */
 
 const ACCENT_H = 127;
