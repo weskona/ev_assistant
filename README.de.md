@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/custom_components/ev_assistant/brand/logo.png" alt="EV Assistant logo" width="400">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/custom_components/ev_assistant/brand/logo.png" alt="EV Assistant Logo" width="400">
 </p>
 
 # EV Assistant
@@ -11,42 +11,42 @@
 [![Validate](https://github.com/weskona/ev_assistant/actions/workflows/validate.yml/badge.svg)](https://github.com/weskona/ev_assistant/actions/workflows/validate.yml)
 [![Downloads](https://img.shields.io/github/downloads/weskona/ev_assistant/total)](https://github.com/weskona/ev_assistant/releases)
 
-[English](README.md)
+[🇬🇧 English Version](README.md) · 📖 [Vollständige Dokumentation im Wiki](https://github.com/weskona/ev_assistant/wiki)
 
-Eine umfassende **EV-Monitoring-Integration für Home Assistant**. EV Assistant deckt Heimladen (über evcc), automatische Fremdladungserkennung und -protokollierung, Fahrtenbuch, Ladewirkungsgrad-Kalibrierung, Kostenvergleich gegenüber einem Verbrenner und ein vollständiges EV-Dashboard als dediziertes Seitenleisten-Panel ab. Funktioniert mit jedem Fahrzeug, das einen SoC-Sensor in HA bereitstellt — herstellerunabhängig.
+Eine umfassende **EV-Überwachungs-Integration für Home Assistant**. EV Assistant deckt Heimladen (via evcc), automatische Fremdladungserkennung und -protokollierung, Fahrtenbuch, Ladewirkungsgrad-Kalibrierung, Kostenvergleich gegenüber einem Verbrenner sowie ein vollständiges EV-Dashboard als eigenes Seitenleisten-Panel ab. Funktioniert mit jedem Fahrzeug, das einen SoC-Sensor in HA bereitstellt — herstellerunabhängig.
 
 ---
 
 ## Status & bekannte Grenzen
 
-EV Assistant befindet sich in **aktiver 0.x-Entwicklung** — vor 1.0. Verhalten und Konfiguration können sich zwischen Releases noch ändern; beim Update lohnt ein Blick ins [CHANGELOG](custom_components/ev_assistant/CHANGELOG.md).
+EV Assistant befindet sich in **aktiver 0.x-Entwicklung** — vor 1.0. Verhalten und Konfiguration können sich zwischen Releases noch ändern; beim Update das [CHANGELOG](custom_components/ev_assistant/CHANGELOG.md) prüfen.
 
-Getestet wurde bisher vor allem an **einem realen Setup**: ein Stellantis-basiertes Fahrzeug (SoC über die Cloud-Integration des Herstellers), eine evcc-Version, eine Wallbox. Das ist ein schmaler Ausschnitt aus dem Anspruch "jedes Fahrzeug, jede evcc-Version, jede Wallbox" — Rückmeldungen zu anderen Fahrzeugen, SoC-Meldeverhalten, evcc-Versionen und Wallboxen sind ausdrücklich erwünscht, nicht nur geduldet. Genau daran wird die Erkennungslogik robuster.
+Getestet wurde primär gegen **eine reale Installation**: ein Stellantis-basiertes Fahrzeug (SoC über die Cloud-Integration des Herstellers), eine evcc-Version, eine Wallbox. Das ist nur ein schmaler Ausschnitt des angestrebten „jedes Fahrzeug, jede evcc-Version, jede Wallbox"-Spektrums — Feedback von anderen Fahrzeugen, SoC-Meldeverhalten, evcc-Versionen und Wallboxen ist ausdrücklich erwünscht, nicht nur geduldet.
 
-Ein paar bekannte Grenzen, offen benannt:
+Ein paar bekannte Grenzen, unverblümt:
 
-- **Erkennung und Nutzungsprofile sind nur so gut wie das SoC-Signal.** Fahrzeuge, die nur grob melden (ganze Prozentschritte, seltene Updates), funktionieren trotzdem, nur ungenauer — eine kleine Fahrt oder Standby-Entladung kann zwischen zwei identischen Messwerten untergehen.
-- **Nutzungsprofile brauchen Aufbauzeit** (grob zwei Wochen für eine vollständige Wochentagsverteilung), bevor sie verlässlich sind. Der Live-SoC-Tracker startet bei Installation/Update bei null und kann keine Historie nachtragen, die nie aufgezeichnet wurde.
-- **Die evcc-Schreibsteuerung ist opt-in und standardmäßig aus.** Am Anfang am besten aus lassen, eine Weile den Sensor `evcc_mode_control` beobachten (der berechnet seine Empfehlung unabhängig davon, ob das Schreiben aktiv ist), mit der eigenen Erwartung vergleichen und erst aktivieren, wenn die Empfehlungen plausibel aussehen. Einmal aktiviert, setzt sie evccs Lademodus und Min-/Ziel-SoC — sie entscheidet **nicht**, woher die Ladeleistung kommt (Solar/Netz/Speicher); das bleibt vollständig evccs eigene Aufgabe.
+- **Erkennung und Nutzungsprofile sind nur so gut wie das SoC-Signal.** Fahrzeuge, die grob melden (nur ganze Prozentschritte, seltene Updates), funktionieren trotzdem, nur ungenauer.
+- **Nutzungsprofile brauchen Zeit zum Aufbauen** (ungefähr zwei Wochen für eine vollständige Wochentags-Verteilung), bevor sie verlässlich sind.
+- **Die evcc-Schreibsteuerung ist optional und standardmäßig aus.** Erst eine Weile aus lassen, den Sensor `evcc_mode_control` beobachten, und die Schreibfunktion erst aktivieren, wenn die Empfehlungen plausibel aussehen. Sie setzt evccs Lademodus und Min-/Ziel-SoC — sie entscheidet **nicht**, woher die Ladeleistung kommt (Solar/Netz/Speicher); das bleibt vollständig evccs eigene Aufgabe.
 
 ---
 
 ## Funktionen
 
-- **Heimladen-Überwachung** — erfasst kWh und Kosten über den Wallbox-Energiezähler und die evcc-Ladehistorie; zeigt die Sitzungshistorie mit SOC-Balken, Solaranteil und Ø-Ladeleistung pro Sitzung.
-- **Fremdladungserkennung** — erkennt Ladungen außerhalb des Hauses rein über SoC-Telemetrie (kein GPS, keine Ladesäulenliste). Fordert zur Eingabe der tatsächlichen kWh/Kosten aus dem Kassenbon auf.
-- **Automatisches Fahrtenbuch** — erkennt Fahrten anhand des Kilometerstands; Start- und Zielort werden manuell bestätigt. CSV-Export inklusive.
-- **Ladewirkungsgrad-Kalibrierung** — lernt den echten AC→Batterie-Wirkungsgrad des Fahrzeugs aus Heimlade-Sitzungen und wendet ihn automatisch auf alle Schätzungen an.
-- **Kilometerstand-Statistik** — gefahrene km pro Tag/Woche/Monat/Jahr sowie gleitende Durchschnitte und Kalenderjahrprojektion, basierend auf HA Long-Term Statistics.
-- **Kostenvergleich** — vergleicht die gesamten EV-Ausgaben (Heimladen + Fremdladung) mit einem gleichwertigen Verbrenner; wird live in der Fahrzeugkarte angezeigt. Kraftstoffpreis kann ein fester Wert, eine Live-Entität oder automatische Tankerkönig-Tankstellenabfrage sein (günstigste geöffnete Station), mit stabilem Fallback, falls die Preisquelle mal ausfällt.
-- **Fahrtenbuch-Import** — historische Fahrten aus einer anderen Fahrtenbuch-App/einem Export per Service-Aufruf in einem Rutsch importieren, für einen einmaligen Rückstand ohne die Kilometerstand-Erkennung.
-- **Vollständiges Seitenleisten-Panel** — ein eingebautes EV-Dashboard; kein Lovelace-Karten-Setup erforderlich.
-- **Anpassbares Panel-Layout** — im Beta-Panel auswählen, welche Karten angezeigt werden, in welcher Reihenfolge/Größe (1/3 bis volle Breite, für Karten nebeneinander), per Drag & Drop sortierbar, serverseitig gespeichert (identisch auf allen Geräten).
-- **Mehrfahrzeug-Unterstützung** — pro Fahrzeug einen Integrationseintrag konfigurieren; das Panel zeigt Tabs zum Wechsel zwischen den Fahrzeugen.
-- **Diagnose** — lädt eine anonymisierte Config- und Zustands-Momentaufnahme herunter (Einstellungen → Geräte & Dienste → EV Assistant → ⋮ → Diagnose herunterladen), für Fehlersuche oder Bug-Reports.
-- **Repair-Hinweise bei hängenden Sensoren** — fällt eine konfigurierte Quell-Entität (SoC, Kilometerstand, Stecker-Sensor, ...) für mindestens 30 Minuten aus oder wird entfernt, zeigt ein Repair-Hinweis (Einstellungen → System → Repariere) genau, was betroffen ist, statt dass Schätzungen unbemerkt mit veralteten Daten weiterlaufen.
-- **Steck-Zeitfenster-Beobachtung** — rein informative Anzeige, wann und wie lange das Fahrzeug typischerweise an der Wallbox angesteckt ist, aus evccs eigenem Verbindungsstatus.
-- **Optionale Speicher-Priorität für den Ladepunkt** — solange das Fahrzeug angesteckt ist, wird es beim PV-Überschuss vorübergehend vor dem Heimspeicher priorisiert; sobald es abgesteckt wird, gilt wieder deine eigene evcc-Einstellung.
+- **Heimladen-Überwachung** — erfasst kWh und Kosten über euren Wallbox-Energiezähler und evccs Sitzungshistorie; Sitzungshistorie mit SOC-Balken, Solaranteil und Ø-Ladeleistung je Sitzung.
+- **Fremdladungserkennung** — erkennt Ladungen unterwegs rein aus SoC-Telemetrie (kein GPS, keine Ladesäulenliste). Fordert euch auf, die echten kWh/den Preis vom Beleg zu erfassen.
+- **Automatisches Fahrtenbuch** — erkennt Fahrten aus dem Kilometerstand-Sensor; ihr bestätigt Start-/Zielort. CSV-Export inklusive.
+- **Ladewirkungsgrad-Kalibrierung** — lernt den echten AC→Akku-Wirkungsgrad eures Autos aus Heimlade-Sitzungen und wendet ihn automatisch an.
+- **Kilometerstand-Statistiken** — gefahrene km je Tag/Woche/Monat/Jahr sowie gleitende Durchschnitte und Kalenderjahr-Projektion.
+- **Kostenvergleich** — vergleicht die gesamten EV-Ausgaben gegen einen vergleichbaren Verbrenner, mit automatischer oder Live-Kraftstoffpreis-Ermittlung.
+- **Automatische evcc-Modus-/SoC-Steuerung** — steuert optional evccs Lademodus aus eurem eigenen Nutzungsprofil, inklusive Echtzeit-PV-Überschuss-Übersteuerung, wirtschaftlicher Kappung des Netz-Zuschusses und Speicher-Priorität.
+- **Fahrten-Import** — historische Fahrten aus einer anderen Fahrtenbuch-App/einem Export bulk-importieren.
+- **Vollständiges Seitenleisten-Panel** — ein eingebautes, anpassbares EV-Dashboard; keine Lovelace-Karten-Einrichtung nötig.
+- **Multi-Fahrzeug-Unterstützung** — ein Integrations-Eintrag je Fahrzeug, mit Panel-Tab-Umschalter.
+- **Diagnose & Repair-Issues** — ein herunterladbarer, geschwärzter Zustands-Snapshot, sowie Repair-Issues, wenn eine Quell-Entität veraltet.
+- **Leasing-Kilometerbudget, Ladekarten und Fahrzeugwartung** — alles vollständig optional, panel-verwaltet.
+
+Die vollständige Aufschlüsselung jedes Sensors, Services und Panel-Tabs steht im [Wiki](https://github.com/weskona/ev_assistant/wiki).
 
 ---
 
@@ -60,426 +60,53 @@ Ein paar bekannte Grenzen, offen benannt:
 
 ### Manuell
 
-1. `custom_components/ev_assistant/` in das Verzeichnis `config/custom_components/` kopieren.
+1. `custom_components/ev_assistant/` in euer `config/custom_components/`-Verzeichnis kopieren.
 2. Home Assistant neu starten.
 
 ---
 
-## Screenshots
-
-Platzhalter unten, bis echte Screenshots ins Repo eingefügt werden.
-
-<!-- Screenshot: Seitenleisten-Panel, Übersicht-Tab -->
-<!-- Screenshot: Seitenleisten-Panel, Fahrzeug-Tab -->
-<!-- Screenshot: Seitenleisten-Panel, Nutzungsprofil-Tab -->
-<!-- Screenshot: Config-Flow, Schritt 1 (Fahrzeug) -->
-
----
-
-## Konfiguration
+## Erste Schritte
 
 **Einstellungen → Geräte & Dienste → Integration hinzufügen → „EV Assistant"**
 
-Die Einrichtung läuft als 9-schrittiger Assistent (derselbe Assistent wird beim Bearbeiten über **Konfigurieren** verwendet):
+Die Einrichtung läuft als 9-Schritte-Flow — Fahrzeugdetails, Lademodus, evcc/Wallbox, Ladeleistung, Benachrichtigungen, Erkennungs-Feinjustierung, Fahrtenbuch, Leasing und Kostenvergleich. Nur Schritt 1 (Fahrzeug) ist Pflicht; alles andere ist optional und kann später über **Konfigurieren** ergänzt/geändert werden.
 
-| Schritt | Was konfiguriert wird |
-|---------|-----------------------|
-| 1 — Fahrzeug | Hersteller + Modell (Pflicht), Erstzulassungsdatum, Kilometerstand-Entität, nutzbare Akkukapazität in kWh (netto, nicht brutto) und ein Startwert für den Ladewirkungsgrad (wird später automatisch kalibriert). |
-| 2 — Lademodus | Wie du dieses Fahrzeug lädst: **Nur zuhause**, **Gemischt** (Standard — identisch zum Verhalten vor Einführung dieses Schritts) oder **Nur auswärts**. Steuert ausschließlich die Sichtbarkeit — welche der folgenden Schritte und welche Panel-Tabs/Karten erscheinen — nie die Berechnung selbst (ein reiner Fremdlader ist rechnerisch einfach der Fall, in dem die Heim-Aggregate 0 sind). Jederzeit über **Konfigurieren** änderbar, ohne bereits erfasste Daten zu verlieren: ein Wechsel zu „Nur auswärts" blendet die Heim-bezogenen Schritte/Karten nur aus, löscht sie nicht; ein Wechsel zurück bietet sie wieder mit allem an, was vorher da war. Siehe [Lademodus](#lademodus) unten. |
-| 3 — evcc & Wallbox | Die Adresse des evcc-Addons (z.B. `http://192.168.178.1:7070`, optional — spricht evccs REST-API direkt an, keine separate HA-Integration nötig), der Fahrzeugname in evcc (für den Heimladen-Historienfilter) und die Wallbox-Ladeleistungs-Entität (dient als Heimlade-Signal — jeder Wert > 0,1 kW gilt als „lädt zuhause"). Ein Zusatzschritt erscheint nur, wenn evcc mehr als einen Ladepunkt verwaltet, um den zu diesem Fahrzeug gehörenden auszuwählen. Ebenfalls hier, alle optional und standardmäßig aus: `evcc_mode_control_enabled` (siehe [Automatische evcc-Modus-/SoC-Steuerung](#automatische-evcc-modus-soc-steuerung) unten), `evcc_battery_priority_enabled` (die Speicher-Prioritäts-Übersteuerung dieser Steuerung), `wallbox_min_power_w` (die Echtzeit-PV-Übersteuerung dieser Steuerung, Standard 1380 W), `evcc_realtime_override_min_solar_share` (optionaler Mindest-Solaranteil, %, für dieselbe Übersteuerung — die passende Preis-Obergrenze wird live aus evccs eigenen Tarifen berechnet, nicht als fester Preis gespeichert), `pv_forecast_today_remaining_entity` (PV-Restprognose für heute, für diese Steuerung — eine andere Entität/anderer Zeitraum als `pv_forecast_entity` in Schritt 7), das optionale Haus-Nutzungsprofil über `home_consumption_entity`/`battery_charge_entity` sowie `urlaub_entity` (ein Urlaubs-`binary_sensor`/`input_boolean` — solange an, werden Tage aus dem gleitenden Fenster des Nutzungsprofils ausgeschlossen statt dessen Schnitt als „0-kWh-Tag" nach unten zu ziehen, siehe [Automatische evcc-Modus-/SoC-Steuerung](#automatische-evcc-modus-soc-steuerung) unten). **Übersprungen** im Modus „Nur auswärts". |
-| 4 — Ladeleistung | Optionaler Fahrzeug-Ladeleistungssensor (verbessert Fremdladungsschätzungen) und Wallbox-Energiezähler (kumulativer kWh-Zähler für Wirkungsgrad-Kalibrierung und Heimlade-Kosten). **Übersprungen** im Modus „Nur auswärts". |
-| 5 — Benachrichtigungen | Push-Zielgeräte (`notify.*`-Entitäten, Mehrfachauswahl) und welche Ereignisse einen Push auslösen: Fremdladung erkannt, SoC-Schwelle erreicht, Fahrt erkannt, Tankerkönig nicht verfügbar. SoC-Schwellenwerte (50/60/70/80/90/100 %) lösen einmal pro Ladevorgang — Heim- oder Fremdladung — aus, wenn der Akku sie erreicht. Eine persistente HA-Benachrichtigung für Fremdladung/Fahrt/Tankerkönig erscheint unabhängig von diesem Schritt immer. |
-| 6 — Erkennung | Feinjustierung der Erkennungs-Zustandsmaschine: `start_delta` (minimaler SoC-Anstieg zum Auslösen), `noise` (Jitter-Toleranz, muss < `start_delta` sein), `idle_timeout_s` (Sitzungsende-Timeout), `drop_ends` (SoC-Abfall, der eine Sitzung sofort beendet). Standardwerte funktionieren für die meisten Fahrzeuge. Optional: `plug_entity` (ein Stecker-/Connectivity-`binary_sensor`) und `plug_debounce_s` — wenn gesetzt, überstimmt ein bestätigtes „eingesteckt" `idle_timeout_s` komplett (keine Fehl-Splits mehr bei grob gemeldetem SoC), ein bestätigtes „ausgesteckt" (muss `plug_debounce_s` lang anhalten, zur Absicherung gegen kurze Fehlmeldungen) beendet die Sitzung sofort, und ein *kleiner* SoC-Anstieg bei bestätigt ausgestecktem Fahrzeug startet gar keine Sitzung (verhindert, dass ein Rekuperations-Anstieg beim Fahren fälschlich als Fremdladung gewertet wird) — ein unplausibel *großer* (≥15 Punkte, für Rekuperation unrealistisch) startet trotzdem eine, da das weit eher eine während einer Erkennungslücke verpasste Ladung ist als tatsächliche Bremsenergie-Rückgewinnung. |
-| 7 — Fahrtenbuch | Optional: `trip_min_km` (Mindestfahrstrecke), `trip_idle_timeout_s` (Standzeit bis Fahrtende), `gps_entity` (person-, device_tracker- oder sensor-Entität für Ortsvorschläge). Ebenfalls optional: `motor_entity` (ein Motor-/Fahr-`binary_sensor`, z.B. Zündung/„Ready“) und `motor_debounce_s` — ein zweites Signal für Fahrzeuge, deren Kilometerstand zu grob/selten aktualisiert wird, um Fahrtbeginn/-ende direkt daraus abzuleiten. Ein bestätigtes „fährt“ startet/verlängert eine Fahrt auch ohne frischen Kilometerstand; `trip_idle_timeout_s` toleriert weiterhin kurze Stopps (z.B. Ampel). Die Strecke stammt trotzdem immer aus dem Kilometerstand. Ein weiterer optionaler Schalter, `trip_auto_confirm`, übernimmt eine erkannte Fahrt sofort ins Fahrtenbuch statt auf eine manuelle Start-/Zielort-Bestätigung zu warten — der Ort kommt dabei aus `gps_entity`, falls konfiguriert, sonst bleibt er leer (später per `edit_trip` nachtragbar). Ein weiteres optionales Feld, `usage_profile_buffer_pct` (Standard 20), legt den Sicherheitspuffer auf den historischen Wochentags-Schnitt für den "morgen benötigt"-Wert im Nutzungsprofil-Tab fest. Ein weiteres optionales Feld, `pv_forecast_entity`, verweist auf eine beliebige Sensor-Entität mit der PV-Ertragsprognose für morgen (z.B. von Solcast oder Forecast.Solar, in kWh oder Wh) — damit darf die morgen erwartete PV-Erzeugung eine Lücke schließen, die der aktuelle Akkustand allein nicht abdeckt; ohne sie vergleicht die Lade-Empfehlung nur den aktuellen Akkustand gegen den typischen Bedarf von morgen. Ein weiteres optionales Feld, `outside_temp_entity` (ein normaler Temperatursensor oder eine `weather.*`-Entität), gruppiert den Fahrtenbuch-Verbrauch in vier Temperaturbänder (<0°C, 0–10°C, 10–20°C, >20°C) — sobald ein Band mindestens 3 Fahrten hat, nutzt `range_estimate` dessen Schnitt statt des rollierenden Gesamtwerts, für eine realistischere Schätzung bei Kälte. |
-| 8 — Leasing | Optional, und nur aktiv, sobald **sowohl** `leasing_inkl_km` als auch `leasing_end_datum` gesetzt sind: Kilometerstand bei Vertragsbeginn (`leasing_start_km`), Vertrags-Start-/Enddatum, insgesamt inkludierte Kilometer, sowie optional ein Preis je Mehrkilometer (`leasing_preis_mehr_km`) und/oder eine Gutschrift je Minderkilometer (`leasing_preis_minder_km`). Bleibt es leer, ist das Feature komplett inaktiv — kein Sensor-Zustand, kein Panel-Inhalt. Siehe [Leasing-Kilometerbudget](#leasing-kilometerbudget) unten. |
-| 9 — Kostenvergleich | Optional: Verbrenner-Referenzverbrauch (L/100 km), Kraftstoffpreis, Heimstrompreis. Kraftstoffpreis-Priorität: Tankerkönig-Auto-Erkennung (Kraftstoffsorte wählen, günstigste offene Tankstelle gewinnt) > Live-Entität (km-gewichteter Durchschnitt — bewegt sich nur, wenn tatsächlich gefahren wird, nicht während das Fahrzeug steht) > fester Wert. Heimstrompreis: Live-Entität (kWh-gewichteter Durchschnitt — bewegt sich nur, wenn tatsächlich geladen wird) > fester Wert. Ebenfalls optional: `co2_per_kwh_g` (Netzstrom-CO2-Intensität, g/kWh, Standard 380 — eine grobe Schätzung für den deutschen Strommix, an den eigenen Versorger/Tarif anpassen) für den CO2-Vergleichssensor. |
+📖 **[Konfiguration](https://github.com/weskona/ev_assistant/wiki/Configuration-DE)** im Wiki hat die vollständige Schritt-für-Schritt-Referenz.
 
-### Lademodus
-
-Rein additiv, kein Datenverlust: `lade_modus` steuert nur, welche Config-Flow-Schritte und Panel-Tabs/Karten angezeigt werden, nie die zugrunde liegenden Berechnungen. Bestandsinstallationen von vor Einführung dieser Einstellung haben keinen gespeicherten Wert und gelten überall als **Gemischt** (identisch zu ihrem bisherigen Verhalten — für dich ändert sich nichts, außer du stellst es aktiv um).
-
-- **Nur zuhause** / **Gemischt**: alles funktioniert exakt wie vor Einführung dieser Einstellung.
-- **Nur auswärts**: die evcc-/Wallbox- und Ladeleistungs-Einrichtungsschritte werden übersprungen, und der Übersicht (Beta)-Panel-Tab zeigt nur, was für einen reinen Fremdlader relevant ist — die letzte bestätigte Fremdladung statt Wallbox-/SoC-Karten, eine AC/DC-Aufteilung statt einer Heim-/Fremd-Ladeort-Aufschlüsselung, Ausgaben über Zeit, Gesamt-kWh/-Kosten, EUR/100 km und den Verbrenner-Kosten-/CO2-Vergleich (die sonst leer oder trivial „100 % Fremd" wären). Ein Wechsel **zu** „Nur auswärts" löscht keine bereits konfigurierten evcc-/Wallbox-Werte, er blendet sie nur aus/nutzt sie nicht mehr; ein Wechsel zurück zu „Gemischt"/„Nur zuhause" bringt dieselben Schritte mit allem zurück, was vorher da war.
+Nach der Einrichtung registriert EV Assistant automatisch ein Seitenleisten-Panel — keine Dashboard-/Lovelace-Einrichtung nötig. Siehe **[Panel-Rundgang](https://github.com/weskona/ev_assistant/wiki/Panel-Tour-DE)** für einen Tab-für-Tab-Rundgang.
 
 ---
 
-## Sensoren
-
-Das HA-Gerät heißt `{Hersteller} {Modell}` (z. B. „VW ID.4"), Entitätsnamen erscheinen daher als `{Gerät} {Sensor}`.
-
-### Fremdladung
-
-| Key | Name | Beschreibung |
-|-----|------|--------------|
-| `pending` | Fremdladung Erfassung offen | Binary Sensor — **on**, solange ≥ 1 Ladung auf Bestätigung wartet. Attribute: `anzahl_offen`, `offene_ladungen`. |
-| `pending_estimate` | Fremdladung ausstehend | Geschätzte kWh der ältesten offenen Ladung. `unknown`, wenn nichts aussteht. |
-| `last_kwh` | Fremdladung kWh (letzte) | kWh aus dem Kassenbon der zuletzt bestätigten Ladung. |
-| `last_cost` | Fremdladung Kosten (letzte) | Kosten der zuletzt *bestätigten* Ladung (kWh × Preis, zzgl. eventueller `start_fee`/`block_fee`/`time_fee`) — nicht zwangsläufig die chronologisch letzte, siehe `historie` unten. Attribut `historie` enthält die Fremdladungs-Historie der letzten `HISTORY_MAX_MONATE` Monate (siehe [Datenaufbewahrung](#datenaufbewahrung)), sortiert nach tatsächlichem Ladezeitpunkt (`start_ts`, neueste zuerst) — unabhängig von der Erfassungs-/Bestätigungsreihenfolge, sodass eine nachträglich manuell erfasste oder später bestätigte Ladung trotzdem an der richtigen chronologischen Position erscheint. |
-| `last_price` | Fremdladung Preis (letzter) | Eingegebener Preis pro kWh der letzten Ladung. |
-| `last_duration` | Fremdladung Ladezeit (letzte) | Dauer der erkannten Sitzung in Minuten. |
-| `last_charge_power` | Fremdladung Ø Leistung (letzte) | Durchschnittliche Ladeleistung (kW) der zuletzt bestätigten Ladung, aus kWh ÷ Dauer. Sitzungen < 5 min oder mit unplausibler Leistung (< 1 kW oder > 350 kW) liefern `unknown`. |
-| `total_kwh` | Fremdladung kWh (gesamt) | Laufende Summe aller bestätigten Fremdladungs-kWh (`state_class: total_increasing`). |
-| `total_cost` | Fremdladung Kosten (gesamt) | Laufende Summe aller bestätigten Fremdladungskosten. |
-| `count` | Fremdladung Anzahl | Gesamtanzahl aller bestätigten Fremdladungen. |
-
-### Heimladen
-
-| Key | Name | Beschreibung |
-|-----|------|--------------|
-| `home_kwh` | Heimladen kWh (gesamt) | Gesamt-kWh Heimladen — vollständige kumulative evcc-Historie. Bevorzugt evccs eigenes Ladelogbuch, selbst je Fahrzeug aufsummiert (direkt aus evccs `/api/sessions`, keine separate Integration nötig), dann evccs standortweite „gesamt geladene Energie"-Statistik (nur wenn für dieses Fahrzeug auch ein Wallbox-Zähler konfiguriert ist — diese Statistik ist nicht pro Fahrzeug), sonst Fallback auf den Wallbox-Energiezähler-Delta seit EV-Assistant-Einrichtung. `unknown` ohne konfigurierten Zähler oder evcc-Host. Attribute (nur falls evcc einen aktiven Ladepunkt meldet, Schritt 3): `evcc_solaranteil_pct` (kWh-gewichteter Solaranteil über deine evcc-gesteuerten Heim-Sessions), `evcc_kosten_gesamt` (summierte Session-Kosten — evccs eigener Session-Gesamtwert, kein Preis/kWh), `evcc_preis_je_kwh` (daraus abgeleitet). Trägt zusätzlich das Live-Attribut `evcc_live` (Ladeleistung, Modus, SoC, Tarife, PV-/Netz-/Speicherleistung, Sitzungswerte — Quelle für den Übersicht (Beta)-Tab im Panel). Fremdladungen und Sessions ohne evcc-Daten fließen einfach nicht ein — keine Nullen, kein Raten. |
-| `home_cost` | Heimladen Kosten (gesamt) | Heimlade-Kosten — vollständige kumulative evcc-Historie. Bevorzugt die aus evccs eigenem Ladelogbuch aufsummierten Fahrzeugkosten (dieselbe Quelle wie bei `home_kwh` oben, am genauesten — evcc wendet den tatsächlichen Sitzungstarif an), dann evccs standortweite Durchschnittspreis-Statistik × kWh (gleiche Fahrzeug-Absicherung wie oben), sonst Fallback auf kWh × Heimstrompreis (kWh-gewichtet, wenn der Preis aus einer Live-Entität kommt — eine Preisspitze ohne jede Ladung verzerrt den Durchschnitt dann nicht). `unknown` ohne Zähler, evcc-Host oder Preis. |
-| `measured_efficiency` | Ladewirkungsgrad (gemessen) | Live-kalibrierter AC→Batterie-Wirkungsgrad aus Heimlade-Sitzungen. Attribute: `anzahl_sessions`, `benoetigte_sessions` (3), `einzelwerte_prozent`, `wird_verwendet`, `manueller_wert_prozent`. Diagnostisch. |
-
-### Kilometerstand & gefahrene Kilometer
-
-Alle Kilometerstand-Sensoren sind `entity_category: diagnostic`. Die Perioden- und LTS-Sensoren setzen voraus, dass die Kilometerstand-Entität in Schritt 1 konfiguriert ist und Long-Term Statistics in HA aufgezeichnet hat.
-
-| Key | Name | Beschreibung |
-|-----|------|--------------|
-| `odo` | Kilometerstand | Spiegelt die konfigurierte Kilometerstand-Entität auf das EV-Assistant-Gerät. |
-| `odo_day_km` | Gefahrene km (heute) | Km seit Beginn des aktuellen Kalendertags. |
-| `odo_week_km` | Gefahrene km (Woche) | Km seit Beginn der aktuellen ISO-Woche. |
-| `odo_month_km` | Gefahrene km (Monat) | Km seit Beginn des aktuellen Kalendermonats. |
-| `odo_year_km` | Gefahrene km (Jahr) | Km seit Beginn des aktuellen Kalenderjahres. |
-| `odo_avg_day` | Ø km/Tag | Gleitender 30-Tage-Durchschnitt der täglichen km (aus LTS-Summen-Deltas). |
-| `odo_avg_week` | Ø km/Woche | 30-Tage-Durchschnitt, auf pro Woche skaliert. |
-| `odo_avg_month` | Ø km/Monat | 90-Tage-Durchschnitt, auf pro Monat skaliert. |
-| `odo_avg_year` | Ø km/Jahr | 365-Tage-Durchschnitt, auf pro Jahr skaliert. |
-| `odo_year_projected` | Erwartete km (Kalenderjahr) | Extrapoliert km ab dem 1. Januar auf das volle Kalenderjahr. Liefert `unknown`, bis ≥ 7 Tage ins Jahr vergangen sind. |
-| `odo_annual_from_reg` | Erwartete km/Jahr (seit Erstzulassung) | Jährliche Rate seit dem in Schritt 1 eingetragenen Erstzulassungsdatum. |
-
-### Fahrtenbuch
-
-| Key | Name | Beschreibung |
-|-----|------|--------------|
-| `trip_pending` | Fahrt Erfassung offen | Binary Sensor — **on**, solange ≥ 1 erkannte Fahrt auf Start-/Zielort wartet. |
-| `trip_pending_estimate` | Fahrt ausstehend | Strecke (km) der ältesten offenen Fahrt. |
-| `last_trip_km` | Fahrt km (letzte) | Strecke der zuletzt *bestätigten* Fahrt — nicht zwangsläufig die chronologisch letzte, siehe `fahrtenbuch` unten. Attribut `fahrtenbuch` enthält die Fahrtenbuch-Historie der letzten `FAHRTEN_MAX_MONATE` Monate (siehe [Datenaufbewahrung](#datenaufbewahrung) — ältere Fahrten wandern ins Archiv, für den vollständigen Datensatz `export_fahrtenbuch` verwenden), sortiert nach tatsächlicher Fahrtzeit (`start_ts`, neueste zuerst) — unabhängig von der Bestätigungsreihenfolge, sodass eine über `edit_trip` korrigierte Startzeit die Fahrt trotzdem an der richtigen Position zeigt. Einträge ohne direkt gemeldeten Verbrauch erhalten ihren `verbrauch_kwh`-Wert aus dem SoC-Abfall während der Fahrt geschätzt; liegt diese Schätzung außerhalb eines plausiblen Bands von ca. 8–40 kWh/100 km (Fahrten unter 5 km sind ausgenommen), wird der Eintrag mit `verbrauch_unsicher: true` markiert — im Panel mit ⚠️ angezeigt — da eine Verbindungslücke zum Fahrzeug während der Fahrt den SoC-Wert einfrieren und die Schätzung stark verzerren kann. Wird zurückgesetzt, sobald über `edit_trip` ein echter Wert eingetragen wird. |
-| `trip_count` | Fahrtenbuch Anzahl | Gesamtanzahl aller bestätigten Fahrten (`state_class: total_increasing`). |
-| `total_trip_km` | Fahrtenbuch km (gesamt) | Laufende Summe aller bestätigten Fahrstrecken (`state_class: total_increasing`). |
-| `trip_avg_consumption` | Fahrtenbuch Durchschnittsverbrauch | Durchschnittlicher Verbrauch in kWh pro Fahrt, über alle Fahrten mit bekanntem Verbrauch (direkt importiert oder aus dem SoC-Delta erkannter Fahrten abgeleitet). `unknown` ohne nutzbare Daten. |
-
-### Kostenvergleich
-
-| Key | Name | Beschreibung |
-|-----|------|--------------|
-| `savings` | Ersparnis ggü. Verbrenner | Geschätzte Ersparnis gegenüber dem Verbrenner-Referenzfahrzeug über die seit Einrichtung gefahrenen km. `unknown`, bis Kilometerstand, Verbrenner-Verbrauch und Kraftstoffpreis konfiguriert sind. Attribute: `gefahrene_km`, `heimladen_kosten` (Heimlade-Kosten seit EV-Assistant-Einrichtung — separate Basislinie, unabhängig vom vollen evcc-Gesamtwert des Anzeigesensors), `kosten_ev_gesamt`, `kosten_verbrenner_geschaetzt`, `kraftstoffpreis_live` (Live-/Auto-Kraftstoffpreis aktiv), `heimstrompreis_live`. |
-| `verbrenner_price_selected` | Kraftstoffpreis (ausgewählt) | Der aktuell geltende Rohpreis (Tankerkönig / Live-Entität / fester Wert), mit dem Attribut `quelle`, das die aktive Quelle benennt. Über HA Long-Term Statistics historisierbar. |
-| `vehicle_avg_consumption` | Fahrzeug Durchschnittsverbrauch | Gesamt-Durchschnittsverbrauch in kWh/100 km seit Einrichtung, aus der Energiebilanz: geladene kWh gesamt (Heim + Fremd) ÷ gefahrene km. `unknown` ohne Kilometerstand-Tracking. |
-| `range_estimate` | Geschätzte Reichweite | Aktueller SoC × nutzbare Akkukapazität ÷ tatsächlicher Verbrauch (kWh/100 km) — nutzt den Schnitt des aktuellen Temperaturbands, falls genug Fahrten vorliegen (siehe `outside_temp_entity`, Schritt 6), sonst den rollierenden 30-Tage/50-km-Fahrtenbuch-Schnitt, sonst den Lebenszeit-Schnitt `vehicle_avg_consumption`. Attribute: `verbrauch_kwh_100km` (verwendeter Verbrauchswert), `aussentemperatur`/`temperaturband_aktuell` (aktuelle Temperatur und ihr Band, falls `outside_temp_entity` konfiguriert), `verbrauch_nach_temperatur` (vollständige Aufschlüsselung je Band). `unknown` ohne SoC oder ohne jeden Verbrauchswert. |
-| `battery_capacity` | Batteriekapazität (gemessen) | Rollierender Schnitt der impliziten Akkukapazität aus der eigenen Ladehistorie: Fremdladungen mit ≥20 Prozentpunkten SoC-Hub (kWh von der Rechnung ÷ SoC-Delta), plus Heim-Ladesessions, sobald ein gemessener Ladewirkungsgrad vorliegt (Wallbox-kWh × Wirkungsgrad ÷ SoC-Delta). Der absolute Wert liegt typischerweise *über* der echten nutzbaren Kapazität — Ladeverluste werden nicht herausgerechnet, dafür gibt es keinen unabhängigen zweiten Messwert (anders als beim AC-Wirkungsgrad beim Heimladen). Über Monate/Jahre beobachten, um Alterung zu erkennen — ein Absinken ist das eigentliche Signal, nicht die einzelne aktuelle Zahl. `unknown` bei weniger als 2 qualifizierenden Sessions. |
-| `equivalent_full_cycles` | Äquivalente Vollzyklen | Gesamter SoC-Durchsatz (Entladung aus dem Fahrtenbuch + Ladung aus Fremd- und Heim-Ladesessions) als volle 0%→100%→0%-Zyklen ausgedrückt — die Ergänzung zu `battery_capacity`, da echte Akku-Garantien meist sowohl in Zyklen als auch in Jahren angegeben werden. `state_class: total` (kann sinken, falls eine Fahrt/Ladung nachträglich gelöscht wird). |
-| `charging_location_breakdown` | Ladeort-Aufschlüsselung | "Woher kommt deine Ladung" — Zustand ist der Heim-Anteil an der Gesamt-kWh. Attribute: `heim`/`fremd`, je mit `kwh`, `kosten`, `kwh_anteil_pct`, `kosten_anteil_pct`, `preis_je_kwh` (nur vorhanden, sobald dieser Ladeort einen bekannten, von Null verschiedenen Wert hat); `heim` bekommt zusätzlich `solar_pct`, falls evcc ihn liefert (siehe `home_kwh` oben). Das oberste `eur_je_100km` ist die fahrzeugweite Gesamtkosten ÷ gefahrene km — bewusst **nicht** je Ladeort aufgeteilt, da man mit gemischtem Strom fährt und Kilometer keinem einzelnen Ladeort zuzuordnen sind. Ebenfalls oberste Ebene `gesamt_autarkie_pct` (nur mit mindestens etwas bekannter Ladung, Heim oder Fremd): der Solaranteil an der GESAMTEN ins Fahrzeug geladenen Energie, Heim + Fremd zusammen — Fremdladung zählt dabei immer als 0% Solar (Strommix an einer fremden Ladesäule unbekannt, gleiche Begründung wie bei `solar_pct` oben, das ebenfalls nur für `heim` gilt). Zusätzlich `ac_dc` (nur vorhanden mit mindestens einer einordenbaren Fremdladung): AC/DC-Aufschlüsselung ausschließlich der *Fremd*ladung (Heimladen ist baulich praktisch immer AC), je mit derselben `kwh`/`kosten`/`anzahl`/`kwh_anteil_pct`/`kosten_anteil_pct`/`preis_je_kwh`-Struktur — siehe `ac_charging_kwh`/`dc_charging_kwh` unten für die Einordnungsmethode. Zusätzlich `anbieter` (nur vorhanden mit mindestens einer Fremdladung): Aufschlüsselung nach Ladenetz-/Betreibername (z.B. "EnBW", "Ionity" — WO geladen wurde, im Gegensatz zu `ladekarten`/`karte_id` unten, das ist WOMIT bezahlt wurde), gleiche `kwh`/`kosten`/`anzahl`/Anteile/`preis_je_kwh`-Struktur, case-insensitiv zusammengeführt (z.B. verschmelzen "EnBW"/"enbw" zu einem Bucket, mit der zuletzt verwendeten Schreibweise) und ohne erfassten Anbieter unter "Unbekannt" gesammelt statt verworfen. Ladekarten-Grundgebühren werden hier aus demselben Grund wie bei `fremd` oben **nicht** je Anbieter aufgeteilt. `bekannte_anbieter`: die bisher verwendeten Anbieter-Namen, zuletzt verwendete zuerst — speist die Vorschlagsliste im Panel-Eingabefeld. Reine Zusammenführung bereits andernorts berechneter Zahlen — keine neue Preis-/PV-Logik. `unknown` ohne jede bekannte Ladung. |
-| `ac_charging_kwh` / `dc_charging_kwh` | Fremdladung AC/DC | kWh der Fremdladung, eingeordnet nach AC/DC anhand der Durchschnittsleistung je Ladung (kWh ÷ Ladedauer) gegen eine 22-kW-Schwelle — es gibt kein direktes AC/DC-Signal in den Daten, 3-phasiges AC-Laden erreicht diesen Wert realistisch nicht. Ladungen ohne bekannte kWh oder Ladedauer (z.B. eine rein manuelle Erfassung ohne Endzeit) werden ausgelassen statt geraten. `state_class: total` (kann sinken, falls eine Ladung nachträglich bearbeitet/gelöscht wird). Attribute: `kosten`, `anzahl`, `kwh_anteil_pct`, `kosten_anteil_pct`, `preis_je_kwh` — dieselben Details wie in der `ac`/`dc`-Aufschlüsselung von `charging_location_breakdown` oben, hier zusätzlich für direkte Dashboard-/Automations-Nutzung ohne Attribut-Vorlage. `unknown` ohne jede einordenbare Ladung in dieser Kategorie. |
-| `co2_savings` | CO2-Ersparnis ggü. Verbrenner | Geschätzte CO2-Ersparnis gegenüber dem Verbrenner-Referenzfahrzeug über die seit Einrichtung gefahrenen km: (Verbrenner-Kraftstoffverbrauch × dessen CO2-Faktor) − (EV-kWh-Verbrauch × `co2_per_kwh_g`). Dieselbe Energiebilanz wie `vehicle_avg_consumption`. `unknown`, bis Kilometerstand und Verbrenner-Verbrauch konfiguriert sind. Attribute: `co2_ev_kg`, `co2_verbrenner_kg`, `co2_ersparnis_kg`. |
-| `home_vs_external_price` | Preisunterschied Fremd- vs. Heimladen | Gewichteter Durchschnittspreis für Fremdladen minus Heimstrompreis (beide €/kWh, seit Einrichtung). Positiv heißt Fremdladen war pro kWh teurer — der Normalfall. `unknown` ohne Heimstrompreis oder solange noch keine Fremdladung bestätigt wurde. Attribute: `heimladen_preis_kwh`, `fremdladen_preis_kwh`, `differenz_kwh`. |
-| `cost_day` / `cost_week` / `cost_month` / `cost_year` | Kosten (heute/Woche/Monat/Jahr) | Kombinierte Heim- + Fremdladekosten innerhalb des aktuellen Kalender-Zeitraums, gleiches Rollover-Muster wie die Kilometer-Perioden-Sensoren unten. `unknown`, solange die Perioden-Basislinie noch nicht gesetzt ist (direkt nach Einrichtung); auf 0 geklemmt statt negativ zu werden, wenn die Gesamtkosten kurz unter die Perioden-Basislinie fallen (z.B. wenn der gewichtete Durchschnittspreis der Heimladen-Schätzung durch eine neue, günstigere Session leicht sinkt). Attribut `differenz_vorperiode`: die Gesamtkosten der gerade abgeschlossenen Periode, sobald ein Rollover tatsächlich stattgefunden hat (z.B. die vollen Kosten des Vormonats, sichtbar ab dem aktuellen Monat) — fehlt bei der ersten Periode nach Einrichtung/Update, nie geraten. |
-| `kwh_day` / `kwh_week` / `kwh_month` / `kwh_year` | kWh (heute/Woche/Monat/Jahr) | Gleiches Perioden-Muster wie `cost_day` etc., für kombinierte Heim- + Fremdlade-kWh statt Kosten. Gleiches Attribut `differenz_vorperiode` (kWh statt EUR). |
-| `erstzulassung` | Erstzulassung | Erstzulassungsdatum aus Schritt 1, als `date`-typisierter Sensor. Diagnostisch. |
-
-### Leasing-Kilometerbudget
-
-Rein additiv — Schritt 7 konfigurieren (`leasing_inkl_km` und `leasing_end_datum` beide gesetzt), um es zu aktivieren; sonst bleibt dieser Sensor `unknown` und der Leasing-Tab im Panel zeigt nur einen Einrichtungshinweis statt Inhalt.
-
-| Key | Name | Beschreibung |
-|-----|------|--------------|
-| `leasing_km_vor_ruecklauf` | Kilometerbudget vor Rücklauf | Wie weit du dem linearen Vertrags-Plan voraus (positiv) oder hinterher (negativ) bist, in km, gegen den in Schritt 7 eingetragenen Kilometerstand bei Vertragsbeginn (`leasing_start_km`) — bewusst **nicht** dieselbe „gefahrene km"-Zahl wie bei den Sensoren oben, die nur seit der ev_assistant-Einrichtung zählt. Attribute: die rohen Vertragseingaben zur Anzeige gespiegelt (`vertrag_start_km`, `vertrag_start_datum`, `vertrag_end_datum`, `vertrag_inkl_km`, sowie `preis_mehr_km`/`preis_minder_km` falls konfiguriert), `gefahrene_vertrags_km`, `resterlaubte_km` (insgesamt noch erlaubte km bis Vertragsende, unabhängig von den verbleibenden Tagen), `vertrag_tage`/`vergangene_tage`/`verbleibende_tage`, `soll_km_bis_heute` (Soll-Wert bis heute), `status` (`im_budget` / `knapp` / `ueber`, basierend auf der linearen Projektion mit kleiner Toleranz), `verbleibendes_tagesbudget_km` (nur solange noch Vertragstage übrig sind). Zwei unabhängige Projektionen für das Vertragsende, jede nur vorhanden, wenn berechenbar: `linear` (geradlinig seit Vertragsbeginn — die stabile Referenz) und `rollierend` (aus den letzten 30 Fahrtagen — reagiert schneller auf ein verändertes Fahrverhalten), beide mit `tempo_km_pro_tag`, `erwartete_end_km`, `erwartete_mehr_bzw_minder_km`, sowie — nur falls der passende Preis konfiguriert ist — `mehrkosten_eur` (Mehrkilometer) oder `gutschrift_eur` (Gutschrift für Minderkilometer, nur vorhanden, wenn `leasing_preis_minder_km` gesetzt ist; die meisten Verträge erstatten ungenutzte km nicht). |
-
-### Ladekarten
-
-Rein additiv und komplett im Panel verwaltet (kein Config-Flow-Schritt) — siehe den Abschnitt "Ladekarten-Tab" unten. Verwaltet Abo-Karten von Fremdlade-Anbietern mit monatlicher Grundgebühr (z.B. eine ADAC e-Charge Karte), unabhängig von einzelnen Ladungen.
-
-| Key | Name | Beschreibung |
-|-----|------|--------------|
-| `ladekarten_kosten` | Ladekarten-Kosten | Summe der aufgelaufenen Grundgebühren aller Karten (aktive Tage seit dem `start_datum` jeder Karte, gedeckelt durch `end_datum` falls gesetzt, ÷ ein durchschnittlicher 30,44-Tage-Monat × die jeweils gültige(n) Gebührenstufe(n) — eine bewusste Näherung, da eine echte Abrechnung in monatlichen Sprüngen erfolgt, nicht stetig). `unknown` ohne konfigurierte Karte. Attribut `karten`: die vollständige Liste, je mit `id`, `name`, `start_datum`, `end_datum`, `gebuehren` (die Liste der Gebührenstufen, je `{ab_datum, gebuehr}` — deckt z.B. einen reduzierten Einführungspreis ab, der später auf den regulären Preis steigt, siehe `add_ladekarte_preisstufe` unten), `aktuelle_gebuehr` (die gerade gültige Gebühr) und der eigenen aufgelaufenen `kosten` (korrekt über Stufen hinweg aufgeteilt, falls sich die Gebühr zwischendurch geändert hat). Diese Summe fließt automatisch in `savings`, die kostenbezogenen EUR/100km-Berechnung (`charging_location_breakdown`) sowie die Sensoren `cost_day`/`cost_week`/`cost_month`/`cost_year` ein — aber bewusst **nicht** in `charging_location_breakdown`s `fremd.kosten`/`fremd.preis_je_kwh` oder den Preis einer einzelnen Fremdladung, da eine Abo-Gebühr keiner bestimmten kWh oder keinem Ladeort zuzuordnen ist. |
-
-### Fahrzeugwartung
-
-Rein additiv und komplett im Panel verwaltet (kein Config-Flow-Schritt) — siehe den Abschnitt „Wartung-Tab" unten. Verwaltet wiederkehrende Wartungspunkte (HU/TÜV, Inspektion, oder frei benannt) mit bis zu drei unabhängigen Fälligkeitskriterien pro Punkt — Kilometer-Intervall, Zeit-Intervall in *Monaten* und/oder festes Datum — je nachdem, was zuerst eintritt. Zeit-Intervalle rechnen mit echten Kalendermonaten (z.B. 31.01. + 1 Monat → 28./29.02., 24 Monate ab einem Monat → derselbe Monat 2 Jahre später), nicht mit einer 30-Tage-Näherung.
-
-| Key | Name | Beschreibung |
-|-----|------|--------------|
-| `wartung_faellig` | Wartung fällig | Anzahl bald fälliger oder überfälliger *aktiver* Punkte (pausierte zählen nicht mit). `unknown` ohne konfigurierten Punkt. Attribut `punkte`: die vollständige Liste, je mit den eigenen Feldern des Punkts plus dem berechneten `status` (`ok`/`bald_faellig`/`ueberfaellig`/`unbekannt`), `naechste_quelle` (welches Kriterium gerade gewinnt), `rest_tage`/`faellig_datum` (vom jeweils frühesten Kriterium — das km-Kriterium liefert erst dann ein Datum, wenn das aktuelle Fahrtempo, ein rollierender 30-Tage-Schnitt, bekannt ist), und `rest_km` (der Kilometer-Rest des km-Kriteriums, unabhängig davon, ob es das gewinnende Kriterium ist — ein zeitbasierter Punkt mit zusätzlichem km-Intervall zeigt also beides). `presets`: die eingebauten Start-Vorlagen (`tuev`, `inspektion`) im Anlegen-Formular des Panels — füllen nur vor, bleiben frei überschreibbar, keine herstellerspezifischen Werte; das Formular blendet dabei passend zur Vorlage auch nur deren Felder ein (HU/TÜV: festes Datum + Intervall, keine km-/letzter-Service-Felder; Inspektion: km-Intervall + Intervall + letzter Service, kein festes Datum; ohne Vorlage: alles). Jeder Punkt kann optional die globale "bald fällig"-Vorwarnzeit überschreiben (intern `reminder_tage`, zeitseitig in Monaten eingegeben, km-seitig direkt in km) — ohne Angabe gilt der globale Standard. Das Markieren eines HU/TÜV-artigen Punkts (festes Datum UND Monats-Intervall) als erledigt schiebt dieses feste Datum automatisch um das Intervall weiter, gerechnet ab dem tatsächlichen Erledigungsdatum — eine verfrühte Erledigung zieht die nächste Fälligkeit also ebenfalls vor, statt den ursprünglichen Rhythmus beizubehalten. |
-
-### Nutzungsprofil
-
-Siehe „Nutzungsprofil-Tab" oben für die zugrundeliegende Idee.
-
-| Key | Name | Beschreibung |
-|-----|------|--------------|
-| `usage_profile` | Nutzungsprofil | Durchschnittlicher kWh-Verbrauch am heutigen Wochentag, aus dem Fahrtenbuch (`verbrauch_kwh` pro Fahrt, falls bekannt, sonst deren `km` × `vehicle_avg_consumption` als Schätzung). Attribute: `montag`…`sonntag` (alle 7 Wochentags-Schnitte). `unknown` bei weniger als 7 Tagen Fahrtenbuch-Historie (garantiert, dass jeder Wochentag mindestens einmal beobachtet wurde). |
-| `usage_profile_tomorrow` | Nutzungsprofil (morgen benötigt) | Morgiger Wochentags-Schnitt zzgl. `usage_profile_buffer_pct` Puffer — direkt mit `available_kwh` vergleichbar. Attribute: `wochentag`, `roh_kwh` (ungepuffert), `puffer_prozent`, `benoetigt_kwh` (identisch mit dem Zustand). |
-| `available_kwh` | Verfügbare kWh | Aktueller SoC × nutzbare Akkukapazität. |
-| `house_usage_profile` | Hausnutzungsprofil | Durchschnittlicher Haus-kWh-Verbrauch am heutigen Wochentag (inkl. optionaler Speicherladung, siehe unten), aus einem kumulativen Hausverbrauchszähler statt Fahrtenbuch. Attribute: `montag`…`sonntag` (nur tatsächlich beobachtete Wochentage — ein noch nie beobachteter Tag fehlt im Ergebnis, statt fälschlich 0 kWh anzunehmen), `konfiguriert` (ob `home_consumption_entity` gesetzt ist), `speicher_enthalten` (ob `battery_charge_entity` gesetzt ist). `unknown` ohne `home_consumption_entity` oder ohne einen einzigen beobachteten Tag. |
-| `plug_window` | Steck-Zeitfenster | Rein informativer Diagnose-Sensor: durchschnittliche Steckdauer (Stunden) je Wochentag, aus evccs eigenem Ladepunkt-Verbindungsstatus (nicht dem separaten, optionalen `plug_entity`). Attribute: `montag`…`sonntag` (nur tatsächlich beobachtete Wochentage), `heute` (laufende Zählung des heutigen Tages), `tage` (das rohe Sliding-Window je Wochentag, jeder Eintrag mit `date`, `stunden`, `erster_connect`, `letzter_disconnect`). Beeinflusst nicht die Modus-/SoC-Steuerung. |
-| `evcc_mode_control` | evcc-Modus-Steuerung | Diagnose-Sensor für die [automatische evcc-Modus-/SoC-Steuerung](#automatische-evcc-modus-soc-steuerung) unten — der Modus (`pv`/`minpv`/`now`), auf den gerade hingesteuert wird (bereits inklusive der [Echtzeit-PV-Übersteuerung](#automatische-evcc-modus-soc-steuerung) unten), bzw. `unknown`, wenn diese Funktion aus ist (Standard) oder noch kein Nutzungsprofil vorliegt. Attribute: `min_soc`, `target_soc`, `verfuegbare_kwh`, `min_kwh`, `target_kwh`, `rest_heute_kwh`, `rest_heute_roh_kwh`, `pv_rest_heute_roh_kwh`, `haus_rest_heute_kwh`, `pv_fuer_auto_kwh`, `pv_ueberschuss_puffer_kwh` (heutiger PV-Überschuss, der zusätzlich gegen morgen/den Puffer angerechnet wird, siehe oben), `zuletzt_geschrieben`, `aktiv`, `min_soc_scope`, `limit_soc_scope`, `balancing_enabled`, `balancing_aktiv`, `naechste_vollladung_faellig_ts` (siehe [wöchentliche Vollladung](#automatische-evcc-modus-soc-steuerung) unten), `pv_override_aktiv`, `pv_ueberschuss_w` (siehe [Echtzeit-PV-Übersteuerung](#automatische-evcc-modus-soc-steuerung) unten), `wallbox_min_power_w` (die konfigurierte Schwelle, auf die die Übersteuerung reagiert, immer vorhanden, anders als die beiden folgenden), `pv_override_mischpreis_kwh` (Mischpreis dieser Übersteuerung, nur gesetzt solange ein `minpv`-Kandidat vorliegt, siehe den Absatz zur wirtschaftlichen Kappung unten), `pv_override_max_mischpreis_kwh` (die aus `evcc_realtime_override_min_solar_share` berechnete Preis-Obergrenze, `null` ohne konfigurierten Wert oder ohne verfügbare Tarife), `pausiert` (ob die manuelle Schreib-Pause, Service `set_evcc_mode_control_pause`/Panel-Schalter, gerade aktiv ist). |
-| `evcc_charge_plan` | evcc-Ladeplan | Diagnose-Sensor, der evccs eigenen Ladeplan (Zielzeit-Laden, siehe [Ladeplan](#ladeplan) unten) spiegelt — die Zielzeit als Zustand (`unknown` ohne gesetzten Plan), Attribute `target_soc`, `projected_start`, `projected_end`, `aktiv` (evcc lädt gerade zur Erfüllung dieses Plans, statt nur einen für später geplant zu haben). Funktioniert unabhängig von `evcc_mode_control_enabled` — braucht nur einen konfigurierten `evcc_host`. |
-| `binary_sensor … Laden vor PV empfehlenswert` | **On**, wenn `available_kwh` kleiner ist als der gepufferte Wert von `usage_profile_tomorrow` — d.h. jetzt laden (z.B. aus dem Netz) ist sinnvoller, als auf den PV-Überschuss von morgen zu warten. Falls `pv_forecast_entity` konfiguriert ist, wird die morgige PV-Ertragsprognose vor diesem Vergleich zu `available_kwh` addiert — eine Lücke, die der Akku allein nicht deckt, kann so trotzdem unkritisch sein, wenn genug Sonne erwartet wird. Attribute: `verfuegbare_kwh`, `benoetigt_morgen_kwh`, `pv_prognose_morgen_kwh` (nur vorhanden, wenn `pv_forecast_entity` konfiguriert und auflösbar ist). `unknown` unter denselben Bedingungen wie `usage_profile`. |
-
-### Automatische evcc-Modus-/SoC-Steuerung
-
-Eine **optional zuschaltbare** Erweiterung des Nutzungsprofils oben (`evcc_mode_control_enabled` im evcc-/Wallbox-Schritt, standardmäßig aus), die nicht nur eine *Empfehlung* anzeigt, sondern evccs Lademodus (`pv`/`minpv`/`now`) sowie Min-/Ziel-SoC des Fahrzeugs tatsächlich schreibt — die Wallbox folgt dem Nutzungsprofil dann ganz ohne manuelles Umschalten. Setzt einen konfigurierten `evcc_host` voraus (Schritt 2); lässt sich evccs SoC-Geltungsbereich (Loadpoint- oder Fahrzeug-Ebene, je nach evcc-Version) nicht ermitteln, erscheint ein Reparieren-Hinweis — der Modus wird trotzdem gesetzt, nur die SoC-Grenzen nicht.
-
-Die Tages-Basis-Entscheidung vergleicht den aktuellen Akkustand mit dem typischen Bedarf von morgen (plus was von heute noch übrig ist), wird etwa minütlich neu berechnet und **immer geschrieben, wenn sie vom tatsächlichen evccs Live-Zustand abweicht** — nicht nur von dem, was ev_assistant selbst zuletzt geschrieben hat, damit sich das selbst heilt, wenn evcc die Einstellung stillschweigend wieder verliert (z.B. nach einem evcc-Addon-Neustart, der auf evccs eigene Konfig-Defaults zurückfällt — ohne das könnte die wöchentliche Vollladung unten dauerhaft blockiert bleiben, weil das Fahrzeug nie mehr wirklich 100 % erreicht). Eine Konsequenz: ein manueller Eingriff direkt in evccs eigener Oberfläche hält jetzt nur noch bis zum nächsten Zyklus (~1 Min.), nicht mehr unbegrenzt — nutze den Service `set_evcc_mode_control_pause` (auch als Schalter direkt in der Panel-Karte "Automatische Ladesteuerung" verfügbar, siehe [Dienste](#dienste) unten), um das Zurückschreiben anzuhalten, bis du ihn wieder ausschaltest — wenn eine bewusste manuelle Änderung eine Weile bestehen bleiben soll:
-
-- **`pv`** (reine Solarladung) — der aktuelle Akkustand deckt den Rest von heute plus den typischen Bedarf von morgen bereits.
-- **`now`** (Netzladen erzwingen) — das ist nicht der Fall, evcc wird also angewiesen, unabhängig von Solarertrag jetzt zu laden.
-
-Das war früher eine dreistufige Entscheidung mit einer eigenen `minpv`-Zwischenstufe, gesteuert über einen rollierenden 1-2-Tage-Puffer (Vergleich gegen morgen UND übermorgen) — Produktionsvorfall: dadurch wurde vorsorglich die ganze Nacht aus dem Netz nachgeladen, allein wegen eines Fehlbetrags gegenüber der Übermorgen-Prognose, obwohl der Bedarf von morgen selbst schon gedeckt war und diese zweite Prognose ohnehin mit aktuelleren Daten neu bewertet wird, sobald der Tag wirklich ansteht. Das Puffer-Fenster wurde daraufhin auf nur noch morgen reduziert, wodurch es exakt mit dem Ein-Tages-Vergleich der Basis-Entscheidung zusammenfällt und sich die Entscheidung auf die zweiwertige `pv`/`now`-Wahl oben reduziert. `minpv` als Modus, der an evcc geschrieben wird, gibt es weiterhin — nur eben aus anderer Quelle: der Echtzeit-PV-Überschuss-Übersteuerung unten, der wöchentlichen Vollladung, oder einem aktiven Ladeplan.
-
-Beispiel: Nutzungsprofil sagt 8 kWh/Tag, Puffer 20 %, 45 kWh nutzbar, 40 % SoC (18 kWh) verfügbar. Benötigt = 8 × 1,2 = 9,6 kWh → 18 kWh decken das bereits, evcc bekommt also `pv`, und es ist keine Min-/Ziel-SoC-Übersteuerung aus diesem Mechanismus nötig.
-
-Das Nutzungsprofil hinter dieser Steuerung stammt ausschließlich aus einem **Live-SoC-Ratchet**, nicht dem Fahrtenbuch — er verfolgt den kompletten Netto-Verbrauch des Fahrzeugs (Fahren UND Standby-Verbrauch, z.B. Klimatisierung im Stand) fortlaufend aus jedem SoC-Messwert, mit derselben Rauschtoleranz wie die Ladungserkennung (Schritt 5). Das ist wichtig für Fahrzeuge, die den SoC nur in groben ganzen Prozentpunkten melden: mehrere kurze Fahrten hintereinander zeigen oft je 0 % Delta (zu wenig Verbrauch, um innerhalb einer Fahrt einen vollen Punkt zu überschreiten), während der tatsächliche Rückgang erst später, im Stand zwischen den Fahrten, gemeldet wird — bei einem rein fahrtenbuch-basierten Profil würde dieser Verbrauch komplett verschwinden statt irgendwo aufzutauchen. Das Fahrtenbuch selbst und dessen eigene Verbrauchswerte (z.B. „Fahrtenbuch Durchschnittsverbrauch") bleiben davon unberührt — das fließt nur in das Profil dieser Steuerung ein. Der Tracker startet bei Null (Setup/Update) und braucht 1–2 Wochen zum Aufbauen (ein noch nie beobachteter Wochentag gilt konservativ als 0 kWh Bedarf) — es gibt in der Zwischenzeit bewusst keinen ungenaueren Fallback.
-
-Sowohl dieses Fahrzeugprofil als auch das optionale Hausprofil unten nutzen ein **gleitendes Fenster der letzten Tage** statt eines Lebenszeit-Durchschnitts: je Wochentag werden nur die letzten 8 beobachteten Kalendertage vorgehalten, sodass sich ein tatsächlich geändertes Nutzungsverhalten (neuer Arbeitsweg, Jahreszeitwechsel) innerhalb weniger Wochen bemerkbar macht statt erst nach Jahren einen Lebenszeit-Schnitt zu bewegen. Ein korrekt als Urlaub ausgeschlossener Tag (optionale `urlaub_entity`, Schritt 3) landet gar nicht erst im Fenster seines Wochentags, statt den Schnitt als „0-kWh-Tag" nach unten zu ziehen.
-
-Beide Profile fließen zusätzlich mit einem **zeitabhängigen Abbau** in `remaining_today_kwh()` ein: der typische Tagesbedarf wird proportional zum bereits vergangenen Tagesanteil heruntergerechnet, bevor der heute schon verbrauchte Wert abgezogen wird — der empfohlene Restbedarf für heute nähert sich so im Tagesverlauf natürlich der Null an, statt einen flachen Wochentags-Schnitt unabhängig von der Uhrzeit gegen den heutigen Verbrauch zu vergleichen (was sonst z.B. abends noch ein Nachladen empfehlen könnte, obwohl der typische Tagesbedarf längst gedeckt war).
-
-Ein für **heute** prognostizierter PV-Überschuss, der über den heutigen Bedarf hinausgeht, reduziert zusätzlich den Bedarf von morgen (`min_kwh`/`target_kwh`) — nicht nur den heutigen Wert. Ohne das könnte ein ungewöhnlich verbrauchsstarker morgiger Tag (z.B. ein geplanter Ausflug) schon deutlich im Voraus nächtliches Netzladen erzwingen, selbst an einem Tag mit reichlich PV-Prognose, die das locker abdecken würde (Produktionsvorfall: das Fahrzeug lud die ganze Nacht durch für einen kommenden verbrauchsstarken Tag, obwohl tagsüber noch ein ganzer Tag PV bevorstand, der das gedeckt hätte). Das Attribut `pv_ueberschuss_puffer_kwh` am `evcc_mode_control`-Sensor zeigt, wie viel Überschuss so angerechnet wurde.
-
-**Optionales Haus-Nutzungsprofil** (`home_consumption_entity`, `battery_charge_entity`): ohne dieses würde eine konfigurierte „PV-Restprognose heute" (`pv_forecast_today_remaining_entity` — getrennt von und für einen anderen Zeitraum als das Feld „PV-Ertragsprognose morgen" in Schritt 7) komplett dem Auto zugerechnet, obwohl davon erst der Eigenbedarf des Hauses (und eines optionalen Hausspeichers, falls dessen Ladung nicht schon im Verbrauchszähler steckt) abgeht. Ein kumulativer Hausverbrauchszähler behebt das — der typische Rest-Eigenbedarf des Hauses für heute wird zuerst von der PV-Prognose abgezogen. Wie das Fahrzeug-Nutzungsprofil baut sich auch dieses erst aus eigener, ab dem Einrichten von `home_consumption_entity` gesammelter Historie auf und braucht ein paar Tage, bis es wirkt — bis dahin zählt es stillschweigend als 0 kWh, also wie das bisherige Verhalten ohne diese Option.
-
-**Optionale wöchentliche Vollladung fürs Zellbalancing** (`weekly_full_charge_enabled`, standardmäßig aus, plus `weekly_full_charge_interval_days`, Standard 7): die meisten E-Autos sind am gesündesten, wenn sie die meiste Zeit in einem mittleren SoC-Fenster verbringen — genau das strebt die profilbasierte Steuerung oben an —, aber das Batteriemanagementsystem braucht trotzdem gelegentlich eine echte Vollladung auf 100 %, um das Zellbalancing neu zu kalibrieren. Ist diese Option aktiviert und seit der letzten erreichten Vollladung (98 % gilt als „voll" — viele Fahrzeuge melden nie exakt 100 %) mindestens das konfigurierte Intervall vergangen, überstimmt die Steuerung das profilbasierte Ziel mit Ziel-SoC 100 % / Modus `minpv`, bis 100 % tatsächlich erreicht sind, danach setzt sich der Zähler zurück. Wie die 100 % erreicht wurden, spielt keine Rolle — eine manuelle Vollladung (eine längere Fahrt, ein bewusstes Nachladen) setzt den Countdown genauso zurück wie eine erzwungene, es wird also nie mehr geladen als nötig. Der Schalter lässt sich auch direkt aus der Wallbox-Karte im Panel umlegen (ein Laufzeit-Override, wie der Puffer-Regler oben — kein Neuladen der Integration nötig) — das Intervall selbst bleibt eine reine Options-Flow-Einstellung.
-
-  Zur Klarstellung, weil man das leicht falsch annimmt: Das setzt **ausschließlich** Ziel-SoC und Lademodus. Es entscheidet **nicht**, WOHER der Ladestrom kommt — das ist und bleibt komplett evccs eigene Sache, davon unberührt. `minpv` nutzt die in evcc konfigurierte Mindestladeleistung als Sockel, ergänzt um verfügbaren PV-Überschuss; wer bei einer Vollladung den Hausspeicher schonen will, macht das über evccs eigene Entladesperre — die steuert diese Integration nicht an, das bleibt eure eigene, bereits vorhandene evcc-Einstellung.
-
-**Echtzeit-PV-Übersteuerung** (`wallbox_min_power_w`, Standard 1380 W = 6A × 230V einphasig — bei dreiphasigem Wallbox-Anschluss wären es 6A × 3 × 230V ≈ 4140 W): Die Tages-Basis-Entscheidung oben wird etwa minütlich aus dem Nutzungsprofil neu berechnet, das bewusst träge ist (Tages-Ebene). Darüber liegt eine zweite, schnellere Ebene, die auf den AKTUELLEN PV-Überschuss reagiert (Site-PV minus Netzeinspeisung, aus demselben Live-evcc-Feed, der ohnehin schon fürs Panel gepollt wird — kein zusätzlicher evcc-Aufruf) und "pv" in Echtzeit auf "minpv" hochstufen kann — NIEMALS umgekehrt, und nur solange das Nutzungsprofil selbst gerade "pv" empfiehlt. Das Problem, das damit gelöst wird: im reinen `pv`-Modus lädt die Wallbox erst, sobald der Überschuss ihre eigene Mindestladeleistung (`wallbox_min_power_w`) übersteigt — ein Überschuss knapp darunter (z.B. 1200 W bei 1380 W Schwelle) lädt gar nichts und geht ungenutzt ins Netz, obwohl `minpv` ihn gerne nähme (mit kleinem Zuschuss aus Netz/Speicher). Erst wenn der Überschuss die Schwelle um weitere 100 W übersteigt, schaltet es zurück auf `pv` — diese Marge (Hysterese) verhindert, dass ein Überschuss, der genau um die Schwelle pendelt (Wolken, ein kurzzeitig einschaltender Verbraucher im Haus), im Minutentakt hin- und herspringt. Bewusst zählt PV, die gerade einen Hausspeicher lädt, NICHT als "Überschuss" — die wird bereits sinnvoll genutzt (Autarkie/Zellbalancing) statt verschenkt, und eine Hochstufung dagegen würde einer in evcc selbst eingerichteten Speicherschutz-Priorisierung entgegenarbeiten.
-
-**Optionale wirtschaftliche Kappung des Netz-Zuschusses** (`evcc_realtime_override_min_solar_share`, %, kein Standardwert — ohne ihn gilt die Übersteuerung oben unverändert rein nach Watt): PV-Strom fürs Laden ist nicht wirklich kostenlos — jede nicht eingespeiste kWh kostet die entgangene Einspeisevergütung. Das Auffüllen bis `wallbox_min_power_w` mit Netzstrom hat also einen echten Mischpreis: `(Überschuss × Einspeisevergütung + Netzanteil × Netzpreis) ÷ wallbox_min_power_w`. Statt diesen Preis direkt einzutragen, wird hier ein Mindest-Solaranteil (z.B. 50%) festgelegt, und die passende Preis-Obergrenze bei jedem Zyklus frisch aus evccs eigenen Live-Tarifen (`tariffFeedIn`/`tariffGrid`) berechnet — bleibt also automatisch korrekt, wenn sich der Tarif ändert (Anbieterwechsel, dynamischer Tarif), statt wie ein fester Preis zu veralten. Die Übersteuerung hebt nur noch auf `minpv` an, wenn der Mischpreis mindestens diesen Solaranteil bedeutet; sonst bleibt es bei `pv`, und der kleine Überschuss wird eingespeist statt teuren Netzstrom dafür zuzukaufen. Das Attribut `pv_override_mischpreis_kwh` am `evcc_mode_control`-Sensor zeigt den aktuellen Mischpreis, sobald ein `minpv`-Kandidat vorliegt — auch schon bevor eine Kappung konfiguriert ist, als Orientierung für einen sinnvollen Wert.
-
-**Optionale Speicher-Priorität** (`evcc_battery_priority_enabled`, standardmäßig aus): die Einstellung oben respektiert bewusst evccs eigene Speicher-Vorrang-Schwelle (`prioritySoc`) — aber eine fest auf 100 % stehende `prioritySoc` bedeutet, dass der Speicher an jedem PV-Überschuss-Tag IMMER zuerst komplett vollläuft, bevor das Auto überhaupt etwas bekommt. Fährt das Auto genau dann los, wenn der Speicher 100 % erreicht, bekommt es praktisch keine Solarladung ab, und jeder weitere Überschuss an dem Tag geht ungenutzt ins Netz statt es je zu erreichen. Aktiviert, senkt ev_assistant evccs site-weite `prioritySoc`, während das Auto angesteckt ist — das Auto bekommt dann vollen Vorrang vor dem Speicher beim PV-Überschuss — und stellt die zuvor beobachtete Schwelle wieder her, sobald das Auto abgesteckt wird, statt sie auf einen festen Wert zurückzusetzen. Das ändert nur, wie PV-*Lade*-Überschuss zwischen Wallbox und Speicher verteilt wird — es hat keinerlei Einfluss auf das *Entlade*-Verhalten des Speichers, das weiterhin komplett eurer eigenen, davon unabhängigen Steuerung (evccs eigener Batteriemodus oder eine eigene Automation) unterliegt.
-
-### Ladeplan
-
-Eine eigenständige, unabhängig nutzbare Ergänzung zur automatischen Modus-/SoC-Steuerung oben: setzt evccs eigenen Ladeplan (Zielzeit-Laden) über den Service `set_evcc_charge_plan` (`config_entry_id`, `target_soc`, `target_time` als Unix-Zeitstempel) oder die Panel-Karte "Ladeplan" — "das Auto soll morgen um 7 Uhr bei 80 % sein." evcc entscheidet danach selbst, WANN (tarif-/PV-optimiert) geladen wird, um das zu schaffen — derselbe Mechanismus, den auch evccs eigene Oberfläche für den Ladeplan nutzt. Braucht nur einen konfigurierten `evcc_host`, keine aktivierte `evcc_mode_control_enabled`.
-
-Das löst einen Fall, den die profilbasierte Modus-Steuerung oben nicht abdeckt: eine harte Deadline. Die `pv`/`now`-Tages-Entscheidung schaut nur auf den typischen Bedarf von morgen, nie auf eine konkrete Uhrzeit.
-
-**Solange ein Plan aktiv ist** (Sensor `evcc_charge_plan` hat einen Zustand), tritt die automatische Modus-/SoC-Steuerung oben komplett zurück und schreibt nichts — unabhängig davon, ob der Plan über ev_assistant oder direkt in evccs eigener Oberfläche gesetzt wurde, damit sich beide Mechanismen nie um den Ladepunkt streiten. Sie läuft automatisch wieder an, sobald der Plan gelöscht wird (Service `clear_evcc_charge_plan`, oder der "Plan löschen"-Button im Panel), oder sobald evccs eigener Plan von selbst ausläuft.
-
----
-
-## Panel / Dashboard
-
-EV Assistant registriert automatisch ein **Seitenleisten-Panel** — keine zusätzliche Einrichtung über die Integration selbst hinaus erforderlich. Sind mehrere Fahrzeuge (d.h. mehrere EV-Assistant-Integrationsinstanzen) angelegt, erscheint eine Fahrzeugauswahl in einer eigenen Zeile über der Tab-Leiste; jeder Tab zeigt dann die Daten des aktuell gewählten Fahrzeugs. Bei nur einem Fahrzeug bleibt die Auswahl komplett ausgeblendet.
-
-### Tab „Übersicht (Beta)"
-
-Der Haupt-Dashboard-Tab, vollständig aus bereits vorhandenen Sensoren/Attributen aufgebaut (keine neuen Berechnungen): eine Hero-Karte für die bisherigen Kosten diesen Monat (mit dem Vormonats-Gesamtbetrag, sobald bekannt) neben einer Fahrzeug-SoC-Zeile, eine Wallbox-Statuskarte (immer dasselbe Layout unabhängig vom Zustand — lädt/verbunden/nicht verbunden — mit dem Live- bzw. letzten Solar-/Netz-Anteil, Modus sowie Min-/Ziel-SoC-Grenzen), eine Kennzahlen-Reihe (EUR/100 km, Ersparnis ggü. Verbrenner, CO2 gespart) sowie — als horizontale Proportionsbalken statt Tabellen — ein Verbrenner-Vergleich und die Ladeort-Aufschlüsselung. Modus-adaptiv: im [Lademodus](#lademodus) **Nur auswärts** werden Wallbox-Karte und Fahrzeug-SoC-Zeile durch die letzte bestätigte Fremdladung ersetzt (dort gibt es keine Wallbox), und die Ladeort-Aufschlüsselung wird durch eine reine AC/DC-Aufteilung der Fremdladung ersetzt (als Schätzung gekennzeichnet — siehe Sensor `charging_location_breakdown` oben). Karten/Zeilen für nicht zutreffende Werte werden komplett weggelassen statt leer oder als 0 angezeigt. *Eine Mehrmonats-Ausgabenhistorie (Balkendiagramm über abgeschlossene Vormonate) ist als Erweiterung geplant — die Rohdaten dafür existieren, sind aber noch nicht zu einer Reihe aggregiert, siehe CHANGELOG.*
-
-(Der Name „(Beta)" ist ein Überbleibsel aus der Zeit, als dieser Tab testweise neben einem separaten klassischen Übersicht-Tab lief — dieser ältere Tab wurde in 0.98.8 entfernt, nachdem dieser ihn vollständig abgelöst hatte.)
-
-Wartet eine Ladung oder Fahrt auf Bestätigung, erscheint oben in diesem Tab eine blinkende Pille ("1 offene Fremdladung" / "N offene Fahrten") — ein Klick öffnet ein Popup mit denselben Bestätigen/Verwerfen-Karten wie die "Laufende Erfassung"-Karte im Fahrzeug-Tab, ohne den Tab wechseln zu müssen.
-
-Ist die [automatische evcc-Modus-/SoC-Steuerung](#automatische-evcc-modus-soc-steuerung) aktiviert, zeigt eine zusätzliche Karte "Automatische Ladesteuerung" den gerade angesteuerten Modus, Min-/Ziel-SoC, den heutigen Rest-Bedarf (Tooltip zeigt die komplette PV-/Haus-Rechenkette), wie viel der PV-Prognose fürs Auto übrig bleibt, den Zeitpunkt der letzten tatsächlichen Schreibung, sowie einen Pause-Schalter — bei deaktivierter Funktion komplett ausgeblendet. Eine Karte "Ladeplan" (siehe [Ladeplan](#ladeplan) oben) erscheint unabhängig davon, sobald evcc überhaupt konfiguriert ist — darüber lässt sich direkt im Panel eine Zielzeit-Deadline setzen/löschen.
-
-Ein "Anpassen"-Button (Zahnrad) erlaubt es, diesen Tab anzupassen: welche Karten angezeigt werden, in welcher Reihenfolge (Drag & Drop, funktioniert per Touch und Maus) und in welcher Breite (1/3, 1/2, 2/3 oder volle Breite — Karten können so nebeneinander stehen). Eine ausgeblendete Karte bleibt im Auswahldialog verfügbar, statt endgültig zu verschwinden. Das Layout wird serverseitig gespeichert (intern der `set_panel_layout`-Service), ist also überall identisch, wo das Panel geöffnet wird, statt eine reine Browser-Einstellung zu sein.
-
-### Tab „Fahrzeug"
-
-Fahrzeugspezifisches Dashboard in einem Drei-Spalten-Layout:
-
-| Spalte | Inhalt |
-|--------|--------|
-| **Heimladen** | Heimlade-Gesamtwerte (kWh, EUR, Sitzungsanzahl, Ø Solaranteil), letzte Sitzungs-KPIs, vollständige evcc-Sitzungshistorie. Jeder Eintrag zeigt SOC Start→Ende, kWh, Ø Ladeleistung, EUR/kWh, Kosten, Solaranteil, Dauer und einen SOC-Balken. |
-| **Fremdladung** | Fremdladungs-Gesamtwerte, letzte Sitzungs-KPIs, editierbare Historie. Jeder Eintrag zeigt kWh, Ø Ladeleistung, Kosten und einen SOC-Balken; `start_fee`, `block_fee` und/oder `time_fee` zeigen jeweils als eigene Zeile neben dem Preis — manche Belege weisen mehrere gleichzeitig aus (z.B. eine pauschale Startgebühr plus eine Blockiergebühr fürs Stehenlassen, oder eine Zeitgebühr, die manche Schnelllade-Netze statt/zusätzlich zu kWh berechnen). Ein "Manuell erfassen"-Button neben der Historie-Überschrift öffnet ein Formular, um eine Ladung ganz ohne vorherige Erkennung nachzutragen — Start-/Endzeit, kWh, Preis, SoC Start/Ende und die optionalen Gebühren. |
-| **Fahrtenbuch** | Fahrt-Gesamtwerte, letzte Fahrt-KPIs (km, Route), editierbare Fahrthistorie. Jeder Eintrag mit bekanntem Verbrauch zeigt sowohl die Gesamt-kWh der Fahrt als auch die kWh/100km-Rate nebeneinander, damit die absolute Zahl nicht als Rate missverstanden wird. |
-
-Über den drei Spalten stellen zwei Balkendiagramme ("Ladeübersicht" und "Kostenübersicht") Heim- und Fremd-kWh/-Kosten im Zeitverlauf nebeneinander dar, dazu ein drittes Diagramm mit dem durchschnittlichen Heim-Solaranteil ("Solaranteil"). Modusabhängig wie die anderen Tabs: im Modus **nur zuhause** entfallen die Fremdladung-Spalte sowie die Fremd-Reihe/-Legende in den beiden Diagrammen. Im Modus **nur auswärts** entfallen die Heimladen-Spalte, die Heim-Reihe/-Legende sowie das komplette Solaranteil-Diagramm (Solar betrifft ausschließlich Heimladen). Der Modus **gemischt** (Standard) bleibt unverändert.
-
-### Nutzungsprofil-Tab
-
-Beantwortet "muss ich heute nachladen, oder reicht es, bis zum PV-Überschuss von morgen zu warten?" — komplett aus der eigenen Fahrhistorie, ohne manuelle Eingabe. Ein Balkendiagramm zeigt den durchschnittlichen kWh-Verbrauch pro Wochentag (Mo–So), aus dem Fahrtenbuch abgeleitet: für jeden Wochentag Gesamt-kWh an diesem Wochentag ÷ Anzahl der seit der ersten erfassten Fahrt verstrichenen Tage dieses Wochentags (Tage ohne Fahrt zählen weiterhin mit 0 kWh, damit "fährt selten sonntags" den Sonntags-Schnitt korrekt nach unten zieht statt ignoriert zu werden). Braucht mindestens 7 Tage Fahrtenbuch-Historie, bevor überhaupt etwas angezeigt wird (siehe `usage_profile` unten); der heutige und der morgige Balken sind hervorgehoben. Unter dem Diagramm: aktuell verfügbare Akku-kWh (aus SoC × nutzbarer Kapazität), der typische Bedarf für morgen zzgl. konfiguriertem Puffer, und eine Klartext-Empfehlung. Falls `pv_forecast_entity` konfiguriert ist (siehe Schritt 6), wird zusätzlich die morgige PV-Ertragsprognose angezeigt und in die Empfehlung einbezogen — eine Lücke, die der Akku allein nicht deckt, muss dann nicht zwingend per Netzladung geschlossen werden, wenn genug Sonne erwartet wird.
-
-Darunter, als eigene Karte: das **Hausnutzungsprofil** (siehe `home_consumption_entity`/`battery_charge_entity` bzw. [automatische evcc-Modus-/SoC-Steuerung](#automatische-evcc-modus-soc-steuerung) unten) — dasselbe Balkendiagramm-Prinzip, nur für den Hausverbrauch statt fürs Fahrzeug, inklusive Speicherladung falls konfiguriert (dann steht das im Untertitel). Erscheint erst, sobald `home_consumption_entity` konfiguriert ist; einzelne Wochentage, die noch nie beobachtet wurden, zeigen einen gestrichelten "–"-Balken statt fälschlich 0 kWh — anders als beim Fahrzeug-Profil oben braucht diese Karte keine vollen 7 Tage, um überhaupt etwas anzuzeigen, sie füllt sich Tag für Tag.
-
-Als dritte Karte zeigt das **Steckerprofil** (Steck-Zeitfenster, siehe `plug_window` oben) dasselbe Balkendiagramm-Prinzip noch einmal — aber für die Stunden pro Wochentag, die das Auto typischerweise an der Wallbox angesteckt ist, keinen Energiewert. Rein zur Beobachtung: hilft zu erkennen, wann Lade-Zeitfenster tatsächlich entstehen, ohne die automatische Steuerung oben zu beeinflussen.
-
-### Analyse-Tab
-
-Längerfristige Signale, die nicht auf die Fahrzeugkarte für den Alltag gehören: der Trend der gemessenen Batteriekapazität und die äquivalenten Vollzyklen (siehe `battery_capacity`/`equivalent_full_cycles` oben), die Ladeort-Aufschlüsselung (Heim vs. Fremd — kWh, Kosten, Anteil, Preis/kWh, Heim-Solaranteil und ein fahrzeugweites EUR/100km, siehe `charging_location_breakdown` oben) inklusive einer AC/DC-Aufschlüsselung der Fremdladung, sobald sich mindestens eine Ladung einordnen lässt, eine horizontale Balken-Aufschlüsselung nach Ladenetz/Betreiber ("Verteilung nach Anbieter", siehe `anbieter` bei `charging_location_breakdown` oben), sobald mindestens zwei Anbieter-Buckets existieren, und im Modus **Nur zuhause** komplett ausgeblendet (dort fällt keine Fremdladung an), und — falls `outside_temp_entity` konfiguriert ist (Schritt 6) — ein Balkendiagramm des Durchschnittsverbrauchs je Temperaturband, mit der aktuellen Außentemperatur und ihrem aktiven Band daneben.
-
-**Fahrzeugkarte** (über den drei Spalten): Fahrzeugname, aktueller SOC mit farbkodiertem Balken (rot < 20 %, orange < 40 %, sonst grün), Kilometerstand, Durchschnittsverbrauch (kWh/100 km, aus der gesamten Energiebilanz seit Einrichtung — geladene kWh gesamt ÷ gefahrene km) und Ladewirkungsgrad. Darunter drei Spalten: ein kompaktes km-Grid (gefahrene km heute/Woche/Monat/Jahr links, gleitende Durchschnitte und Projektionen rechts), eine Kosten-Spalte (kombinierte Heim- + Fremdladekosten heute/Woche/Monat/Jahr, aus den Sensoren `cost_day`/`cost_week`/`cost_month`/`cost_year`) sowie der Verbrenner-Vergleich (Ersparnis, EV-Kosten, Verbrenner-Kosten, Kosten pro 100 km).
-
-**Balkendiagramme**: Ladeübersicht, Kostenübersicht und Solaranteil — umschaltbar zwischen Wochen-, Monats- und Jahresansicht mit Vor-/Zurück-Navigation. Beim Hovern über einen Balken erscheint ein Tooltip mit dem Wert (ersetzt die früheren Beschriftungen über den Balken, die in der Monatsansicht überlappten). Mobil-responsiv: auf Bildschirmen ≤ 600 px stapeln sich die drei Diagramme vertikal.
-
-**Karte "Wirtschaftlichkeit Netz-Zuschuss"**: visualisiert die [wirtschaftliche Kappung der Echtzeit-PV-Übersteuerung](#automatische-evcc-modus-soc-steuerung) (`evcc_realtime_override_min_solar_share`) als Skala von der Einspeisevergütung bis zum Netzpreis, mit Markern für den aktuellen Mischpreis und die konfigurierte Schwelle — sichtbar sobald evcc Live-Tarife meldet, unabhängig davon, ob die Kappung selbst konfiguriert ist.
-
-**Zahlenformatierung**: Alle Werte im Panel richten sich nach der HA-Locale-Einstellung (`Einstellungen → Profil → Zahlenformat`) — keine manuelle Konfiguration nötig.
-
-### Leasing-Tab
-
-Zeigt nur Inhalt, sobald der Leasing-Schritt konfiguriert ist (siehe `leasing_km_vor_ruecklauf` oben) — sonst ein schlichter Einrichtungshinweis statt leerer Karten. Zeigt Vertragsbeginn/-ende, vergangene/verbleibende Tage, gefahrene km seit Vertragsbeginn gegen den Soll-Wert bis heute, sowie die insgesamt noch erlaubten km bis Vertragsende, dazu — falls konfiguriert — den Preis je Mehr-/Minderkilometer. Ein Fortschrittsbalken zeigt den tatsächlichen Kilometerstand gegen die insgesamt inkludierten km, mit einer Markierung, wo der lineare Plan dich heute erwartet. Darunter die lineare und die rollierende Projektion nebeneinander (Ø km/Tag, erwarteter Endstand, projizierte Mehr-/Minder-km und — nur falls konfiguriert — die Euro-Schätzung), plus das verbleibende Tagesbudget. Fehlende Werte (z.B. noch kein rollierendes Tempo, kein Preis für eine Gutschrift hinterlegt) werden ausgeblendet statt als 0 oder „n/a" angezeigt.
-
-### Ladekarten-Tab
-
-Immer in der Tab-Leiste sichtbar (damit man überhaupt einen Ort findet, um die erste Karte anzulegen), zeigt aber einen schlichten Hinweis statt jeglichem Inhalt, solange keine Ladekarte existiert. Karten direkt im Panel anlegen/bearbeiten/löschen — Name, monatliche Gebühr, Startdatum und ein optionales Enddatum (ein geleertes Enddatum reaktiviert eine gekündigte Karte). Jede Karte zeigt ihre aktuelle Gebühr, ihren Preisverlauf und die bisher aufgelaufenen Kosten; ein „Preisänderung"-Mini-Formular fügt eine neue Gebührenstufe hinzu (z.B. sobald ein reduzierter Einführungspreis endet), mit einer Lösch-Aktion je Stufe außer der frühesten. Eine KPI oben summiert alle Karten. Die Erfassen-/Bearbeiten-Formulare für Fremdladungen bekommen ein „Ladekarte"-Dropdown, sobald mindestens eine Karte existiert, um optional zu notieren, welche Karte für eine Ladung verwendet wurde (als 🎫-Badge in der Historie sichtbar) — rein informativ, ohne Einfluss auf jede Kostenberechnung.
-
-Getrennt davon haben dieselben Formulare (plus die Bestätigen-Karte für offene Fremdladungen) auch ein „Anbieter"-Feld — Freitext, mit Vorschlägen bereits verwendeter Namen — für das Ladenetz/den Betreiber selbst (z.B. „EnBW", „Ionity"), als 🏢-Badge in der Historie sichtbar. Nicht verwechseln: eine Ladekarte ist WOMIT bezahlt wurde, der Anbieter ist WO geladen wurde — eine Ladung kann beides, eines von beiden oder keines haben, und beide werden völlig unabhängig voneinander erfasst (siehe `anbieter` bei `charging_location_breakdown` oben sowie die Karte „Verteilung nach Anbieter" im Analyse-Tab unten).
-
-### Wartung-Tab
-
-Immer in der Tab-Leiste sichtbar, zeigt aber einen schlichten Hinweis statt jeglichem Inhalt, solange kein Wartungspunkt existiert. Das Anlegen-Formular (und das Bearbeiten-Formular je Punkt) ist in Gruppen gegliedert: Grunddaten (optionale Vorlage + Name), Fälligkeit (die drei Kriterien — mindestens eines Pflicht, es gilt was zuerst eintritt), Letzter Service (km + Datum), Erinnerung (optionaler Vorwarnzeit-Override je Punkt) und Kosten — statt einer flachen Feldreihe. Die Vorlagenwahl im Anlegen-Formular füllt nicht nur Standardwerte vor, sondern zeigt auch nur die Felder, die diese Vorlage tatsächlich braucht (siehe [Fahrzeugwartung](#fahrzeugwartung) oben) — „eigene" (keine Vorlage) zeigt alles. Jeder Punkt in der Liste zeigt eine Status-Ampel (OK/bald fällig/überfällig), das frühest fällige Kriterium („zuerst fällig: in X Tagen (Datum)"), eine eigene Restkilometer-Zeile, falls zusätzlich ein km-Intervall konfiguriert ist („noch X km bis Y km", weggelassen falls das die Primärzeile nur duplizieren würde), die konfigurierten Kriterien, den letzten Service und optional Kosten. Aktionen je Punkt: als erledigt markieren (setzt den letzten Service auf den heutigen Kilometerstand/das heutige Datum zurück, und bei einem HU/TÜV-artigen Punkt schiebt es zusätzlich das feste Fälligkeitsdatum um das konfigurierte Intervall weiter), bearbeiten, löschen oder pausieren (nimmt den Punkt aus der Fälligkeits-Zählung heraus, ohne ihn zu löschen).
-
----
-
-## Dienste
-
-Alle Dienste benötigen `config_entry_id`, um bei mehreren konfigurierten Einträgen das richtige Fahrzeug anzusprechen.
-
-| Dienst | Parameter | Beschreibung |
-|--------|-----------|--------------|
-| `set_usage_profile_buffer_pct` | `config_entry_id`, `buffer_pct`* | Laufzeit-Override für den Sicherheitspuffer (%) des [Nutzungsprofils](#automatische-evcc-modus-soc-steuerung)/der "Laden vor PV"-Empfehlung, ohne den Options-Flow öffnen zu müssen (auch der Puffer-Regler im Panel). Ohne `buffer_pct` wird auf den konfigurierten Wert zurückgesetzt. |
-| `urlaub_seit` | `config_entry_id`, `seit_ts` | Bucht rückwirkend bereits bestätigte Live-SoC-Verbrauchsbuchungen seit dem angegebenen Unix-Zeitstempel wieder aus ihrem Wochentags-Nutzungsprofil-Fenster heraus — für den Fall, dass der Urlaubsmodus erst nach der Abfahrt aktiviert wurde. Wirkt nur auf Tage, die noch im Verbrauchsereignis-Log stehen. |
-| `set_weekly_full_charge_enabled` | `config_entry_id`, `enabled`* | Schaltet die [wöchentliche Vollladung fürs Zellbalancing](#automatische-evcc-modus-soc-steuerung) direkt um (z.B. Panel-Schalter) — wird trotzdem dauerhaft in die Konfiguration geschrieben (kurzer Neuladen der Integration), damit der Options-Flow nie einen veralteten Wert zeigt. Ohne `enabled` wird auf den Standardwert (aus) zurückgesetzt. |
-| `set_evcc_mode_control_pause` | `config_entry_id`, `paused` | Unterdrückt das automatische Zurückschreiben von Lademodus/Min-/Ziel-SoC nach evcc, solange aktiviert — z.B. wenn du selbst etwas in evccs eigener Oberfläche einstellst und verhindern willst, dass es im nächsten Zyklus (~1 Min.) überschrieben wird. Bleibt an, bis dieser Service mit `paused: false` erneut aufgerufen wird (auch der Pause-Schalter in der Panel-Karte "Automatische Ladesteuerung"). |
-| `set_evcc_charge_plan` | `config_entry_id`, `target_soc`, `target_time` | Setzt evccs eigenen [Ladeplan](#ladeplan) (Zielzeit-Laden). Pausiert dabei automatisch die profilbasierte Modus-/SoC-Steuerung, solange der Plan aktiv ist. |
-| `clear_evcc_charge_plan` | `config_entry_id` | Entfernt einen aktiven evcc-Ladeplan — die profilbasierte Modus-/SoC-Steuerung greift danach wieder normal (sofern aktiviert und nicht manuell pausiert). |
-| `set_evcc_charge_plan_range_km` | `config_entry_id`, `target_range_km`, `target_time` | Wie `set_evcc_charge_plan`, nimmt aber eine Ziel-Restreichweite in km entgegen statt Ziel-SoC in % — rechnet intern mit dem aktuellen Verbrauchsschnitt (derselbe wie bei der Restreichweite-Anzeige) in SoC% um. |
-| `set_evcc_manual_mode` | `config_entry_id`, `mode` | Setzt den evcc-Lademodus direkt (`pv`/`minpv`/`now`) und pausiert die profilbasierte Modus-/SoC-Steuerung, bis das Fahrzeug den Ladepunkt verlässt (session-gebunden, setzt sich automatisch zurück). Min-/Ziel-SoC bleiben dabei unverändert. |
-| `clear_evcc_manual_mode` | `config_entry_id` | Beendet einen über `set_evcc_manual_mode` gesetzten manuellen Modus vorzeitig, ohne auf das Trennen zu warten — die profilbasierte Steuerung greift sofort wieder normal. |
-| `log_charge` | `config_entry_id`, `kwh`, `price_kwh`, `start_ts`*, `end_ts`*, `soc_start`*, `soc_end`*, `start_fee`*, `block_fee`*, `time_fee`*, `karte_id`*, `anbieter`* | Ausstehende Fremdladung mit Kassenbon-Werten bestätigen, oder — ohne offene Ladung — einen komplett eigenständigen Eintrag anlegen (entspricht dem "Manuell erfassen"-Button in der Fremdladung-Karte im Panel). `start_ts` wählt die Ladung aus (älteste, wenn weggelassen); bei einem eigenständigen Eintrag ist es dessen Startzeit. `end_ts`/`soc_start`/`soc_end` wirken nur bei einem eigenständigen Eintrag (eine bestätigte offene Ladung behält ihre eigene gemessene Dauer/SoC-Werte): `end_ts` ergibt zusammen mit `start_ts` die Ladedauer, `soc_start`/`soc_end` ergeben `delta_soc`. `start_fee`/`block_fee`/`time_fee` sind optionale Pauschalgebühren mancher Ladenetze/-punkte zusätzlich zum kWh-Preis (Startgebühr, Blockiergebühr fürs Stehenlassen, Zeitgebühr nach Ladedauer) — getrennte Felder, da ein Beleg mehrere gleichzeitig ausweisen kann, je Standard 0. `karte_id` notiert optional, welche Ladekarte (siehe [Ladekarten](#ladekarten) unten) verwendet wurde — rein informativ, ohne Einfluss auf jede Kostenberechnung. `anbieter` notiert optional das Ladenetz/den Betreiber (z.B. "EnBW", "Ionity") — Freitext, kein fester Katalog; das Panel schlägt bereits verwendete Namen vor, es kann aber alles eingetippt werden. Das ist etwas *anderes* als `karte_id`: eine Ladung hat immer einen Ort, unabhängig davon, mit welcher Karte (falls überhaupt) bezahlt wurde. |
-| `discard_pending` | `config_entry_id`, `start_ts`* | Ausstehende Fremdladung verwerfen (Fehlalarm). |
-| `edit_charge` | `config_entry_id`, `erfasst_ts`, `kwh`*, `price_kwh`*, `start_fee`*, `block_fee`*, `time_fee`*, `start_ts`*, `end_ts`*, `soc_start`*, `soc_end`*, `karte_id`*, `anbieter`* | Beliebiges Feld eines bereits bestätigten Historieneintrags korrigieren, gleiches "nur mitgegebene Felder ändern sich"-Modell wie `edit_trip`. Gesamtsummen werden bei kWh/Preis/Gebühren-Änderung um die Differenz angepasst; `soc_start`/`soc_end`-Änderungen berechnen das SoC-Delta neu; `end_ts` wird zusammen mit dem (neuen oder bisherigen) `start_ts` in eine Dauer umgerechnet. `karte_id`: `0` entfernt eine bestehende Kartenzuordnung, jeder andere Wert setzt/ändert sie. `anbieter`: ein leerer String entfernt einen bestehenden Anbieter, jeder andere Wert setzt/ändert ihn. |
-| `delete_charge` | `config_entry_id`, `erfasst_ts` | Bestätigten Historieneintrag entfernen. **Nicht rückgängig machbar.** |
-| `simulate_event` | `config_entry_id`, `soc_start`, `soc_end`, `energy_source`* | Test-Fremdladungsereignis ohne Auto auslösen. |
-| `log_trip` | `config_entry_id`, `start_ort`, `end_ort`, `start_ts`* | Ausstehende Fahrt mit Start-/Zielort bestätigen. |
-| `discard_pending_trip` | `config_entry_id`, `start_ts`* | Ausstehende Fahrt verwerfen. |
-| `edit_trip` | `config_entry_id`, `erfasst_ts`, `start_ort`*, `end_ort`*, `start_ts`*, `end_ts`*, `km`*, `odo_start`*, `odo_end`*, `soc_start`*, `soc_end`*, `verbrauch_kwh`* | Beliebige Felder eines bestätigten Fahrtenbucheintrags korrigieren, inklusive Datum/Uhrzeit. Nur mitgegebene Felder ändern sich. |
-| `delete_trip` | `config_entry_id`, `erfasst_ts` | Bestätigten Fahrtenbucheintrag entfernen. **Nicht rückgängig machbar.** |
-| `export_fahrtenbuch` | `config_entry_id` | Vollständige Fahrthistorie als CSV in `www/ev_assistant_fahrtenbuch_<entry_id>.csv` schreiben. |
-| `import_fahrtenbuch` | `config_entry_id`, `trips` | Historische Fahrten aus einer anderen Fahrtenbuch-App/einem Export importieren (Liste von `{start, start_ort, ende, ziel_ort, strecke, ...}`), ohne die Kilometerstand-Erkennung. Gefahrlos mehrfach aufrufbar — bereits vorhandene Einträge werden übersprungen. |
-| `simulate_trip` | `config_entry_id`, `km` | Test-Fahrtereignis ohne Auto auslösen. |
-| `add_ladekarte` | `config_entry_id`, `name`, `monatliche_gebuehr`, `start_datum`, `end_datum`* | Neue Ladekarte anlegen (siehe [Ladekarten](#ladekarten) unten). `monatliche_gebuehr` wird die erste Gebührenstufe der Karte, gültig ab `start_datum`. |
-| `edit_ladekarte` | `config_entry_id`, `karte_id`, `name`*, `monatliche_gebuehr`*, `start_datum`*, `end_datum`* | Beliebiges Feld einer bestehenden Karte korrigieren. Nur mitgegebene Felder ändern sich; ein leeres `end_datum` entfernt ein zuvor gesetztes (gekündigte Karte reaktivieren). `monatliche_gebuehr` korrigiert nur die *früheste* Gebührenstufe (z.B. ein Tippfehler beim Anlegen) — für einen echten Preiswechsel stattdessen `add_ladekarte_preisstufe` verwenden. |
-| `delete_ladekarte` | `config_entry_id`, `karte_id` | Ladekarte entfernen. **Nicht rückgängig machbar.** Bereits zugeordnete Ladungen behalten ihre (dann verwaiste) Referenz — die Historie selbst bleibt unverändert. |
-| `add_ladekarte_preisstufe` | `config_entry_id`, `karte_id`, `gebuehr`, `ab_datum` | Fügt einer bestehenden Karte eine neue Gebührenstufe hinzu — z.B. wenn ein reduzierter Einführungspreis endet und der reguläre Preis greift. Jede Stufe gilt ab ihrem Datum bis zur nächsten; die Reihenfolge der Aufrufe spielt keine Rolle. Existiert bereits eine Stufe mit exakt diesem Datum, wird deren Gebühr ersetzt statt dupliziert. |
-| `delete_ladekarte_preisstufe` | `config_entry_id`, `karte_id`, `ab_datum` | Entfernt eine zuvor hinzugefügte Gebührenstufe. Die früheste Stufe einer Karte kann nicht entfernt werden — eine Karte braucht immer mindestens eine bekannte Gebühr. |
-| `add_maintenance` | `config_entry_id`, `name`*, `preset`*, `km_intervall`*, `zeit_intervall_monate`*, `festes_datum`*, `kosten`*, `last_done_km`*, `last_done_datum`*, `reminder_monate`*, `reminder_km`* | Legt einen neuen Wartungspunkt an (siehe [Fahrzeugwartung](#fahrzeugwartung) oben). `preset` (`tuev` oder `inspektion`) füllt `name`/Intervall-Standardwerte als Startpunkt — jedes explizit angegebene Feld gewinnt. Braucht einen Namen (eigenen oder aus der Vorlage) und nach Anwendung der Vorlage mindestens ein Fälligkeitskriterium (km-Intervall, Zeit-Intervall in Monaten und/oder festes Datum), sonst wird der Aufruf abgelehnt und protokolliert. `reminder_monate`/`reminder_km` überschreiben optional die globale "bald fällig"-Vorwarnzeit nur für diesen Punkt (`reminder_monate` wird einmalig beim Anlegen in Tage umgerechnet — die Vorwarnzeit selbst braucht anders als das Fälligkeits-Intervall keine Kalenderpräzision). |
-| `edit_maintenance` | `config_entry_id`, `wartung_id`, `name`*, `km_intervall`*, `zeit_intervall_monate`*, `festes_datum`*, `kosten`*, `last_done_km`*, `last_done_datum`*, `aktiv`*, `reminder_monate`*, `reminder_km`* | Korrigiert ein beliebiges Feld eines bestehenden Punkts. Nur angegebene Felder ändern sich; ein leeres `km_intervall`/`zeit_intervall_monate`/`kosten`/`festes_datum`/`reminder_monate`/`reminder_km` löscht dieses Feld. Wird abgelehnt (und zurückgerollt), falls dadurch kein Fälligkeitskriterium mehr übrig bliebe — ein Punkt braucht immer mindestens eines (die Erinnerungsfelder zählen dabei nicht mit). `aktiv: false` pausiert den Punkt (zählt nicht mehr in `wartung_faellig`, bleibt aber im Panel sichtbar). |
-| `delete_maintenance` | `config_entry_id`, `wartung_id` | Entfernt einen Wartungspunkt. **Nicht rückgängig machbar.** |
-| `mark_maintenance_done` | `config_entry_id`, `wartung_id`, `km`*, `datum`* | Markiert den Punkt als erledigt und setzt damit seine Fälligkeitsberechnung zurück. Ohne `km`/`datum` werden der aktuelle Kilometerstand und das heutige Datum verwendet. |
-| `set_panel_layout` | `config_entry_id`, `layout` | Speichert Sichtbarkeit/Reihenfolge der Beta-Panel-Karten — wird vom "Anpassen"-Popup des Panels selbst aufgerufen, nicht für manuelle Nutzung gedacht. |
-
-*optional
-
----
-
-## Beispiele
-
-**Automatisierung: Benachrichtigung bei erzwungenem Netzladen.** Wenn du auf Solar setzt und die [automatische evcc-Modus-/SoC-Steuerung](#automatische-evcc-modus-soc-steuerung) aktiviert hast, feuert das, sobald der berechnete Modus ganz auf `now` fällt — das Nutzungsprofil hat also entschieden, dass der aktuelle Akkustand plus erwartete Solarerzeugung die nächsten Tage nicht abdeckt, und Netzladen wird erzwungen. Die genaue `entity_id` unten hängt vom Gerätenamen deines Fahrzeugs ab.
-
-```yaml
-automation:
-  - alias: "EV Assistant: Netzladen erzwungen"
-    trigger:
-      - platform: state
-        entity_id: sensor.dein_fahrzeug_evcc_modus_steuerung
-        to: "now"
-    action:
-      - service: notify.notify
-        data:
-          title: "Laden wird aus dem Netz erzwungen"
-          message: >
-            evcc-Modus auf "now" gewechselt — {{ state_attr('sensor.dein_fahrzeug_evcc_modus_steuerung', 'rest_heute_kwh') }} kWh heute noch nötig, Solar/Akku reichen nicht aus.
-```
-
-**Lovelace: ein paar Kern-Sensoren auf einem bestehenden Dashboard.** Das [Seitenleisten-Panel](#panel--dashboard) deckt das bereits ausführlich ab — hier geht es nur darum, ein paar Werte auf ein Dashboard zu heften, das du schon hast. `dein_fahrzeug` durch die tatsächliche Entity-ID deines Geräts ersetzen.
-
-```yaml
-type: entities
-title: EV Assistant
-entities:
-  - entity: sensor.dein_fahrzeug_verfuegbare_kwh
-  - entity: sensor.dein_fahrzeug_nutzungsprofil_morgen_benoetigt
-  - entity: binary_sensor.dein_fahrzeug_laden_vor_pv_empfehlenswert
-  - entity: sensor.dein_fahrzeug_evcc_modus_steuerung
-```
-
----
-
-## Wie die Fremdladungserkennung funktioniert
-
-EV Assistant benötigt kein GPS, keine Hersteller-API und keine Ladesäulenliste. Das Prinzip in einem Satz: **Steigt der Batterie-SoC, während das Heimlade-Signal inaktiv ist, muss das Auto woanders laden**.
-
-Eine kleine Zustandsmaschine (`engine.py::ChargeDetector`) überwacht jeden SoC-Messwert. Sie verfolgt den letzten Ruhepunkt als „Anker". Sobald der SoC *ohne aktives Heimlade-Signal* um ≥ `start_delta` über den Anker gestiegen ist, beginnt eine Sitzung — außer `plug_entity` ist konfiguriert und bestätigt, dass das Fahrzeug ausgesteckt ist; dann verschiebt der Anstieg (z.B. ein paar Punkte durch Rekuperation beim Fahren) nur den Anker nach oben, statt eine Sitzung zu starten — **sofern** der Anstieg klein genug ist, um plausibel Rekuperation zu sein (unter 15 Prozentpunkten). Ein größerer Anstieg trotz bestätigtem Ausstecken wird trotzdem als Ladung gewertet — Rekuperation kann realistisch nicht so viel auf einmal bringen, das ist mit weit überwiegender Wahrscheinlichkeit eine während einer Erkennungslücke (z.B. mehrtägiger Verbindungsausfall zur Fahrzeug-Telemetrie) verpasste Ladung statt echter Bremsenergie-Rückgewinnung. Sie endet, wenn das Heimlade-Signal aktiv wird, der SoC um > `drop_ends` unter den verfolgten Höchstwert fällt, `idle_timeout_s` ohne neuen Höchstwert verstreicht, oder (falls `plug_entity` konfiguriert ist) ein bestätigtes Ausstecken erkannt wird.
-
-Die Energie wird aus SoC-Delta × nutzbarem Akku ÷ Ladewirkungsgrad geschätzt — oder, wenn ein Fahrzeug-Ladeleistungssensor konfiguriert ist, aus der integrierten Leistungskurve (genauer, funktioniert auch unterwegs ohne Wallbox-Daten).
-
-Fahrzeuge, die den SoC nur grob oder selten melden (manche Hersteller-Cloud-APIs), können `idle_timeout_s` zwischen zwei SoC-Meldungen derselben, eigentlich durchgehenden Ladung auslösen und sie so in mehrere "offene" Einträge zerteilen. Zwei Absicherungen fangen das ab: neu erkannte Ladungen werden mit der vorherigen offenen zusammengeführt, wenn dazwischen kein SoC-Abfall lag (ein echter Abfall bedeutet, dass gefahren wurde, also tatsächlich getrennte Ladestopps); und falls ein `plug_entity` konfiguriert ist, überstimmt ein bestätigtes „eingesteckt" `idle_timeout_s` komplett, sodass die Sitzung einfach nie endet, solange das Auto verbunden bleibt.
-
----
-
-## Automatische Wirkungsgrad-Kalibrierung
-
-Einen **Wallbox-Energiezähler** konfigurieren (Schritt 3 — kumulativer kWh-Zähler). Für jede Heimlade-Sitzung erfasst EV Assistant die bezogene Wallbox-Energie und den SoC-Gewinn und berechnet:
-
-```
-Wirkungsgrad = (SoC-Gewinn% × nutzbare_kWh) ÷ Wallbox_kWh_Delta
-```
-
-Nach 3 gültigen Sitzungen (≥ 5 Prozentpunkte SoC-Gewinn, Ergebnis im Bereich 50–100 %) wird der Durchschnitt der letzten 10 Messwerte gebildet und automatisch angewendet — kein Neustart erforderlich. Der Sensor `Ladewirkungsgrad (gemessen)` zeigt den aktuellen Wert und seinen Status.
-
----
-
-## Datenaufbewahrung
-
-Fahrtenbuch- und Fremdladungs-Einträge sammeln sich an, solange die Integration eingerichtet ist — bei einem Leasingvertrag potenziell über Jahre. Damit die Speicherdatei von Home Assistant und jeder Scan dieser Daten nicht unbegrenzt wächst, wandern Einträge, die älter als `FAHRTEN_MAX_MONATE`/`HISTORY_MAX_MONATE` sind (beide standardmäßig 24 Monate, `const.py`), täglich in eine separate Archivdatei — **nie gelöscht**. `export_fahrtenbuch` liest das Archiv zusammen mit der aktuellen Liste, der CSV-Export deckt also immer alles ab; ein erneuter Aufruf von `import_fahrtenbuch` prüft ebenfalls gegen das Archiv und erzeugt daher keine Dubletten für bereits archivierte Fahrten.
-
-Alle Summen und Durchschnittswerte — Ersparnis, €/100 km, Gesamt-kWh/-Kosten, `equivalent_full_cycles`, die AC/DC- und Anbieter-Aufschlüsselung sowie die Verbrauchs-/Temperaturband-/Wochentags-Werte — werden aus laufend gepflegten Lebenszeit-Summen berechnet, nicht direkt aus den Fahrtenbuch-/Ladehistorie-Listen — die Archivierung ändert sie daher nie. Nur das "aktuelle Fenster", das über die `fahrtenbuch`/`historie`-Entity-Attribute und die Historien-Ansichten im Panel sichtbar ist, schrumpft mit der Zeit; der vollständige Datensatz bleibt über `export_fahrtenbuch` verfügbar.
+## Dokumentation
+
+Das [Wiki](https://github.com/weskona/ev_assistant/wiki) hat die vollständige Referenz:
+
+| Seite | Behandelt |
+|---|---|
+| [Konfiguration](https://github.com/weskona/ev_assistant/wiki/Configuration-DE) | Der komplette 9-Schritte-Einrichtungs-Flow, jede Option erklärt. |
+| [Sensoren & Entitäten](https://github.com/weskona/ev_assistant/wiki/Sensors-and-Entities-DE) | Jeder Sensor/Binärsensor, mit allen Attributen. |
+| [Dienste](https://github.com/weskona/ev_assistant/wiki/Services-DE) | Jeder Service-Aufruf, mit Parametern. |
+| [Panel-Rundgang](https://github.com/weskona/ev_assistant/wiki/Panel-Tour-DE) | Ein Tab-für-Tab-Rundgang durch das Seitenleisten-Panel. |
+| [Automatische evcc-Modus-Steuerung](https://github.com/weskona/ev_assistant/wiki/Automatic-evcc-Mode-Control-DE) | Tiefer Einblick: die Tages-Basis-Entscheidung, PV-Überschuss-Anrechnung, Echtzeit-Übersteuerung, wirtschaftliche Kappung, Ladeplan. |
+| [Fremdladungserkennung](https://github.com/weskona/ev_assistant/wiki/External-Charge-Detection-Deep-Dive-DE) | Tiefer Einblick: die exakte Zustandsmaschine hinter der Erkennung von Ladungen unterwegs. |
+| [Nutzungsprofil & Recency-Weighting](https://github.com/weskona/ev_assistant/wiki/Usage-Profile-Deep-Dive-DE) | Tiefer Einblick: wie euer typischer Tagesbedarf gelernt und aktuell gehalten wird. |
+| [Anleitung: Panel anpassen](https://github.com/weskona/ev_assistant/wiki/Panel-Customization-Guide-DE) | Praktische Anleitung zu Karten-Auswahl/-Reihenfolge/-Größe. |
+| [Architektur & Mitwirken](https://github.com/weskona/ev_assistant/wiki/Architecture-and-Contributing-DE) | Modul-Struktur, Testen, und eine Anleitung zum Hinzufügen eines neuen Sensors. |
+| [FAQ / Fehlersuche](https://github.com/weskona/ev_assistant/wiki/FAQ-Troubleshooting-DE) | Einrichtungsprobleme und häufige Verhaltensfragen. |
 
 ---
 
 ## Voraussetzungen
 
 - **Home Assistant 2024.1** oder neuer
-- **evcc** (das Addon/die Binary selbst, im Netzwerk erreichbar) — optional, aber erforderlich für die Heimladen-Historie und Live-Energieflussdaten im Panel. EV Assistant spricht evccs eigene REST-API direkt an (`evcc_host` in Schritt 3) — keine separate `evcc_intg`-HA-Integration nötig.
-- Beliebiges Fahrzeug mit SoC-Sensor in HA (WiCAN Pro / MQTT, Hersteller-Cloud-Integrationen, evcc-Fahrzeugsensoren, ...)
-
----
-
-## Testen
-
-**Unit-Tests (reine Logik, `tests/test_engine.py`, kein HA erforderlich):**
-```bash
-python -m pytest tests/test_engine.py -q
-```
-
-**HA-Verdrahtungstests (`tests/ha/`, Config-Flow/Coordinator/Entry-Lifecycle — benötigt `pytest-homeassistant-custom-component`, siehe `requirements_test.txt`):**
-```bash
-pip install -r requirements_test.txt
-pytest tests -q  # laesst beide Suiten zusammen laufen, siehe tests/ha/conftest.py fuer die Koexistenz
-```
-
-**End-to-End in HA (kein Auto erforderlich):**
-- Fremdladung: `ev_assistant.simulate_event` aufrufen mit `config_entry_id`, `soc_start: 32`, `soc_end: 74`. Eine Benachrichtigung und `binary_sensor ... Fremdladung Erfassung offen` sollten aktiv werden. Im Panel bestätigen.
-- Fahrt: `ev_assistant.simulate_trip` aufrufen mit `config_entry_id`, `km: 12.5`. Im Panel bestätigen, dann `export_fahrtenbuch` aufrufen und die CSV in `www/` prüfen.
-
----
-
-## Fehlerbehebung / FAQ
-
-Debug-Logging für mehr Detail als Panel/Sensoren zeigen aktivieren:
-
-```yaml
-logger:
-  logs:
-    custom_components.ev_assistant: debug
-```
-
-**Jeder SoC-Anstieg wird als Fremdladung erkannt, auch beim Heimladen.** Die Wallbox-Ladeleistungs-Entität (Schritt 3) fehlt oder liefert keine korrekten Werte — ohne sie kann EV Assistant Heimladen nicht von Fremdladung unterscheiden. Siehe [Konfiguration](#konfiguration), Schritt 3.
-
-**Der Nutzungsprofil-Tab bzw. der Sensor `usage_profile` bleibt `unknown` oder leer.** Er braucht mindestens 7 Tage Fahrtenbuch-Historie, bevor überhaupt etwas angezeigt wird, damit jeder Wochentag mindestens einmal beobachtet wurde — siehe [Nutzungsprofil](#nutzungsprofil). Weiter Fahrten bestätigen (oder manuell erfassen), dann füllt es sich von selbst.
-
-**`evcc_mode_control` setzt den Lademodus, aber nicht Min-/Ziel-SoC, oder ein Reparieren-Hinweis `evcc_soc_scope_failed` erscheint.** evccs SoC-Geltungsbereich (Loadpoint- oder Fahrzeug-Ebene — abhängig von der evcc-Version, und beide können sich sogar unterscheiden, siehe [Automatische evcc-Modus-/SoC-Steuerung](#automatische-evcc-modus-soc-steuerung)) konnte nicht ermittelt werden. Der Modus wird trotzdem weiterhin gesetzt, nur die betroffene SoC-Grenze wird bis zur nächsten erfolgreichen Probe ausgelassen.
-
-**Alle Energie-Schätzungen wirken durchgängig um einen Faktor daneben.** Die in Schritt 1 eingetragene nutzbare Akkukapazität prüfen — das ist der *netto* nutzbare kWh-Wert, den das Auto tatsächlich laden/entladen kann, nicht die oft größere Brutto-/Werksangabe mancher Hersteller. Jede SoC-basierte kWh-Schätzung der Integration skaliert direkt mit dieser einen Zahl.
+- **evcc** (das Addon/die Binary selbst, im Netzwerk erreichbar) — optional, aber erforderlich für die Heimladen-Historie und Live-Energieflussdaten im Panel. EV Assistant spricht evccs eigene REST-API direkt an — keine separate `evcc_intg`-HA-Integration nötig.
+- Jedes Fahrzeug mit einem SoC-Sensor in HA (WiCAN Pro / MQTT, Hersteller-Cloud-Integrationen, evcc-Fahrzeugsensoren, ...)
 
 ---
 
 ## Mitwirken
 
-Einen Bug gefunden oder einen Feature-Wunsch? Bitte [ein GitHub Issue eröffnen](https://github.com/weskona/ev_assistant/issues) — mit Home-Assistant-Version und, falls relevant, einem Debug-Log (siehe Fehlerbehebung oben). Pull Requests sind willkommen; vor dem Öffnen bitte [CONTRIBUTING.md](CONTRIBUTING.md) lesen (Englisch).
+Einen Bug gefunden oder einen Feature-Wunsch? Bitte [ein GitHub Issue eröffnen](https://github.com/weskona/ev_assistant/issues) — mit eurer Home-Assistant-Version und, falls relevant, einem Debug-Log (siehe [Fehlersuche](https://github.com/weskona/ev_assistant/wiki/FAQ-Troubleshooting-DE)). Pull Requests willkommen; vorher [CONTRIBUTING.md](CONTRIBUTING.md) und die Wiki-Seite [Architektur & Mitwirken](https://github.com/weskona/ev_assistant/wiki/Architecture-and-Contributing-DE) lesen.
 
 ---
 
@@ -491,8 +118,8 @@ MIT — siehe [LICENSE](LICENSE).
 
 Erstellt und gepflegt von [@weskona](https://github.com/weskona).
 
-Das App-Icon basiert auf dem „ev-station"-Glyph der Material Design Icons
+Das App-Icon basiert auf dem „ev-station"-Glyph von Material Design Icons
 (https://pictogrammers.com/library/mdi/), © Pictogrammers, lizenziert unter
-Apache License 2.0. Der Glyph wurde auf eine eigene Sechseck-Kachel gesetzt.
+Apache License 2.0. Das Glyph wurde auf eine eigene Sechseck-Kachel gesetzt.
 
 Fragen oder Support-Anfragen bitte über [GitHub Issues](https://github.com/weskona/ev_assistant/issues), nicht per Direktnachricht.
