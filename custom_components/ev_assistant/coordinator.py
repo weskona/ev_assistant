@@ -5671,7 +5671,23 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # waere sonst JEDEN Zyklus ein "Unterschied" und wuerde endlos
         # (nutzlos) neu schreiben, obwohl new_state["target_soc"] is not
         # None weiter unten diesen Wert sowieso nie tatsaechlich sendet.
-        matches_live = all(new_state[k] is None or live.get(k) == new_state[k] for k in new_state)
+        # target_soc == 0 faellt ebenfalls aus dem Live-Vergleich raus:
+        # evcc behandelt limitSoc=0 nicht als "Ziel 0%", sondern als "kein
+        # Limit gesetzt" und spiegelt stattdessen den fahrzeugeigenen Default
+        # als effectiveLimitSoc zurueck (z.B. 80% statt 0) -- ein woertlicher
+        # Vergleich wuerde hier JEDEN Zyklus faelschlich einen Unterschied
+        # erkennen und den kompletten Modus+SoC-Zustand endlos neu schreiben,
+        # obwohl sich an der eigenen Empfehlung nichts geaendert hat
+        # (Produktionsvorfall 2026-09-26: 5 identische Rewrites im
+        # Minutentakt bei target_soc=0). min_soc=0 ist NICHT betroffen --
+        # effectiveMinSoc wird von evcc korrekt als 0 gespiegelt.
+        def _live_matches(k: str) -> bool:
+            if new_state[k] is None:
+                return True
+            if k == "target_soc" and new_state[k] == 0:
+                return True
+            return live.get(k) == new_state[k]
+        matches_live = all(_live_matches(k) for k in new_state)
         if matches_last and matches_live:
             return  # keine Aenderung -- nichts schreiben
         loadpoint_id = self._current_loadpoint_index()

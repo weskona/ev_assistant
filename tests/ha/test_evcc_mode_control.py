@@ -1303,6 +1303,50 @@ async def test_apply_evcc_mode_control_evcc_live_zustand_stimmt_ueberein_kein_er
     coordinator._evcc_client.async_set_mode.assert_awaited_once()
 
 
+async def test_apply_evcc_mode_control_target_soc_null_evcc_spiegelt_fahrzeug_default_kein_endlos_schreiben(
+    hass, coordinators
+):
+    """Produktionsvorfall 2026-09-26 (Event-Log, 11:04-11:08 Uhr, 5 identische
+    Rewrites im Minutentakt): evcc behandelt limitSoc=0 nicht als "Ziel 0%",
+    sondern als "kein Limit gesetzt" und spiegelt stattdessen den fahrzeug-
+    eigenen Default (hier 80) als effectiveLimitSoc zurueck -- ein woertlicher
+    Live-Vergleich haette das nie erkannt und bei target_soc=0 (z.B. weil das
+    Puffer-Fenster schon komplett gedeckt ist) jeden Zyklus neu geschrieben.
+    minSoc=0 ist NICHT betroffen (siehe Gegenprobe unten) -- effectiveMinSoc
+    wird von evcc korrekt als 0 gespiegelt."""
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "aemc_zero1", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
+    )
+    # weekday_kwh=0.0 -> min_kwh/target_kwh runden auf 0.0 -> target_soc=0.
+    _seed_usage_profile(coordinator, weekday_kwh=0.0)
+    coordinator._soc = 50.0
+    coordinator._evcc_client = _fake_evcc_client(probe_result="loadpoint")
+    coordinator._evcc_state = {"loadpoints": [{}]}
+    await coordinator._async_apply_evcc_mode_control()
+    written = coordinator.data["evcc_mode_control"]
+    assert written["target_soc"] == 0
+    coordinator._evcc_client.async_set_mode.assert_awaited_once()
+
+    # evcc spiegelt effectiveLimitSoc als seinen Fahrzeug-Default (80) statt
+    # der geschriebenen 0 zurueck -- alles andere (Modus, effectiveMinSoc)
+    # stimmt bereits ueberein.
+    coordinator._evcc_state = {
+        "loadpoints": [{
+            "mode": written["modus"],
+            "effectiveMinSoc": written["min_soc"],
+            "effectiveLimitSoc": 80,
+        }],
+    }
+    await coordinator._async_apply_evcc_mode_control()
+
+    coordinator._evcc_client.async_set_mode.assert_awaited_once()  # KEIN zweiter Schreibvorgang
+
+
 async def test_apply_evcc_mode_control_pause_unterdrueckt_schreiben(hass, coordinators):
     from custom_components.ev_assistant.const import (
         CONF_EVCC_MODE_CONTROL_ENABLED,

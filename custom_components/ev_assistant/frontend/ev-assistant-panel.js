@@ -5217,6 +5217,15 @@ class EVAssistantPanel extends HTMLElement {
   _buildStyles() {
     const el = document.createElement("style");
     el.textContent = `
+      /* Global statt nur auf einzelnen Elementen (frueher nur .pend-inputs
+         input): ohne das addieren Padding-Breiten auf .appbar/.vt-bar/.main
+         (siehe dort) zur zugewiesenen Breite/Hoehe hinzu statt sie
+         einzuschliessen -- Produktionsfeedback 2026-09-26: "Layout ein
+         paar Pixel zu breit" auf iOS. Gegengeprueft: keine bestehende Regel
+         verlaesst sich auf content-box-Verhalten (z.B. width:100% +
+         horizontales Padding auf demselben Element, das eine
+         Kompensationsrechnung noetig machen wuerde). */
+      *, *::before, *::after { box-sizing: border-box; }
       :host {
         display: block; height: 100%;
         --accent: #8fbd39;
@@ -5250,11 +5259,27 @@ class EVAssistantPanel extends HTMLElement {
       /* Appbar */
       .appbar {
         display: flex; align-items: center; gap: 26px;
-        height: 66px; padding: 0 30px; flex-shrink: 0;
+        /* min-height statt height: laesst die Bar natuerlich waechsen, wenn
+           .app > *:first-child weiter unten ihr (nur falls sie tatsaechlich
+           zuoberst sitzt) zusaetzliches padding-top fuer die Notch-
+           Aussparung gibt, statt den Inhalt darin zusammenzuquetschen. */
+        min-height: 66px;
+        padding: 0 30px; flex-shrink: 0;
         border-bottom: 1px solid var(--line);
         background: color-mix(in oklab, var(--bg-1) 85%, transparent);
         backdrop-filter: blur(10px);
       }
+      /* handle_safe_area=True bei der Panel-Registrierung (siehe __init__.py)
+         verzichtet bewusst auf HAs eigenen Safe-Area-Wrapper (kollidierte
+         mit dem Touch-Scrolling, siehe CHANGELOG) -- die Notch-/Dynamic-
+         Island-Aussparung oben uebernehmen wir also selbst. Bewusst NICHT
+         direkt auf .appbar: bei mehreren Fahrzeugen wird .vt-bar VOR der
+         Appbar eingefuegt (siehe _renderShell()-Kommentar) und ist dann
+         das tatsaechlich oberste Element -- ein hartcodiertes padding-top
+         nur auf .appbar liess die Fahrzeugleiste in diesem Fall weiterhin
+         unter der Dynamic Island sitzen (Produktionsfeedback 2026-09-26).
+         Diese Regel trifft immer genau das jeweils oberste Element. */
+      .app > *:first-child { padding-top: env(safe-area-inset-top, 0px); }
       .brand { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
       .brand .logo {
         width: 38px; height: 38px; border-radius: 11px;
@@ -5294,7 +5319,10 @@ class EVAssistantPanel extends HTMLElement {
       .vt-bar-scroll::-webkit-scrollbar { display: none; }
 
       /* Main scroll area */
-      .main { flex: 1; overflow-y: auto; padding: 24px 28px 40px; }
+      /* padding-bottom addiert env(safe-area-inset-bottom) (Home-Indicator-
+         Aussparung auf iOS, siehe .appbar-Kommentar oben) zum bestehenden
+         40px-Abstand, statt ihn zu ersetzen. */
+      .main { flex: 1; overflow-y: auto; padding: 24px 28px calc(40px + env(safe-area-inset-bottom, 0px)); }
       .main::-webkit-scrollbar { width: 8px; }
       .main::-webkit-scrollbar-thumb {
         background: var(--line-s); border-radius: 8px;
@@ -6123,7 +6151,7 @@ class EVAssistantPanel extends HTMLElement {
         .brand .btext { display: none; }
         .tab { padding: 0 12px; }
         .vt-bar { padding: 8px 14px; }
-        .main { padding: 16px 14px 30px; }
+        .main { padding: 16px 14px calc(30px + env(safe-area-inset-bottom, 0px)); }
         .kv { font-size: 1.3rem; }
         .kpi-row { gap: 10px 18px; }
         .pend-inputs label { flex: 1 1 90px; }
@@ -6139,7 +6167,7 @@ class EVAssistantPanel extends HTMLElement {
         .brand .btext { display: none; }
         .tab { padding: 0 12px; }
         .vt-bar { padding: 8px 14px; }
-        .main { padding: 16px 14px 30px; }
+        .main { padding: 16px 14px calc(30px + env(safe-area-inset-bottom, 0px)); }
         .kv { font-size: 1.3rem; }
         .kpi-row { gap: 10px 18px; }
         .pend-inputs label { flex: 1 1 90px; }

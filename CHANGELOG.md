@@ -2,6 +2,21 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.2] - 2026-09-26
+
+### Fixed
+
+- **Panel top bar overlapped by the iPhone Dynamic Island/notch**: `handle_safe_area=True` (added in an earlier release to stop HA's own safe-area wrapper from freezing touch scrolling) means the panel has to carve out the notch clearance itself, which it never actually did. Whichever bar is actually topmost now gets `env(safe-area-inset-top)` added as padding — the appbar normally, but the vehicle switcher bar when more than one vehicle is configured (it's inserted above the appbar in that case, and was still missed by an initial fix that only touched the appbar). The main scroll area's bottom padding grows by `env(safe-area-inset-bottom)` (home-indicator clearance) the same way.
+- **Panel layout slightly wider than the viewport on iOS** (a few pixels of horizontal overflow/cut-off edge), caused by `box-sizing` defaulting to `content-box` everywhere except one isolated input field — padding on `.appbar`/`.vt-bar`/`.main` was adding to their assigned width instead of being included in it. Now `box-sizing: border-box` globally.
+
+**Tested**: iPhone 16 Pro (Dynamic Island), portrait. **Not tested**: other notch shapes/older iPhones, Android devices with a punch-hole camera, landscape orientation — the `env()` values should adapt automatically on any device that reports them, but this hasn't been verified beyond the one device.
+
+## [0.99.1] - 2026-09-26
+
+### Fixed
+
+- **evcc mode control repeatedly rewrote mode/SoC every cycle when the computed target SoC was 0%**: found via the new event log (0.99.0) — 5 identical rewrites in a row, one per minute. Root cause: evcc doesn't mirror a written `limitSoc=0` back as `effectiveLimitSoc=0` — it treats 0 as "no limit set" and reports the vehicle's own configured default instead (e.g. 80%), so the live-state comparison never converged. `minSoc=0` was never affected — evcc mirrors that one correctly. `target_soc == 0` is now excluded from the live comparison, the same way an already-`None` value already was.
+
 ## [0.99.0] - 2026-09-26
 
 ### Added
