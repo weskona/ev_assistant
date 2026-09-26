@@ -457,6 +457,17 @@ AC_MAX_KW = 22.0
 FAHRTEN_MAX_MONATE = 24
 HISTORY_MAX_MONATE = 24
 
+# Wie lange das Ereignisprotokoll (coordinator._log_event()/self.data
+# ["event_log"]) zurueckreicht, bevor die aeltesten Eintraege beim naechsten
+# Schreibvorgang rausfallen -- bewusst kurz (Tage/Wochen, nicht Monate wie
+# FAHRTEN_MAX_MONATE/HISTORY_MAX_MONATE oben): anders als Fahrten/Ladungen
+# ist das hier ein reines Diagnose-Log fuer Bug-Reports (siehe
+# async_export_event_log()), kein Datensatz mit eigenem Wert -- unbegrenztes
+# Wachstum waere nur Speicher-Ballast ohne Nutzen. Nutzerwunsch 2026-09-26:
+# "logs, die alles wiederspiegeln was zb zwei wochen lang passiert ist",
+# "und einen restart überleben".
+EVENT_LOG_MAX_AGE_DAYS = 14
+
 # Naeherung fuer die Umrechnung "monatliche Grundgebuehr" -> laufende
 # Tagesrate (siehe engine.ladekarte_accrued_cost()): eine echte
 # Kartenabrechnung erfolgt in monatlichen Spruengen, nicht stetig -- hier
@@ -591,6 +602,7 @@ SERVICE_DELETE = "delete_charge"
 SERVICE_LOG_TRIP = "log_trip"
 SERVICE_DISCARD_TRIP = "discard_pending_trip"
 SERVICE_EXPORT_TRIPS = "export_fahrtenbuch"
+SERVICE_EXPORT_EVENT_LOG = "export_event_log"
 SERVICE_SIMULATE_TRIP = "simulate_trip"
 SERVICE_EDIT_TRIP = "edit_trip"
 SERVICE_DELETE_TRIP = "delete_trip"

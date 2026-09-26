@@ -8,7 +8,10 @@ body:
         Thanks for taking the time to report a bug. Since EV Assistant works from whatever
         entities you point it at (manufacturer integration, OBD dongle, evcc, ...), most bugs
         turn out to be about *how* a specific vehicle/sensor combination reports its data —
-        the config and log details below help a lot in tracking that down.
+        the config, event log, and debug log details below help a lot in tracking that down.
+        If you're on v0.99.0 or later, the event log especially: unlike the Diagnostics
+        snapshot (a single point in time), it's a timeline of what actually happened over the
+        last ~14 days, and needs no manual redaction before attaching.
 
   - type: input
     id: version
@@ -134,6 +137,20 @@ body:
             no tokens or precise location data — and helps far more than manually
             transcribed config.
           required: true
+
+  - type: checkboxes
+    id: event-log
+    attributes:
+      label: Event log (v0.99.0+)
+      options:
+        - label: >
+            I've attached the event log — the "Ereignisprotokoll" card on the panel's
+            Analyse tab (Download button), or the `ev_assistant.export_event_log` service.
+            It's the last ~14 days of mode changes (with the reasoning behind each), detected/
+            confirmed/discarded external charges and trips, vacation/evcc-connectivity
+            transitions, and repair-issue transitions — usually the fastest way to see what
+            actually happened over time, not just the current state. Not available before
+            v0.99.0.
 
   - type: textarea
     id: logs

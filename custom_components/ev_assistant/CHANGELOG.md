@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.0] - 2026-09-26
+
+### Added
+
+- **Persistent event log for bug reports**: a rolling, restart-surviving log of what happened over roughly the last 14 days — mode changes (with the min/target/available kWh behind the decision, plus whether the real-time PV override or weekly balancing caused it), external charges and trips detected/confirmed/discarded, repair-issue transitions (entity gone stale/recovered, evcc SoC-scope probe failed/recovered), vacation mode activated/ended, evcc connectivity lost/restored, and the weekly full-charge toggle. New `export_event_log` service writes it as a plain-text file to `www/`, and the Analyse panel tab has a "Ereignisprotokoll" card with a direct download button. Intended so other users can attach the file to a bug report without needing access to their instance — always on, no config toggle, and small enough (discrete events only, not raw sensor polling) that 14 days of history stays a few KB.
+
 ## [0.98.9] - 2026-09-24
 
 ### Changed

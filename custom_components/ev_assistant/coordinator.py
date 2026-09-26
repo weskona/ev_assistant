@@ -118,6 +118,7 @@ from .const import (
     EVCC_UEBERSCHUSS_ZIEL_HOLD_S,
     EVENT_DELETED,
     EVENT_EDITED,
+    EVENT_LOG_MAX_AGE_DAYS,
     EVENT_LOGGED,
     EVENT_PENDING,
     EVENT_TRIP_DELETED,
@@ -887,6 +888,24 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     async def _refresh_evcc_state(self, _now=None) -> None:
         if self._evcc_client is not None:
             self._evcc_state = await self._evcc_client.async_get_state()
+            reachable = self._evcc_state is not None
+            was_reachable = self.data.get("evcc_reachable_last")
+            # was_reachable is None (nicht True/False) nur beim allerersten
+            # Poll nach Setup/Neustart -- da gibt es noch keinen Vorzustand,
+            # ein Log-Eintrag waere kein echter Uebergang.
+            if was_reachable is not None and was_reachable != reachable:
+                self._log_event(
+                    "evcc_erreichbar" if reachable else "evcc_nicht_erreichbar",
+                    f"host={self._opt(CONF_EVCC_HOST) or ''}",
+                )
+                # Eigener Save-Aufruf noetig: _refresh_evcc_state() laeuft auf
+                # seinem eigenen Timer (_EVCC_POLL_INTERVAL_S), nicht auf dem
+                # von _periodic_check() -- ohne das koennte ein "nicht mehr
+                # erreichbar"-Uebergang unbemerkt liegen bleiben, wenn evcc
+                # laenger unerreichbar bleibt (der untere Zweig, der sonst
+                # mitspeichert, laeuft ja gerade NICHT, siehe unten).
+                self._save_soon()
+            self.data["evcc_reachable_last"] = reachable
             self._check_evcc_manual_mode_session_end()
             if self._evcc_state is not None:
                 self._update_plug_window()
@@ -2354,9 +2373,22 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._run_detection()
         await self._run_trip_detection()
         self._check_entity_health()
+        self._check_urlaub_transition()
         if self._soc is not None:
             self._update_vehicle_discharge(self._soc)
         await self._async_apply_evcc_mode_control()
+
+    def _check_urlaub_transition(self) -> None:
+        """Loggt den Uebergang von _urlaub_aktiv() (siehe dort), damit sich
+        im Ereignisprotokoll nachvollziehen laesst, warum die evcc-Modus-
+        Steuerung ueber einen Zeitraum nichts geschrieben hat (pausiert
+        waehrend Urlaub, siehe _async_apply_evcc_mode_control()). Reiner
+        Flanken-Trigger, analog _check_evcc_manual_mode_session_end()."""
+        aktiv = self._urlaub_aktiv()
+        war_aktiv = self.data.get("urlaub_aktiv_last")
+        if war_aktiv is not None and war_aktiv != aktiv:
+            self._log_event("urlaub_aktiviert" if aktiv else "urlaub_beendet", "")
+        self.data["urlaub_aktiv_last"] = aktiv
 
     def _check_entity_health(self) -> None:
         """Repair-Issue anlegen/entfernen fuer konfigurierte Quell-Entitaeten,
@@ -2389,6 +2421,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 if conf_key in self._entity_issue_active:
                     self._entity_issue_active.discard(conf_key)
                     ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+                    self._log_event("problem_behoben", f"{entity_id} ({conf_key}) meldet wieder")
                 continue
             since = self._entity_bad_since.setdefault(conf_key, now)
             if now - since >= _ENTITY_STALE_THRESHOLD_S and conf_key not in self._entity_issue_active:
@@ -2402,6 +2435,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                         "entity_id": entity_id,
                         "minuten": str(_ENTITY_STALE_THRESHOLD_S // 60),
                     },
+                )
+                self._log_event(
+                    "problem_erkannt",
+                    f"{entity_id} ({conf_key}) seit {_ENTITY_STALE_THRESHOLD_S // 60}min unavailable/unknown",
                 )
 
     def _recheck_motor(self) -> None:
@@ -2583,6 +2620,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # letzten offenen zusammengefuehrt, siehe dort).
         pend["config_entry_id"] = self.entry.entry_id
         merge_pending(self.data.setdefault("pending", []), pend)
+        self._log_event(
+            "fremdladung_erkannt",
+            f"SoC {pend.get('soc_start')}->{pend.get('soc_end')}%, "
+            f"~{pend.get('energy_kwh')} kWh, Quelle: {pend.get('energy_source')}",
+        )
         await self._save()
         self.hass.bus.async_fire(EVENT_PENDING, pend)
         await self._notify()
@@ -2699,11 +2741,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if self._opt(CONF_TRIP_AUTO_CONFIRM, DEFAULT_TRIP_AUTO_CONFIRM):
             rec = self._build_trip_record(pend, pend.get("start_ort_vorschlag"), pend.get("end_ort_vorschlag"))
             self._finalize_trip_record(rec)
+            self._log_event("fahrt_erkannt", f"{pend.get('km')} km, automatisch bestaetigt")
             await self._save()
             self.hass.bus.async_fire(EVENT_TRIP_LOGGED, rec)
             self.async_set_updated_data(self.data)
             return
         self.data.setdefault("pending_trips", []).append(pend)
+        self._log_event("fahrt_erkannt", f"{pend.get('km')} km, wartet auf Bestaetigung")
         await self._save()
         self.hass.bus.async_fire(EVENT_TRIP_PENDING, pend)
         await self._notify_trip()
@@ -3109,6 +3153,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
         rec = self._build_trip_record(pend, start_ort, end_ort)
         self._finalize_trip_record(rec)
+        self._log_event("fahrt_bestaetigt", f"{rec.get('km')} km")
         await self._save()
         self.hass.bus.async_fire(EVENT_TRIP_LOGGED, rec)
         if pending_list:
@@ -3121,8 +3166,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         """Verwirft eine offene Fahrt. Bei mehreren gleichzeitig offenen
         waehlt `start_ts` die gemeinte aus; ohne Angabe die aelteste (FIFO)."""
         pending_list = list(self.data.get("pending_trips") or [])
-        pop_pending(pending_list, start_ts)
+        discarded = pop_pending(pending_list, start_ts)
         self.data["pending_trips"] = pending_list
+        if discarded is not None:
+            self._log_event("fahrt_verworfen", f"{discarded.get('km')} km")
         await self._save()
         if pending_list:
             await self._notify_trip()
@@ -3369,6 +3416,47 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 odo_end = t["odo_end"] if t["odo_end"] is not None else ""
                 writer.writerow([t["datum"], t["start_ort"], t["end_ort"], odo_start, odo_end, t["km"]])
 
+    async def async_export_event_log(self) -> str:
+        """Exportiert das Ereignisprotokoll (siehe _log_event()/
+        EVENT_LOG_MAX_AGE_DAYS in const.py) als lesbare Text-Datei nach
+        www/, fuer Bug-Reports -- andere Nutzer koennen die Datei direkt
+        an ein GitHub-Issue anhaengen, ohne dass wir Zugriff auf ihre
+        Instanz brauchen. Bewusst reiner Text statt JSON: soll auf einen
+        Blick lesbar sein, nicht nur maschinell auswertbar. Keine eigene
+        Redaction noetig (anders als diagnostics.py/TO_REDACT_LOCATION):
+        _log_event()-Aufrufer duerfen laut dortigem Docstring ohnehin
+        keine Orte/Tokens in den Text schreiben, nur technische Werte
+        (SoC/kWh/Modus/Entity-IDs)."""
+        log = list(self.data.get("event_log") or [])
+        path = self.hass.config.path("www", f"ev_assistant_event_log_{self.entry.entry_id}.txt")
+        await self.hass.async_add_executor_job(self._write_event_log_txt, path, log)
+        filename = os.path.basename(path)
+        en = self._en()
+        try:
+            await self.hass.services.async_call(
+                "persistent_notification", "create",
+                {
+                    "notification_id": f"{self._notify_tag}_event_log_export",
+                    "title": "Event log exported" if en else "Ereignisprotokoll exportiert",
+                    "message": (
+                        f"Log ready: [{filename}](/local/{filename})" if en
+                        else f"Protokoll bereit: [{filename}](/local/{filename})"
+                    ),
+                },
+                blocking=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return path
+
+    @staticmethod
+    def _write_event_log_txt(path: str, log: list[dict]) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            for entry in log:
+                ts_local = dt_util.as_local(dt_util.utc_from_timestamp(entry["ts"]))
+                f.write(f"[{ts_local.strftime('%Y-%m-%d %H:%M:%S')}] {entry['kategorie']}: {entry['text']}\n")
+
     async def async_log_charge(
         self, kwh: float, price: float, start_ts: Optional[float] = None,
         start_fee: float = 0.0, block_fee: float = 0.0, time_fee: float = 0.0,
@@ -3447,6 +3535,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._apply_charge_baselines(rec, 1)
         self._history_version += 1
         self.data["last_price"] = price
+        self._log_event("fremdladung_bestaetigt", f"{kwh} kWh, {price} EUR/kWh")
         await self._save()
         self.hass.bus.async_fire(EVENT_LOGGED, rec)
         if pending_list:
@@ -4008,8 +4097,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         offenen waehlt `start_ts` die gemeinte aus; ohne Angabe wird die
         aelteste verworfen (FIFO)."""
         pending_list = list(self.data.get("pending") or [])
-        pop_pending(pending_list, start_ts)
+        discarded = pop_pending(pending_list, start_ts)
         self.data["pending"] = pending_list
+        if discarded is not None:
+            self._log_event(
+                "fremdladung_verworfen",
+                f"SoC {discarded.get('soc_start')}->{discarded.get('soc_end')}%",
+            )
         await self._save()
         if pending_list:
             await self._notify()
@@ -4782,6 +4876,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             new_data.pop(CONF_WEEKLY_FULL_CHARGE_ENABLED, None)
         else:
             new_data[CONF_WEEKLY_FULL_CHARGE_ENABLED] = bool(enabled)
+        self._log_event(
+            "woechentliche_vollladung_umgeschaltet",
+            f"enabled={new_data.get(CONF_WEEKLY_FULL_CHARGE_ENABLED, DEFAULT_WEEKLY_FULL_CHARGE_ENABLED)}",
+        )
+        # Synchron speichern (nicht _save_soon()): async_update_entry() loest
+        # sofort einen Reload aus (siehe Docstring oben), der diese
+        # Coordinator-Instanz abbaut -- _save_soon() garantiert einen Flush
+        # nur vor einem echten HA-Shutdown, NICHT vor einem Reload waehrend
+        # HA weiterlaeuft (siehe dortigen Docstring), der Log-Eintrag ginge
+        # sonst bei jedem Umschalten verloren.
+        await self._save()
         self.hass.config_entries.async_update_entry(self.entry, data=new_data)
 
     def usage_profile_tomorrow(self) -> Optional[dict]:
@@ -5428,6 +5533,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             if self._soc_scope_issue_active:
                 self._soc_scope_issue_active = False
                 ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+                self._log_event("problem_behoben", "evcc SoC-Scope wieder ermittelbar")
             return
         if not self._soc_scope_issue_active:
             self._soc_scope_issue_active = True
@@ -5437,6 +5543,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 severity=ir.IssueSeverity.WARNING,
                 translation_key="evcc_soc_scope_failed",
                 translation_placeholders={"host": self._opt(CONF_EVCC_HOST) or ""},
+            )
+            self._log_event(
+                "problem_erkannt",
+                f"evcc SoC-Scope nicht ermittelbar (min={min_scope}, limit={limit_scope})",
             )
 
     async def _evcc_scope(
@@ -5613,6 +5723,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             _LOGGER.warning("evcc_mode_control: Schreibvorgang teilweise/ganz fehlgeschlagen: %s", new_state)
             return  # bei Fehler NICHT als "geschrieben" vermerken -> naechster Zyklus versucht erneut
         self.data["evcc_mode_control"] = {**new_state, "geschrieben_ts": dt_util.utcnow().timestamp()}
+        self._log_event(
+            "evcc_modus_geschrieben",
+            f"{last.get('modus')}->{new_state['modus']}, min_soc={new_state['min_soc']}, "
+            f"target_soc={new_state['target_soc']}, verfuegbar={targets.get('verfuegbare_kwh')}kWh, "
+            f"min={targets.get('min_kwh')}kWh, target={targets.get('target_kwh')}kWh, "
+            f"pv_override_aktiv={targets.get('pv_override_aktiv')}, "
+            f"balancing_faellig={targets.get('balancing_faellig')}",
+        )
         await self._store.async_save(self.data)
 
     async def async_set_evcc_mode_control_pause(self, paused: bool) -> None:
@@ -5877,6 +5995,24 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             )
         except Exception:  # noqa: BLE001
             pass
+
+    def _log_event(self, kategorie: str, text: str) -> None:
+        """Haengt einen Eintrag ans persistente Ereignisprotokoll an (siehe
+        EVENT_LOG_MAX_AGE_DAYS/async_export_event_log()) -- ein "Flug-
+        schreiber" fuer Bug-Reports: andere Nutzer koennen den Export
+        anhaengen, ohne dass wir Zugriff auf ihre Instanz brauchen.
+        Mutiert nur self.data, speichert NICHT selbst -- laeuft immer an
+        Stellen, die ohnehin gleich/kurz danach _save()/_save_soon()
+        aufrufen, ein zusaetzlicher Schreibvorgang hier waere nur doppelte
+        I/O. Reine, kleine Text-Eintraege (kein Roh-Objekt-Dump) -- klein
+        genug, um nach EVENT_LOG_MAX_AGE_DAYS wirklich uebersichtlich zu
+        bleiben, siehe async_export_event_log() fuer die Redaction-Regeln
+        beim Export."""
+        log = self.data.setdefault("event_log", [])
+        log.append({"ts": dt_util.utcnow().timestamp(), "kategorie": kategorie, "text": text})
+        cutoff = dt_util.utcnow().timestamp() - EVENT_LOG_MAX_AGE_DAYS * 86400
+        while log and log[0]["ts"] < cutoff:
+            log.pop(0)
 
     async def _save(self) -> None:
         await self._store.async_save(self.data)

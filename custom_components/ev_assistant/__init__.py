@@ -33,6 +33,7 @@ from .const import (
     SERVICE_EDIT_LADEKARTE,
     SERVICE_EDIT_MAINTENANCE,
     SERVICE_EDIT_TRIP,
+    SERVICE_EXPORT_EVENT_LOG,
     SERVICE_EXPORT_TRIPS,
     SERVICE_IMPORT_TRIPS,
     SERVICE_LOG,
@@ -265,6 +266,10 @@ DISCARD_TRIP_SCHEMA = vol.Schema({
 })
 
 EXPORT_TRIPS_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+})
+
+EXPORT_EVENT_LOG_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
 })
 
@@ -573,6 +578,11 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_export_fahrtenbuch()
 
+    async def _handle_export_event_log(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_export_event_log()
+
     async def _handle_simulate_trip(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
@@ -749,6 +759,9 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_LOG_TRIP, _handle_log_trip, schema=LOG_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCARD_TRIP, _handle_discard_trip, schema=DISCARD_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_EXPORT_TRIPS, _handle_export_trips, schema=EXPORT_TRIPS_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, SERVICE_EXPORT_EVENT_LOG, _handle_export_event_log, schema=EXPORT_EVENT_LOG_SCHEMA
+    )
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE_TRIP, _handle_simulate_trip, schema=SIMULATE_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_EDIT_TRIP, _handle_edit_trip, schema=EDIT_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DELETE_TRIP, _handle_delete_trip, schema=DELETE_TRIP_SCHEMA)
@@ -829,7 +842,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _async_unregister_panel(hass)
             for service in (
                 SERVICE_LOG, SERVICE_DISCARD, SERVICE_SIMULATE, SERVICE_EDIT, SERVICE_DELETE,
-                SERVICE_LOG_TRIP, SERVICE_DISCARD_TRIP, SERVICE_EXPORT_TRIPS, SERVICE_SIMULATE_TRIP,
+                SERVICE_LOG_TRIP, SERVICE_DISCARD_TRIP, SERVICE_EXPORT_TRIPS, SERVICE_EXPORT_EVENT_LOG,
+                SERVICE_SIMULATE_TRIP,
                 SERVICE_EDIT_TRIP, SERVICE_DELETE_TRIP, SERVICE_IMPORT_TRIPS,
                 SERVICE_ADD_LADEKARTE, SERVICE_EDIT_LADEKARTE, SERVICE_DELETE_LADEKARTE,
                 SERVICE_ADD_LADEKARTE_PREISSTUFE, SERVICE_DELETE_LADEKARTE_PREISSTUFE,

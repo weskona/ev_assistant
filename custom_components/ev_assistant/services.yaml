@@ -472,6 +472,23 @@ export_fahrtenbuch:
         config_entry:
           integration: ev_assistant
 
+export_event_log:
+  name: Ereignisprotokoll exportieren
+  description: >
+    Schreibt das Ereignisprotokoll der letzten ca. 14 Tage (Modus-Wechsel,
+    erkannte/bestätigte/verworfene Fremdladungen und Fahrten, Repair-Issues)
+    als Text-Datei nach /config/www/ev_assistant_event_log_[config_entry_id].txt
+    und meldet den Download-Link per Benachrichtigung -- gedacht zum Anhängen
+    an einen Bug-Report.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+
 import_fahrtenbuch:
   name: Fahrtenbuch importieren
   description: >

@@ -1198,6 +1198,18 @@ class EVAssistantPanel extends HTMLElement {
           Nur tatsächliche Ladungskosten je Anbieter (WO geladen wurde) — Ladekarten-Grundgebühren gehören
           keinem einzelnen Anbieter zu und fließen hier nicht ein.
         </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:file-download-outline"></ha-icon></span><h2>Ereignisprotokoll</h2>
+        </div>
+        <div class="profil-empty">
+          Protokoll der letzten ca. 14 Tage (Modus-Wechsel, erkannte/bestätigte/verworfene Fremdladungen und
+          Fahrten, Probleme) als Text-Datei — z.B. zum Anhängen an einen Bug-Report.
+        </div>
+        <button type="button" class="btn btn-ghost" id="analyse-event-log-export" style="margin-top:10px">
+          <ha-icon icon="mdi:file-download-outline"></ha-icon> Herunterladen
+        </button>
       </div>`;
 
     const q = (s) => wrap.querySelector(s);
@@ -1245,7 +1257,40 @@ class EVAssistantPanel extends HTMLElement {
       analyseMischpreisAktuell:  q("#analyse-mischpreis-aktuell"),
       analyseMischpreisSchwelle: q("#analyse-mischpreis-schwelle"),
       analyseMischpreisNote:     q("#analyse-mischpreis-note"),
+      analyseEventLogExport: q("#analyse-event-log-export"),
     };
+    // Wartet (anders als this._call(), das nur "fire and forget" macht) auf
+    // den Abschluss des Service-Aufrufs, bevor der Download ausgeloest
+    // wird -- die Datei muss ja erst geschrieben sein (siehe coordinator.py::
+    // async_export_event_log(), Dateiname ist deterministisch aus
+    // config_entry_id, kein Response-Value noetig). Bewusst KEIN
+    // window.open() hier: das laeuft nach dem await nicht mehr synchron
+    // zur Klick-Geste und wird von mobilem Safari/der HA-Begleit-App als
+    // Popup geblockt (Produktionsfeedback 2026-09-26: Button tut auf dem
+    // Handy nichts). Ein unsichtbares <a download>-Element anklicken
+    // funktioniert stattdessen zuverlaessig, weil es kein neues
+    // Fenster/Tab oeffnet, sondern nur einen Datei-Download ausloest.
+    this._r.analyseEventLogExport.addEventListener("click", async () => {
+      const config_entry_id = this._configEntryId();
+      if (!config_entry_id) return;
+      const btn = this._r.analyseEventLogExport;
+      btn.disabled = true;
+      try {
+        await this._hass.callService("ev_assistant", "export_event_log", { config_entry_id });
+        const filename = `ev_assistant_event_log_${config_entry_id}.txt`;
+        const a = document.createElement("a");
+        a.href = `/local/${filename}`;
+        a.download = filename;
+        a.target = "_blank";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch (err) {
+        console.error("export_event_log fehlgeschlagen", err);
+      } finally {
+        btn.disabled = false;
+      }
+    });
     return wrap;
   }
 
