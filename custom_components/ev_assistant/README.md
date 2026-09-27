@@ -75,6 +75,7 @@ Once set up, EV Assistant registers a sidebar panel automatically — no dashboa
 | [External Charge Detection](https://github.com/weskona/ev_assistant/wiki/External-Charge-Detection-Deep-Dive) | Deep dive: the exact state machine behind detecting away-from-home charges. |
 | [Usage Profile & Recency-Weighting](https://github.com/weskona/ev_assistant/wiki/Usage-Profile-Deep-Dive) | Deep dive: how your typical daily need is learned and kept current. |
 | [Panel Customization Guide](https://github.com/weskona/ev_assistant/wiki/Panel-Customization-Guide) | Practical walkthrough of card selection/reordering/sizing. |
+| [Tips and Tricks](https://github.com/weskona/ev_assistant/wiki/Tips-and-Tricks) | Home Assistant tricks that work around a real limitation, e.g. multiple possible drivers for trip location. |
 | [Architecture & Contributing](https://github.com/weskona/ev_assistant/wiki/Architecture-and-Contributing) | Module layout, testing, and a guide to adding a new sensor. |
 | [FAQ / Troubleshooting](https://github.com/weskona/ev_assistant/wiki/FAQ-Troubleshooting) | Setup issues and common behavior questions. |
 
@@ -149,6 +150,7 @@ Nach der Einrichtung registriert EV Assistant automatisch ein Seitenleisten-Pane
 | [Fremdladungserkennung](https://github.com/weskona/ev_assistant/wiki/External-Charge-Detection-Deep-Dive-DE) | Tiefer Einblick: die exakte Zustandsmaschine hinter der Erkennung von Ladungen unterwegs. |
 | [Nutzungsprofil & Recency-Weighting](https://github.com/weskona/ev_assistant/wiki/Usage-Profile-Deep-Dive-DE) | Tiefer Einblick: wie euer typischer Tagesbedarf gelernt und aktuell gehalten wird. |
 | [Anleitung: Panel anpassen](https://github.com/weskona/ev_assistant/wiki/Panel-Customization-Guide-DE) | Praktische Anleitung zu Karten-Auswahl/-Reihenfolge/-Größe. |
+| [Tipps und Tricks](https://github.com/weskona/ev_assistant/wiki/Tips-and-Tricks-DE) | Home-Assistant-Kniffe für echte Grenzen der Integration, z.B. mehrere mögliche Fahrer bei der Fahrt-Ortserkennung. |
 | [Architektur & Mitwirken](https://github.com/weskona/ev_assistant/wiki/Architecture-and-Contributing-DE) | Modul-Struktur, Testen, und eine Anleitung zum Hinzufügen eines neuen Sensors. |
 | [FAQ / Fehlersuche](https://github.com/weskona/ev_assistant/wiki/FAQ-Troubleshooting-DE) | Einrichtungsprobleme und häufige Verhaltensfragen. |
 

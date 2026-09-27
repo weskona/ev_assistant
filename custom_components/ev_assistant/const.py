@@ -20,6 +20,14 @@ CONF_POWER_ENTITY = "power_entity"
 CONF_POWER_TEMPLATE = "power_template"
 CONF_WALLBOX_ENERGY_ENTITY = "wallbox_energy_entity"
 CONF_WALLBOX_ENERGY_TEMPLATE = "wallbox_energy_template"
+# Optional, nur fuer den generischen (nicht-evcc) Live-Status der Wallbox-
+# Karte (siehe coordinator.py::home_generic_live_attrs()): eigene Status-
+# Sensoren der Wallbox selbst, falls vorhanden -- ersetzen dann die sonst
+# aus CONF_HOME_ENTITY/CONF_PLUG_ENTITY abgeleitete Heuristik (Nutzerwunsch
+# 2026-09-28: "im schritt wallbox, sensoren auswaehlbar machen die den
+# status zeigen"). Beide rein optional, unabhaengig voneinander nutzbar.
+CONF_WALLBOX_CONNECTED_ENTITY = "wallbox_connected_entity"
+CONF_WALLBOX_CHARGING_ENTITY = "wallbox_charging_entity"
 # Optional, nur fuer das Haus-Nutzungsprofil der evcc-Modus-/SoC-Steuerung
 # (siehe coordinator.py::_update_house_usage_profile()/_evcc_mode_targets()):
 # kumulative Energiezaehler (kWh, state_class: total_increasing), analog
@@ -31,6 +39,15 @@ CONF_WALLBOX_ENERGY_TEMPLATE = "wallbox_energy_template"
 # haengt direkt am PV-/Netz-Pfad) -- rein additiv-optional.
 CONF_HOME_CONSUMPTION_ENTITY = "home_consumption_entity"
 CONF_BATTERY_CHARGE_ENTITY = "battery_charge_entity"
+# Optional, fuer die Solaranteil-/Kosten-Schaetzung von Heim-Ladesessions OHNE
+# evcc (siehe coordinator.py::_process_home_tick()/_set_home()) -- kumulativer
+# kWh-Zaehlerstand der PV-ERZEUGUNG (NICHT Momentanleistung, Konsistenz mit
+# CONF_HOME_CONSUMPTION_ENTITY/CONF_BATTERY_CHARGE_ENTITY oben), NICHT zu
+# verwechseln mit CONF_PV_FORECAST_TODAY_REMAINING_ENTITY (Prognose fuer den
+# Rest des Tages, evcc-Balancing) oder CONF_PV_FORECAST_ENTITY (Prognose fuer
+# morgen, Reichweitenschaetzung) -- diese hier ist die tatsaechliche, bereits
+# erzeugte Energie bis jetzt.
+CONF_PV_GENERATION_ENTITY = "pv_generation_entity"
 # Optional: Entitaet (input_boolean/switch/binary_sensor), die "an" waehrend
 # Urlaub/laengerer Abwesenheit anzeigt (siehe coordinator.py::
 # _urlaub_aktiv()). Betrifft NUR die Wochentags-Nutzungsprofile (Fahrzeug
@@ -185,6 +202,36 @@ def resolve_lade_modus(value) -> str:
     muss (siehe coordinator.py::lade_modus())."""
     return value if value in LADE_MODUS_OPTIONS else DEFAULT_LADE_MODUS
 
+
+# Wie zuhause geladen wird -- steuert NUR, welcher Options-Flow-Schritt
+# erscheint (Schritt "evcc" vs. neuer Schritt "heimladen"), NICHT die
+# Rechenlogik selbst (die evcc-Modus-/SoC-Steuerung bleibt an
+# CONF_EVCC_MODE_CONTROL_ENABLED haengen, unabhaengig davon). Jederzeit
+# umschaltbar (Nutzerwunsch: "falls man mal von evcc weg will") -- Daten des
+# jeweils inaktiven Pfads bleiben unter denselben CONF_-Schluesseln
+# gespeichert, nur der Options-Flow zeigt sie nicht mehr an (analog dem
+# hidden_tabs-Muster: ausblenden statt loeschen).
+CONF_HOME_CHARGING_METHOD = "home_charging_method"
+HOME_CHARGING_METHOD_EVCC = "evcc"
+HOME_CHARGING_METHOD_GENERISCH = "generisch"
+HOME_CHARGING_METHOD_OPTIONS = (HOME_CHARGING_METHOD_EVCC, HOME_CHARGING_METHOD_GENERISCH)
+
+
+def resolve_home_charging_method(stored_value, evcc_host) -> str:
+    """Liefert die aktive Heimladen-Methode. Bereits gespeicherter, gueltiger
+    Wert hat Vorrang. Sonst (Bestandsinstallation vor Einfuehrung dieses
+    Feldes, oder Erstinstallation) wird ein sinnvoller Default aus dem
+    bereits vorhandenen CONF_EVCC_HOST abgeleitet: ist evcc bereits
+    konfiguriert, war die Installation offensichtlich schon ein evcc-Nutzer
+    (aendert sich dadurch nichts); ohne evcc_host gilt "generisch" (deckt
+    Bestandsinstallationen OHNE evcc ab, ohne dass dort aktiv etwas
+    umgestellt werden muss). Bewusst eine reine Funktion ohne HA-Import
+    (analog resolve_lade_modus() oben)."""
+    if stored_value in HOME_CHARGING_METHOD_OPTIONS:
+        return stored_value
+    return HOME_CHARGING_METHOD_EVCC if evcc_host else HOME_CHARGING_METHOD_GENERISCH
+
+
 # Fahrtenbuch: Feinjustierung der Fahrten-Erkennung (engine.py::TripDetector),
 # basiert auf derselben Kilometerstand-Entitaet (CONF_ODO_ENTITY oben).
 CONF_TRIP_MIN_KM = "trip_min_km"
@@ -273,6 +320,13 @@ LEASING_TOLERANZ_PCT = 2.0
 # waehlen, je nachdem, ob das Feld gesetzt ist.
 CONF_HOME_PRICE_KWH = "home_price_kwh"
 CONF_HOME_PRICE_ENTITY = "home_price_entity"
+# Einspeiseverguetung -- fester Wert ODER live-Entitaet, gleiches Muster/
+# gleiche Prioritaet wie CONF_HOME_PRICE_KWH/-_ENTITY oben. Nur fuer die
+# Solaranteil-/Kosten-Schaetzung von Heim-Ladesessions OHNE evcc gebraucht
+# (siehe coordinator.py::_home_feedin_price()) -- mit evcc kommt der
+# entsprechende Tarif stattdessen live aus evccs eigenem "tariffFeedIn".
+CONF_HOME_FEEDIN_PRICE_KWH = "home_feedin_price_kwh"
+CONF_HOME_FEEDIN_PRICE_ENTITY = "home_feedin_price_entity"
 CONF_VERBRENNER_L_100KM = "verbrenner_l_100km"
 CONF_VERBRENNER_PRICE_PER_LITER = "verbrenner_price_per_liter"
 CONF_VERBRENNER_PRICE_ENTITY = "verbrenner_price_entity"

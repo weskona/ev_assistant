@@ -106,14 +106,12 @@ async def test_zurueckwechseln_zu_gemischt_zeigt_erhaltene_werte_vorbefuellt(has
     from custom_components.ev_assistant.config_flow import EvAssistantOptionsFlow
     from custom_components.ev_assistant.const import (
         CONF_EVCC_VEHICLE_NAME,
-        CONF_HOME_ENTITY,
         CONF_LADE_MODUS,
         CONF_POWER_ENTITY,
         CONF_SOC_ENTITY,
         CONF_USABLE_KWH,
         CONF_VEHICLE_HERSTELLER,
         CONF_VEHICLE_MODELL,
-        CONF_WALLBOX_ENERGY_ENTITY,
         LADE_MODUS_GEMISCHT,
         LADE_MODUS_NUR_AUSWAERTS,
     )
@@ -145,11 +143,12 @@ async def test_zurueckwechseln_zu_gemischt_zeigt_erhaltene_werte_vorbefuellt(has
         if getattr(key, "description", None)
     }
     assert evcc_defaults[CONF_EVCC_VEHICLE_NAME] == "mein_auto"
-    assert evcc_defaults[CONF_HOME_ENTITY] == "binary_sensor.wallbox_laedt"
+    # CONF_HOME_ENTITY/CONF_WALLBOX_ENERGY_ENTITY sind in den Schritt
+    # "heimladen" umgezogen (siehe test_home_charging_method_switch.py fuer
+    # deren Vorbefuellung) -- hier nur noch die Felder pruefen, die im
+    # "evcc"-Schritt geblieben sind.
 
-    result = await flow2.async_step_evcc({
-        CONF_EVCC_VEHICLE_NAME: "mein_auto", CONF_HOME_ENTITY: "binary_sensor.wallbox_laedt",
-    })
+    result = await flow2.async_step_evcc({CONF_EVCC_VEHICLE_NAME: "mein_auto"})
     assert result["step_id"] == "ladeleistung"
     power_defaults = {
         str(key): key.description["suggested_value"]
@@ -157,20 +156,35 @@ async def test_zurueckwechseln_zu_gemischt_zeigt_erhaltene_werte_vorbefuellt(has
         if getattr(key, "description", None)
     }
     assert power_defaults[CONF_POWER_ENTITY] == "sensor.wallbox_leistung"
-    assert power_defaults[CONF_WALLBOX_ENERGY_ENTITY] == "sensor.wallbox_energie"
 
 
 async def test_carry_forward_kopiert_nur_fehlende_schluessel():
     """Reiner Logik-Test von _carry_forward() selbst (siehe engine-artige
     Randfaelle: bereits gesetzte Werte in `data` gewinnen gegen `current`)."""
     from custom_components.ev_assistant.config_flow import _carry_forward, build_evcc_schema
-    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME, CONF_HOME_ENTITY
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME, CONF_URLAUB_ENTITY
 
-    current = {CONF_EVCC_VEHICLE_NAME: "alt", CONF_HOME_ENTITY: "binary_sensor.alt"}
+    current = {CONF_EVCC_VEHICLE_NAME: "alt", CONF_URLAUB_ENTITY: "input_boolean.alt"}
     data = {CONF_EVCC_VEHICLE_NAME: "neu"}  # bereits explizit gesetzt -- darf NICHT ueberschrieben werden
     result = _carry_forward(current, data, build_evcc_schema({}))
     assert result[CONF_EVCC_VEHICLE_NAME] == "neu"
-    assert result[CONF_HOME_ENTITY] == "binary_sensor.alt"
+    assert result[CONF_URLAUB_ENTITY] == "input_boolean.alt"
+
+
+async def test_evcc_schema_enthaelt_haus_nutzungsprofil_felder():
+    """Regressionsnetz fuer die Nutzerkorrektur 2026-09-27 ("wenn evcc
+    ausgewaehlt ist, ist hausverbrauch, speicherladung nicht mehr
+    konfigurierbar. das brauchen wir aber auch mit evcc"): home_consumption_
+    entity/battery_charge_entity speisen das Haus-Nutzungsprofil der evcc-
+    Modus-/SoC-Steuerung (siehe coordinator.py::_house_combined_reading_
+    kwh()) UNABHAENGIG von der generischen Solar-/Kosten-Schaetzung -- muss
+    im "evcc"-Schema bleiben, nicht nur im neuen "heimladen"-Schema."""
+    from custom_components.ev_assistant.config_flow import build_evcc_schema
+    from custom_components.ev_assistant.const import CONF_BATTERY_CHARGE_ENTITY, CONF_HOME_CONSUMPTION_ENTITY
+
+    keys = {str(key) for key in build_evcc_schema({}).schema}
+    assert CONF_HOME_CONSUMPTION_ENTITY in keys
+    assert CONF_BATTERY_CHARGE_ENTITY in keys
 
 
 async def test_mode_switch_beruehrt_keine_coordinator_historie(hass, coordinators):

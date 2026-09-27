@@ -91,6 +91,7 @@ The [Wiki](https://github.com/weskona/ev_assistant/wiki) has the full reference:
 | [External Charge Detection](https://github.com/weskona/ev_assistant/wiki/External-Charge-Detection-Deep-Dive) | Deep dive: the exact state machine behind detecting away-from-home charges. |
 | [Usage Profile & Recency-Weighting](https://github.com/weskona/ev_assistant/wiki/Usage-Profile-Deep-Dive) | Deep dive: how your typical daily need is learned and kept current. |
 | [Panel Customization Guide](https://github.com/weskona/ev_assistant/wiki/Panel-Customization-Guide) | Practical walkthrough of card selection/reordering/sizing. |
+| [Tips and Tricks](https://github.com/weskona/ev_assistant/wiki/Tips-and-Tricks) | Home Assistant tricks that work around a real limitation, e.g. multiple possible drivers for trip location. |
 | [Architecture & Contributing](https://github.com/weskona/ev_assistant/wiki/Architecture-and-Contributing) | Module layout, testing, and a guide to adding a new sensor. |
 | [FAQ / Troubleshooting](https://github.com/weskona/ev_assistant/wiki/FAQ-Troubleshooting) | Setup issues and common behavior questions. |
 

@@ -1192,6 +1192,36 @@ def blended_charge_price(
     return round((surplus_w * feedin_price + grid_topup_w * grid_price) / wallbox_min_power_w, 4)
 
 
+def home_charging_tick_split(
+    pv_delta_kwh: Optional[float], haus_delta_kwh: Optional[float], auto_delta_kwh: Optional[float],
+) -> Optional[tuple[float, float]]:
+    """Ein Tick der Solar-/Netz-Aufteilung einer laufenden Heim-Ladesession
+    OHNE evcc (Nutzeranforderung 2026-09-27: "gleiche Kosten ermitteln wie
+    evcc es macht, genauso richtig -- sonst macht das keinen Sinn", KEINE
+    grobe Naeherung) -- siehe coordinator.py::_process_home_tick(), dort bei
+    jeder Aktualisierung von PV-Erzeugung, Hausverbrauch (ohne Auto) oder
+    Wallbox-Energiezaehler waehrend einer laufenden Session aufgerufen, mit
+    dem jeweiligen Delta seit dem letzten Tick.
+
+    verfuegbarer_ueberschuss = max(0, pv_delta - haus_delta)
+    solar_fuer_auto = min(auto_delta, verfuegbarer_ueberschuss)
+    netz_fuer_auto = auto_delta - solar_fuer_auto
+
+    None bei fehlendem Sensorwert (z.B. Entity kurzzeitig unavailable) --
+    der Aufrufer soll diesen einen Tick dann ueberspringen (Anker NICHT
+    weiterschieben), statt mit einem erfundenen Wert weiterzurechnen.
+    `auto_delta_kwh <= 0` (kein Ladefortschritt seit dem letzten Tick, z.B.
+    reine PV-/Hausverbrauchs-Aenderung ohne Auto-Beitrag) liefert (0, 0)
+    statt None -- ein gueltiger, nur leerer Tick."""
+    if pv_delta_kwh is None or haus_delta_kwh is None or auto_delta_kwh is None:
+        return None
+    if auto_delta_kwh <= 0:
+        return (0.0, 0.0)
+    verfuegbarer_ueberschuss = max(0.0, pv_delta_kwh - haus_delta_kwh)
+    solar_fuer_auto = min(auto_delta_kwh, verfuegbarer_ueberschuss)
+    return (round(solar_fuer_auto, 4), round(auto_delta_kwh - solar_fuer_auto, 4))
+
+
 def min_solar_share_price_ceiling(
     min_solar_share_pct: float, feedin_price: float, grid_price: float,
 ) -> float:

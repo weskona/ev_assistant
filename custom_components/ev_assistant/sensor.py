@@ -588,11 +588,16 @@ class HomeKwhSensor(EvAssistantEntity, SensorEntity):
     einem Verbrenner. unknown ohne konfigurierte Wallbox-Energiemessung
     (Schritt 3 des Config Flow).
 
-    Attribute (falls evccs Session-Entities konfiguriert UND verfuegbar
+    Attribute (falls die noetigen Sensoren konfiguriert UND verfuegbar
     sind, siehe coordinator.py::home_session_stats()): kWh-gewichteter
-    Solaranteil sowie Kostensumme/Preis je kWh aus evccs eigenen Heim-
-    Ladesessions. Gilt NUR fuer Heimladungen, die evcc selbst gesteuert
-    hat -- Fremdladen liefert diese Felder nicht."""
+    Solaranteil sowie Kostensumme/Preis je kWh aus den Heim-Ladesessions --
+    entweder aus evccs eigenem Session-Log (mit evcc, siehe _set_home())
+    oder aus der tick-basierten Schaetzung ohne evcc (siehe
+    _process_home_tick()), je nachdem welcher Pfad konfiguriert ist. Gilt
+    NUR fuer Heimladungen -- Fremdladen liefert diese Felder nicht. Absichtlich
+    OHNE "evcc_"-Praefix im Attributnamen (bis 0.99.10 noch evcc_solaranteil_
+    pct/evcc_kosten_gesamt/evcc_preis_je_kwh): seit 0.99.11 nicht mehr
+    evcc-exklusiv."""
 
     _attr_translation_key = "home_kwh"
     _attr_native_unit_of_measurement = UnitOfEnergy.KILO_WATT_HOUR
@@ -611,14 +616,17 @@ class HomeKwhSensor(EvAssistantEntity, SensorEntity):
         stats = self.coordinator.home_session_stats()
         attrs = {}
         if "solar_pct" in stats:
-            attrs["evcc_solaranteil_pct"] = stats["solar_pct"]
+            attrs["solaranteil_pct"] = stats["solar_pct"]
         if "kosten_gesamt" in stats:
-            attrs["evcc_kosten_gesamt"] = stats["kosten_gesamt"]
+            attrs["kosten_gesamt"] = stats["kosten_gesamt"]
         if "preis_je_kwh" in stats:
-            attrs["evcc_preis_je_kwh"] = stats["preis_je_kwh"]
+            attrs["preis_je_kwh"] = stats["preis_je_kwh"]
         evcc_live = self.coordinator.evcc_live_attrs()
         if evcc_live:
             attrs["evcc_live"] = evcc_live
+        home_generic_live = self.coordinator.home_generic_live_attrs()
+        if home_generic_live:
+            attrs["home_generic_live"] = home_generic_live
         return attrs
 
 

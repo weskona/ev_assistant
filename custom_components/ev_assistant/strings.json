@@ -18,21 +18,27 @@
         "title": "EV Assistant - Lademodus",
         "description": "Schritt 2/9: Wie ladest du dein Fahrzeug? Bestimmt NUR, welche der folgenden Schritte und welche Panel-Tabs/Karten angezeigt werden — an der Berechnung selbst ändert sich nichts (ein reiner Fremdlader ist rechnerisch einfach der Fall, in dem die Heim-Werte 0 sind). „Nur auswärts\" blendet den evcc-/Wallbox-Schritt sowie die Heimlade-Karten im Panel aus; „Nur zuhause\" und „Gemischt\" laufen wie gehabt weiter. Über Konfigurieren jederzeit wieder änderbar, ohne dass bereits erfasste Daten verloren gehen.",
         "data": {
-          "lade_modus": "Lademodus"
+          "lade_modus": "Lademodus",
+          "home_charging_method": "Wie wird zuhause geladen?"
+        },
+        "data_description": {
+          "home_charging_method": "„evcc“ zeigt als nächstes den evcc-Schritt (Adresse, automatische Modus-/SoC-Steuerung). „Generische Wallbox-Sensoren“ zeigt stattdessen den Schritt „Heimladen“ (Wallbox-Energiezähler, Hausverbrauch, Heimstrompreis, optionale Solaranteil-/Kosten-Schätzung) — ohne evcc-Addon. Jederzeit umschaltbar, bereits erfasste Werte des jeweils anderen Pfads bleiben beim Umschalten erhalten."
         }
       },
       "evcc": {
         "title": "EV Assistant - evcc & Wallbox",
-        "description": "Schritt 3/9: evcc-Host (die Adresse deines evcc-Addons, z.B. http://192.168.178.1:7070) wird direkt per REST angesprochen — Wallbox- und Standort-Werte (Ladeleistung, PV, Netz, Tarife, Statistiken) kommen dann automatisch von dort, keine evcc_intg-Integration mehr nötig. Ohne Host bleiben diese Felder einfach leer. Zusätzlich: Fahrzeugname in evcc (filtert die Heimladen-Historie) und die Leistungsentität deiner Wallbox. Die Wallbox-Leistungsentität dient NUR der Ja/Nein-Erkennung \"lädt gerade zuhause\" (kein Energie-Messwert, liefert naturgemäß nur zuhause Werte) — ohne sie wird jede SoC-Zunahme fälschlich als Fremdladen erkannt. Für die Energie-Messung bei einer Fremdladung unterwegs siehe Schritt 4 (Fahrzeug-Ladeleistung, aus der Fahrzeug-Telemetrie).",
+        "description": "Schritt 3/9 (nur bei evcc als Heimladen-Methode): evcc-Host (die Adresse deines evcc-Addons, z.B. http://192.168.178.1:7070) wird direkt per REST angesprochen — Wallbox- und Standort-Werte (Ladeleistung, PV, Netz, Tarife, Statistiken) kommen dann automatisch von dort, keine evcc_intg-Integration mehr nötig. Ohne Host bleiben diese Felder einfach leer. Zusätzlich: Fahrzeugname in evcc (filtert die Heimladen-Historie). Die Wallbox-Ladeleistung (Ja/Nein-Erkennung „lädt gerade zuhause“) ist jetzt Teil von Schritt 4 (Fahrzeug-Ladeleistung), zusammen mit der Fahrzeug-Telemetrie.",
         "data": {
           "evcc_host": "evcc-Adresse (z.B. http://192.168.178.1:7070)",
           "evcc_vehicle_name": "Fahrzeugname in evcc",
-          "home_entity": "Wallbox Ladeleistung",
+          "home_consumption_entity": "Hausverbrauch (ohne Auto/Speicher)",
+          "battery_charge_entity": "Speicherladung (optional, falls nicht bereits im Hausverbrauch enthalten)",
           "urlaub_entity": "Urlaubs-Entität (optional)"
         },
         "data_description": {
           "evcc_host": "Optional — ohne sie bleiben Ladeleistung/Modus/Tarife/PV im Panel einfach leer, alles andere funktioniert unverändert weiter.",
-          "home_entity": "Nur ein Ja/Nein-Schwellwert (>0,1 kW = \"lädt gerade zuhause\") — kein Energie-Messwert und liefert nur Werte, während das Fahrzeug an dieser Wallbox hängt.",
+          "home_consumption_entity": "Optional, kumulativer Energiezähler in kWh (aufsummierter Zählerstand, kein Leistungssensor) — speist das Haus-Nutzungsprofil für die evcc-Modus-/SoC-Steuerung oben (siehe Nutzungsprofil-Tab im Panel). Dasselbe Feld wie im Schritt \"Heimladen\", dort für die Solaranteil-/Kosten-Schätzung genutzt.",
+          "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch (gleiche Einheit: kumulativer Energiezähler in kWh, kein Leistungssensor) — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
           "urlaub_entity": "Optional, z.B. ein input_boolean/switch/binary_sensor \"an\" während Urlaub — betroffene Tage werden dann aus den Wochentags-Nutzungsprofilen (Fahrzeug & Haus) ausgeschlossen statt den Schnitt zu verzerren, und die evcc-Modus-/SoC-Steuerung pausiert."
         }
       },
@@ -45,15 +51,15 @@
       },
       "ladeleistung": {
         "title": "EV Assistant - Ladeleistung",
-        "description": "Schritt 4/9: optionale Ladeleistungs- und Wallbox-Energiemessung. Die Fahrzeug-Ladeleistung verbessert die Energie-Schätzung auch bei Fremdladungen unterwegs — im Unterschied zur Wallbox-Leistungsentität aus Schritt 3 kommt sie aus der Fahrzeug-Telemetrie und liefert daher auch abseits der eigenen Wallbox Werte. Der Wallbox-Energiezähler ist ein kumulativer kWh-Zähler und wird nur bei Heimladen ausgewertet: er kalibriert daraus den echten Ladewirkungsgrad (ersetzt danach den Startwert aus Schritt 1, z.B. für die SoC-Schätzung bei Fremdladungen) und gewichtet bei variablen Tarifen den Heimstrompreis für Schritt 9 nach tatsächlich geladener Menge.",
+        "description": "Schritt 4: Fahrzeug-Ladeleistung + Wallbox-Ladeleistung — beides unabhängig von der Heimladen-Methode (evcc oder generisch), daher immer sichtbar. Die Wallbox-Ladeleistung dient NUR der Ja/Nein-Erkennung „lädt gerade zuhause“ (kein Energie-Messwert) — ohne sie wird jede SoC-Zunahme fälschlich als Fremdladen erkannt. Für die Energie-Messung (kumulativer kWh-Zähler) siehe stattdessen den Schritt „evcc“ bzw. „Heimladen“.",
         "data": {
           "power_entity": "Fahrzeug-Ladeleistung (Watt/kW)",
           "power_is_ac": "Ladeleistung ist AC-seitig (Ladepunkt) statt DC-seitig (Batterie)",
-          "wallbox_energy_entity": "Wallbox-Energiezähler (kumulativer kWh-Zähler)"
+          "home_entity": "Wallbox Ladeleistung"
         },
         "data_description": {
           "power_is_ac": "Wirkt sich nur aus, wenn oben eine Fahrzeug-Ladeleistung eingetragen ist — ohne sie hat diese Einstellung keine Wirkung.",
-          "wallbox_energy_entity": "Nur bei Heimladen aktiv: kalibriert daraus den echten Ladewirkungsgrad (ersetzt den Startwert aus Schritt 1) und gewichtet den Heimstrompreis für Schritt 8 nach tatsächlich geladener Menge."
+          "home_entity": "Nur ein Ja/Nein-Schwellwert (>0,1 kW = „lädt gerade zuhause“) — kein Energie-Messwert und liefert nur Werte, während das Fahrzeug an dieser Wallbox hängt."
         }
       },
       "ausgabe": {
@@ -116,13 +122,37 @@
         "title": "EV Assistant - Kostenvergleich",
         "description": "Schritt 9/9: Optionaler Kostenvergleich gegenüber einem Verbrenner. Alle Felder optional. Heimladen-Kosten setzen einen Wallbox-Energiezähler aus Schritt 4 voraus. Kraftstoffpreis-Priorität: Tankerkönig-Kraftstoffsorte (automatisch, günstigste offene Tankstelle) > Entität > fester Wert — nur eine Quelle konfigurieren.",
         "data": {
-          "home_price_kwh": "Preis pro kWh (Heimladen)",
-          "home_price_entity": "Heimstrompreis-Entität (überschreibt den festen Preis)",
           "verbrenner_l_100km": "Verbrauch Vergleichsfahrzeug (L/100km)",
           "verbrenner_price_per_liter": "Kraftstoffpreis (EUR/Liter)",
           "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis)",
           "tankerkoenig_fuel_type": "Kraftstoffsorte für Tankerkönig-Auto-Erkennung (überschreibt Entität/festen Preis mit der günstigsten offenen Tankstelle)",
           "co2_per_kwh_g": "Netzstrom-CO2-Intensität (g/kWh, für den CO2-Vergleich)"
+        }
+      },
+      "heimladen": {
+        "title": "EV Assistant - Heimladen",
+        "description": "Schritt 3/9 (nur bei generischer Heimladen-Methode): wie und wie teuer zuhause geladen wird, ohne evcc. Zusätzlich optional: PV-Erzeugung und Einspeisevergütung — sind ALLE drei (die beiden hier plus Hausverbrauch) zusammen konfiguriert, schätzt ev_assistant Solaranteil und Kosten jeder Heim-Ladesession genauso präzise wie evcc es tun würde (tick-basierte Integration, keine grobe Näherung) — fehlt auch nur eines, bleibt die Schätzung für diese Session einfach aus.",
+        "data": {
+          "home_consumption_entity": "Hausverbrauch (ohne Auto/Speicher)",
+          "battery_charge_entity": "Speicherladung (optional, falls nicht bereits im Hausverbrauch enthalten)",
+          "wallbox_energy_entity": "Wallbox-Energiezähler (kumulativer kWh-Zähler)",
+          "wallbox_connected_entity": "Wallbox verbunden (optional, eigener Statussensor)",
+          "wallbox_charging_entity": "Wallbox lädt (optional, eigener Statussensor)",
+          "home_price_kwh": "Preis pro kWh (Heimladen)",
+          "home_price_entity": "Heimstrompreis-Entität (überschreibt den festen Preis)",
+          "pv_generation_entity": "PV-Erzeugung (kumulativer kWh-Zähler, optional)",
+          "home_feedin_price_kwh": "Einspeisevergütung (EUR/kWh, optional)",
+          "home_feedin_price_entity": "Einspeisevergütungs-Entität (überschreibt den festen Preis)"
+        },
+        "data_description": {
+          "home_consumption_entity": "Optional, kumulativer Energiezähler in kWh (aufsummierter Zählerstand, kein Leistungssensor) — nur für die Solaranteil-/Kosten-Schätzung unten gebraucht.",
+          "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch (gleiche Einheit: kumulativer Energiezähler in kWh, kein Leistungssensor) — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
+          "wallbox_energy_entity": "Kalibriert daraus den echten Ladewirkungsgrad (ersetzt den Startwert aus Schritt 1) und liefert die geladene kWh-Menge für die Kostenberechnung.",
+    "wallbox_connected_entity": "Optional, ein binary_sensor der Wallbox selbst (z.B. aus deren eigener Integration) für \"angesteckt/verbunden\" — ersetzt, falls gesetzt, die sonst aus Ladeleistung/Stecker-Entität abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
+    "wallbox_charging_entity": "Optional, ein binary_sensor der Wallbox selbst für \"lädt gerade\" — ersetzt, falls gesetzt, die sonst aus der Ladeleistung abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
+          "pv_generation_entity": "Optional, kumulativer Energiezähler in kWh der PV-ERZEUGUNG (aufsummierter Zählerstand, keine Momentanleistung) — zusammen mit Hausverbrauch und Einspeisevergütung unten nötig für die Solaranteil-/Kosten-Schätzung von Heim-Ladesessions. Fehlt eines der drei, bleibt die Schätzung für eine Session einfach aus (kein Fallback auf eine gröbere Näherung).",
+          "home_feedin_price_kwh": "Optional, fester Wert ODER die Entität darunter (Entität hat Vorrang) — nur für die Solaranteil-/Kosten-Schätzung gebraucht, siehe pv_generation_entity oben.",
+          "home_feedin_price_entity": "Optional, überschreibt den festen Einspeisevergütungswert, falls beide gesetzt sind."
         }
       }
     },
@@ -154,16 +184,19 @@
         "title": "EV Assistant - Lademodus",
         "description": "Schritt 2/9: Lademodus — bestimmt nur Sichtbarkeit (Panel-Tabs/Karten, welche weiteren Schritte erscheinen), keine Rechenlogik. Jederzeit änderbar, ohne dass bereits erfasste Daten verloren gehen.",
         "data": {
-          "lade_modus": "Lademodus"
+          "lade_modus": "Lademodus",
+          "home_charging_method": "Wie wird zuhause geladen?"
+        },
+        "data_description": {
+          "home_charging_method": "„evcc“ zeigt als nächstes den evcc-Schritt (Adresse, automatische Modus-/SoC-Steuerung). „Generische Wallbox-Sensoren“ zeigt stattdessen den Schritt „Heimladen“ (Wallbox-Energiezähler, Hausverbrauch, Heimstrompreis, optionale Solaranteil-/Kosten-Schätzung) — ohne evcc-Addon. Jederzeit umschaltbar, bereits erfasste Werte des jeweils anderen Pfads bleiben beim Umschalten erhalten."
         }
       },
       "evcc": {
         "title": "EV Assistant - evcc & Wallbox",
-        "description": "Schritt 3/9: evcc-Host wird direkt per REST angesprochen (Wallbox-/Standortwerte kommen dann automatisch von dort). Die automatische Lademodus-/SoC-Steuerung sowie das optionale Haus-Nutzungsprofil sind unten separat einstellbar.",
+        "description": "Schritt 3/9 (nur bei evcc als Heimladen-Methode): evcc-Host (die Adresse deines evcc-Addons, z.B. http://192.168.178.1:7070) wird direkt per REST angesprochen — Wallbox- und Standort-Werte (Ladeleistung, PV, Netz, Tarife, Statistiken) kommen dann automatisch von dort, keine evcc_intg-Integration mehr nötig. Ohne Host bleiben diese Felder einfach leer. Zusätzlich: Fahrzeugname in evcc (filtert die Heimladen-Historie). Die Wallbox-Ladeleistung (Ja/Nein-Erkennung „lädt gerade zuhause“) ist jetzt Teil von Schritt 4 (Fahrzeug-Ladeleistung), zusammen mit der Fahrzeug-Telemetrie.",
         "data": {
           "evcc_host": "evcc-Adresse (z.B. http://192.168.178.1:7070)",
           "evcc_vehicle_name": "Fahrzeugname in evcc",
-          "home_entity": "Wallbox Ladeleistung",
           "evcc_mode_control_enabled": "evcc-Lademodus/-SoC automatisch nach Nutzungsprofil steuern",
           "evcc_battery_priority_enabled": "Auto-Ladung vor Speicher priorisieren, solange angesteckt",
           "wallbox_min_power_w": "Wallbox-Mindestladeleistung (W, für Echtzeit-PV-Übersteuerung)",
@@ -177,13 +210,12 @@
         },
         "data_description": {
           "evcc_host": "Optional — ohne sie bleiben Ladeleistung/Modus/Tarife/PV im Panel einfach leer, alles andere funktioniert unverändert weiter.",
-          "home_entity": "Nur ein Ja/Nein-Schwellwert (>0,1 kW = \"lädt gerade zuhause\") — kein Energie-Messwert und liefert nur Werte, während das Fahrzeug an dieser Wallbox hängt.",
           "evcc_mode_control_enabled": "Deaktiviert (Default): nur die bisherigen Anzeige-Empfehlungen (Nutzungsprofil-Tab, „Laden vor PV empfehlenswert“) bleiben unverändert bestehen. Aktiviert: evcc bekommt zusätzlich tatsächlich einen Lademodus (pv/minpv/now) sowie Min-/Ziel-SoC nach dem Nutzungsprofil geschrieben — bei jeder Abweichung vom evcc-Live-Zustand (nicht nur vom eigenen zuletzt geschriebenen Stand), damit sich das z.B. nach einem evcc-Neustart selbst korrigiert. Ein manueller Eingriff in der evcc-UI hält dadurch nur bis zum nächsten Zyklus (~1 Min.) — siehe Service set_evcc_mode_control_pause (auch als Schalter im Panel), um das gezielt zu unterbinden, bis er wieder ausgeschaltet wird.",
           "evcc_battery_priority_enabled": "Deaktiviert (Default): keine Änderung — evccs feste \"Speicher-Vorrang\"-Schwelle (prioritySoc) gilt unverändert immer. Aktiviert: solange das Auto am Ladepunkt angesteckt ist, setzt ev_assistant prioritySoc herunter, damit das Auto vollen Vorrang vor dem Heimspeicher beim PV-Überschuss bekommt (verhindert z.B., dass der Speicher vormittags komplett vollläuft, während das Auto wartet, und danach ungenutzt überschüssiger Strom ins Netz geht, sobald das Auto losfährt). Sobald das Auto abgesteckt wird, wird der zuletzt beobachtete eigene Wert wiederhergestellt, nicht blind zurückgesetzt.",
           "wallbox_min_power_w": "Nur relevant, wenn die evcc-Steuerung oben aktiviert ist. Liegt der aktuelle PV-Überschuss (Site-PV minus Netzeinspeisung) unter diesem Wert, würde die Wallbox im Modus \"pv\" gar nicht laden und der Überschuss ungenutzt ins Netz gehen — ev_assistant hebt den Modus dann in Echtzeit (unabhängig von der Nutzungsprofil-Logik oben, nur pv→minpv, nie umgekehrt) auf \"minpv\" an, mit Hysterese gegen Flattern. Default 1380 W = 6A × 230V einphasig; bei dreiphasigem Anschluss wären es 6A × 3 × 230V ≈ 4140 W.",
           "evcc_realtime_override_min_solar_share": "Optional, nur relevant zusammen mit der Mindestladeleistung oben. Ohne diesen Wert wird jeder positive PV-Überschuss unter der Mindestladeleistung durch Netzstrom ergänzt, egal wie teuer. Gesetzt (z.B. 50%), wird bei jedem Zyklus live aus evccs eigenen Tarifen (Einspeisevergütung/Netzpreis) die passende Mischpreis-Obergrenze für diesen Solaranteil berechnet und geprüft — liegt der resultierende Mischpreis (PV-Strom ist nicht kostenlos, er kostet die entgangene Einspeisevergütung) darüber, bleibt es bei \"pv\" (der Überschuss wird stattdessen eingespeist statt teuren Netzstrom zuzukaufen). Bleibt automatisch aktuell bei Tarifänderungen, da nichts als fester Preis eingetragen wird. Braucht evccs eigene Live-Tarife — fehlen die, bleibt die reine Watt-Schwelle wirksam.",
           "pv_forecast_today_remaining_entity": "Optional, unabhängig von der PV-Ertragsprognose für morgen (Schritt 7) — nur relevant, wenn die evcc-Steuerung oben aktiviert ist.",
-          "home_consumption_entity": "Optional, kumulativer Energiezähler in kWh (aufsummierter Zählerstand, kein Leistungssensor) — nur relevant, wenn die evcc-Steuerung oben aktiviert ist. Ohne ihn wird die PV-Restprognose fälschlich komplett dem Auto zugerechnet.",
+          "home_consumption_entity": "Optional, kumulativer Energiezähler in kWh (aufsummierter Zählerstand, kein Leistungssensor) — speist das Haus-Nutzungsprofil für die evcc-Modus-/SoC-Steuerung oben (siehe Nutzungsprofil-Tab im Panel). Dasselbe Feld wie im Schritt \"Heimladen\", dort für die Solaranteil-/Kosten-Schätzung genutzt.",
           "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch (gleiche Einheit: kumulativer Energiezähler in kWh, kein Leistungssensor) — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
           "urlaub_entity": "Optional, z.B. ein input_boolean/switch/binary_sensor \"an\" während Urlaub — betroffene Tage werden dann aus den Wochentags-Nutzungsprofilen (Fahrzeug & Haus) ausgeschlossen statt den Schnitt zu verzerren, und die evcc-Modus-/SoC-Steuerung pausiert.",
           "weekly_full_charge_enabled": "Deaktiviert (Default): keine Änderung am bisherigen Verhalten. Aktiviert: ist seit der letzten erreichten Vollladung (98% oder mehr, egal ob manuell oder automatisch) das Intervall unten verstrichen, überstimmt die evcc-Steuerung das profilbasierte Ziel mit Ziel-SoC=100%/Modus=minpv, bis 100% erreicht sind. Steuert NUR Ziel-SoC + Modus — WOHER der Ladestrom kommt (PV/Netz/Speicher), entscheidet weiterhin evcc selbst (Mindestladeleistung im minpv-Modus, Speicher-Entladesperre als eigene evcc-Einstellung). Zusätzlich per Panel-Schalter umschaltbar, ohne diesen Options-Flow erneut öffnen zu müssen.",
@@ -199,15 +231,15 @@
       },
       "ladeleistung": {
         "title": "EV Assistant - Ladeleistung",
-        "description": "Schritt 4/9: optionale Fahrzeug-Ladeleistung (aus der Fahrzeug-Telemetrie, liefert auch unterwegs Werte) und Wallbox-Energiezähler (kalibriert den Ladewirkungsgrad und den Heimladen-Preis für Schritt 9).",
+        "description": "Schritt 4: Fahrzeug-Ladeleistung + Wallbox-Ladeleistung — beides unabhängig von der Heimladen-Methode (evcc oder generisch), daher immer sichtbar. Die Wallbox-Ladeleistung dient NUR der Ja/Nein-Erkennung „lädt gerade zuhause“ (kein Energie-Messwert) — ohne sie wird jede SoC-Zunahme fälschlich als Fremdladen erkannt. Für die Energie-Messung (kumulativer kWh-Zähler) siehe stattdessen den Schritt „evcc“ bzw. „Heimladen“.",
         "data": {
           "power_entity": "Fahrzeug-Ladeleistung (Watt/kW)",
           "power_is_ac": "Ladeleistung ist AC-seitig (Ladepunkt) statt DC-seitig (Batterie)",
-          "wallbox_energy_entity": "Wallbox-Energiezähler (kumulativer kWh-Zähler)"
+          "home_entity": "Wallbox Ladeleistung"
         },
         "data_description": {
-          "wallbox_energy_entity": "Nur bei Heimladen aktiv: kalibriert daraus den echten Ladewirkungsgrad (ersetzt den Startwert aus Schritt 1) und gewichtet den Heimstrompreis für Schritt 8 nach tatsächlich geladener Menge.",
-          "power_is_ac": "Wirkt sich nur aus, wenn oben eine Fahrzeug-Ladeleistung eingetragen ist — ohne sie hat diese Einstellung keine Wirkung."
+          "power_is_ac": "Wirkt sich nur aus, wenn oben eine Fahrzeug-Ladeleistung eingetragen ist — ohne sie hat diese Einstellung keine Wirkung.",
+          "home_entity": "Nur ein Ja/Nein-Schwellwert (>0,1 kW = „lädt gerade zuhause“) — kein Energie-Messwert und liefert nur Werte, während das Fahrzeug an dieser Wallbox hängt."
         }
       },
       "ausgabe": {
@@ -270,13 +302,37 @@
         "title": "EV Assistant - Kostenvergleich",
         "description": "Schritt 9/9: Optionaler Kostenvergleich gegenüber einem Verbrenner. Kraftstoffpreis-Priorität: Tankerkönig-Kraftstoffsorte > Entität > fester Wert.",
         "data": {
-          "home_price_kwh": "Preis pro kWh (Heimladen)",
-          "home_price_entity": "Heimstrompreis-Entität (überschreibt den festen Preis)",
           "verbrenner_l_100km": "Verbrauch Vergleichsfahrzeug (L/100km)",
           "verbrenner_price_per_liter": "Kraftstoffpreis (EUR/Liter)",
           "verbrenner_price_entity": "Kraftstoffpreis-Entität (überschreibt den festen Preis)",
           "tankerkoenig_fuel_type": "Kraftstoffsorte für Tankerkönig-Auto-Erkennung (überschreibt Entität/festen Preis)",
           "co2_per_kwh_g": "Netzstrom-CO2-Intensität (g/kWh, für den CO2-Vergleich)"
+        }
+      },
+      "heimladen": {
+        "title": "EV Assistant - Heimladen",
+        "description": "Schritt 3/9 (nur bei generischer Heimladen-Methode): wie und wie teuer zuhause geladen wird, ohne evcc. Zusätzlich optional: PV-Erzeugung und Einspeisevergütung — sind ALLE drei (die beiden hier plus Hausverbrauch) zusammen konfiguriert, schätzt ev_assistant Solaranteil und Kosten jeder Heim-Ladesession genauso präzise wie evcc es tun würde (tick-basierte Integration, keine grobe Näherung) — fehlt auch nur eines, bleibt die Schätzung für diese Session einfach aus.",
+        "data": {
+          "home_consumption_entity": "Hausverbrauch (ohne Auto/Speicher)",
+          "battery_charge_entity": "Speicherladung (optional, falls nicht bereits im Hausverbrauch enthalten)",
+          "wallbox_energy_entity": "Wallbox-Energiezähler (kumulativer kWh-Zähler)",
+          "wallbox_connected_entity": "Wallbox verbunden (optional, eigener Statussensor)",
+          "wallbox_charging_entity": "Wallbox lädt (optional, eigener Statussensor)",
+          "home_price_kwh": "Preis pro kWh (Heimladen)",
+          "home_price_entity": "Heimstrompreis-Entität (überschreibt den festen Preis)",
+          "pv_generation_entity": "PV-Erzeugung (kumulativer kWh-Zähler, optional)",
+          "home_feedin_price_kwh": "Einspeisevergütung (EUR/kWh, optional)",
+          "home_feedin_price_entity": "Einspeisevergütungs-Entität (überschreibt den festen Preis)"
+        },
+        "data_description": {
+          "home_consumption_entity": "Optional, kumulativer Energiezähler in kWh (aufsummierter Zählerstand, kein Leistungssensor) — nur für die Solaranteil-/Kosten-Schätzung unten gebraucht.",
+          "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch (gleiche Einheit: kumulativer Energiezähler in kWh, kein Leistungssensor) — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
+          "wallbox_energy_entity": "Kalibriert daraus den echten Ladewirkungsgrad (ersetzt den Startwert aus Schritt 1) und liefert die geladene kWh-Menge für die Kostenberechnung.",
+    "wallbox_connected_entity": "Optional, ein binary_sensor der Wallbox selbst (z.B. aus deren eigener Integration) für \"angesteckt/verbunden\" — ersetzt, falls gesetzt, die sonst aus Ladeleistung/Stecker-Entität abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
+    "wallbox_charging_entity": "Optional, ein binary_sensor der Wallbox selbst für \"lädt gerade\" — ersetzt, falls gesetzt, die sonst aus der Ladeleistung abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
+          "pv_generation_entity": "Optional, kumulativer Energiezähler in kWh der PV-ERZEUGUNG (aufsummierter Zählerstand, keine Momentanleistung) — zusammen mit Hausverbrauch und Einspeisevergütung unten nötig für die Solaranteil-/Kosten-Schätzung von Heim-Ladesessions. Fehlt eines der drei, bleibt die Schätzung für eine Session einfach aus (kein Fallback auf eine gröbere Näherung).",
+          "home_feedin_price_kwh": "Optional, fester Wert ODER die Entität darunter (Entität hat Vorrang) — nur für die Solaranteil-/Kosten-Schätzung gebraucht, siehe pv_generation_entity oben.",
+          "home_feedin_price_entity": "Optional, überschreibt den festen Einspeisevergütungswert, falls beide gesetzt sind."
         }
       }
     },
@@ -302,6 +358,12 @@
         "nur_zuhause": "Nur zuhause",
         "gemischt": "Gemischt (zuhause + auswärts)",
         "nur_auswaerts": "Nur auswärts"
+      }
+    },
+    "home_charging_method": {
+      "options": {
+        "evcc": "evcc",
+        "generisch": "Generische Wallbox-Sensoren"
       }
     }
   },

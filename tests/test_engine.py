@@ -44,6 +44,7 @@ from engine import (
     equivalent_full_cycles_from_totals,
     estimate_battery_capacity_kwh,
     home_capacity_sample,
+    home_charging_tick_split,
     home_session_solar_and_cost,
     house_weekday_usage_profile,
     is_plausible_trip_consumption,
@@ -1355,6 +1356,41 @@ def test_min_solar_share_price_ceiling_50_prozent_ist_mittelwert():
 def test_min_solar_share_price_ceiling_klemmt_ausserhalb_0_bis_100():
     assert min_solar_share_price_ceiling(-10.0, feedin_price=0.081, grid_price=0.298) == 0.298
     assert min_solar_share_price_ceiling(150.0, feedin_price=0.081, grid_price=0.298) == 0.081
+
+
+# ----- home_charging_tick_split / Solaranteil-Schaetzung ohne evcc
+# (Nutzeranforderung 2026-09-27: "gleiche Kosten ermitteln koennen, bzw
+# genauso richtig wie evcc es macht. Sonst macht das keinen Sinn" -- KEINE
+# grobe Naeherung.) ---------------------------------------------------------
+
+def test_home_charging_tick_split_ueberschuss_groesser_als_bedarf():
+    # 3 kWh PV-Delta, 1 kWh Hausverbrauch-Delta -> 2 kWh Ueberschuss,
+    # Auto braucht nur 0.5 kWh -> komplett aus Solar.
+    assert home_charging_tick_split(3.0, 1.0, 0.5) == (0.5, 0.0)
+
+
+def test_home_charging_tick_split_ueberschuss_kleiner_als_bedarf():
+    # 1.2 kWh Ueberschuss (2.0 - 0.8), Auto braucht 2.0 kWh -> 1.2 Solar
+    # + 0.8 Netz.
+    assert home_charging_tick_split(2.0, 0.8, 2.0) == (1.2, 0.8)
+
+
+def test_home_charging_tick_split_kein_ueberschuss():
+    # Hausverbrauch frisst die komplette PV auf (und mehr) -> alles Netz.
+    assert home_charging_tick_split(0.5, 0.9, 1.0) == (0.0, 1.0)
+
+
+def test_home_charging_tick_split_auto_delta_null_oder_negativ():
+    # Kein Ladefortschritt seit dem letzten Tick -- gueltiger, leerer Tick,
+    # kein None.
+    assert home_charging_tick_split(1.0, 0.2, 0.0) == (0.0, 0.0)
+    assert home_charging_tick_split(1.0, 0.2, -0.1) == (0.0, 0.0)
+
+
+def test_home_charging_tick_split_fehlender_sensor_liefert_none():
+    assert home_charging_tick_split(None, 0.2, 0.5) is None
+    assert home_charging_tick_split(1.0, None, 0.5) is None
+    assert home_charging_tick_split(1.0, 0.2, None) is None
 
 
 def test_apply_realtime_pv_override_kappung_verhindert_minpv_bei_zu_teurem_mischpreis():

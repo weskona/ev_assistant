@@ -126,6 +126,16 @@ class EVAssistantPanel extends HTMLElement {
     return (s && s.attributes && s.attributes.evcc_live) || {};
   }
 
+  // Pendant zu _evccLive() fuer den generischen (nicht-evcc) Heimladen-Pfad
+  // (siehe coordinator.py::home_generic_live_attrs()) -- serverseitig
+  // schliessen sich beide gegenseitig aus, hier also nie beide gleichzeitig
+  // befuellt.
+  _homeGenericLive() {
+    const eid = this._eid("home_kwh");
+    const s = eid && this._hass ? this._hass.states[eid] : null;
+    return (s && s.attributes && s.attributes.home_generic_live) || {};
+  }
+
   // Lade-Modus (siehe const.py::resolve_lade_modus()) -- als Attribut am
   // "count"-Sensor mitgeliefert (coordinator.py::lade_modus(), sensor.py::
   // CountSensor.extra_state_attributes), kein eigener Netzwerkweg/Sensor
@@ -4398,9 +4408,11 @@ class EVAssistantPanel extends HTMLElement {
     this._r.betaWbStat2Label  = q("#beta-wb-stat2-label");
     this._r.betaWbStat3Val    = q("#beta-wb-stat3-val");
     this._r.betaWbStat3Label  = q("#beta-wb-stat3-label");
+    this._r.betaWbBufferSection = q(".beta-wallbox-buffer");
     this._r.betaWbBufferVal    = q("#beta-wb-buffer-val");
     this._r.betaWbBufferSlider = q("#beta-wb-buffer-slider");
     this._r.betaWbBufferReset  = q("#beta-wb-buffer-reset");
+    this._r.betaWbBalancingSection = q(".beta-wallbox-balancing");
     this._r.betaWbBalancingToggle = q("#beta-wb-balancing-toggle");
     this._r.betaWbBalancingStatus = q("#beta-wb-balancing-status");
 
@@ -5444,16 +5456,23 @@ class EVAssistantPanel extends HTMLElement {
     }
   }
 
-  // Wallbox-Karte (Aufgabe 3.3) -- IMMER dieselbe Struktur, nur der
-  // INHALT wechselt je Zustand (laedt/verbunden/nicht verbunden). Die
-  // Karte selbst wird nur ausgeblendet, wenn ueberhaupt kein evcc-State
-  // vorliegt (kein evcc_host konfiguriert/erreichbar) -- "nicht verbunden"
-  // ist dagegen ein regulaerer, sichtbarer Zustand (Fahrzeug einfach nicht
-  // angesteckt).
+  // Wallbox-Karte (Aufgabe 3.3, generischer Pfad ergaenzt 2026-09-28) --
+  // IMMER dieselbe Struktur je Datenquelle, nur der INHALT wechselt je
+  // Zustand (laedt/verbunden/nicht verbunden). Zwei Datenquellen, siehe
+  // coordinator.py::evcc_live_attrs()/home_generic_live_attrs() (schliessen
+  // sich serverseitig gegenseitig aus): mit evcc alle Felder wie bisher,
+  // ohne evcc nur Ladestatus + Leistung (kein Modus/Tarife/Min-Ziel-SoC/
+  // Balancing -- die gibt es ohne evcc-Anbindung schlicht nicht, siehe
+  // unten). Die Karte selbst wird nur ausgeblendet, wenn WEDER evcc- noch
+  // generischer Status vorliegt (kein evcc_host konfiguriert/erreichbar
+  // UND kein home_entity konfiguriert) -- "nicht verbunden" ist dagegen
+  // ein regulaerer, sichtbarer Zustand (Fahrzeug einfach nicht angesteckt).
   _updateBetaWallbox() {
     const r = this._r;
     if (!r.betaWbStatusText) return;
-    const live = this._evccLive();
+    const evccLive = this._evccLive();
+    const isEvcc = Object.keys(evccLive).length > 0;
+    const live = isEvcc ? evccLive : this._homeGenericLive();
     const ev = (key) => (live[key] === undefined || live[key] === null) ? null : live[key];
     const connected = ev("connected");
     r.betaWallboxCard.classList.toggle("hidden", connected == null);
@@ -5468,23 +5487,39 @@ class EVAssistantPanel extends HTMLElement {
     r.betaWbStatusText.textContent = STATUS_TEXT[state];
     r.betaWbIcon.classList.toggle("beta-wb-icon-active", state !== "disconnected");
 
-    // Modus-Pill: LIVE-Modus von evcc (kann "off" sein, wenn nichts
-    // angesteckt ist) -- NICHT der von ev_assistant empfohlene Modus
-    // (siehe _updateBetaEvccMode() fuer Letzteren, eigene Karte).
-    const liveMode = ev("mode");
-    r.betaWbModePill.textContent = this._evccModeLabel(liveMode);
-    r.betaWbModePill.style.setProperty("--pill-color", this._evccModeColor(liveMode));
-    r.betaWbModePill.classList.toggle("beta-mode-pill-pulse", state === "charging");
+    // Modus-Pill/Min-Ziel-SoC-Limits/Puffer/Balancing: reine evcc-Konzepte
+    // (Lademodus pv/minpv/now, evcc-Ziel-SoC, evcc-Modus-/SoC-Steuerung) --
+    // ohne evcc gibt es davon nichts Aequivalentes, deshalb ganz
+    // ausgeblendet statt mit Platzhaltern befuellt. Dies ist KEIN
+    // Zustandswechsel (laedt/verbunden/nicht verbunden, siehe
+    // Kartenkopf-Kommentar), sondern eine feste Eigenschaft der
+    // Datenquelle -- bleibt fuer die gesamte Kartenlebensdauer gleich.
+    r.betaWbModePill.classList.toggle("hidden", !isEvcc);
+    r.betaWbLimits.classList.toggle("hidden", !isEvcc);
+    r.betaWbBufferSection.classList.toggle("hidden", !isEvcc);
+    r.betaWbBalancingSection.classList.toggle("hidden", !isEvcc);
 
-    // Min-Limit/Ladelimit -- IMMER sichtbar (auch nicht verbunden), aus
-    // den live "effective*"-evcc-Feldern (siehe coordinator.py::
-    // evcc_live_attrs(), korrigiert fuer Fahrzeug-Scope).
-    const fmtPct = (v) => (typeof v === "number" ? `${Math.round(v)}%` : "—");
-    r.betaWbLimits.textContent = `Min-Limit ${fmtPct(ev("min_soc"))} · Ladelimit ${fmtPct(ev("limit_soc"))}`;
+    if (isEvcc) {
+      // Modus-Pill: LIVE-Modus von evcc (kann "off" sein, wenn nichts
+      // angesteckt ist) -- NICHT der von ev_assistant empfohlene Modus
+      // (siehe _updateBetaEvccMode() fuer Letzteren, eigene Karte).
+      const liveMode = ev("mode");
+      r.betaWbModePill.textContent = this._evccModeLabel(liveMode);
+      r.betaWbModePill.style.setProperty("--pill-color", this._evccModeColor(liveMode));
+      r.betaWbModePill.classList.toggle("beta-mode-pill-pulse", state === "charging");
+
+      // Min-Limit/Ladelimit -- IMMER sichtbar (auch nicht verbunden), aus
+      // den live "effective*"-evcc-Feldern (siehe coordinator.py::
+      // evcc_live_attrs(), korrigiert fuer Fahrzeug-Scope).
+      const fmtPct = (v) => (typeof v === "number" ? `${Math.round(v)}%` : "—");
+      r.betaWbLimits.textContent = `Min-Limit ${fmtPct(ev("min_soc"))} · Ladelimit ${fmtPct(ev("limit_soc"))}`;
+    }
 
     // Letzte Heimladung -- dieselbe Quelle wie Fahrzeug-Tab (_homeSessions/
     // _homeSessionsFiltered(), siehe _fetchHomeSessions()). 5-Minuten-
-    // Cache gemeinsam mit dem Fahrzeug-Tab genutzt/aufgefrischt.
+    // Cache gemeinsam mit dem Fahrzeug-Tab genutzt/aufgefrischt. Funktioniert
+    // unveraendert fuer beide Datenquellen, seit home_sessions/home_kwh
+    // sowohl evcc- als auch generisch befuellte Sessions gleich ablegt.
     if (this._homeSessions === null || Date.now() - this._homeSessionsFetchedAt > 300000) {
       this._fetchHomeSessions();
     }
@@ -5494,9 +5529,14 @@ class EVAssistantPanel extends HTMLElement {
       ? "Aktuelle Ladung"
       : `Letzte Ladung${lastHome && lastHome.startTs != null ? " · " + this._fmtDate(lastHome.startTs) : ""}`;
 
-    // Ring (Solar/Netz): live waehrend des Ladens, sonst Solaranteil der
-    // letzten Session -- bei verbunden/nicht-verbunden gedimmt (~55%).
-    const solarPct = state === "charging"
+    // Ring (Solar/Netz): live waehrend des Ladens NUR mit evcc (session_
+    // solar_pct kommt aus evccs eigenem Live-State) -- die generische
+    // Schaetzung (siehe coordinator.py::_process_home_tick()) wird
+    // bewusst erst bei Sessionende fertig berechnet, kein Zwischenstand
+    // waehrend der Session verfuegbar/exponiert. Ohne evcc zeigt der Ring
+    // waehrend des Ladens deshalb den Solaranteil der letzten (bereits
+    // abgeschlossenen) Session, nicht 0%/falsch geschaetzt.
+    const solarPct = (state === "charging" && isEvcc)
       ? parseFloat(ev("session_solar_pct") ?? NaN)
       : (lastHome && lastHome.solarPct != null ? lastHome.solarPct : NaN);
     const frac = isNaN(solarPct) ? 0 : Math.max(0, Math.min(100, solarPct)) / 100;
@@ -5510,14 +5550,26 @@ class EVAssistantPanel extends HTMLElement {
     // Drei Statfelder -- je Zustand unterschiedlicher Inhalt, aber IMMER
     // drei Felder befuellt (siehe Kartenkopf-Kommentar: feste Struktur).
     if (state === "charging") {
-      const phases = parseInt(ev("phases_active") ?? "3", 10) || 3;
       const durSec = parseFloat(ev("charge_duration") ?? NaN);
+      const durText = (!isNaN(durSec) && durSec > 0) ? this._fmtDuration(Math.round(durSec / 60)) : "—";
       r.betaWbStat1Val.textContent   = !isNaN(power) ? this._fmtNum(power, 1) : "—";
       r.betaWbStat1Label.textContent = "kW";
-      r.betaWbStat2Val.textContent   = String(phases);
-      r.betaWbStat2Label.textContent = "Phasen";
-      r.betaWbStat3Val.textContent   = (!isNaN(durSec) && durSec > 0) ? this._fmtDuration(Math.round(durSec / 60)) : "—";
-      r.betaWbStat3Label.textContent = "Dauer";
+      if (isEvcc) {
+        const phases = parseInt(ev("phases_active") ?? "3", 10) || 3;
+        r.betaWbStat2Val.textContent   = String(phases);
+        r.betaWbStat2Label.textContent = "Phasen";
+        r.betaWbStat3Val.textContent   = durText;
+        r.betaWbStat3Label.textContent = "Dauer";
+      } else {
+        // Keine Phasen-Info ohne evcc, und der Solaranteil dieser noch
+        // laufenden Session steht erst bei ihrem Ende fest (siehe
+        // Ring-Kommentar oben) -- ehrlich als "wird berechnet" statt
+        // geraten/mit 0% vorgetaeuscht.
+        r.betaWbStat2Val.textContent   = durText;
+        r.betaWbStat2Label.textContent = "Dauer";
+        r.betaWbStat3Val.textContent   = "—";
+        r.betaWbStat3Label.textContent = "Solaranteil";
+      }
     } else {
       r.betaWbStat1Val.textContent   = lastHome && lastHome.kwh != null ? this._fmtNum(lastHome.kwh, 2) : "—";
       r.betaWbStat1Label.textContent = "kWh";
@@ -5526,6 +5578,8 @@ class EVAssistantPanel extends HTMLElement {
       r.betaWbStat3Val.textContent   = lastHome && lastHome.pricePerKwh != null ? this._fmtNum(lastHome.pricePerKwh, 3) + " €/kWh" : "—";
       r.betaWbStat3Label.textContent = "Preis";
     }
+
+    if (!isEvcc) return;
 
     // Puffer-Schieberegler: aktuellen Wert (Override oder Konfigurations-
     // Default, siehe coordinator.py::_usage_profile_buffer_pct()) aus dem

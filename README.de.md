@@ -91,6 +91,7 @@ Das [Wiki](https://github.com/weskona/ev_assistant/wiki) hat die vollständige R
 | [Fremdladungserkennung](https://github.com/weskona/ev_assistant/wiki/External-Charge-Detection-Deep-Dive-DE) | Tiefer Einblick: die exakte Zustandsmaschine hinter der Erkennung von Ladungen unterwegs. |
 | [Nutzungsprofil & Recency-Weighting](https://github.com/weskona/ev_assistant/wiki/Usage-Profile-Deep-Dive-DE) | Tiefer Einblick: wie euer typischer Tagesbedarf gelernt und aktuell gehalten wird. |
 | [Anleitung: Panel anpassen](https://github.com/weskona/ev_assistant/wiki/Panel-Customization-Guide-DE) | Praktische Anleitung zu Karten-Auswahl/-Reihenfolge/-Größe. |
+| [Tipps und Tricks](https://github.com/weskona/ev_assistant/wiki/Tips-and-Tricks-DE) | Home-Assistant-Kniffe für echte Grenzen der Integration, z.B. mehrere mögliche Fahrer bei der Fahrt-Ortserkennung. |
 | [Architektur & Mitwirken](https://github.com/weskona/ev_assistant/wiki/Architecture-and-Contributing-DE) | Modul-Struktur, Testen, und eine Anleitung zum Hinzufügen eines neuen Sensors. |
 | [FAQ / Fehlersuche](https://github.com/weskona/ev_assistant/wiki/FAQ-Troubleshooting-DE) | Einrichtungsprobleme und häufige Verhaltensfragen. |
 

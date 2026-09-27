@@ -39,6 +39,8 @@ from .const import (
     CONF_GPS_ENTITY,
     CONF_HOME_CONSUMPTION_ENTITY,
     CONF_HOME_ENTITY,
+    CONF_HOME_FEEDIN_PRICE_ENTITY,
+    CONF_HOME_FEEDIN_PRICE_KWH,
     CONF_HOME_PRICE_ENTITY,
     CONF_HOME_PRICE_KWH,
     CONF_HOME_TEMPLATE,
@@ -64,6 +66,7 @@ from .const import (
     CONF_POWER_TEMPLATE,
     CONF_PV_FORECAST_ENTITY,
     CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
+    CONF_PV_GENERATION_ENTITY,
     CONF_SOC_ENTITY,
     CONF_SOC_TEMPLATE,
     CONF_SOC_THRESHOLDS,
@@ -80,6 +83,8 @@ from .const import (
     CONF_VERBRENNER_L_100KM,
     CONF_VERBRENNER_PRICE_ENTITY,
     CONF_VERBRENNER_PRICE_PER_LITER,
+    CONF_WALLBOX_CHARGING_ENTITY,
+    CONF_WALLBOX_CONNECTED_ENTITY,
     CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_ENERGY_TEMPLATE,
     CONF_WALLBOX_MIN_POWER_W,
@@ -205,6 +210,7 @@ from .engine import (
     equivalent_full_cycles_from_totals,
     estimate_battery_capacity_kwh,
     home_capacity_sample,
+    home_charging_tick_split,
     home_session_solar_and_cost,
     house_weekday_usage_profile,
     is_plausible_trip_consumption,
@@ -357,6 +363,19 @@ def _empty_data() -> dict:
         # Leer ohne gespeicherte Einstellung, alle ausblendbaren Tabs
         # bleiben dann sichtbar.
         "hidden_tabs": [],
+        # Ob gerade eine generische (nicht-evcc) Heim-Ladesession mit
+        # laufender Solaranteil-/Kosten-Akkumulation offen ist (siehe
+        # _process_home_tick()/_set_home()) -- persistiert, damit ein
+        # Neustart/Reload waehrend einer offenen Session NICHT zu einem
+        # unvollstaendigen/falschen Solar-/Kosten-Wert fuer diese Session
+        # fuehrt (Nutzeranforderung 2026-09-27: "ein neustart darf aber die
+        # kosten/solar nicht falsch darstellen"). Wird beim naechsten Start
+        # VOR dem Verdrahten der Entities gelesen (siehe async_setup()) --
+        # steht er noch auf True, war die Session beim letzten Herunterfahren
+        # noch offen, die aktuell laufende (fortgesetzte) Session bekommt
+        # dann bewusst KEINEN neuen Akkumulator (kein Teil-Ergebnis, siehe
+        # _set_home()).
+        "home_generic_estimate_open": False,
         "verbrenner_price_last": None,
         "home_price_last": None,
         # Km-gewichtete Durchschnittsbildung fuer den schwankenden
@@ -535,6 +554,32 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._soc: Optional[float] = None
         self._home: bool = False
         self._power: Optional[float] = None
+        # Solaranteil-/Kosten-Schaetzung fuer Heim-Ladesessions OHNE evcc
+        # (siehe _process_home_tick()/_set_home()) -- None ausser waehrend
+        # einer laufenden, dafuer geeigneten Session. Bewusst NICHT in
+        # self.data (Neustart wuerde sonst einen fremden/veralteten
+        # Zwischenstand wiederverwenden statt sauber None zu sein) --
+        # persistiert wird nur das flache "hat gerade eine Session offen"-
+        # Flag (self.data["home_generic_estimate_open"]), das
+        # _home_tick_restart_suppress unten speist.
+        self._home_tick_acc: Optional[dict] = None
+        self._pv_generation: Optional[float] = None
+        self._home_consumption_live_raw: Optional[float] = None
+        self._battery_charge_live_raw: Optional[float] = None
+        self._home_tick_restart_suppress: bool = False
+        # Sessiondauer fuer die Wallbox-Karte im generischen (nicht-evcc)
+        # Heimladen-Pfad (siehe home_generic_live_attrs()) -- unabhaengig
+        # von self._home_tick_acc (das nur bei erfuellter Solaranteil-/
+        # Kosten-Schaetzungs-Eignung existiert), da eine laufende Dauer-
+        # Anzeige auch OHNE vollstaendige Sensor-Ausstattung fuer die
+        # Schaetzung sinnvoll ist.
+        self._home_session_start_ts: Optional[float] = None
+        # Optionale eigene Wallbox-Status-Sensoren (siehe
+        # _wire_wallbox_status_entities()/home_generic_live_attrs()) --
+        # None ohne konfigurierten Sensor oder bei dessen unavailable/
+        # unknown-Zustand (dann greift die abgeleitete Heuristik weiter).
+        self._wallbox_connected_override: Optional[bool] = None
+        self._wallbox_charging_override: Optional[bool] = None
         # Optional: debounced Steckerstatus (siehe engine.py::SignalDebouncer)
         # -- bleibt None ohne konfigurierten CONF_PLUG_ENTITY, ChargeDetector
         # faellt dann auf die idle_timeout_s-Heuristik zurueck.
@@ -803,6 +848,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._trip_start_zone = self.data.get("trip_start_zone")
         self._trip_start_soc = self.data.get("trip_start_soc")
         self._trip_start_temp = self.data.get("trip_start_temp")
+        # MUSS vor _setup_sources() (verdrahtet CONF_HOME_ENTITY -> _set_home())
+        # gelesen werden -- siehe _set_home()-Docstring: verhindert, dass eine
+        # ueber einen Neustart hinweg bereits laufende generische Heim-
+        # Ladesession faelschlich als frisch gestartet behandelt wird (kein
+        # Teil-/falsches Solar-/Kosten-Ergebnis fuer sie).
+        self._home_tick_restart_suppress = bool(self.data.get("home_generic_estimate_open"))
         self._build_detector()
         self._build_trip_detector()
         await self._setup_sources()
@@ -899,6 +950,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         else:
             self._wire_verbrenner_price()
         self._wire_home_price()
+        self._wire_home_tick_sources()
+        self._wire_wallbox_status_entities()
         self._wire_gps()
         self._wire_motor()
         self._wire_outside_temp()
@@ -1210,6 +1263,52 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "max_charge_power_kw": self._evcc_max_charge_power_kw(),
         }
 
+    def home_generic_live_attrs(self) -> dict:
+        """Live-Ladestatus fuers Panel (Uebersicht-Beta, Wallbox-Karte) im
+        generischen (nicht-evcc) Heimladen-Pfad -- Pendant zu
+        evcc_live_attrs(), aber bewusst nur der Ladestatus selbst (kein
+        Modus/Tarife/PV-Site-Werte, die gibt es ohne evcc-Anbindung
+        schlicht nicht). Nutzt ausschliesslich ohnehin schon getrackte
+        interne Zustaende (self._home/self._power/self._plugged_in/
+        self._home_session_start_ts aus _set_home()/_set_power()/
+        _wire_plug()) -- keine neue Signalquelle, kein zusaetzliches Polling.
+        Leeres Dict mit konfiguriertem CONF_EVCC_HOST (dann liefert
+        stattdessen evcc_live_attrs(), die beiden schliessen sich also
+        gegenseitig aus) oder ohne konfigurierten CONF_HOME_ENTITY (dann
+        gibt es ueberhaupt kein Heimlade-Signal, an dem sich irgendetwas
+        festmachen liesse).
+
+        Optionale wallbox_connected_entity/wallbox_charging_entity (siehe
+        _wire_wallbox_status_entities()) haben Vorrang vor der sonst aus
+        home_entity/plug_entity abgeleiteten Heuristik, falls konfiguriert
+        und aktuell nicht unavailable/unknown -- betrifft NUR die beiden
+        Statuswerte hier, nicht die Session-/Kalibrierungs-Erkennung selbst
+        (die bleibt unveraendert an home_entity gebunden)."""
+        if self._opt(CONF_EVCC_HOST) or not self._opt(CONF_HOME_ENTITY):
+            return {}
+        duration = (
+            time.time() - self._home_session_start_ts
+            if self._home and self._home_session_start_ts is not None
+            else None
+        )
+        charging = self._wallbox_charging_override if self._wallbox_charging_override is not None else self._home
+        # Ohne konfigurierten wallbox_connected_entity/plug_entity gibt es
+        # kein eigenstaendiges "angesteckt, laedt aber gerade nicht"-Signal
+        # -- "connected" faellt dann auf "charging" zurueck (2 statt 3
+        # Panel-Zustaende, siehe Panel-JS _updateBetaWallbox()).
+        if self._wallbox_connected_override is not None:
+            connected = self._wallbox_connected_override
+        elif self._plugged_in is not None:
+            connected = self._plugged_in
+        else:
+            connected = self._home
+        return {
+            "charging": charging,
+            "connected": connected,
+            "charge_power": self._power,
+            "charge_duration": duration,
+        }
+
     def _evcc_realtime_pv_surplus_w(self) -> Optional[float]:
         """Aktueller PV-Ueberschuss in Watt fuer engine.apply_realtime_pv_
         override() (siehe _evcc_mode_targets()) -- aus dem ohnehin gepollten
@@ -1269,6 +1368,130 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         else:
             phases = 3
         return round(max_current * phases * 230.0 / 1000.0, 3)
+
+    def _wire_home_tick_sources(self) -> None:
+        """PV-Erzeugung + Hausverbrauch + Speicherladung reaktiv verdrahten,
+        ausschliesslich fuer die tick-basierte Solaranteil-/Kosten-
+        Schaetzung generischer (nicht-evcc) Heim-Ladesessions (siehe
+        _process_home_tick()). Kein Template-Override noetig (anders als
+        die per _wire() verdrahteten Felder) -- eigene, einfachere Methode
+        statt der generischen _wire()-Maschinerie. wallbox_energy_entity
+        ist bereits per _wire() verdrahtet (_set_wallbox_energy()) -- dort
+        wird derselbe Tick zusaetzlich ausgeloest.
+
+        battery_charge_entity ist rein additiv-optional (analog
+        _house_combined_reading_kwh()) -- ohne sie zaehlt nur der
+        Hausverbrauch, mit ihr wird ihr Delta zusaetzlich zum "haus_delta"
+        addiert (ein ladender Hausspeicher konkurriert genauso um den PV-
+        Ueberschuss wie das Auto)."""
+        pv_id = self._opt(CONF_PV_GENERATION_ENTITY)
+        if pv_id:
+            @callback
+            def _on_pv_state(event) -> None:
+                new = event.data.get("new_state")
+                if new is None or new.state in _INVALID:
+                    return
+                self._set_pv_generation(new.state)
+
+            self._unsub.append(async_track_state_change_event(self.hass, [pv_id], _on_pv_state))
+            state = self.hass.states.get(pv_id)
+            if state is not None and state.state not in _INVALID:
+                self._set_pv_generation(state.state)
+
+        home_id = self._opt(CONF_HOME_CONSUMPTION_ENTITY)
+        if home_id:
+            @callback
+            def _on_home_consumption_state(event) -> None:
+                new = event.data.get("new_state")
+                if new is None or new.state in _INVALID:
+                    return
+                self._set_home_consumption_live(new.state)
+
+            self._unsub.append(async_track_state_change_event(self.hass, [home_id], _on_home_consumption_state))
+            state = self.hass.states.get(home_id)
+            if state is not None and state.state not in _INVALID:
+                self._set_home_consumption_live(state.state)
+
+        battery_id = self._opt(CONF_BATTERY_CHARGE_ENTITY)
+        if battery_id:
+            @callback
+            def _on_battery_charge_state(event) -> None:
+                new = event.data.get("new_state")
+                if new is None or new.state in _INVALID:
+                    return
+                self._set_battery_charge_live(new.state)
+
+            self._unsub.append(async_track_state_change_event(self.hass, [battery_id], _on_battery_charge_state))
+            state = self.hass.states.get(battery_id)
+            if state is not None and state.state not in _INVALID:
+                self._set_battery_charge_live(state.state)
+
+    def _wire_wallbox_status_entities(self) -> None:
+        """Optionale eigene Status-Sensoren der Wallbox selbst (Nutzerwunsch
+        2026-09-28: "im schritt wallbox, sensoren auswaehlbar machen die den
+        status zeigen") -- ersetzen, falls konfiguriert, in
+        home_generic_live_attrs() die sonst aus home_entity/plug_entity
+        abgeleitete Heuristik. Anders als die uebrigen reaktiven Felder hier
+        bewusst MIT explizitem async_set_updated_data()-Aufruf je Aenderung
+        (siehe _set_wallbox_connected_override()/_set_wallbox_charging_
+        override()) -- ein Wechsel dieser Sensoren faellt sonst nicht
+        zwangslaeufig mit einem anderen, bereits live-ausloesenden Signal
+        zusammen, die Wallbox-Karte soll aber zuverlaessig sofort reagieren."""
+        connected_id = self._opt(CONF_WALLBOX_CONNECTED_ENTITY)
+        if connected_id:
+            @callback
+            def _on_connected_state(event) -> None:
+                new = event.data.get("new_state")
+                self._set_wallbox_connected_override(new.state if new is not None else None)
+
+            self._unsub.append(async_track_state_change_event(self.hass, [connected_id], _on_connected_state))
+            state = self.hass.states.get(connected_id)
+            self._set_wallbox_connected_override(state.state if state is not None else None)
+
+        charging_id = self._opt(CONF_WALLBOX_CHARGING_ENTITY)
+        if charging_id:
+            @callback
+            def _on_charging_state(event) -> None:
+                new = event.data.get("new_state")
+                self._set_wallbox_charging_override(new.state if new is not None else None)
+
+            self._unsub.append(async_track_state_change_event(self.hass, [charging_id], _on_charging_state))
+            state = self.hass.states.get(charging_id)
+            self._set_wallbox_charging_override(state.state if state is not None else None)
+
+    @callback
+    def _set_wallbox_connected_override(self, raw: Optional[str]) -> None:
+        self._wallbox_connected_override = {"on": True, "off": False}.get(raw)
+        self.async_set_updated_data(self.data)
+
+    @callback
+    def _set_wallbox_charging_override(self, raw: Optional[str]) -> None:
+        self._wallbox_charging_override = {"on": True, "off": False}.get(raw)
+        self.async_set_updated_data(self.data)
+
+    @callback
+    def _set_pv_generation(self, raw) -> None:
+        try:
+            self._pv_generation = float(raw)
+        except (ValueError, TypeError):
+            return
+        self._process_home_tick()
+
+    @callback
+    def _set_home_consumption_live(self, raw) -> None:
+        try:
+            self._home_consumption_live_raw = float(raw)
+        except (ValueError, TypeError):
+            return
+        self._process_home_tick()
+
+    @callback
+    def _set_battery_charge_live(self, raw) -> None:
+        try:
+            self._battery_charge_live_raw = float(raw)
+        except (ValueError, TypeError):
+            return
+        self._process_home_tick()
 
     def _wire_home_price(self) -> None:
         """Heimstrompreis: optionale Live-Entitaet (z.B. ein dynamischer
@@ -1781,10 +2004,42 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if self._calibrator is None or self._soc is None:
             return
         if not was_home and self._home:
+            self._home_session_start_ts = time.time()
             self._calibrator.start(self._soc, self._wallbox_energy)
             self._capacity_anchor_soc = self._soc
             self._capacity_anchor_wallbox_kwh = self._wallbox_energy
+            # Solaranteil-/Kosten-Schaetzung ohne evcc (siehe
+            # _process_home_tick()): _home_tick_restart_suppress ist nur
+            # beim ALLERERSTEN _set_home()-Aufruf nach einem Neustart/Reload
+            # ueberhaupt True (siehe async_setup()) -- betrifft also genau
+            # den Fall, dass diese "gerade startende" Session in Wahrheit
+            # schon vor dem Neustart lief. Dann bewusst KEIN Akkumulator
+            # (kein Teil-/falsches Ergebnis fuer diese Session, siehe
+            # Nutzeranforderung "ein neustart darf aber die kosten/solar
+            # nicht falsch darstellen"). Einmalig konsumiert -- eine
+            # tatsaechlich neue Session spaeter in derselben Laufzeit ist
+            # davon nicht betroffen.
+            if self._home_tick_restart_suppress:
+                self._home_tick_restart_suppress = False
+                self._home_tick_acc = None
+            elif self._home_generic_estimate_eligible():
+                self._home_tick_acc = {
+                    "solar_kwh": 0.0, "grid_kwh": 0.0, "kosten": 0.0,
+                    "last_pv": self._pv_generation,
+                    "last_home": self._home_consumption_live_raw,
+                    "last_auto": self._wallbox_energy,
+                    # None, falls battery_charge_entity nicht konfiguriert --
+                    # rein additiv-optional, siehe _process_home_tick().
+                    "last_battery": self._battery_charge_live_raw,
+                    "last_feedin_price": self._home_feedin_price(),
+                    "last_grid_price": self._home_price(),
+                }
+                self.data["home_generic_estimate_open"] = True
+                self._save_soon()
+            else:
+                self._home_tick_acc = None
         elif was_home and not self._home:
+            self._home_session_start_ts = None
             sample = self._calibrator.end(self._soc, self._wallbox_energy)
             if sample is not None:
                 self.hass.async_create_task(self._record_efficiency_sample(sample))
@@ -1833,6 +2088,97 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # naechsten periodischen _refresh_evcc_sessions() zu warten,
             # damit _home_kwh()/_home_cost() sie ohne Verzoegerung sehen.
             self.hass.async_create_task(self._refresh_evcc_sessions())
+            # Solaranteil-/Kosten-Schaetzung ohne evcc (siehe
+            # _process_home_tick()): eigener, unabhaengiger Record --
+            # betrifft NIE dieselbe Session wie der evcc-Zweig oben (siehe
+            # _home_generic_estimate_eligible(): explizit nur ohne
+            # evcc_host aktiv).
+            acc = self._home_tick_acc
+            self._home_tick_acc = None
+            self.data["home_generic_estimate_open"] = False
+            self._save_soon()
+            if acc is not None:
+                total_kwh = acc["solar_kwh"] + acc["grid_kwh"]
+                if total_kwh > 0:
+                    session_rec = {
+                        "ts": time.time(),
+                        "kwh": round(total_kwh, 2),
+                        "solar_pct": round(100.0 * acc["solar_kwh"] / total_kwh, 1),
+                        "kosten": round(acc["kosten"], 2),
+                    }
+                    self.hass.async_create_task(self._record_home_session(session_rec))
+
+    def _process_home_tick(self) -> None:
+        """Ein Tick der Solaranteil-/Kosten-Akkumulation einer laufenden
+        generischen (nicht-evcc) Heim-Ladesession (siehe engine.home_
+        charging_tick_split(), _set_home()) -- ausgeloest bei jeder
+        Aktualisierung von PV-Erzeugung, Hausverbrauch oder Wallbox-
+        Energiezaehler (siehe _wire_home_tick_sources()/_set_wallbox_
+        energy()). No-op ohne aktiven Akkumulator (kein passender Session-
+        Start, siehe _home_generic_estimate_eligible()) oder ausserhalb
+        einer laufenden Session.
+
+        Preis wird PRO TICK frisch gelesen und sofort in Waehrung verrechnet
+        (nicht erst am Session-Ende aus der Energie-Summe abgeleitet) --
+        genauer bei einem waehrend der Session schwankenden Tarif
+        (Nutzerentscheidung 2026-09-27). Ein einzelner ungueltiger Preis-
+        Messwert faellt auf den letzten gueltigen dieser Session zurueck
+        (acc["last_feedin_price"]/["last_grid_price"]), statt diesen einen
+        Tick unbepreist zu lassen.
+
+        battery_charge_entity (falls konfiguriert) zaehlt additiv zum
+        Hausverbrauch (analog _house_combined_reading_kwh()): ein
+        ladender Hausspeicher konkurriert genauso um den PV-Ueberschuss
+        wie das Auto, ohne das wuerde dessen Ladeleistung faelschlich als
+        zusaetzlicher Ueberschuss fuers Auto gezaehlt. Rein additiv-optional
+        -- ohne konfigurierte Entity oder bei (noch) fehlendem Messwert
+        zaehlt fuer diesen Tick schlicht 0 zusaetzlich, der reine
+        Hausverbrauch bleibt trotzdem gueltig (kein Blocker fuer den
+        gesamten Tick, analog dem Verhalten dort)."""
+        acc = self._home_tick_acc
+        if acc is None or not self._home:
+            return
+        if self._pv_generation is None or self._home_consumption_live_raw is None or self._wallbox_energy is None:
+            return
+        pv_delta = self._pv_generation - acc["last_pv"]
+        home_delta = self._home_consumption_live_raw - acc["last_home"]
+        auto_delta = self._wallbox_energy - acc["last_auto"]
+        acc["last_pv"] = self._pv_generation
+        acc["last_home"] = self._home_consumption_live_raw
+        acc["last_auto"] = self._wallbox_energy
+        battery_delta = 0.0
+        if self._opt(CONF_BATTERY_CHARGE_ENTITY) and self._battery_charge_live_raw is not None:
+            if acc.get("last_battery") is not None:
+                battery_delta = max(0.0, self._battery_charge_live_raw - acc["last_battery"])
+            acc["last_battery"] = self._battery_charge_live_raw
+        # Zaehler-Reset/-Ruecksprung (z.B. Sensor-/Integrations-Neustart) --
+        # dieser eine Tick wird uebersprungen (Anker ist oben trotzdem schon
+        # auf den aktuellen Wert gesprungen), damit der naechste Tick wieder
+        # ein plausibles kleines Delta sieht statt denselben Sprung erneut
+        # zu verrechnen.
+        if pv_delta < 0 or home_delta < 0 or auto_delta < 0:
+            return
+        split = home_charging_tick_split(pv_delta, home_delta + battery_delta, auto_delta)
+        if split is None:
+            return
+        solar_kwh, grid_kwh = split
+        acc["solar_kwh"] += solar_kwh
+        acc["grid_kwh"] += grid_kwh
+        tick_total = solar_kwh + grid_kwh
+        if tick_total <= 0:
+            return
+        feedin_price = self._home_feedin_price()
+        if feedin_price is None:
+            feedin_price = acc.get("last_feedin_price")
+        grid_price = self._home_price()
+        if grid_price is None:
+            grid_price = acc.get("last_grid_price")
+        if feedin_price is None or grid_price is None:
+            return
+        acc["last_feedin_price"] = feedin_price
+        acc["last_grid_price"] = grid_price
+        price_per_kwh = blended_charge_price(solar_kwh, tick_total, feedin_price, grid_price)
+        acc["kosten"] += price_per_kwh * tick_total
 
     @callback
     def _set_power(self, raw) -> None:
@@ -1905,6 +2251,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         elif stored_source is None:
             self.data["wallbox_energy_start_source"] = source
         self.async_set_updated_data(self.data)
+        self._process_home_tick()
 
     @callback
     def _set_odo(self, raw, unit) -> None:
@@ -4941,6 +5288,49 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 return avg
         price = self._opt(CONF_HOME_PRICE_KWH)
         return float(price) if price is not None else None
+
+    def _home_feedin_price(self) -> Optional[float]:
+        """Einspeiseverguetung fuer die Solaranteil-/Kosten-Schaetzung von
+        Heim-Ladesessions OHNE evcc (siehe _process_home_tick()) -- Entity
+        hat Vorrang vor festem Wert, gleiches Muster wie CONF_HOME_PRICE_
+        KWH/_ENTITY. Bewusst einfacher als _home_price() (keine evcc-Tarif-
+        Prioritaet, keine kWh-gewichtete Mittelwertbildung): mit evcc kommt
+        der Einspeisetarif ohnehin live aus dessen eigenem "tariffFeedIn"
+        (siehe engine.min_solar_share_price_ceiling()), diese Methode wird
+        nur im generischen (nicht-evcc) Pfad gebraucht."""
+        entity_id = self._opt(CONF_HOME_FEEDIN_PRICE_ENTITY)
+        if entity_id:
+            state = self.hass.states.get(entity_id)
+            if state is not None and state.state not in _INVALID:
+                try:
+                    return float(state.state)
+                except (TypeError, ValueError):
+                    pass
+        price = self._opt(CONF_HOME_FEEDIN_PRICE_KWH)
+        return float(price) if price is not None else None
+
+    def _home_generic_estimate_eligible(self) -> bool:
+        """Ob JETZT alle Voraussetzungen fuer die tick-basierte Solaranteil-/
+        Kosten-Schaetzung einer Heim-Ladesession ohne evcc erfuellt sind
+        (siehe _process_home_tick()) -- geprueft bei jedem Session-Start
+        (_set_home()). Nutzeranforderung 2026-09-27: "gleiche Kosten
+        ermitteln koennen, genauso richtig wie evcc es macht. Sonst macht
+        das keinen Sinn" -- KEIN Fallback auf eine grobere Naeherung, wenn
+        auch nur eine Voraussetzung fehlt (PV-Erzeugung, Hausverbrauch,
+        Wallbox-Energiezaehler, Einspeiseverguetung, Heimstrompreis); dann
+        bleibt die Schaetzung fuer diese Session komplett aus (kein
+        Akkumulator). Bewusst NICHT aktiv, wenn evcc_host konfiguriert ist
+        -- dort liefert bereits evccs eigenes Session-Log dieselben Werte
+        praeziser (siehe _set_home()-evcc-Zweig), kein Doppel-Tracking."""
+        if self._opt(CONF_EVCC_HOST):
+            return False
+        if not (
+            self._opt(CONF_PV_GENERATION_ENTITY)
+            and self._opt(CONF_HOME_CONSUMPTION_ENTITY)
+            and self._opt(CONF_WALLBOX_ENERGY_ENTITY)
+        ):
+            return False
+        return self._home_feedin_price() is not None and self._home_price() is not None
 
     def home_vs_external_price(self) -> Optional[dict]:
         """Vergleich Heimladen- vs. Fremdladen-Preis pro kWh, jeweils seit

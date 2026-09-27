@@ -25,8 +25,11 @@ from .const import (
     CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
     CONF_EVCC_VEHICLE_NAME,
     CONF_GPS_ENTITY,
+    CONF_HOME_CHARGING_METHOD,
     CONF_HOME_CONSUMPTION_ENTITY,
     CONF_HOME_ENTITY,
+    CONF_HOME_FEEDIN_PRICE_ENTITY,
+    CONF_HOME_FEEDIN_PRICE_KWH,
     CONF_HOME_PRICE_ENTITY,
     CONF_HOME_PRICE_KWH,
     CONF_IDLE_TIMEOUT,
@@ -50,6 +53,7 @@ from .const import (
     CONF_POWER_IS_AC,
     CONF_PV_FORECAST_ENTITY,
     CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
+    CONF_PV_GENERATION_ENTITY,
     CONF_SOC_ENTITY,
     CONF_SOC_THRESHOLDS,
     CONF_START_DELTA,
@@ -65,6 +69,8 @@ from .const import (
     CONF_VERBRENNER_L_100KM,
     CONF_VERBRENNER_PRICE_ENTITY,
     CONF_VERBRENNER_PRICE_PER_LITER,
+    CONF_WALLBOX_CHARGING_ENTITY,
+    CONF_WALLBOX_CONNECTED_ENTITY,
     CONF_WALLBOX_ENERGY_ENTITY,
     CONF_WALLBOX_MIN_POWER_W,
     CONF_WEEKLY_FULL_CHARGE_ENABLED,
@@ -92,11 +98,14 @@ from .const import (
     DEFAULT_WEEKLY_FULL_CHARGE_ENABLED,
     DEFAULT_WEEKLY_FULL_CHARGE_INTERVAL_DAYS,
     DOMAIN,
+    HOME_CHARGING_METHOD_GENERISCH,
+    HOME_CHARGING_METHOD_OPTIONS,
     LADE_MODUS_GEMISCHT,
     LADE_MODUS_NUR_AUSWAERTS,
     LADE_MODUS_NUR_ZUHAUSE,
     NOTIFY_EVENTS,
     SOC_THRESHOLD_OPTIONS,
+    resolve_home_charging_method,
 )
 
 _SOC_ENTITY = selector.EntitySelector(
@@ -132,14 +141,33 @@ _MOTOR_ENTITY = selector.EntitySelector(
 _PV_FORECAST_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor")
 )
-# Kein device_class-Filter, analog _PV_FORECAST_ENTITY/_HOME_PRICE_ENTITY --
-# Energiezaehler-Integrationen sind zu uneinheitlich (device_class="energy"
-# waere hier zu eng, manche liefern nur "measurement" statt "total_increasing").
+# Kumulative kWh-Zaehler -- device_class="energy" analog _WALLBOX_ENERGY_
+# ENTITY oben (Nutzerkorrektur 2026-09-27: Konsistenz zwischen allen
+# Energiezaehler-Feldern, vorher hier abweichend ungefiltert).
 _HOME_CONSUMPTION_ENTITY = selector.EntitySelector(
-    selector.EntitySelectorConfig(domain="sensor")
+    selector.EntitySelectorConfig(domain="sensor", device_class="energy")
 )
 _BATTERY_CHARGE_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="sensor", device_class="energy")
+)
+# Kumulativer kWh-Zaehlerstand der PV-ERZEUGUNG, NICHT Momentanleistung --
+# device_class="energy" analog _WALLBOX_ENERGY_ENTITY/_HOME_CONSUMPTION_
+# ENTITY oben.
+_PV_GENERATION_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="sensor", device_class="energy")
+)
+_HOME_FEEDIN_PRICE_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor")
+)
+# Kein device_class-Filter: Verbunden-/Laedt-Statussensoren verschiedener
+# Wallbox-Integrationen tragen sehr uneinheitliche (oder gar keine)
+# device_class (anders als die Energiezaehler-Felder oben) -- analog
+# _PLUG_ENTITY.
+_WALLBOX_CONNECTED_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="binary_sensor")
+)
+_WALLBOX_CHARGING_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="binary_sensor")
 )
 _URLAUB_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain=["input_boolean", "switch", "binary_sensor"])
@@ -172,6 +200,13 @@ _LADE_MODUS = selector.SelectSelector(
     selector.SelectSelectorConfig(
         options=[LADE_MODUS_NUR_ZUHAUSE, LADE_MODUS_GEMISCHT, LADE_MODUS_NUR_AUSWAERTS],
         translation_key="lade_modus",
+        mode=selector.SelectSelectorMode.LIST,
+    )
+)
+_HOME_CHARGING_METHOD = selector.SelectSelector(
+    selector.SelectSelectorConfig(
+        options=list(HOME_CHARGING_METHOD_OPTIONS),
+        translation_key="home_charging_method",
         mode=selector.SelectSelectorMode.LIST,
     )
 )
@@ -235,21 +270,33 @@ def build_modus_schema(cur: dict) -> vol.Schema:
     """Schritt 2: Lade-Modus -- steuert NUR Sichtbarkeit (Panel-Tabs/Karten,
     welche der folgenden Schritte erscheinen), keine Rechenlogik (siehe
     const.py::resolve_lade_modus()). Jederzeit in der OptionsFlow aenderbar,
-    additiv: siehe async_step_modus()/_carry_forward() dort."""
+    additiv: siehe async_step_modus()/_carry_forward() dort.
+
+    Zusaetzlich (Nutzerwunsch, Issue #1/#2-Diskussion 2026-09-27): wie zuhause
+    geladen wird -- steuert, ob als naechstes Schritt "evcc" oder der neue
+    Schritt "heimladen" erscheint (siehe async_step_modus() unten). Default
+    wird aus dem bereits vorhandenen CONF_EVCC_HOST abgeleitet (siehe
+    const.py::resolve_home_charging_method()) -- Bestandsinstallationen mit
+    evcc_host bekommen automatisch "evcc", welche ohne automatisch
+    "generisch", ohne dass irgendwer aktiv etwas umstellen muss."""
     return vol.Schema({
         vol.Required(
             CONF_LADE_MODUS, default=cur.get(CONF_LADE_MODUS, DEFAULT_LADE_MODUS)
         ): _LADE_MODUS,
+        vol.Required(
+            CONF_HOME_CHARGING_METHOD,
+            default=resolve_home_charging_method(cur.get(CONF_HOME_CHARGING_METHOD), cur.get(CONF_EVCC_HOST)),
+        ): _HOME_CHARGING_METHOD,
     })
 
 
 def build_evcc_schema(cur: dict) -> vol.Schema:
-    """Schritt 2: evcc-Host (Addon-API direkt, optional), Fahrzeugname +
-    Wallbox-Leistungsentität. Zusätzlich (rein additiv, alle optional): die
-    automatische evcc-Modus-/SoC-Steuerung (siehe coordinator.py::
-    _async_apply_evcc_mode_control(), Default aus) sowie deren optionales
-    Haus-Nutzungsprofil (PV-Restprognose heute, Hausverbrauch, Speicher-
-    ladung), die Wallbox-Mindestladeleistung fuer die Echtzeit-PV-Über-
+    """Schritt 3 (nur bei home_charging_method == "evcc"): evcc-Host
+    (Addon-API direkt, optional), Fahrzeugname. Zusätzlich (rein additiv,
+    alle optional): die automatische evcc-Modus-/SoC-Steuerung (siehe
+    coordinator.py:: _async_apply_evcc_mode_control(), Default aus) sowie
+    deren optionales Haus-Nutzungsprofil (PV-Restprognose heute), die
+    Wallbox-Mindestladeleistung fuer die Echtzeit-PV-Über-
     steuerung (siehe engine.apply_realtime_pv_override()/const.py::
     CONF_WALLBOX_MIN_POWER_W), die dynamische Speicher-Vorrang-Steuerung
     waehrend das Auto angesteckt ist (siehe coordinator.py::
@@ -262,14 +309,27 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
     der Ein/Aus-Schalter ist zusaetzlich direkt aus dem Panel schaltbar
     (siehe async_set_weekly_full_charge_enabled() -- schreibt nach
     entry.data, damit dieser Flow hier nie einen anderen Wert zeigt),
-    das Intervall in Tagen bewusst nur hier im Options-Flow."""
+    das Intervall in Tagen bewusst nur hier im Options-Flow.
+
+    home_consumption_entity/battery_charge_entity sind HIER GEBLIEBEN (nicht
+    nach "heimladen" umgezogen, anders als zunaechst geplant -- Korrektur
+    2026-09-27, Nutzerhinweis: "wenn evcc ausgewaehlt ist, ist hausverbrauch,
+    speicherladung nicht mehr konfigurierbar. das brauchen wir aber auch mit
+    evcc"): sie speisen das Haus-Nutzungsprofil der evcc-Modus-/SoC-
+    Steuerung oben (PV-Ueberschuss-Anrechnung, siehe _house_combined_
+    reading_kwh()) UNABHAENGIG von der generischen Solar-/Kosten-Schaetzung
+    in "heimladen" -- werden dort ZUSAETZLICH (nicht stattdessen) auch
+    angezeigt, da beide Pfade sie fuer jeweils eigene Zwecke brauchen
+    koennen, siehe build_heimladen_schema(). home_entity ist stattdessen in
+    "ladeleistung" umgezogen (siehe dort), da fuer BEIDE Heimladen-Pfade
+    noetig, aber dort thematisch (Ladeleistung/-Erkennung) klarer passend
+    als bei den Energiemengen-Feldern hier/in "heimladen"."""
     def sv(key):
         return {"suggested_value": cur.get(key)}
 
     return vol.Schema({
         vol.Optional(CONF_EVCC_HOST, description=sv(CONF_EVCC_HOST)): _EVCC_HOST,
         vol.Optional(CONF_EVCC_VEHICLE_NAME, description=sv(CONF_EVCC_VEHICLE_NAME)): _EVCC_VEHICLE_NAME,
-        vol.Optional(CONF_HOME_ENTITY, description=sv(CONF_HOME_ENTITY)): _HOME_ENTITY,
         vol.Optional(
             CONF_EVCC_MODE_CONTROL_ENABLED,
             default=cur.get(CONF_EVCC_MODE_CONTROL_ENABLED, DEFAULT_EVCC_MODE_CONTROL_ENABLED),
@@ -303,6 +363,66 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
     })
 
 
+def build_heimladen_schema(cur: dict) -> vol.Schema:
+    """Schritt 3 (nur bei home_charging_method == "generisch"): generische
+    Heimladen-Sensoren, ohne evcc -- ersetzt an dieser Stelle im Flow den
+    Schritt "evcc". Enthaelt home_consumption_entity/battery_charge_entity
+    AUCH hier (nicht exklusiv -- dieselben CONF_-Schluessel wie im "evcc"-
+    Schritt, siehe dortigen Docstring: beide Pfade koennen sie fuer jeweils
+    eigene Zwecke brauchen, evcc fuer das Haus-Nutzungsprofil der Modus-
+    Steuerung, hier fuer die Solar-/Kosten-Schaetzung unten), aus
+    "ladeleistung" umgezogen (wallbox_energy_entity) und aus "vergleich"
+    umgezogen (home_price_kwh/home_price_entity) -- alle thematisch "wie
+    viel/wie teuer wird zuhause geladen", jetzt an einem Ort statt auf drei
+    Schritte verstreut. Zusaetzlich neu (Nutzerwunsch: "gleiche Kosten
+    ermitteln wie evcc es macht"): pv_generation_entity + home_feedin_
+    price_kwh/_entity fuer die tick-basierte Solaranteil-/Kosten-Schaetzung
+    von Heim-Ladesessions (siehe coordinator.py::_process_home_tick()) --
+    ALLE zusammen mit home_consumption_entity noetig, sonst bleibt die
+    Schaetzung fuer eine Session einfach aus (kein Fallback auf eine
+    grobere Naeherung). battery_charge_entity ist dabei rein additiv-
+    optional (analog _house_combined_reading_kwh()) -- kein Pflichtfeld
+    fuer die Schaetzung selbst.
+
+    home_entity (Wallbox Ladeleistung, Ja/Nein-Signal fuer Session-Start/
+    -Ende) ist NICHT hier, sondern im Schritt "ladeleistung" -- braucht
+    keinen evcc-Ersatz, ist also fuer BEIDE home_charging_method-Pfade
+    gleichermassen noetig, nicht nur fuer "generisch" (Korrektur waehrend
+    der Umsetzung: die urspruengliche Migrationstabelle haette es
+    faelschlich exklusiv hierher gepackt, was evcc-Nutzern die Moeglichkeit
+    genommen haette, es ueberhaupt zu konfigurieren).
+
+    wallbox_connected_entity/wallbox_charging_entity (Nutzerwunsch: "im
+    schritt wallbox, sensoren auswaehlbar machen die den status zeigen"):
+    optionale eigene Status-Sensoren der Wallbox selbst (z.B. aus deren
+    eigener Integration), falls vorhanden -- ersetzen dann in der Wallbox-
+    Karte/im generischen Live-Status (siehe coordinator.py::
+    home_generic_live_attrs()) die sonst aus home_entity/plug_entity
+    abgeleitete Heuristik. Beide unabhaengig voneinander optional, kein
+    Pflichtfeld fuer irgendetwas anderes hier."""
+    def sv(key):
+        return {"suggested_value": cur.get(key)}
+
+    return vol.Schema({
+        vol.Optional(CONF_HOME_CONSUMPTION_ENTITY, description=sv(CONF_HOME_CONSUMPTION_ENTITY)): _HOME_CONSUMPTION_ENTITY,
+        vol.Optional(CONF_BATTERY_CHARGE_ENTITY, description=sv(CONF_BATTERY_CHARGE_ENTITY)): _BATTERY_CHARGE_ENTITY,
+        vol.Optional(CONF_WALLBOX_ENERGY_ENTITY, description=sv(CONF_WALLBOX_ENERGY_ENTITY)): _WALLBOX_ENERGY_ENTITY,
+        vol.Optional(
+            CONF_WALLBOX_CONNECTED_ENTITY, description=sv(CONF_WALLBOX_CONNECTED_ENTITY)
+        ): _WALLBOX_CONNECTED_ENTITY,
+        vol.Optional(
+            CONF_WALLBOX_CHARGING_ENTITY, description=sv(CONF_WALLBOX_CHARGING_ENTITY)
+        ): _WALLBOX_CHARGING_ENTITY,
+        vol.Optional(CONF_HOME_PRICE_KWH, description=sv(CONF_HOME_PRICE_KWH)): vol.Coerce(float),
+        vol.Optional(CONF_HOME_PRICE_ENTITY, description=sv(CONF_HOME_PRICE_ENTITY)): _HOME_PRICE_ENTITY,
+        vol.Optional(CONF_PV_GENERATION_ENTITY, description=sv(CONF_PV_GENERATION_ENTITY)): _PV_GENERATION_ENTITY,
+        vol.Optional(CONF_HOME_FEEDIN_PRICE_KWH, description=sv(CONF_HOME_FEEDIN_PRICE_KWH)): vol.Coerce(float),
+        vol.Optional(
+            CONF_HOME_FEEDIN_PRICE_ENTITY, description=sv(CONF_HOME_FEEDIN_PRICE_ENTITY)
+        ): _HOME_FEEDIN_PRICE_ENTITY,
+    })
+
+
 def build_evcc_loadpoint_schema(cur: dict, titles: list[str]) -> vol.Schema:
     """Zusatzschritt, nur wenn evcc mehr als einen Loadpoint meldet."""
     return vol.Schema({
@@ -316,14 +436,22 @@ def build_evcc_loadpoint_schema(cur: dict, titles: list[str]) -> vol.Schema:
 
 
 def build_power_schema(cur: dict) -> vol.Schema:
-    """Schritt 3: Fahrzeug-Ladeleistung + Wallbox-Energiezähler."""
+    """Schritt 4: Fahrzeug-Ladeleistung + Wallbox-Ladeleistung -- beides
+    unabhaengig vom Heimladen-Pfad (evcc oder generisch), daher fuer BEIDE
+    home_charging_method-Pfade sichtbar: Fahrzeug-Ladeleistung ist reine
+    Fahrzeug-Telemetrie, home_entity (Ja/Nein-Signal "laedt gerade
+    zuhause") braucht ebenfalls keinen evcc-Ersatz (siehe coordinator.py::
+    _set_home()). wallbox_energy_entity dagegen ist in den neuen Schritt
+    "heimladen" umgezogen (Nutzerwunsch 2026-09-27: kumulative Energie-
+    messung gehoert thematisch zum Home-Charging-Themenblock, nicht zur
+    reinen Ladeleistung hier)."""
     def sv(key):
         return {"suggested_value": cur.get(key)}
 
     return vol.Schema({
         vol.Optional(CONF_POWER_ENTITY, description=sv(CONF_POWER_ENTITY)): _POWER_ENTITY,
         vol.Optional(CONF_POWER_IS_AC, default=cur.get(CONF_POWER_IS_AC, DEFAULT_POWER_IS_AC)): bool,
-        vol.Optional(CONF_WALLBOX_ENERGY_ENTITY, description=sv(CONF_WALLBOX_ENERGY_ENTITY)): _WALLBOX_ENERGY_ENTITY,
+        vol.Optional(CONF_HOME_ENTITY, description=sv(CONF_HOME_ENTITY)): _HOME_ENTITY,
     })
 
 
@@ -409,19 +537,20 @@ def build_leasing_schema(cur: dict) -> vol.Schema:
 
 
 def build_comparison_schema(cur: dict) -> vol.Schema:
-    """Schritt 7: Kostenvergleich Verbrenner.
+    """Schritt 9: Kostenvergleich Verbrenner.
 
     Kraftstoffpreis-Prioritaet: tankerkoenig_fuel_type (guenstigste offene
     Tankerkoenig-Station, automatisch ermittelt) > verbrenner_price_entity
     (eigene Entitaet) > verbrenner_price_per_liter (fester Wert). Nur eines
     davon konfigurieren, je nachdem, welche Quelle genutzt werden soll.
-    """
+
+    home_price_kwh/home_price_entity sind in den neuen Schritt "heimladen"
+    umgezogen (Nutzerwunsch 2026-09-27: gehoert thematisch zu den anderen
+    Heimladen-Energiemengen-Feldern, nicht zum Verbrenner-Vergleich hier)."""
     def sv(key):
         return {"suggested_value": cur.get(key)}
 
     return vol.Schema({
-        vol.Optional(CONF_HOME_PRICE_KWH, description=sv(CONF_HOME_PRICE_KWH)): vol.Coerce(float),
-        vol.Optional(CONF_HOME_PRICE_ENTITY, description=sv(CONF_HOME_PRICE_ENTITY)): _HOME_PRICE_ENTITY,
         vol.Optional(CONF_VERBRENNER_L_100KM, description=sv(CONF_VERBRENNER_L_100KM)): vol.Coerce(float),
         vol.Optional(CONF_VERBRENNER_PRICE_PER_LITER, description=sv(CONF_VERBRENNER_PRICE_PER_LITER)): vol.Coerce(float),
         vol.Optional(CONF_VERBRENNER_PRICE_ENTITY, description=sv(CONF_VERBRENNER_PRICE_ENTITY)): _VERBRENNER_PRICE_ENTITY,
@@ -448,11 +577,13 @@ def _noise_ok(data: dict) -> bool:
 
 
 def _all_step_schema_keys() -> set[str]:
-    """Alle Config-Keys, die eines der 9 Options-Flow-Formulare abdeckt."""
+    """Alle Config-Keys, die eines der 9 Options-Flow-Formulare (bzw. je
+    nach home_charging_method "evcc" ODER "heimladen", nie beide) abdeckt."""
     schemas = (
         build_vehicle_schema({}), build_modus_schema({}), build_evcc_schema({}),
-        build_power_schema({}), build_output_schema({}), build_detection_schema({}),
-        build_trip_schema({}), build_leasing_schema({}), build_comparison_schema({}),
+        build_heimladen_schema({}), build_power_schema({}), build_output_schema({}),
+        build_detection_schema({}), build_trip_schema({}), build_leasing_schema({}),
+        build_comparison_schema({}),
     )
     return {str(key) for schema in schemas for key in schema.schema}
 
@@ -479,13 +610,18 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
     LADE_MODUS_NUR_AUSWAERTS uebersprungen -- siehe async_step_modus()).
 
     1 fahrzeug:    Eckdaten, ODO, SoC-Entitaet, Akkugroesse.
-    2 modus:       Lade-Modus (steuert nur Sichtbarkeit, siehe const.py).
-    3 evcc:        evcc-Host (Addon-API direkt) + Fahrzeugname + Wallbox-
-                   Leistungsentitaet, ggf. gefolgt vom Zwischenschritt
-                   evcc_loadpoint (nur bei mehr als einem Loadpoint).
-                   -- UEBERSPRUNGEN bei "nur_auswaerts".
-    4 ladeleistung: Fahrzeug-Ladeleistung + Wallbox-Energiezaehler.
-                   -- UEBERSPRUNGEN bei "nur_auswaerts".
+    2 modus:       Lade-Modus (steuert nur Sichtbarkeit, siehe const.py) +
+                   Heimladen-Methode (evcc vs. generisch -- steuert, welcher
+                   der beiden folgenden Schritte erscheint).
+    3 evcc ODER heimladen (nie beide): evcc-Host (Addon-API direkt) +
+                   Fahrzeugname, ggf. gefolgt vom Zwischenschritt
+                   evcc_loadpoint (nur bei mehr als einem Loadpoint) -- ODER
+                   generische Heimladen-Sensoren (Wallbox-Ladeleistung/
+                   -Energiezaehler, Hausverbrauch, Heimstrompreis, optionale
+                   Solaranteil-/Kosten-Schaetzung ohne evcc).
+                   -- BEIDE UEBERSPRUNGEN bei "nur_auswaerts".
+    4 ladeleistung: Fahrzeug-Ladeleistung (Telemetrie, unabhaengig vom
+                   Heimladen-Pfad). -- UEBERSPRUNGEN bei "nur_auswaerts".
     5 ausgabe:     Push-Benachrichtigung.
     6 erkennung:   ChargeDetector-Schwellwerte.
     7 fahrtenbuch: TripDetector + GPS.
@@ -530,6 +666,8 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
             self._data = {**self._data, **_clean(user_input)}
             if self._data.get(CONF_LADE_MODUS) == LADE_MODUS_NUR_AUSWAERTS:
                 return await self.async_step_ausgabe()
+            if self._data.get(CONF_HOME_CHARGING_METHOD) == HOME_CHARGING_METHOD_GENERISCH:
+                return await self.async_step_heimladen()
             return await self.async_step_evcc()
 
         cur = user_input if user_input is not None else self._data
@@ -570,6 +708,16 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="evcc_loadpoint",
             data_schema=build_evcc_loadpoint_schema(self._data, self._evcc_loadpoints),
+        )
+
+    async def async_step_heimladen(self, user_input=None) -> FlowResult:
+        if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            return await self.async_step_ladeleistung()
+
+        cur = user_input if user_input is not None else self._data
+        return self.async_show_form(
+            step_id="heimladen", data_schema=build_heimladen_schema(cur)
         )
 
     async def async_step_ladeleistung(self, user_input=None) -> FlowResult:
@@ -683,17 +831,30 @@ class EvAssistantOptionsFlow(OptionsFlow):
         if user_input is not None:
             self._data = {**self._data, **_clean(user_input)}
             if self._data.get(CONF_LADE_MODUS) == LADE_MODUS_NUR_AUSWAERTS:
-                # evcc-/Ladeleistungs-Schritte werden jetzt uebersprungen --
-                # ihre bereits konfigurierten Werte trotzdem unveraendert
-                # uebernehmen (siehe _carry_forward()), sonst wuerden sie
-                # beim Speichern als "nicht mehr angegeben" geloescht statt
-                # nur nicht mehr angezeigt/genutzt zu werden.
+                # evcc-/Heimladen-/Ladeleistungs-Schritte werden jetzt
+                # uebersprungen -- ihre bereits konfigurierten Werte
+                # trotzdem unveraendert uebernehmen (siehe _carry_forward()),
+                # sonst wuerden sie beim Speichern als "nicht mehr angegeben"
+                # geloescht statt nur nicht mehr angezeigt/genutzt zu werden.
                 current = self._current()
                 self._data = _carry_forward(current, self._data, build_evcc_schema({}))
+                self._data = _carry_forward(current, self._data, build_heimladen_schema({}))
                 self._data = _carry_forward(current, self._data, build_power_schema({}))
                 if CONF_EVCC_LOADPOINT_TITLE not in self._data and CONF_EVCC_LOADPOINT_TITLE in current:
                     self._data[CONF_EVCC_LOADPOINT_TITLE] = current[CONF_EVCC_LOADPOINT_TITLE]
                 return await self.async_step_ausgabe()
+            # Nur einer der beiden Pfade wird je Durchlauf gezeigt (Nutzer-
+            # wunsch: "steuert welcher der beiden folgenden Schritte
+            # erscheint -- niemals beide") -- der jeweils andere wird analog
+            # zum nur_auswaerts-Fall oben unveraendert uebernommen, damit ein
+            # spaeteres Zurueckwechseln (Nutzerwunsch: "falls man mal von
+            # evcc weg will") die alten Werte wiederfindet statt bei 0
+            # anzufangen.
+            current = self._current()
+            if self._data.get(CONF_HOME_CHARGING_METHOD) == HOME_CHARGING_METHOD_GENERISCH:
+                self._data = _carry_forward(current, self._data, build_evcc_schema({}))
+                return await self.async_step_heimladen()
+            self._data = _carry_forward(current, self._data, build_heimladen_schema({}))
             return await self.async_step_evcc()
 
         return self.async_show_form(
@@ -732,6 +893,15 @@ class EvAssistantOptionsFlow(OptionsFlow):
         return self.async_show_form(
             step_id="evcc_loadpoint",
             data_schema=build_evcc_loadpoint_schema(self._current(), self._evcc_loadpoints),
+        )
+
+    async def async_step_heimladen(self, user_input=None) -> FlowResult:
+        if user_input is not None:
+            self._data = {**self._data, **_clean(user_input)}
+            return await self.async_step_ladeleistung()
+
+        return self.async_show_form(
+            step_id="heimladen", data_schema=build_heimladen_schema(self._current())
         )
 
     async def async_step_ladeleistung(self, user_input=None) -> FlowResult:
