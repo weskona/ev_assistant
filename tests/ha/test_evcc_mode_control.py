@@ -1898,3 +1898,96 @@ async def test_migrate_weekday_usage_windows_ist_idempotent(hass, coordinators):
     coordinator.data["house_weekday_day_counts"] = {"2": 2}
     assert coordinator._migrate_weekday_usage_windows() is True
     assert coordinator._migrate_weekday_usage_windows() is False
+
+
+# ----- Woechentliches Balancing: Tageszeit-Gate (weekly_balancing_time_ok) -
+
+
+async def test_evcc_mode_targets_balancing_faellig_mittags_noch_pv_uebrig_nicht_aktiv(hass, coordinators):
+    """Produktionsvorfall 2026-09-27: eine mittags faellig gewordene
+    woechentliche Vollladung erzwang bislang sofort minpv/100%, obwohl noch
+    reichlich PV fuer den Rest des Tages zu erwarten war. "faellig" (reines
+    Intervall) und "aktiv" (tatsaechlich erzwungen) muessen jetzt
+    auseinanderfallen koennen."""
+    from custom_components.ev_assistant.const import (
+        CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
+        CONF_USABLE_KWH,
+        CONF_WEEKLY_FULL_CHARGE_ENABLED,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "wb_mittag",
+        options={
+            CONF_USABLE_KWH: 50.0,
+            CONF_WEEKLY_FULL_CHARGE_ENABLED: True,
+            CONF_PV_FORECAST_TODAY_REMAINING_ENTITY: "sensor.pv_rest",
+        },
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator._day_fraction_elapsed = lambda: 0.5
+    coordinator._local_hour = lambda: 13
+    coordinator.data["vollladung_letzter_ts"] = None  # noch nie -> sofort faellig
+    hass.states.async_set("sensor.pv_rest", "5.0", {"unit_of_measurement": "kWh"})
+
+    targets = coordinator._evcc_mode_targets()
+    assert targets["balancing_faellig"] is True
+    assert targets["balancing_aktiv"] is False
+    assert targets["modus"] != "minpv" or targets["target_soc"] != 100
+
+
+async def test_evcc_mode_targets_balancing_faellig_pv_aufgebraucht_wird_aktiv(hass, coordinators):
+    """Gegenprobe: sobald die PV-Restprognose (fast) aufgebraucht ist, wird
+    die faellige Vollladung tatsaechlich erzwungen."""
+    from custom_components.ev_assistant.const import (
+        CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
+        CONF_USABLE_KWH,
+        CONF_WEEKLY_FULL_CHARGE_ENABLED,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "wb_abend",
+        options={
+            CONF_USABLE_KWH: 50.0,
+            CONF_WEEKLY_FULL_CHARGE_ENABLED: True,
+            CONF_PV_FORECAST_TODAY_REMAINING_ENTITY: "sensor.pv_rest",
+        },
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator._day_fraction_elapsed = lambda: 0.9
+    coordinator._local_hour = lambda: 20
+    coordinator.data["vollladung_letzter_ts"] = None
+    hass.states.async_set("sensor.pv_rest", "0.05", {"unit_of_measurement": "kWh"})
+
+    targets = coordinator._evcc_mode_targets()
+    assert targets["balancing_faellig"] is True
+    assert targets["balancing_aktiv"] is True
+    assert targets["modus"] == "minpv"
+    assert targets["target_soc"] == 100
+
+
+async def test_evcc_mode_targets_balancing_faellig_ohne_pv_prognose_fallback_stunde(hass, coordinators):
+    """Ohne konfigurierte PV-Restprognose greift die feste Fallback-Stunde
+    (23 Uhr, Nutzerentscheidung 2026-09-27) statt nie auszuloesen."""
+    from custom_components.ev_assistant.const import (
+        CONF_USABLE_KWH,
+        CONF_WEEKLY_FULL_CHARGE_ENABLED,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "wb_fallback",
+        options={CONF_USABLE_KWH: 50.0, CONF_WEEKLY_FULL_CHARGE_ENABLED: True},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator.data["vollladung_letzter_ts"] = None
+
+    coordinator._day_fraction_elapsed = lambda: 0.9
+    coordinator._local_hour = lambda: 22
+    targets = coordinator._evcc_mode_targets()
+    assert targets["balancing_aktiv"] is False
+
+    coordinator._local_hour = lambda: 23
+    targets = coordinator._evcc_mode_targets()
+    assert targets["balancing_aktiv"] is True

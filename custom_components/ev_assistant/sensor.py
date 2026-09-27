@@ -1577,11 +1577,16 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
     den Urlaubsmodus-Status -- waehrend aktiv liefert der Sensor weiterhin
     die rechnerische Empfehlung, es wird aber NICHTS mehr tatsaechlich an
     evcc geschrieben (siehe _async_apply_evcc_mode_control()). Attribute
-    "balancing_enabled"/"balancing_aktiv"/"naechste_vollladung_faellig_ts"
-    (siehe CONF_WEEKLY_FULL_CHARGE_ENABLED/engine.weekly_balancing_due())
-    nur bei aktivierter evcc-Steuerung sichtbar, da eine faellige Balancing-
-    Ladung ohnehin nur wirkt, wenn ueberhaupt etwas an evcc geschrieben
-    wird. native_value ist "modus_effektiv" aus _evcc_mode_targets() --
+    "balancing_enabled"/"balancing_faellig"/"balancing_aktiv"/
+    "naechste_vollladung_faellig_ts" (siehe CONF_WEEKLY_FULL_CHARGE_ENABLED/
+    engine.weekly_balancing_due()) nur bei aktivierter evcc-Steuerung
+    sichtbar, da eine faellige Balancing-Ladung ohnehin nur wirkt, wenn
+    ueberhaupt etwas an evcc geschrieben wird. "balancing_faellig" (reines
+    Intervall, siehe weekly_balancing_due()) und "balancing_aktiv"
+    (zusaetzlich durchs Tageszeit-Gate, siehe engine.weekly_balancing_
+    time_ok()) koennen auseinanderfallen: "faellig" ohne "aktiv" heisst,
+    die Vollladung ist ueberfaellig, wartet aber noch auf den Rest des
+    heutigen Solartags. native_value ist "modus_effektiv" aus _evcc_mode_targets() --
     bereits inkl. der Echtzeit-PV-Uebersteuerung (siehe engine.
     apply_realtime_pv_override()); die Attribute "pv_override_aktiv"/
     "pv_ueberschuss_w" zeigen, ob/warum gerade hochgestuft wurde. Attribut
@@ -1679,7 +1684,8 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             "min_soc_scope": self.coordinator.data.get("evcc_min_soc_scope"),
             "limit_soc_scope": self.coordinator.data.get("evcc_limit_soc_scope"),
             "balancing_enabled": targets["balancing_enabled"],
-            "balancing_aktiv": targets["balancing_faellig"],
+            "balancing_faellig": targets["balancing_faellig"],
+            "balancing_aktiv": targets["balancing_aktiv"],
             "naechste_vollladung_faellig_ts": targets["naechste_vollladung_faellig_ts"],
             "pausiert": bool(self.coordinator.data.get("evcc_mode_control_paused")),
             # Manueller Modus (siehe coordinator.py::async_set_evcc_manual_

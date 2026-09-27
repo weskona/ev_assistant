@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.4] - 2026-09-27
+
+### Changed
+
+- **Weekly full-charge balancing now waits for the end of the solar day instead of triggering the moment it's due**: previously, becoming due mid-day (e.g. 13:29) immediately forced `minpv`/target 100%, cutting off the rest of that day's PV that would otherwise have been captured normally. It now additionally waits for today's PV forecast to be (nearly) used up before actually forcing the charge — falling back to a fixed local hour (23:00) if `pv_forecast_today_remaining_entity` isn't configured, since it could otherwise never trigger at all. The `evcc_mode_control` sensor's `balancing_faellig` (due, interval only) and `balancing_aktiv` (actually forcing right now) attributes can now genuinely differ — "due" without "active" means it's overdue but still waiting out the rest of today's solar.
+
+## [0.99.3] - 2026-09-27
+
+### Documentation
+
+- **Clarified the expected unit for `home_consumption_entity`/`battery_charge_entity`** (evcc step): both are summed as raw cumulative meter readings (`coordinator.py::_house_combined_reading_kwh()`), so both must be a rising kWh counter, not an instantaneous power sensor — `home_consumption_entity` already said "kWh" but not "cumulative"/"not power"; `battery_charge_entity` didn't mention either at all. No behavior change.
+
 ## [0.99.2] - 2026-09-26
 
 ### Fixed

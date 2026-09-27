@@ -549,6 +549,18 @@ DEFAULT_WEEKLY_FULL_CHARGE_INTERVAL_DAYS = 7
 # darunter statt exakter Gleichheit verhindert, dass eine Vollladung nie als
 # "erreicht" erkannt wird (siehe engine.py::soc_reached_full_charge()).
 VOLLLADUNG_SOC_THRESHOLD = 98.0
+# Nutzer-unsichtbar, keine Config-Option (siehe engine.py::
+# weekly_balancing_time_ok()) -- ab wann eine faellige woechentliche
+# Balancing-Vollladung tatsaechlich erzwungen wird, statt noch den Rest des
+# heutigen Solartags abzuwarten. Produktionsfeedback 2026-09-27: eine
+# mittags faellig gewordene Vollladung schnitt bislang sofort den Rest des
+# Solartags ab.
+# Schwelle statt exakt 0 kWh, gegen Prognose-Rundungsrauschen.
+WEEKLY_BALANCING_PV_REST_THRESHOLD_KWH = 0.3
+# Fallback-Stunde (lokale Zeit, 0-23) ohne konfigurierte PV-Restprognose
+# (CONF_PV_FORECAST_TODAY_REMAINING_ENTITY) -- Nutzerentscheidung
+# 2026-09-27: "ansonsten ab 23 uhr".
+WEEKLY_BALANCING_FALLBACK_HOUR = 23
 # Automatische Ausreisser-Daempfung (siehe engine.py::
 # clamp_weekday_contribution()) fuer alle drei Wochentags-Profil-
 # Buchungsstellen (Fahrtenbuch, Haus, Live-SoC-Fahrzeug) -- ein Beitrag,

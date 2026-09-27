@@ -84,6 +84,7 @@ from engine import (
     weekday_usage_profile_from_totals,
     weekday_usage_profile_window_kwh,
     weekly_balancing_due,
+    weekly_balancing_time_ok,
 )
 
 
@@ -1196,6 +1197,40 @@ def test_apply_weekly_balancing_override_faellig_ueberstimmt_mit_minpv_100():
 
 def test_apply_weekly_balancing_override_faellig_ueberstimmt_auch_now_modus():
     assert apply_weekly_balancing_override(mode="now", target_soc=None, due=True) == ("minpv", 100)
+
+
+# ----- weekly_balancing_time_ok: Tageszeit-Gate fuers Erzwingen ------------
+
+def test_weekly_balancing_time_ok_pv_prognose_konfiguriert_noch_rest_nicht_ok():
+    # Produktionsvorfall 2026-09-27: Vollladung wurde mittags erzwungen,
+    # obwohl noch reichlich PV zu erwarten war.
+    assert weekly_balancing_time_ok(
+        pv_rest_heute_kwh=5.0, now_local_hour=13, pv_rest_threshold_kwh=0.3, fallback_hour=23,
+    ) is False
+
+
+def test_weekly_balancing_time_ok_pv_prognose_konfiguriert_rest_aufgebraucht_ok():
+    assert weekly_balancing_time_ok(
+        pv_rest_heute_kwh=0.1, now_local_hour=13, pv_rest_threshold_kwh=0.3, fallback_hour=23,
+    ) is True
+
+
+def test_weekly_balancing_time_ok_pv_prognose_konfiguriert_genau_an_schwelle_ok():
+    assert weekly_balancing_time_ok(
+        pv_rest_heute_kwh=0.3, now_local_hour=13, pv_rest_threshold_kwh=0.3, fallback_hour=23,
+    ) is True
+
+
+def test_weekly_balancing_time_ok_ohne_pv_prognose_vor_fallback_stunde_nicht_ok():
+    assert weekly_balancing_time_ok(
+        pv_rest_heute_kwh=None, now_local_hour=22, pv_rest_threshold_kwh=0.3, fallback_hour=23,
+    ) is False
+
+
+def test_weekly_balancing_time_ok_ohne_pv_prognose_ab_fallback_stunde_ok():
+    assert weekly_balancing_time_ok(
+        pv_rest_heute_kwh=None, now_local_hour=23, pv_rest_threshold_kwh=0.3, fallback_hour=23,
+    ) is True
 
 
 # ----- apply_realtime_pv_override: Echtzeit-PV-Hochstufung pv->minpv -------

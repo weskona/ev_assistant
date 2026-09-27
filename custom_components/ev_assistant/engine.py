@@ -1121,6 +1121,34 @@ def apply_weekly_balancing_override(
     return "minpv", 100
 
 
+def weekly_balancing_time_ok(
+    pv_rest_heute_kwh: Optional[float],
+    now_local_hour: int,
+    pv_rest_threshold_kwh: float,
+    fallback_hour: int,
+) -> bool:
+    """Ob eine faellige woechentliche Balancing-Vollladung (siehe
+    weekly_balancing_due()) jetzt tatsaechlich erzwungen werden soll,
+    statt noch den Rest des heutigen Solartags per normaler pv/minpv-
+    Logik abzuwarten. Produktionsfeedback 2026-09-27: eine z.B. um 13:29
+    faellig gewordene Vollladung schnitt bislang sofort den kompletten
+    restlichen Solartag ab, obwohl noch reichlich PV zu erwarten war.
+
+    Bevorzugt die konfigurierte PV-Restprognose fuer heute (siehe
+    CONF_PV_FORECAST_TODAY_REMAINING_ENTITY/coordinator.py::
+    _pv_forecast_today_remaining_kwh()): faellt sie auf/unter
+    `pv_rest_threshold_kwh` (klein statt exakt 0, gegen Prognose-
+    Rundungsrauschen), gilt der PV-Tag als praktisch vorbei -- OK zum
+    Erzwingen. Ohne konfigurierte Entitaet (`pv_rest_heute_kwh=None`)
+    gibt es keine Prognose, an der sich das beurteilen liesse; Fallback
+    ist dann eine feste lokale Uhrzeit (`fallback_hour`, Nutzer-
+    entscheidung 2026-09-27: 23 Uhr), da eine faellige Vollladung sonst
+    ganz ohne diese Entitaet nie ausgeloest wuerde."""
+    if pv_rest_heute_kwh is not None:
+        return pv_rest_heute_kwh <= pv_rest_threshold_kwh
+    return now_local_hour >= fallback_hour
+
+
 def blended_charge_price(
     surplus_w: float, wallbox_min_power_w: float, feedin_price: float, grid_price: float,
 ) -> float:

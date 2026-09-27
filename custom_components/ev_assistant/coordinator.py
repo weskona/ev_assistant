@@ -165,6 +165,8 @@ from .const import (
     WARTUNG_PRESETS,
     WARTUNG_ROLLING_WINDOW_DAYS,
     WARTUNG_TAGE_PRO_MONAT,
+    WEEKLY_BALANCING_FALLBACK_HOUR,
+    WEEKLY_BALANCING_PV_REST_THRESHOLD_KWH,
     resolve_lade_modus,
 )
 from .engine import (
@@ -237,6 +239,7 @@ from .engine import (
     weekday_usage_profile_from_totals,
     weekday_usage_profile_window_kwh,
     weekly_balancing_due,
+    weekly_balancing_time_ok,
 )
 from .evcc_client import EvccClient
 
@@ -5152,6 +5155,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         seconds = now.hour * 3600 + now.minute * 60 + now.second
         return seconds / 86400.0
 
+    def _local_hour(self) -> int:
+        """Aktuelle lokale Stunde (0-23) -- eigene Methode statt inline
+        dt_util.now().hour, analog _day_fraction_elapsed() oben, damit Tests
+        sie ueberschreiben koennen (siehe engine.weekly_balancing_time_
+        ok())."""
+        return dt_util.now().hour
+
     def _house_remaining_today_kwh(self) -> Optional[float]:
         """Erwarteter PV-konkurrierender Rest-Bedarf des Hauses (inkl.
         Speicherladung) fuer den Rest des heutigen Tages -- wiederverwendet
@@ -5342,7 +5352,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if used_today is None:
             used_today = self._kwh_used_today() or 0.0
         rest_heute_roh = remaining_today_kwh(profile.get(today_wd, 0.0), used_today, self._day_fraction_elapsed())
-        pv_rest_heute_roh = self._pv_forecast_today_remaining_kwh() or 0.0
+        # Roh (kann None sein, ohne konfigurierte Entitaet) getrennt von der
+        # unten mit "or 0.0" geglaetteten pv_rest_heute_roh gehalten -- fuer
+        # das Balancing-Zeit-Gate weiter unten muss "nicht konfiguriert" von
+        # "konfiguriert, aber 0" unterscheidbar bleiben (siehe
+        # weekly_balancing_time_ok()).
+        pv_rest_heute_roh_optional = self._pv_forecast_today_remaining_kwh()
+        pv_rest_heute_roh = pv_rest_heute_roh_optional or 0.0
         # Die Haus-/Speicher-PV-Konkurrenz wird ZUERST von der PV-Prognose
         # abgezogen, nicht vom Fahrzeug-Restbedarf -- die rohe PV-Prognose
         # ist fuer das GESAMTE Haus, nicht fuers Auto allein (siehe
@@ -5391,7 +5407,19 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             naechste_vollladung_faellig_ts = (
                 jetzt_ts if letzter_ts is None else letzter_ts + interval_days * 86400.0
             )
-        mode, target_soc = apply_weekly_balancing_override(mode, target_soc, balancing_due)
+        # balancing_due bleibt die reine Intervall-Faelligkeit (Anzeige im
+        # "balancing_faellig"-Attribut) -- ob JETZT tatsaechlich erzwungen
+        # wird, haengt zusaetzlich vom Tageszeit-Gate ab (siehe
+        # engine.weekly_balancing_time_ok()-Docstring): sonst wuerde eine
+        # z.B. mittags faellige Vollladung sofort den Rest des Solartags
+        # abschneiden statt ihn noch normal per pv/minpv zu nutzen.
+        balancing_trigger = balancing_due and weekly_balancing_time_ok(
+            pv_rest_heute_roh_optional,
+            self._local_hour(),
+            WEEKLY_BALANCING_PV_REST_THRESHOLD_KWH,
+            WEEKLY_BALANCING_FALLBACK_HOUR,
+        )
+        mode, target_soc = apply_weekly_balancing_override(mode, target_soc, balancing_trigger)
         # Zweite, schnellere Entscheidungsebene (siehe engine.apply_realtime_
         # pv_override()-Docstring): hebt "mode" (die obige Tages-Logik) in
         # Echtzeit von "pv" auf "minpv" an, wenn der aktuelle PV-Ueberschuss
@@ -5500,7 +5528,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "pv_override_max_mischpreis_kwh": max_blended_price,
             "wallbox_min_power_w": wallbox_min_power_w,
             "balancing_enabled": balancing_enabled,
+            # "faellig" (Intervall abgelaufen) und "aktiv" (Override
+            # tatsaechlich gerade wirksam) koennen jetzt auseinanderfallen
+            # -- siehe weekly_balancing_time_ok()-Docstring: eine mittags
+            # faellige Vollladung ist "faellig", aber erst abends "aktiv".
+            # Vorher (vor dem Tageszeit-Gate) waren beide immer identisch.
             "balancing_faellig": balancing_due,
+            "balancing_aktiv": balancing_trigger,
             "naechste_vollladung_faellig_ts": naechste_vollladung_faellig_ts,
         }
 
@@ -5745,7 +5779,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             f"target_soc={new_state['target_soc']}, verfuegbar={targets.get('verfuegbare_kwh')}kWh, "
             f"min={targets.get('min_kwh')}kWh, target={targets.get('target_kwh')}kWh, "
             f"pv_override_aktiv={targets.get('pv_override_aktiv')}, "
-            f"balancing_faellig={targets.get('balancing_faellig')}",
+            f"balancing_faellig={targets.get('balancing_faellig')}, "
+            f"balancing_aktiv={targets.get('balancing_aktiv')}",
         )
         await self._store.async_save(self.data)
 
