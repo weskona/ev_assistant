@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.10] - 2026-09-27
+
+### Documentation
+
+- **Clarified that `gps_entity` should prefer a location entity from the vehicle itself** (e.g. from a vehicle cloud integration like VW We Connect/MySkoda, or a GPS module) over a person/smartphone entity, wherever available (Issue #2 discussion): a person entity only tracks where that entity is, not who's actually driving, so with multiple possible drivers in a household the location suggestion can point to the wrong person's location. `gps_entity` already technically accepted a vehicle-side entity (any `sensor`/`device_tracker`/`person` domain), this only adds the missing explanation — no schema or behavior change.
+
 ## [0.99.9] - 2026-09-27
 
 ### Added

@@ -95,6 +95,9 @@
           "usage_profile_buffer_pct": "Puffer für Nutzungsprofil (%, auf den Wochentags-Durchschnitt)",
           "pv_forecast_entity": "PV-Ertragsprognose für morgen (optional, beliebige sensor-Entität, z.B. Solcast/Forecast.Solar)",
           "outside_temp_entity": "Außentemperatur (optional, Wetter-Integration oder Sensor — für temperaturabhängige Verbrauchs-/Reichweitenschätzung)"
+        },
+        "data_description": {
+          "gps_entity": "Optional. Bevorzugt eine Standort-Entität des Fahrzeugs selbst (z.B. aus einer Fahrzeug-Cloud-Integration wie We Connect/MySkoda oder einem GPS-Modul), falls vorhanden — eine Personen-Entität (Smartphone/person) erkennt nur, wo sich diese Entität befindet, nicht wer tatsächlich fährt, und kann bei mehreren möglichen Fahrern im Haushalt zum falschen Ort führen. Ohnehin nur ein Vorschlag für Start-/Zielort, vor dem Speichern bzw. nachträglich per edit_trip korrigierbar."
         }
       },
       "leasing": {
@@ -246,6 +249,9 @@
           "usage_profile_buffer_pct": "Puffer für Nutzungsprofil (%, auf den Wochentags-Durchschnitt)",
           "pv_forecast_entity": "PV-Ertragsprognose für morgen (optional, beliebige sensor-Entität, z.B. Solcast/Forecast.Solar)",
           "outside_temp_entity": "Außentemperatur (optional, Wetter-Integration oder Sensor — für temperaturabhängige Verbrauchs-/Reichweitenschätzung)"
+        },
+        "data_description": {
+          "gps_entity": "Optional. Bevorzugt eine Standort-Entität des Fahrzeugs selbst (z.B. aus einer Fahrzeug-Cloud-Integration wie We Connect/MySkoda oder einem GPS-Modul), falls vorhanden — eine Personen-Entität (Smartphone/person) erkennt nur, wo sich diese Entität befindet, nicht wer tatsächlich fährt, und kann bei mehreren möglichen Fahrern im Haushalt zum falschen Ort führen. Ohnehin nur ein Vorschlag für Start-/Zielort, vor dem Speichern bzw. nachträglich per edit_trip korrigierbar."
         }
       },
       "leasing": {

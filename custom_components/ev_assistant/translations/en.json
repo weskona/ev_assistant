@@ -95,6 +95,9 @@
           "usage_profile_buffer_pct": "Buffer for usage profile (%, on the weekday average)",
           "pv_forecast_entity": "PV forecast for tomorrow (optional, any sensor entity, e.g. Solcast/Forecast.Solar)",
           "outside_temp_entity": "Outside temperature (optional, weather integration or sensor — for temperature-aware consumption/range estimation)"
+        },
+        "data_description": {
+          "gps_entity": "Optional. Prefers a location entity from the vehicle itself (e.g. from a vehicle cloud integration like We Connect/MySkoda, or a GPS module) if available — a person entity (smartphone/person) only tracks where that entity is, not who's actually driving, and can point to the wrong location with multiple possible drivers in a household. Either way just a suggestion for start/end location, editable before saving or afterwards via edit_trip."
         }
       },
       "leasing": {
@@ -246,6 +249,9 @@
           "usage_profile_buffer_pct": "Buffer for usage profile (%, on the weekday average)",
           "pv_forecast_entity": "PV forecast for tomorrow (optional, any sensor entity, e.g. Solcast/Forecast.Solar)",
           "outside_temp_entity": "Outside temperature (optional, weather integration or sensor — for temperature-aware consumption/range estimation)"
+        },
+        "data_description": {
+          "gps_entity": "Optional. Prefers a location entity from the vehicle itself (e.g. from a vehicle cloud integration like We Connect/MySkoda, or a GPS module) if available — a person entity (smartphone/person) only tracks where that entity is, not who's actually driving, and can point to the wrong location with multiple possible drivers in a household. Either way just a suggestion for start/end location, editable before saving or afterwards via edit_trip."
         }
       },
       "leasing": {
