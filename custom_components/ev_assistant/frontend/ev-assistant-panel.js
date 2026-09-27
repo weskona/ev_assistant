@@ -4,6 +4,29 @@
 
 const ACCENT_H = 127;
 
+// Modulweit statt lokal in _buildAppbar(), damit die "Sichtbare Tabs"-
+// Kachel (_buildEinstellungen(), Nutzerwunsch 2026-09-27: Leasing/
+// Ladekarten/Wartung ausblendbar machen) dieselbe Liste/Labels nutzt statt
+// sie zu duplizieren. Reihenfolge = Anzeigereihenfolge in der Tab-Leiste.
+const TAB_DEFS = [
+  ["uebersicht_beta", "mdi:flask-outline",          "Übersicht (Beta)"],
+  ["fahrzeuge",  "mdi:car-electric",           "Fahrzeug"],
+  ["profil",     "mdi:calendar-week",          "Nutzungsprofil"],
+  ["analyse",    "mdi:chart-line",             "Analyse"],
+  ["leasing",    "mdi:file-document-outline",  "Leasing"],
+  ["ladekarten", "mdi:credit-card-multiple-outline", "Ladekarten"],
+  ["wartung",    "mdi:wrench-clock",           "Wartung"],
+  ["einstellungen", "mdi:cog-outline",         "Einstellungen"],
+];
+
+// Tabs, die ueber set_hidden_tabs() ausblendbar sind (siehe const.py::
+// HIDEABLE_TAB_IDS -- muss inhaltlich synchron gehalten werden, hier als
+// einfaches JS-Array dupliziert, da das Panel keinen Zugriff auf Python-
+// Konstanten hat). "leasing" ist zusaetzlich IMMER ausgeblendet, wenn kein
+// Leasing-Vertrag konfiguriert ist (siehe _isLeasingConfigured()) --
+// unabhaengig von dieser manuellen Liste.
+const HIDEABLE_TAB_IDS = ["leasing", "ladekarten", "wartung"];
+
 class EVAssistantPanel extends HTMLElement {
   constructor() {
     super();
@@ -135,6 +158,49 @@ class EVAssistantPanel extends HTMLElement {
     const s = eid && this._hass ? this._hass.states[eid] : null;
     const raw = s && s.attributes && s.attributes.panel_layout;
     return Array.isArray(raw) ? raw : [];
+  }
+
+  // Vom Nutzer in der "Sichtbare Tabs"-Kachel (Einstellungen-Tab) gewaehlte
+  // ausgeblendete Tabs -- als Attribut am "count"-Sensor mitgeliefert
+  // (coordinator.py::hidden_tabs()). Optimistischer lokaler Override direkt
+  // nach dem Speichern, ANDERS als _panelLayoutOverride oben aber NICHT
+  // einmalig konsumiert: hidden_tabs hat pro Rebuild zwei Leser (_buildAppbar()
+  // fuer die Tab-Leiste UND ggf. _buildEinstellungen() fuer die Checkboxen,
+  // falls dieser Tab gerade aktiv ist) -- ein Einmal-Konsum wuerde dem
+  // zweiten Leser wieder den alten (noch nicht aktualisierten) Live-Wert
+  // zeigen. Wird stattdessen explizit in _update() geloescht, sobald die
+  // Live-Entitaet nachgezogen hat (siehe dort).
+  _hiddenTabs() {
+    if (this._hiddenTabsOverride) return this._hiddenTabsOverride;
+    const eid = this._eid("count");
+    const s = eid && this._hass ? this._hass.states[eid] : null;
+    const raw = s && s.attributes && s.attributes.hidden_tabs;
+    return Array.isArray(raw) ? raw : [];
+  }
+
+  // Ob ein Leasing-Vertrag konfiguriert ist -- dieselbe Bedingung wie
+  // _updateLeasing() (dort serverseitig gespiegelt aus coordinator.py::
+  // leasing_stats(), leer ohne CONF_LEASING_INKL_KM/-END_DATUM). Hier
+  // zusaetzlich gebraucht, um den "Leasing"-Tab in der Tab-LEISTE selbst
+  // auszublenden (Nutzerentscheidung 2026-09-27: "das leasing tab koennte
+  // man ja ausblenden wenn im configflow kein leasing konfiguriert ist"),
+  // nicht nur seinen Karteninhalt.
+  _isLeasingConfigured() {
+    const eid = this._eid("leasing_km_vor_ruecklauf");
+    const s = eid && this._hass ? this._hass.states[eid] : null;
+    return !!(s && s.state !== "unavailable" && s.state !== "unknown");
+  }
+
+  // Tab-Leiste nach manueller Auswahl (_hiddenTabs()) UND, nur fuer
+  // "leasing", dem Konfigurationsstatus gefiltert. "einstellungen" selbst
+  // ist nie ausblendbar -- sonst gaebe es keinen Weg zurueck, die
+  // Einstellung wieder zu aendern.
+  _visibleTabDefs() {
+    const hidden = new Set(this._hiddenTabs());
+    return TAB_DEFS.filter(([id]) => {
+      if (id === "leasing" && !this._isLeasingConfigured()) return false;
+      return !hidden.has(id);
+    });
   }
 
   // Gemeinsames Label/Farbe fuer einen evcc-Lademodus-String -- verwendet
@@ -357,18 +423,8 @@ class EVAssistantPanel extends HTMLElement {
     );
     const tabBar = document.createElement("div");
     tabBar.className = "tabs";
-    const TAB_DEFS = [
-      ["uebersicht_beta", "mdi:flask-outline",          "Übersicht (Beta)"],
-      ["fahrzeuge",  "mdi:car-electric",           "Fahrzeug"],
-      ["profil",     "mdi:calendar-week",          "Nutzungsprofil"],
-      ["analyse",    "mdi:chart-line",             "Analyse"],
-      ["leasing",    "mdi:file-document-outline",  "Leasing"],
-      ["ladekarten", "mdi:credit-card-multiple-outline", "Ladekarten"],
-      ["wartung",    "mdi:wrench-clock",           "Wartung"],
-      ["einstellungen", "mdi:cog-outline",         "Einstellungen"],
-    ];
     this._tabs = {};
-    for (const [id, icon, label] of TAB_DEFS) {
+    for (const [id, icon, label] of this._visibleTabDefs()) {
       const btn = document.createElement("button");
       btn.className = "tab";
       btn.innerHTML = `<ha-icon icon="${icon}"></ha-icon><span class="tab-label">${label}</span>`;
@@ -1256,7 +1312,33 @@ class EVAssistantPanel extends HTMLElement {
   _buildEinstellungen() {
     const wrap = document.createElement("div");
     wrap.className = "tab-wrap";
+    // "Leasing" nur als Checkbox anbieten, wenn ueberhaupt konfiguriert --
+    // sonst ist es ja schon (unabhaengig von dieser Liste) unsichtbar, eine
+    // Checkbox dafuer waere wirkungslos (siehe _visibleTabDefs()).
+    const hiddenNow = new Set(this._hiddenTabs());
+    const tabLabel = (id) => (TAB_DEFS.find((t) => t[0] === id) || [id, "", id])[2];
+    const hideableRows = HIDEABLE_TAB_IDS
+      .filter((id) => id !== "leasing" || this._isLeasingConfigured())
+      .map((id) => `
+        <label class="tabvis-row">
+          <input type="checkbox" class="tabvis-check" data-tab="${id}" ${hiddenNow.has(id) ? "" : "checked"}>
+          ${tabLabel(id)}
+        </label>`)
+      .join("");
     wrap.innerHTML = `
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:eye-off-outline"></ha-icon></span><h2>Sichtbare Tabs</h2>
+        </div>
+        <div class="profil-empty">
+          Blendet selten genutzte Tabs aus der Tab-Leiste aus. "Leasing" ist zusätzlich automatisch
+          ausgeblendet, solange kein Leasing-Vertrag konfiguriert ist.
+        </div>
+        <div class="tabvis-form" id="einst-tabvis-form">${hideableRows}</div>
+        <button type="button" class="btn btn-primary sm" id="einst-tabvis-save" style="margin-top:10px">
+          Speichern
+        </button>
+      </div>
       <div class="card">
         <div class="card-head">
           <span class="ic"><ha-icon icon="mdi:file-download-outline"></ha-icon></span><h2>Ereignisprotokoll</h2>
@@ -1346,6 +1428,24 @@ class EVAssistantPanel extends HTMLElement {
       einstLogFilterKat: q("#einst-log-filter-kat"),
       einstLogFilterText: q("#einst-log-filter-text"),
     };
+
+    q("#einst-tabvis-save").addEventListener("click", () => {
+      const hidden = Array.from(q("#einst-tabvis-form").querySelectorAll(".tabvis-check"))
+        .filter((cb) => !cb.checked)
+        .map((cb) => cb.dataset.tab);
+      this._call("set_hidden_tabs", { hidden_tabs: hidden });
+      // Optimistisches lokales Update (siehe _hiddenTabs()) statt auf den
+      // Server-Roundtrip zu warten -- kompletter Shell-Rebuild statt nur
+      // _switchView(), da hier die Tab-LEISTE selbst betroffen ist (anders
+      // als z.B. beim Panel-Layout, das nur Karteninhalt eines einzelnen
+      // Tabs aendert).
+      this._hiddenTabsOverride = hidden;
+      // Fallback, falls der gerade aktive Tab dabei mit ausgeblendet wird
+      // (Nutzerentscheidung 2026-09-27: automatisch auf "uebersicht_beta"
+      // wechseln statt auf einem nun unsichtbaren Tab stehen zu bleiben).
+      if (hidden.includes(this._view)) this._view = "uebersicht_beta";
+      this._renderShell();
+    });
     this._r.einstLogFilterKat.value = this._eventLogFilterKat || "alle";
     this._r.einstLogFilterText.value = this._eventLogFilterText || "";
     this._r.einstLogFilterKat.addEventListener("change", () => {
@@ -2823,6 +2923,12 @@ class EVAssistantPanel extends HTMLElement {
 
   _update() {
     if (!this._built || !this._hass) return;
+    if (this._hiddenTabsOverride) {
+      const eid = this._eid("count");
+      const s = eid ? this._hass.states[eid] : null;
+      const live = (s && s.attributes && s.attributes.hidden_tabs) || [];
+      if (JSON.stringify(live) === JSON.stringify(this._hiddenTabsOverride)) this._hiddenTabsOverride = null;
+    }
     if (this._view === "uebersicht_beta") this._updateUebersichtBeta();
     else if (this._view === "fahrzeuge") this._updateVehicle();
     else if (this._view === "profil") this._updateProfil();
@@ -6137,6 +6243,9 @@ class EVAssistantPanel extends HTMLElement {
         display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px;
       }
       .hist-delete-text { font-size: 12px; color: var(--ink-mid); }
+
+      .tabvis-form { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+      .tabvis-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink); }
 
       .log-filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
       .log-filter-row select, .log-filter-row input {

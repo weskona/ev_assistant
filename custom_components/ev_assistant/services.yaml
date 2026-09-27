@@ -1533,3 +1533,27 @@ set_panel_layout:
       required: true
       selector:
         object:
+
+set_hidden_tabs:
+  name: Sichtbare Tabs speichern
+  description: >
+    Speichert, welche ausblendbaren Panel-Tabs (Leasing, Ladekarten, Wartung)
+    der Nutzer nicht sehen möchte. Wird vom Panel selbst über die "Sichtbare
+    Tabs"-Kachel im Einstellungen-Tab aufgerufen, nicht für die manuelle
+    Nutzung gedacht. Unbekannte Werte werden verworfen. "Leasing" wird davon
+    unabhängig ohnehin ausgeblendet, solange kein Leasing-Vertrag
+    konfiguriert ist.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    hidden_tabs:
+      name: Ausgeblendete Tabs
+      description: Liste der Tab-IDs, z.B. ["leasing", "wartung"].
+      required: true
+      selector:
+        object:

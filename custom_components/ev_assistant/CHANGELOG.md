@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.9] - 2026-09-27
+
+### Added
+
+- **Hideable panel tabs** (Issue #2, follow-up feedback): a new "Sichtbare Tabs" card on the Einstellungen tab lets you hide Leasing, Ladekarten and Wartung from the tab bar if you don't use them. Persisted server-side via a new `set_hidden_tabs` service (same pattern as the existing `set_panel_layout`/Übersicht-Beta card customization — a `hidden_tabs` attribute on the count sensor, not browser localStorage, so it carries across devices), with unknown tab IDs silently dropped. If the currently open tab gets hidden, the panel switches to Übersicht (Beta) automatically. Leasing is additionally always hidden on its own whenever no leasing contract is configured, independent of this list — nothing to manually hide if it's already invisible.
+
 ## [0.99.8] - 2026-09-27
 
 ### Added

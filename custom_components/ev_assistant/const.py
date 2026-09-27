@@ -638,6 +638,7 @@ SERVICE_SET_EVCC_MANUAL_MODE = "set_evcc_manual_mode"
 SERVICE_CLEAR_EVCC_MANUAL_MODE = "clear_evcc_manual_mode"
 SERVICE_URLAUB_SEIT = "urlaub_seit"
 SERVICE_SET_PANEL_LAYOUT = "set_panel_layout"
+SERVICE_SET_HIDDEN_TABS = "set_hidden_tabs"
 SERVICE_RESET_LIFETIME_KPIS = "reset_lifetime_kpis"
 SERVICE_EXPORT_BACKUP = "export_backup"
 SERVICE_RESTORE_BACKUP = "restore_backup"
@@ -660,6 +661,16 @@ PANEL_LAYOUT_KEYS = (
     "hero_cost", "hero_secondary", "wallbox", "kpi",
     "comparison", "location", "evcc_mode", "evcc_plan",
 )
+
+# Tabs, die der Nutzer ueber set_hidden_tabs()/die "Sichtbare Tabs"-Kachel im
+# Einstellungen-Tab ausblenden kann (Nutzerwunsch, Issue #2/Jochen754-Folge-
+# feedback 2026-09-27: "Leasing", "Ladekarten", "Wartung" nannte er konkret,
+# "Nutzungsprofil" bewusst NICHT dabei -- Nutzerentscheidung "profil auch
+# immer sichtbar"). "uebersicht_beta"/"fahrzeuge"/"analyse"/"einstellungen"
+# bleiben als Kernfunktionen bzw. Ort zum Wiedereinblenden ebenfalls immer
+# sichtbar. Nur hier gelistete Werte werden von async_set_hidden_tabs()
+# uebernommen (analog PANEL_LAYOUT_KEYS oben).
+HIDEABLE_TAB_IDS = ("leasing", "ladekarten", "wartung")
 
 # Erlaubte Groessenstufen je Karte (Nutzerwunsch: "vlt auch die groesse
 # aendern kann") -- feste Stufen statt freiem Ziehen/Resize (aufwaendiger,

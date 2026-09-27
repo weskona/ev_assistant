@@ -129,6 +129,7 @@ from .const import (
     EVENT_TRIP_PENDING,
     EVENT_VEHICLE_DISCHARGE_URLAUB_APPLIED,
     FAHRTEN_MAX_MONATE,
+    HIDEABLE_TAB_IDS,
     HISTORY_MAX_MONATE,
     IMPLAUSIBLE_POWER_RATIO,
     IMPLAUSIBLE_REGEN_DELTA_PCT,
@@ -351,6 +352,11 @@ def _empty_data() -> dict:
         # Anzeigereihenfolge. Leer ohne gespeicherte Einstellung, das
         # Panel-JS faellt dann auf seine eigene Standardreihenfolge zurueck.
         "panel_layout": [],
+        # Vom Nutzer ausgeblendete Tabs (siehe async_set_hidden_tabs()/
+        # hidden_tabs()) -- Liste aus Tab-IDs (const.py::HIDEABLE_TAB_IDS).
+        # Leer ohne gespeicherte Einstellung, alle ausblendbaren Tabs
+        # bleiben dann sichtbar.
+        "hidden_tabs": [],
         "verbrenner_price_last": None,
         "home_price_last": None,
         # Km-gewichtete Durchschnittsbildung fuer den schwankenden
@@ -706,6 +712,32 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             if isinstance(item, dict) and item.get("key") in PANEL_LAYOUT_KEYS
         ]
         self.data["panel_layout"] = clean
+        self.async_set_updated_data(self.data)
+        self._save_soon()
+
+    def hidden_tabs(self) -> list:
+        """Vom Nutzer ausgeblendete Panel-Tabs (siehe async_set_hidden_
+        tabs()) -- Liste aus Tab-IDs (const.py::HIDEABLE_TAB_IDS). Leere
+        Liste ohne gespeicherte Einstellung; das Panel-JS zeigt dann alle
+        ausblendbaren Tabs (analog panel_layout())."""
+        return list(self.data.get("hidden_tabs") or [])
+
+    async def async_set_hidden_tabs(self, hidden_tabs: list) -> None:
+        """Speichert die vom Nutzer in der "Sichtbare Tabs"-Kachel (Ein-
+        stellungen-Tab) gewaehlten ausgeblendeten Tabs (Nutzerwunsch, Issue
+        #2/Jochen754-Folgefeedback 2026-09-27: "Leasing", "Ladekarten",
+        "Wartung" ausblendbar machen) -- serverseitig statt per Browser-
+        localStorage gespeichert (analog async_set_panel_layout(), gleiche
+        Begruendung: geraeteuebergreifend erhalten). Reine Praesentations-
+        einstellung, kein Recompute noetig. Nur bekannte Tab-IDs (siehe
+        const.py::HIDEABLE_TAB_IDS) werden uebernommen, alles andere
+        stillschweigend verworfen (analog PANEL_LAYOUT_KEYS-Filterung).
+        "leasing" wird zusaetzlich, unabhaengig von dieser Liste, im
+        Panel-JS ausgeblendet, wenn kein Leasing-Vertrag konfiguriert ist
+        (Nutzerentscheidung 2026-09-27) -- das betrifft nur die Anzeige,
+        nicht diese gespeicherte Liste selbst."""
+        clean = [tab_id for tab_id in hidden_tabs if tab_id in HIDEABLE_TAB_IDS]
+        self.data["hidden_tabs"] = clean
         self.async_set_updated_data(self.data)
         self._save_soon()
 

@@ -46,6 +46,7 @@ from .const import (
     SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM,
     SERVICE_SET_EVCC_MANUAL_MODE,
     SERVICE_SET_EVCC_MODE_CONTROL_PAUSE,
+    SERVICE_SET_HIDDEN_TABS,
     SERVICE_SET_PANEL_LAYOUT,
     SERVICE_SET_USAGE_PROFILE_BUFFER_PCT,
     SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED,
@@ -476,6 +477,11 @@ SET_PANEL_LAYOUT_SCHEMA = vol.Schema({
     ],
 })
 
+SET_HIDDEN_TABS_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("hidden_tabs"): [str],
+})
+
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Version 1 -> 2: evcc_intg-Entity-Discovery entfernt (siehe
@@ -789,6 +795,11 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_set_panel_layout(call.data["layout"])
 
+    async def _handle_set_hidden_tabs(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_set_hidden_tabs(call.data["hidden_tabs"])
+
     hass.services.async_register(DOMAIN, SERVICE_LOG, _handle_log, schema=LOG_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCARD, _handle_discard, schema=DISCARD_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE, _handle_simulate, schema=SIMULATE_SCHEMA)
@@ -872,6 +883,10 @@ def _register_services(hass: HomeAssistant) -> None:
         DOMAIN, SERVICE_SET_PANEL_LAYOUT, _handle_set_panel_layout,
         schema=SET_PANEL_LAYOUT_SCHEMA,
     )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_HIDDEN_TABS, _handle_set_hidden_tabs,
+        schema=SET_HIDDEN_TABS_SCHEMA,
+    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -899,6 +914,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM, SERVICE_SET_EVCC_MANUAL_MODE,
                 SERVICE_CLEAR_EVCC_MANUAL_MODE, SERVICE_SET_PANEL_LAYOUT,
                 SERVICE_RESET_LIFETIME_KPIS, SERVICE_EXPORT_BACKUP, SERVICE_RESTORE_BACKUP,
+                SERVICE_SET_HIDDEN_TABS,
             ):
                 hass.services.async_remove(DOMAIN, service)
         else:
