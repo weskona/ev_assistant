@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import os
 import time
@@ -3511,6 +3512,101 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             for entry in log:
                 ts_local = dt_util.as_local(dt_util.utc_from_timestamp(entry["ts"]))
                 f.write(f"[{ts_local.strftime('%Y-%m-%d %H:%M:%S')}] {entry['kategorie']}: {entry['text']}\n")
+
+    async def async_export_backup(self) -> str:
+        """Exportiert den kompletten persistenten Zustand (self.data --
+        Fahrtenbuch, Ladehistorie, Ladekarten, Wartungsplan, alle "seit
+        Einrichtung"-Anker, Event-Log) als JSON-Datei nach www/, zum
+        manuellen Sichern/Wiederherstellen (siehe async_restore_backup()).
+        Deterministischer Dateiname (wie async_export_event_log()) -- wird
+        bei jedem Aufruf ueberschrieben, eine dauerhafte Historie mehrerer
+        Zeitpunkte muss der Nutzer selbst durch Herunterladen/Umbenennen der
+        Datei anlegen (kein automatisches, geplantes Backup -- bewusst rein
+        On-Demand, siehe Nutzerwunsch).
+
+        Enthaelt zusaetzlich einen rein informativen Konfigurations-
+        Schnappschuss (entry.data/entry.options) unter dem Schluessel
+        "_config_snapshot_readonly" -- NUR zur Referenz (z.B. um spaeter zu
+        sehen, mit welchem evcc-Host ein Backup erstellt wurde), wird von
+        async_restore_backup() verworfen. self.data ist bereits vollstaendig
+        JSON-serialisierbar (laeuft ohnehin schon durch Store.async_save()),
+        kein Encoder noetig."""
+        payload = dict(self.data)
+        payload["_config_snapshot_readonly"] = {
+            "data": dict(self.entry.data), "options": dict(self.entry.options),
+        }
+        path = self.hass.config.path("www", f"ev_assistant_backup_{self.entry.entry_id}.json")
+        await self.hass.async_add_executor_job(self._write_backup_json, path, payload)
+        filename = os.path.basename(path)
+        en = self._en()
+        try:
+            await self.hass.services.async_call(
+                "persistent_notification", "create",
+                {
+                    "notification_id": f"{self._notify_tag}_backup_export",
+                    "title": "Backup exported" if en else "Backup exportiert",
+                    "message": (
+                        f"Backup ready: [{filename}](/local/{filename})" if en
+                        else f"Backup bereit: [{filename}](/local/{filename})"
+                    ),
+                },
+                blocking=False,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        return path
+
+    @staticmethod
+    def _write_backup_json(path: str, payload: dict) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+    async def async_restore_backup(self, backup_data: str) -> bool:
+        """Ersetzt self.data komplett durch einen zuvor per async_export_
+        backup() erzeugten JSON-Snapshot -- die folgenschwerste Aktion der
+        Integration, daher mehrfach abgesichert:
+
+        (1) Minimale Struktur-Pruefung (erwartet mindestens die "history"-
+        Kernstruktur aus _empty_data()) -- bei Fehlschlag NUR eine Warnung
+        im Log, self.data bleibt unveraendert (analog async_add_
+        maintenance() ohne Kriterium: stiller Reject statt Exception). Die
+        eigentliche Validierung (ist das ueberhaupt eine JSON-Datei, hat sie
+        die erwarteten Schluessel) passiert bereits client-seitig im Panel,
+        BEVOR der Service ueberhaupt aufgerufen wird -- diese Pruefung hier
+        ist nur die zweite Verteidigungslinie fuer einen direkten
+        Service-Aufruf (z.B. ueber Entwicklerwerkzeuge).
+        (2) Automatisches Sicherheits-Backup des AKTUELLEN Stands vor dem
+        Ueberschreiben (eigener Dateiname, siehe async_export_backup()) --
+        fuer den Fall der falschen Datei.
+        (3) Integration-Reload danach statt nur _save() + async_set_
+        updated_data(): mehrere abgeleitete In-Memory-Caches (z.B. _evcc_
+        session_sums, Debounce-Zustaende) waeren nach einem reinen Daten-
+        Austausch sonst inkonsistent mit dem neuen Stand.
+
+        Der rein informative "_config_snapshot_readonly"-Schluessel (siehe
+        async_export_backup()) wird verworfen -- Konfiguration (evcc-Host,
+        Entity-IDs etc.) ist NIE Teil des Restores, nur die Daten. Gibt
+        True bei Erfolg zurueck, False bei Ablehnung."""
+        try:
+            restored = json.loads(backup_data)
+        except (json.JSONDecodeError, TypeError):
+            _LOGGER.warning("restore_backup: kein gueltiges JSON, Vorgang abgebrochen")
+            return False
+        if not isinstance(restored, dict) or "history" not in restored:
+            _LOGGER.warning("restore_backup: fehlende Kernstruktur, Vorgang abgebrochen")
+            return False
+        restored.pop("_config_snapshot_readonly", None)
+
+        pre_restore_path = self.hass.config.path(
+            "www", f"ev_assistant_backup_pre_restore_{self.entry.entry_id}.json"
+        )
+        await self.hass.async_add_executor_job(self._write_backup_json, pre_restore_path, dict(self.data))
+
+        self.data = restored
+        await self._save()
+        self.hass.async_create_task(self.hass.config_entries.async_reload(self.entry.entry_id))
+        return True
 
     async def async_log_charge(
         self, kwh: float, price: float, start_ts: Optional[float] = None,

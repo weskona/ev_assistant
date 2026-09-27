@@ -639,6 +639,8 @@ SERVICE_CLEAR_EVCC_MANUAL_MODE = "clear_evcc_manual_mode"
 SERVICE_URLAUB_SEIT = "urlaub_seit"
 SERVICE_SET_PANEL_LAYOUT = "set_panel_layout"
 SERVICE_RESET_LIFETIME_KPIS = "reset_lifetime_kpis"
+SERVICE_EXPORT_BACKUP = "export_backup"
+SERVICE_RESTORE_BACKUP = "restore_backup"
 
 # Bekannte Karten-Schluessel fuer das anpassbare Beta-Panel-Layout (Nutzerwunsch
 # 2026-09-23: "der nutzer bekommt eine auswahl von karten, die er selber im

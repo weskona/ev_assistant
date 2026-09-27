@@ -541,6 +541,51 @@ reset_lifetime_kpis:
           min: 0
           step: 1
 
+export_backup:
+  name: Backup erstellen
+  description: >
+    Schreibt den kompletten persistenten Zustand (Fahrtenbuch, Ladehistorie,
+    Ladekarten, Wartungsplan, alle "seit Einrichtung"-Anker, Ereignisprotokoll)
+    als JSON-Datei nach /config/www/ev_assistant_backup_[config_entry_id].json
+    -- zum manuellen Sichern, siehe restore_backup zum Wiedereinspielen. Auch
+    als Button im Einstellungen-Panel-Tab verfügbar. Enthält zusätzlich einen
+    rein informativen Konfigurations-Schnappschuss (evcc-Host, Entity-IDs
+    etc.), der beim Restore ignoriert wird.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+
+restore_backup:
+  name: Backup wiederherstellen
+  description: >
+    Ersetzt den kompletten persistenten Zustand durch einen zuvor per
+    export_backup erzeugten JSON-Snapshot -- betrifft NICHT die Konfiguration
+    (evcc-Host, Entity-IDs etc.), nur die Daten. Legt vor dem Überschreiben
+    automatisch ein Sicherheits-Backup des aktuellen Stands an (eigener
+    Dateiname, siehe export_backup) und lädt die Integration danach neu.
+    Nicht rückgängig machbar (außer über dieses Sicherheits-Backup). Auch als
+    Formular im Einstellungen-Panel-Tab verfügbar (mit Datei-Upload).
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    backup_data:
+      name: Backup-Inhalt
+      description: Der vollständige Inhalt einer zuvor mit export_backup erzeugten JSON-Datei, als Text.
+      required: true
+      selector:
+        text:
+          multiline: true
+
 import_fahrtenbuch:
   name: Fahrtenbuch importieren
   description: >

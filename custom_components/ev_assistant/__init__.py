@@ -33,6 +33,7 @@ from .const import (
     SERVICE_EDIT_LADEKARTE,
     SERVICE_EDIT_MAINTENANCE,
     SERVICE_EDIT_TRIP,
+    SERVICE_EXPORT_BACKUP,
     SERVICE_EXPORT_EVENT_LOG,
     SERVICE_EXPORT_TRIPS,
     SERVICE_IMPORT_TRIPS,
@@ -40,6 +41,7 @@ from .const import (
     SERVICE_LOG_TRIP,
     SERVICE_MARK_MAINTENANCE_DONE,
     SERVICE_RESET_LIFETIME_KPIS,
+    SERVICE_RESTORE_BACKUP,
     SERVICE_SET_EVCC_CHARGE_PLAN,
     SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM,
     SERVICE_SET_EVCC_MANUAL_MODE,
@@ -279,6 +281,15 @@ RESET_LIFETIME_KPIS_SCHEMA = vol.Schema({
     vol.Optional("home_kwh_since_setup"): vol.Coerce(float),
     vol.Optional("home_cost_since_setup"): vol.Coerce(float),
     vol.Optional("km_driven"): vol.Coerce(float),
+})
+
+EXPORT_BACKUP_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+})
+
+RESTORE_BACKUP_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("backup_data"): str,
 })
 
 SIMULATE_TRIP_SCHEMA = vol.Schema({
@@ -600,6 +611,16 @@ def _register_services(hass: HomeAssistant) -> None:
                 km_driven=call.data.get("km_driven"),
             )
 
+    async def _handle_export_backup(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_export_backup()
+
+    async def _handle_restore_backup(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_restore_backup(call.data["backup_data"])
+
     async def _handle_simulate_trip(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
@@ -782,6 +803,10 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_RESET_LIFETIME_KPIS, _handle_reset_lifetime_kpis, schema=RESET_LIFETIME_KPIS_SCHEMA
     )
+    hass.services.async_register(DOMAIN, SERVICE_EXPORT_BACKUP, _handle_export_backup, schema=EXPORT_BACKUP_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, SERVICE_RESTORE_BACKUP, _handle_restore_backup, schema=RESTORE_BACKUP_SCHEMA
+    )
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE_TRIP, _handle_simulate_trip, schema=SIMULATE_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_EDIT_TRIP, _handle_edit_trip, schema=EDIT_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DELETE_TRIP, _handle_delete_trip, schema=DELETE_TRIP_SCHEMA)
@@ -873,7 +898,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SET_EVCC_CHARGE_PLAN, SERVICE_CLEAR_EVCC_CHARGE_PLAN,
                 SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM, SERVICE_SET_EVCC_MANUAL_MODE,
                 SERVICE_CLEAR_EVCC_MANUAL_MODE, SERVICE_SET_PANEL_LAYOUT,
-                SERVICE_RESET_LIFETIME_KPIS,
+                SERVICE_RESET_LIFETIME_KPIS, SERVICE_EXPORT_BACKUP, SERVICE_RESTORE_BACKUP,
             ):
                 hass.services.async_remove(DOMAIN, service)
         else:

@@ -2010,6 +2010,69 @@ async def test_reset_lifetime_kpis_faehrt_wallbox_energy_start_immer_uncondition
     assert coordinator.data["wallbox_energy_start"] == 4200.0
 
 
+# ----- async_export_backup / async_restore_backup ------------------------------
+
+async def test_export_backup_schreibt_json_mit_config_snapshot(hass, coordinators):
+    import json
+
+    coordinator, entry = await _make_coordinator(hass, coordinators, "bkp1")
+    coordinator.data["totals"] = {"kwh": 42.0, "kosten": 10.0, "count": 3}
+
+    path = await coordinator.async_export_backup()
+
+    with open(path, encoding="utf-8") as f:
+        payload = json.load(f)
+    assert payload["totals"]["kwh"] == 42.0
+    assert payload["_config_snapshot_readonly"]["options"] == dict(entry.options)
+
+
+async def test_restore_backup_ersetzt_data_und_legt_pre_restore_backup_an(hass, coordinators):
+    import json
+
+    coordinator, entry = await _make_coordinator(hass, coordinators, "bkp2")
+    coordinator.data["totals"] = {"kwh": 5.0, "kosten": 1.0, "count": 1}
+    coordinator.hass.config_entries.async_reload = AsyncMock(return_value=None)
+
+    backup = dict(coordinator.data)
+    backup["totals"] = {"kwh": 999.0, "kosten": 50.0, "count": 9}
+    backup["_config_snapshot_readonly"] = {"data": {}, "options": {}}
+
+    ok = await coordinator.async_restore_backup(json.dumps(backup))
+    await hass.async_block_till_done()
+
+    assert ok is True
+    assert coordinator.data["totals"]["kwh"] == 999.0
+    assert "_config_snapshot_readonly" not in coordinator.data
+    coordinator.hass.config_entries.async_reload.assert_called()
+
+    pre_restore_path = hass.config.path("www", f"ev_assistant_backup_pre_restore_{entry.entry_id}.json")
+    with open(pre_restore_path, encoding="utf-8") as f:
+        pre_restore = json.load(f)
+    assert pre_restore["totals"]["kwh"] == 5.0
+
+
+async def test_restore_backup_ungueltiges_json_wird_abgelehnt(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "bkp3")
+    coordinator.data["totals"] = {"kwh": 5.0, "kosten": 1.0, "count": 1}
+
+    ok = await coordinator.async_restore_backup("das ist kein json")
+
+    assert ok is False
+    assert coordinator.data["totals"]["kwh"] == 5.0
+
+
+async def test_restore_backup_fehlende_kernstruktur_wird_abgelehnt(hass, coordinators):
+    import json
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "bkp4")
+    coordinator.data["totals"] = {"kwh": 5.0, "kosten": 1.0, "count": 1}
+
+    ok = await coordinator.async_restore_backup(json.dumps({"foo": "bar"}))
+
+    assert ok is False
+    assert coordinator.data["totals"]["kwh"] == 5.0
+
+
 # ----- _migrate_weekday_usage_windows -----------------------------------------
 # Migration von den Lebenszeit-Skalar-Akkumulatoren (Summe + Tageszaehler je
 # Wochentag) auf das Sliding-Window-Modell (siehe engine.append_recent_

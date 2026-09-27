@@ -1268,6 +1268,13 @@ class EVAssistantPanel extends HTMLElement {
         <button type="button" class="btn btn-ghost" id="einst-event-log-export" style="margin-top:10px">
           <ha-icon icon="mdi:file-download-outline"></ha-icon> Herunterladen
         </button>
+        <div class="log-filter-row">
+          <select id="einst-log-filter-kat"><option value="alle">Alle Kategorien</option></select>
+          <input type="text" id="einst-log-filter-text" placeholder="Suchen…">
+        </div>
+        <div class="log-view" id="einst-event-log-view">
+          <div class="profil-empty">Lädt…</div>
+        </div>
       </div>
       <div class="card">
         <div class="card-head">
@@ -1298,9 +1305,57 @@ class EVAssistantPanel extends HTMLElement {
           <button class="btn btn-danger" id="einst-reset-confirm">Zurücksetzen</button>
           <button class="btn btn-ghost" id="einst-reset-cancel">Abbrechen</button>
         </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:database-arrow-down-outline"></ha-icon></span><h2>Datensicherung</h2>
+        </div>
+        <div class="profil-empty">
+          Sichert den kompletten Datenstand (Fahrtenbuch, Ladehistorie, Ladekarten, Wartungsplan, alle
+          Kennzahlen, Ereignisprotokoll) als Datei — unabhängig von der Konfiguration (evcc-Host, Entitäten etc.).
+        </div>
+        <button type="button" class="btn btn-ghost" id="einst-backup-export" style="margin-top:10px">
+          <ha-icon icon="mdi:database-arrow-down-outline"></ha-icon> Backup erstellen
+        </button>
+        <div class="profil-empty" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--divider-color, #8883)">
+          Ein zuvor erstelltes Backup wiederherstellen — ersetzt den kompletten aktuellen Datenstand.
+        </div>
+        <input type="file" accept="application/json" id="einst-restore-file" class="hidden">
+        <button type="button" class="btn btn-ghost sm" id="einst-restore-toggle" style="margin-top:6px">
+          <ha-icon icon="mdi:database-arrow-up-outline" style="--mdc-icon-size:14px;vertical-align:-2px"></ha-icon>
+          Datei auswählen…
+        </button>
+        <div class="profil-empty" id="einst-restore-fileinfo" style="margin-top:8px"></div>
+        <div class="hist-edit-form hidden" id="einst-restore-form">
+          <span class="hist-delete-text" style="flex-basis:100%">
+            Diese Sicherung wiederherstellen? ALLE aktuellen Daten (Fahrtenbuch, Ladehistorie, Ladekarten,
+            Wartungsplan, Kennzahlen) werden ersetzt. Ein Sicherheits-Backup des jetzigen Stands wird vorher
+            automatisch angelegt. Nicht rückgängig machbar (außer über dieses Sicherheits-Backup).
+          </span>
+          <label style="flex-basis:100%">Zum Bestätigen "WIEDERHERSTELLEN" eintippen
+            <input type="text" id="einst-restore-confirm-text" placeholder="WIEDERHERSTELLEN" autocomplete="off">
+          </label>
+          <button class="btn btn-danger" id="einst-restore-confirm" disabled>Wiederherstellen</button>
+          <button class="btn btn-ghost" id="einst-restore-cancel">Abbrechen</button>
+        </div>
       </div>`;
 
     const q = (s) => wrap.querySelector(s);
+    this._r = {
+      einstEventLogView: q("#einst-event-log-view"),
+      einstLogFilterKat: q("#einst-log-filter-kat"),
+      einstLogFilterText: q("#einst-log-filter-text"),
+    };
+    this._r.einstLogFilterKat.value = this._eventLogFilterKat || "alle";
+    this._r.einstLogFilterText.value = this._eventLogFilterText || "";
+    this._r.einstLogFilterKat.addEventListener("change", () => {
+      this._eventLogFilterKat = this._r.einstLogFilterKat.value;
+      this._renderEventLogView();
+    });
+    this._r.einstLogFilterText.addEventListener("input", () => {
+      this._eventLogFilterText = this._r.einstLogFilterText.value;
+      this._renderEventLogView();
+    });
     const exportBtn = q("#einst-event-log-export");
     // Bewusst KEIN window.open() hier: siehe Kommentar an derselben Stelle,
     // frueher im Analyse-Tab (Produktionsfeedback 2026-09-26, mobiles
@@ -1348,7 +1403,106 @@ class EVAssistantPanel extends HTMLElement {
       resetForm.classList.add("hidden");
       clearResetInputs();
     });
+
+    const backupExportBtn = q("#einst-backup-export");
+    backupExportBtn.addEventListener("click", async () => {
+      const config_entry_id = this._configEntryId();
+      if (!config_entry_id) return;
+      backupExportBtn.disabled = true;
+      try {
+        await this._hass.callService("ev_assistant", "export_backup", { config_entry_id });
+        const filename = `ev_assistant_backup_${config_entry_id}.json`;
+        const a = document.createElement("a");
+        a.href = `/local/${filename}`;
+        a.download = filename;
+        a.target = "_blank";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      } catch (err) {
+        console.error("export_backup fehlgeschlagen", err);
+      } finally {
+        backupExportBtn.disabled = false;
+      }
+    });
+
+    // Restore: Datei wird NICHT hochgeladen (kein HA-Service kann das) --
+    // client-seitig per FileReader gelesen, grob validiert (JSON + erwartete
+    // "history"-Kernstruktur, siehe coordinator.py::async_restore_backup()
+    // fuer die serverseitige zweite Verteidigungslinie) und ihr kompletter
+    // Text-Inhalt als backup_data-Parameter an den Service geschickt. Wegen
+    // der Tragweite (ersetzt WIRKLICH ALLES) reicht das sonst im Panel
+    // uebliche Klick-Reveal hier bewusst NICHT -- eine Tipp-Bestaetigung
+    // ("WIEDERHERSTELLEN" exakt eintippen) macht ein versehentliches
+    // Doppelklicken/Antippen unmoeglich.
+    const restoreFileInput = q("#einst-restore-file");
+    const restoreFileInfo = q("#einst-restore-fileinfo");
+    const restoreForm = q("#einst-restore-form");
+    const restoreConfirmText = q("#einst-restore-confirm-text");
+    const restoreConfirmBtn = q("#einst-restore-confirm");
+    let restoreRawText = null;
+
+    const resetRestoreUi = () => {
+      restoreForm.classList.add("hidden");
+      restoreFileInfo.textContent = "";
+      restoreConfirmText.value = "";
+      restoreConfirmBtn.disabled = true;
+      restoreRawText = null;
+      restoreFileInput.value = "";
+    };
+
+    q("#einst-restore-toggle").addEventListener("click", () => restoreFileInput.click());
+
+    restoreFileInput.addEventListener("change", () => {
+      const file = restoreFileInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const text = String(reader.result);
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch (err) {
+          restoreFileInfo.textContent = "Ungültige Datei (kein gültiges JSON).";
+          restoreForm.classList.add("hidden");
+          restoreRawText = null;
+          return;
+        }
+        if (!parsed || typeof parsed !== "object" || !("history" in parsed)) {
+          restoreFileInfo.textContent = "Ungültige Datei (keine EV-Assistant-Sicherung).";
+          restoreForm.classList.add("hidden");
+          restoreRawText = null;
+          return;
+        }
+        const kb = (file.size / 1024).toFixed(0);
+        restoreFileInfo.textContent = `Datei ausgewählt: ${file.name} (${kb} KB)`;
+        restoreRawText = text;
+        restoreConfirmText.value = "";
+        restoreConfirmBtn.disabled = true;
+        restoreForm.classList.remove("hidden");
+      };
+      reader.readAsText(file);
+    });
+
+    restoreConfirmText.addEventListener("input", () => {
+      restoreConfirmBtn.disabled = restoreConfirmText.value.trim() !== "WIEDERHERSTELLEN";
+    });
+    q("#einst-restore-cancel").addEventListener("click", resetRestoreUi);
+    restoreConfirmBtn.addEventListener("click", () => {
+      if (!restoreRawText) return;
+      this._call("restore_backup", { backup_data: restoreRawText });
+      resetRestoreUi();
+    });
     return wrap;
+  }
+
+  _updateEinstellungen() {
+    if (!this._r.einstEventLogView) return;
+    if (this._eventLog === undefined || Date.now() - (this._eventLogFetchedAt || 0) > 30000) {
+      this._fetchEventLog();
+    } else {
+      this._renderEventLogView();
+    }
   }
 
   _updateProfil() {
@@ -2676,6 +2830,7 @@ class EVAssistantPanel extends HTMLElement {
     else if (this._view === "leasing") this._updateLeasing();
     else if (this._view === "ladekarten") this._updateLadekarten();
     else if (this._view === "wartung") this._updateWartung();
+    else if (this._view === "einstellungen") this._updateEinstellungen();
   }
 
   // --- Update: Fahrzeuge (unchanged) ------------------------------------------
@@ -3389,6 +3544,87 @@ class EVAssistantPanel extends HTMLElement {
   // unabhaengig davon, welcher Tab den Abruf ausgeloest hat.
   _refreshBetaWallboxIfActive() {
     if (this._view === "uebersicht_beta" && this._r.betaWallboxCard) this._updateBetaWallbox();
+  }
+
+  // --- Ereignisprotokoll: scrollbare Live-Ansicht (Nutzerwunsch 2026-09-27) ----
+  // Gleiches Muster wie _fetchHomeSessions() oben: eigener WS-Abruf statt
+  // reaktivem hass.states, mit demselben "nicht doppelt gleichzeitig
+  // abrufen"/Staleness-Cache-Ansatz -- nur mit kuerzerem Schwellwert (30s
+  // statt 5min), weil hier explizit der "quasi live"-Eindruck gewuenscht ist,
+  // waehrend _updateEinstellungen() ohnehin bei jedem Coordinator-Update
+  // aufgerufen wird (siehe _update()).
+
+  async _fetchEventLog() {
+    if (this._eventLogFetching) return;
+    this._eventLogFetching = true;
+    this._eventLogFetchedAt = Date.now();
+    const entryId = this._configEntryId();
+    if (!entryId || !this._hass || !this._hass.callWS) {
+      this._eventLogFetching = false;
+      this._renderEventLogView();
+      return;
+    }
+    try {
+      const res = await this._hass.callWS({ type: "ev_assistant/event_log", config_entry_id: entryId });
+      this._eventLog = Array.isArray(res && res.event_log) ? res.event_log : [];
+    } catch (err) {
+      this._eventLog = [];
+    } finally {
+      this._eventLogFetching = false;
+      this._renderEventLogView();
+    }
+  }
+
+  // Kategorie-Liste im Filter-Dropdown wird bewusst aus den tatsaechlich im
+  // Log vorkommenden Werten aufgebaut (nicht aus einer in JS gepflegten
+  // Kopie der coordinator.py::_log_event()-Aufrufstellen) -- so bleibt sie
+  // automatisch aktuell, auch wenn dort spaeter neue Kategorien dazukommen.
+  _updateLogFilterOptions() {
+    const sel = this._r.einstLogFilterKat;
+    if (!sel || !Array.isArray(this._eventLog)) return;
+    const kats = [...new Set(this._eventLog.map((e) => e.kategorie))].sort();
+    const current = sel.value || "alle";
+    sel.innerHTML = `<option value="alle">Alle Kategorien</option>` +
+      kats.map((k) => `<option value="${k}">${k}</option>`).join("");
+    sel.value = kats.includes(current) || current === "alle" ? current : "alle";
+  }
+
+  _renderEventLogView() {
+    const view = this._r.einstEventLogView;
+    if (!view) return;
+    if (this._eventLog === null || this._eventLog === undefined) {
+      view.innerHTML = `<div class="profil-empty">Lädt…</div>`;
+      return;
+    }
+    this._updateLogFilterOptions();
+    if (this._eventLog.length === 0) {
+      view.innerHTML = `<div class="profil-empty">Noch keine Einträge.</div>`;
+      return;
+    }
+    const kat = this._eventLogFilterKat || "alle";
+    const suche = (this._eventLogFilterText || "").trim().toLowerCase();
+    const filtered = this._eventLog.filter((e) =>
+      (kat === "alle" || e.kategorie === kat) &&
+      (!suche || e.text.toLowerCase().includes(suche) || e.kategorie.toLowerCase().includes(suche))
+    );
+    if (filtered.length === 0) {
+      view.innerHTML = `<div class="profil-empty">Keine Einträge für diesen Filter.</div>`;
+      return;
+    }
+    // Neueste zuerst -- fuer einen Blick "was ist zuletzt passiert", ohne
+    // erst runterscrollen zu muessen (anders als ein klassisches
+    // Log-Tail-Fenster, dafuer ist hier kein echtes Live-Streaming noetig).
+    const sorted = [...filtered].sort((a, b) => b.ts - a.ts);
+    const wasAtTop = view.scrollTop < 4;
+    view.innerHTML = sorted.map((e) => {
+      const d = new Date(e.ts * 1000);
+      const zeit = d.toLocaleDateString("de-DE") + " " + d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+      return `<div class="log-line"><span class="log-ts">${zeit}</span><span class="log-kat">${e.kategorie}</span><span class="log-text">${e.text}</span></div>`;
+    }).join("");
+    // Scrollposition nur korrigieren, wenn der Nutzer ohnehin oben war
+    // (frisch geoeffnet/nicht gescrollt) -- sonst Kampf mit eigenem Scrollen
+    // beim periodischen Refresh (siehe feedback_scroll_preserve_conditional).
+    if (wasAtTop) view.scrollTop = 0;
   }
 
   _renderHomeHistory() {
@@ -5901,6 +6137,23 @@ class EVAssistantPanel extends HTMLElement {
         display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 10px;
       }
       .hist-delete-text { font-size: 12px; color: var(--ink-mid); }
+
+      .log-filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+      .log-filter-row select, .log-filter-row input {
+        border: 1px solid var(--line-s); border-radius: 7px; padding: 6px 9px; font-size: 12px;
+        background: var(--bg-0); color: var(--ink);
+      }
+      .log-filter-row input { flex: 1; min-width: 120px; }
+      .log-view {
+        margin-top: 8px; max-height: 320px; overflow-y: auto; border: 1px solid var(--line);
+        border-radius: 8px; background: var(--bg-0); padding: 8px 10px; font-family: monospace;
+        font-size: 11.5px; line-height: 1.6;
+      }
+      .log-line { display: flex; gap: 8px; flex-wrap: wrap; padding: 2px 0; border-bottom: 1px solid var(--line); }
+      .log-line:last-child { border-bottom: none; }
+      .log-ts { color: var(--ink-mid); flex-shrink: 0; }
+      .log-kat { color: var(--accent); flex-shrink: 0; }
+      .log-text { color: var(--ink); word-break: break-word; }
 
       /* Uebersicht (Beta) -- Konzept A */
       .beta-pending-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 12px; }

@@ -2,6 +2,24 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.8] - 2026-09-27
+
+### Added
+
+- **Category dropdown + free-text search for the event log view** (Einstellungen tab): the dropdown's options are built from whatever categories actually appear in the fetched log, not a hand-maintained copy of the categories `_log_event()` can produce — it stays correct automatically as new categories get added. Search matches against both the entry text and its category, case-insensitive. Filter state persists across the periodic refetch (doesn't get reset every 30 seconds).
+
+## [0.99.7] - 2026-09-27
+
+### Added
+
+- **Scrollable, quasi-live event log view directly on the Einstellungen tab**, instead of only a download button: a new `ev_assistant/event_log` websocket command returns the in-memory event log on demand (deliberately not exposed as an entity attribute — 14 days of entries can reach several tens of KB, which would otherwise unnecessarily bloat the recorder and risk hitting HA's attribute-size warning). The panel refetches it whenever the tab is open and the last fetch is more than 30 seconds old, giving a "quasi live" feel without a full push/subscription mechanism. Newest entries first, monospace, scroll position preserved across refreshes unless already at the top.
+
+## [0.99.6] - 2026-09-27
+
+### Added
+
+- **Backup & restore for the persistent data** (`export_backup`/`restore_backup` services + a new "Datensicherung" card on the Einstellungen tab): backs up everything in the Store (trip log, charge history, charging cards, maintenance plan, all "since setup" anchors, event log) as a downloadable JSON file, and can restore it again later. Deliberately scoped to data only — never the integration's configuration (evcc host, entity IDs, thresholds), since restoring stale config alongside data could silently point the integration at entities that no longer exist. Restore has three safeguards: the panel requires typing "WIEDERHERSTELLEN" to enable the button (stronger than the panel's usual click-to-reveal confirmation, given this replaces literally everything), the current state is automatically backed up first under its own filename before being overwritten, and the integration reloads afterwards so every in-memory cache derived from the old data gets rebuilt cleanly rather than potentially running stale until next restart.
+
 ## [0.99.5] - 2026-09-27
 
 ### Added
