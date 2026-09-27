@@ -365,6 +365,7 @@ class EVAssistantPanel extends HTMLElement {
       ["leasing",    "mdi:file-document-outline",  "Leasing"],
       ["ladekarten", "mdi:credit-card-multiple-outline", "Ladekarten"],
       ["wartung",    "mdi:wrench-clock",           "Wartung"],
+      ["einstellungen", "mdi:cog-outline",         "Einstellungen"],
     ];
     this._tabs = {};
     for (const [id, icon, label] of TAB_DEFS) {
@@ -474,6 +475,7 @@ class EVAssistantPanel extends HTMLElement {
     else if (view === "leasing") this._main.appendChild(this._buildLeasing());
     else if (view === "ladekarten") this._main.appendChild(this._buildLadekarten());
     else if (view === "wartung") this._main.appendChild(this._buildWartung());
+    else if (view === "einstellungen") this._main.appendChild(this._buildEinstellungen());
     this._update();
   }
 
@@ -1198,18 +1200,6 @@ class EVAssistantPanel extends HTMLElement {
           Nur tatsächliche Ladungskosten je Anbieter (WO geladen wurde) — Ladekarten-Grundgebühren gehören
           keinem einzelnen Anbieter zu und fließen hier nicht ein.
         </div>
-      </div>
-      <div class="card">
-        <div class="card-head">
-          <span class="ic"><ha-icon icon="mdi:file-download-outline"></ha-icon></span><h2>Ereignisprotokoll</h2>
-        </div>
-        <div class="profil-empty">
-          Protokoll der letzten ca. 14 Tage (Modus-Wechsel, erkannte/bestätigte/verworfene Fremdladungen und
-          Fahrten, Probleme) als Text-Datei — z.B. zum Anhängen an einen Bug-Report.
-        </div>
-        <button type="button" class="btn btn-ghost" id="analyse-event-log-export" style="margin-top:10px">
-          <ha-icon icon="mdi:file-download-outline"></ha-icon> Herunterladen
-        </button>
       </div>`;
 
     const q = (s) => wrap.querySelector(s);
@@ -1257,24 +1247,68 @@ class EVAssistantPanel extends HTMLElement {
       analyseMischpreisAktuell:  q("#analyse-mischpreis-aktuell"),
       analyseMischpreisSchwelle: q("#analyse-mischpreis-schwelle"),
       analyseMischpreisNote:     q("#analyse-mischpreis-note"),
-      analyseEventLogExport: q("#analyse-event-log-export"),
     };
-    // Wartet (anders als this._call(), das nur "fire and forget" macht) auf
-    // den Abschluss des Service-Aufrufs, bevor der Download ausgeloest
-    // wird -- die Datei muss ja erst geschrieben sein (siehe coordinator.py::
-    // async_export_event_log(), Dateiname ist deterministisch aus
-    // config_entry_id, kein Response-Value noetig). Bewusst KEIN
-    // window.open() hier: das laeuft nach dem await nicht mehr synchron
-    // zur Klick-Geste und wird von mobilem Safari/der HA-Begleit-App als
-    // Popup geblockt (Produktionsfeedback 2026-09-26: Button tut auf dem
-    // Handy nichts). Ein unsichtbares <a download>-Element anklicken
-    // funktioniert stattdessen zuverlaessig, weil es kein neues
-    // Fenster/Tab oeffnet, sondern nur einen Datei-Download ausloest.
-    this._r.analyseEventLogExport.addEventListener("click", async () => {
+    return wrap;
+  }
+
+  // --- Tab: Einstellungen -------------------------------------------------------
+
+  _buildEinstellungen() {
+    const wrap = document.createElement("div");
+    wrap.className = "tab-wrap";
+    wrap.innerHTML = `
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:file-download-outline"></ha-icon></span><h2>Ereignisprotokoll</h2>
+        </div>
+        <div class="profil-empty">
+          Protokoll der letzten ca. 14 Tage (Modus-Wechsel, erkannte/bestätigte/verworfene Fremdladungen und
+          Fahrten, Probleme) als Text-Datei — z.B. zum Anhängen an einen Bug-Report.
+        </div>
+        <button type="button" class="btn btn-ghost" id="einst-event-log-export" style="margin-top:10px">
+          <ha-icon icon="mdi:file-download-outline"></ha-icon> Herunterladen
+        </button>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:restart-alert"></ha-icon></span><h2>Kennzahlen seit Einrichtung</h2>
+        </div>
+        <div class="profil-empty">
+          Setzt Verbrauch (kWh/100km), Savings und CO2-Ersparnis auf einen neuen Startpunkt zurück — z.B. wenn
+          diese Werte durch fehlerhafte Sensordaten kurz nach der Einrichtung dauerhaft verzerrt sind.
+          Fahrtenbuch, Ladehistorie, Leasing-Budget und Wartungsplan bleiben unverändert.
+        </div>
+        <button type="button" class="btn btn-ghost sm" id="einst-reset-toggle" style="margin-top:10px">
+          <ha-icon icon="mdi:restart-alert" style="--mdc-icon-size:14px;vertical-align:-2px"></ha-icon> Zurücksetzen…
+        </button>
+        <div class="hist-edit-form hidden" id="einst-reset-form">
+          <label>Korrekter Wert kWh seit Einrichtung
+            <input type="text" inputmode="decimal" id="einst-reset-kwh" placeholder="leer = auf 0 zurücksetzen">
+          </label>
+          <label>Korrekter Wert Kosten (€) seit Einrichtung
+            <input type="text" inputmode="decimal" id="einst-reset-cost" placeholder="leer = auf 0 zurücksetzen">
+          </label>
+          <label>Korrekter Wert km seit Einrichtung
+            <input type="text" inputmode="decimal" id="einst-reset-km" placeholder="leer = auf 0 zurücksetzen">
+          </label>
+          <span class="hist-delete-text" style="flex-basis:100%">
+            Kennzahlen (Verbrauch, Ersparnis) seit Einrichtung zurücksetzen? Fahrtenbuch und Ladehistorie
+            bleiben unverändert. Nicht rückgängig machbar.
+          </span>
+          <button class="btn btn-danger" id="einst-reset-confirm">Zurücksetzen</button>
+          <button class="btn btn-ghost" id="einst-reset-cancel">Abbrechen</button>
+        </div>
+      </div>`;
+
+    const q = (s) => wrap.querySelector(s);
+    const exportBtn = q("#einst-event-log-export");
+    // Bewusst KEIN window.open() hier: siehe Kommentar an derselben Stelle,
+    // frueher im Analyse-Tab (Produktionsfeedback 2026-09-26, mobiles
+    // Popup-Blocking nach einem await).
+    exportBtn.addEventListener("click", async () => {
       const config_entry_id = this._configEntryId();
       if (!config_entry_id) return;
-      const btn = this._r.analyseEventLogExport;
-      btn.disabled = true;
+      exportBtn.disabled = true;
       try {
         await this._hass.callService("ev_assistant", "export_event_log", { config_entry_id });
         const filename = `ev_assistant_event_log_${config_entry_id}.txt`;
@@ -1288,8 +1322,31 @@ class EVAssistantPanel extends HTMLElement {
       } catch (err) {
         console.error("export_event_log fehlgeschlagen", err);
       } finally {
-        btn.disabled = false;
+        exportBtn.disabled = false;
       }
+    });
+
+    const resetForm = q("#einst-reset-form");
+    const resetKwh = q("#einst-reset-kwh");
+    const resetCost = q("#einst-reset-cost");
+    const resetKm = q("#einst-reset-km");
+    const clearResetInputs = () => { resetKwh.value = ""; resetCost.value = ""; resetKm.value = ""; };
+    q("#einst-reset-toggle").addEventListener("click", () => resetForm.classList.toggle("hidden"));
+    q("#einst-reset-cancel").addEventListener("click", () => {
+      resetForm.classList.add("hidden");
+      clearResetInputs();
+    });
+    q("#einst-reset-confirm").addEventListener("click", () => {
+      const payload = {};
+      const kwh = parseFloat(resetKwh.value.replace(",", "."));
+      const cost = parseFloat(resetCost.value.replace(",", "."));
+      const km = parseFloat(resetKm.value.replace(",", "."));
+      if (!isNaN(kwh)) payload.home_kwh_since_setup = kwh;
+      if (!isNaN(cost)) payload.home_cost_since_setup = cost;
+      if (!isNaN(km)) payload.km_driven = km;
+      this._call("reset_lifetime_kpis", payload);
+      resetForm.classList.add("hidden");
+      clearResetInputs();
     });
     return wrap;
   }

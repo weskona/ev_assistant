@@ -489,6 +489,58 @@ export_event_log:
         config_entry:
           integration: ev_assistant
 
+reset_lifetime_kpis:
+  name: Kennzahlen seit Einrichtung zurücksetzen
+  description: >
+    Setzt die "seit Einrichtung"-Referenzwerte für Verbrauch (kWh/100km),
+    Savings und CO2-Ersparnis zurück -- z.B. wenn diese Kennzahlen durch
+    fehlerhafte Sensordaten in den ersten Tagen nach Einrichtung dauerhaft
+    verzerrt sind. Betrifft ausschließlich diese Referenzwerte, NICHT
+    Fahrtenbuch, Ladehistorie, Leasing-Budget oder Wartungsplan. Ohne die
+    drei optionalen Felder wird jeweils auf den aktuellen Absolutwert
+    gesetzt (Delta seit Einrichtung = 0, bis neue Fahrten/Ladevorgänge
+    dazukommen). Mit einem Feld wird stattdessen so zurückgerechnet, dass
+    das Delta seit Einrichtung genau dem eingegebenen Wert entspricht.
+    Nicht rückgängig machbar.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    home_kwh_since_setup:
+      name: Korrekter Wert kWh seit Einrichtung (optional)
+      description: Ohne Angabe wird auf 0 zurückgesetzt.
+      required: false
+      example: 120
+      selector:
+        number:
+          mode: box
+          min: 0
+          step: 0.1
+    home_cost_since_setup:
+      name: Korrekter Wert Kosten € seit Einrichtung (optional)
+      description: Ohne Angabe wird auf 0 zurückgesetzt.
+      required: false
+      example: 35.5
+      selector:
+        number:
+          mode: box
+          min: 0
+          step: 0.01
+    km_driven:
+      name: Korrekter Wert km seit Einrichtung (optional)
+      description: Ohne Angabe wird auf 0 zurückgesetzt.
+      required: false
+      example: 850
+      selector:
+        number:
+          mode: box
+          min: 0
+          step: 1
+
 import_fahrtenbuch:
   name: Fahrtenbuch importieren
   description: >

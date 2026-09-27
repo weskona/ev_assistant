@@ -535,6 +535,10 @@
     "evcc_soc_scope_failed": {
       "title": "evcc SoC-Steuerung nicht eingerichtet",
       "description": "evcc-Fahrzeug-/Loadpoint-SoC-Steuerung konnte nicht eingerichtet werden (Host: {host}) — Lademodus wird weiterhin automatisch gesetzt, Min-/Ziel-SoC nicht. evcc-Version prüfen oder Issue auf GitHub melden."
+    },
+    "evcc_vehicle_match_fallback": {
+      "title": "evcc-Fahrzeug-Zuordnung fehlgeschlagen",
+      "description": "Die automatische Zuordnung zu einem Fahrzeug in evcc ist fehlgeschlagen. Heimladen-kWh basiert deshalb auf evccs standortweiter Lifetime-Statistik statt der präzisen Pro-Fahrzeug-Session-Summe — bei mehreren Fahrzeugen/Ladepunkten am selben evcc kann das ungenau sein. Setze \"evcc Fahrzeugname\" in den Integrationsoptionen manuell auf den evcc-Anzeigetitel dieses Fahrzeugs."
     }
   }
 }

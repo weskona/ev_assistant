@@ -215,6 +215,7 @@ from .engine import (
     min_solar_share_price_ceiling,
     net_need_after_pv_kwh,
     normalize_evcc_mode,
+    normalize_vehicle_label,
     pop_pending,
     range_km_to_soc_percent,
     remaining_today_kwh,
@@ -583,6 +584,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # statt sofort ein Issue aus der vorherigen Session zu recyceln.
         self._entity_bad_since: dict[str, float] = {}
         self._entity_issue_active: set[str] = set()
+        # Repair-Issue fuer die riskante Stufe-2-Rueckfalloption in
+        # _home_kwh() (siehe _check_evcc_vehicle_match_issue()) -- ebenfalls
+        # rein im Arbeitsspeicher, kein Neustart-Recycling.
+        self._evcc_vehicle_match_issue_active: bool = False
         # Cache fuer den rollierenden Realverbrauch, analog
         # _usage_profile_cache (Schluessel: _fahrten_version + heutiges
         # Datum, da das Rolling-Fenster auch ohne Fahrtenbuch-Aenderung
@@ -2377,6 +2382,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._run_trip_detection()
         self._check_entity_health()
         self._check_urlaub_transition()
+        self._check_evcc_vehicle_match_issue()
         if self._soc is not None:
             self._update_vehicle_discharge(self._soc)
         await self._async_apply_evcc_mode_control()
@@ -2443,6 +2449,52 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                     "problem_erkannt",
                     f"{entity_id} ({conf_key}) seit {_ENTITY_STALE_THRESHOLD_S // 60}min unavailable/unknown",
                 )
+
+    def _check_evcc_vehicle_match_issue(self) -> None:
+        """Warnt per Repair-Issue, wenn _home_kwh() gerade auf die riskante
+        Stufe-2-Rueckfalloption (evccs standortweite Lifetime-Ladeenergie-
+        Statistik statt der praezisen Pro-Fahrzeug-Session-Summe)
+        angewiesen ist, WEIL die automatische Fahrzeug-Zuordnung
+        (_evcc_vehicle_key()) fehlgeschlagen ist -- Produktionsvorfall
+        2026-09-27 (Issue #2, Jochen754): ohne diese Warnung fror
+        savings_home_kwh_start faelschlich auf evccs komplette
+        Installations-Lifetime-Energie ein, statt auf den Wert seit
+        EV-Assistant-Einrichtung.
+
+        Nur relevant, wenn CONF_EVCC_VEHICLE_NAME nicht explizit gesetzt
+        ist (sonst liefert _evcc_vehicle_key() immer einen Treffer, kein
+        Auto-Matching-Risiko) UND die Stufe-2-Bedingung aus _home_kwh()
+        selbst ueberhaupt vorliegt (Wallbox-Energiezaehler konfiguriert,
+        evcc liefert eine gueltige Lifetime-Statistik) -- sonst wuerde
+        z.B. ein Single-Vehicle-Setup ganz ohne Wallbox-Energiezaehler
+        (dort greift ohnehin nur Stufe 3, kein Risiko) grundlos gewarnt.
+        Kein hartes Verwerfen: Stufe 2 ist manchmal legitim der einzig
+        verfuegbare Wert (siehe _home_kwh()-Docstring), nur ein Hinweis
+        mit Handlungsempfehlung (CONF_EVCC_VEHICLE_NAME manuell setzen)."""
+        issue_id = f"{self.entry.entry_id}_evcc_vehicle_match_fallback"
+        if self._evcc_vehicle_key() is not None:
+            if self._evcc_vehicle_match_issue_active:
+                self._evcc_vehicle_match_issue_active = False
+                ir.async_delete_issue(self.hass, DOMAIN, issue_id)
+            return
+        if not self._opt(CONF_WALLBOX_ENERGY_ENTITY) or self._evcc_state is None:
+            return
+        statistics = self._evcc_state.get("statistics") or {}
+        value = (statistics.get("total") or {}).get("chargedKWh")
+        if not isinstance(value, (int, float)):
+            return
+        if not self._evcc_vehicle_match_issue_active:
+            self._evcc_vehicle_match_issue_active = True
+            ir.async_create_issue(
+                self.hass, DOMAIN, issue_id,
+                is_fixable=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key="evcc_vehicle_match_fallback",
+            )
+            self._log_event(
+                "problem_erkannt",
+                "evcc-Fahrzeug-Matching fehlgeschlagen, Fallback auf Standort-Statistik fuer Heimladen-kWh aktiv",
+            )
 
     def _recheck_motor(self) -> None:
         """Analog _recheck_plug() oben, fuer den optionalen Motor-Sensor."""
@@ -4535,7 +4587,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         (siehe entity.py/__init__.py), NICHT aus entry.title geparst:
         dessen Format war nicht immer "EV Assistant (Hersteller Modell)"
         (aeltere Eintraege wurden ohne Klammern angelegt), ein Parsen dort
-        ist daher fragil."""
+        ist daher fragil.
+
+        Vergleich ueber normalize_vehicle_label() (siehe dort) statt
+        rohem lowercase-Vergleich -- Produktionsvorfall 2026-09-27: ein
+        evcc-Titel "iD3" gegen konfiguriertes "ID.3" matchte vorher nicht,
+        Stufe 1 in _home_kwh() wurde faelschlich uebersprungen."""
         configured = self._opt(CONF_EVCC_VEHICLE_NAME)
         if configured:
             return configured
@@ -4544,13 +4601,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         vehicles = self._evcc_state.get("vehicles") or {}
         hersteller = self._opt(CONF_VEHICLE_HERSTELLER) or ""
         modell = self._opt(CONF_VEHICLE_MODELL) or ""
-        label = f"{hersteller} {modell}".strip().lower()
+        label = normalize_vehicle_label(f"{hersteller} {modell}")
         for veh in vehicles.values():
             title = veh.get("title")
             if not title:
                 continue
-            k = title.lower()
-            if label.find(k) != -1 or all(w in label for w in k.split()):
+            k = normalize_vehicle_label(title)
+            if k and k in label:
                 return title
         return None
 
@@ -4569,20 +4626,20 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         die Fahrzeug-Titel aufgeloest statt eine explizite Konfiguration
         direkt zurueckzugeben, da hier in jedem Fall der Schluessel und
         nicht der eingegebene Titel gebraucht wird. None ohne evcc-Zustand
-        oder ohne Treffer."""
+        oder ohne Treffer. Normalisierung siehe _evcc_vehicle_key()."""
         if self._evcc_state is None:
             return None
         vehicles = self._evcc_state.get("vehicles") or {}
         configured = self._opt(CONF_EVCC_VEHICLE_NAME)
         hersteller = self._opt(CONF_VEHICLE_HERSTELLER) or ""
         modell = self._opt(CONF_VEHICLE_MODELL) or ""
-        label = (configured or f"{hersteller} {modell}").strip().lower()
+        label = normalize_vehicle_label(configured or f"{hersteller} {modell}")
         for key, veh in vehicles.items():
             title = veh.get("title")
             if not title:
                 continue
-            k = title.lower()
-            if label.find(k) != -1 or all(w in label for w in k.split()):
+            k = normalize_vehicle_label(title)
+            if k and k in label:
                 return key
         return None
 
@@ -4675,6 +4732,66 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self._save_soon()
             start = cost
         return round(max(0.0, cost - start), 2)
+
+    async def async_reset_lifetime_kpis(
+        self,
+        home_kwh_since_setup: Optional[float] = None,
+        home_cost_since_setup: Optional[float] = None,
+        km_driven: Optional[float] = None,
+    ) -> None:
+        """Setzt die "seit Einrichtung"-Referenzwerte fuer Verbrauch
+        (kWh/100km), Savings und CO2-Ersparnis zurueck -- fuer Faelle, in
+        denen diese Kennzahlen durch fehlerhafte Sensordaten in den ersten
+        Tagen nach Einrichtung dauerhaft verzerrt sind (Nutzerfeedback
+        Issue #2, Jochen754: 1.944,8 kWh/100km durch einen Matching-Fehler,
+        siehe _check_evcc_vehicle_match_issue()). Betrifft AUSSCHLIESSLICH
+        odo_start/savings_home_kwh_start/savings_home_cost_start/
+        wallbox_energy_start -- Fahrtenbuch (self.data["fahrten"]),
+        Ladehistorie (self.data["totals"]), Leasing-Budget (eigener
+        Vertrags-Start-km) und Wartungsplan (vergleicht gegen den
+        absoluten Kilometerstand) sind davon unberuehrt.
+
+        Ohne Parameter (None) wird der jeweilige Anker auf den aktuellen
+        Absolutwert gesetzt -- das Delta seit Einrichtung ist danach 0,
+        bis neue Fahrten/Ladevorgaenge dazukommen (kein Bug, siehe
+        CHANGELOG). Mit Parameter wird stattdessen so zurueckgerechnet,
+        dass das Delta seit Einrichtung genau dem uebergebenen Wert
+        entspricht (z.B. `home_kwh_since_setup=120` bei aktuell 150 kWh
+        absolut -> savings_home_kwh_start = 30) -- fuer den Fall, dass der
+        Nutzer den korrekten historischen Wert kennt, statt komplett auf 0
+        zurueckzusetzen.
+
+        `wallbox_energy_start` bekommt bewusst KEINEN eigenen Parameter:
+        es ist eine rein interne Hilfsgroesse fuer Stufe 3 in _home_kwh()
+        (Wallbox-Energiezaehler-Delta), nicht selbst eine angezeigte
+        Kennzahl -- wird deshalb immer unconditional auf jetzt gesetzt,
+        unabhaengig von den drei uebrigen Parametern."""
+        odo = self.data.get("odo")
+        if odo is not None:
+            if km_driven is not None:
+                km = float(km_driven)
+                if self.data.get("odo_unit") == "mi":
+                    km = km / MILES_TO_KM
+                self.data["odo_start"] = round(odo - km, 2)
+            else:
+                self.data["odo_start"] = odo
+        if self._wallbox_energy is not None:
+            self.data["wallbox_energy_start"] = self._wallbox_energy
+        home_kwh = self._home_kwh()
+        if home_kwh is not None:
+            self.data["savings_home_kwh_start"] = (
+                round(home_kwh - float(home_kwh_since_setup), 2)
+                if home_kwh_since_setup is not None else home_kwh
+            )
+        home_cost = self._home_cost()
+        if home_cost is not None:
+            self.data["savings_home_cost_start"] = (
+                round(home_cost - float(home_cost_since_setup), 2)
+                if home_cost_since_setup is not None else home_cost
+            )
+        self._log_event("kennzahlen_zurueckgesetzt", "Kennzahlen seit Einrichtung zurueckgesetzt")
+        self.async_set_updated_data(self.data)
+        await self._save()
 
     def _home_price(self) -> Optional[float]:
         """Heimstrompreis. Prioritaet: (1) evccs standortweite

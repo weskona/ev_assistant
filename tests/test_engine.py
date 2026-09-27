@@ -58,6 +58,7 @@ from engine import (
     net_need_after_pv_kwh,
     normalize_anbieter,
     normalize_evcc_mode,
+    normalize_vehicle_label,
     pop_pending,
     range_km_to_soc_percent,
     remaining_today_kwh,
@@ -1231,6 +1232,26 @@ def test_weekly_balancing_time_ok_ohne_pv_prognose_ab_fallback_stunde_ok():
     assert weekly_balancing_time_ok(
         pv_rest_heute_kwh=None, now_local_hour=23, pv_rest_threshold_kwh=0.3, fallback_hour=23,
     ) is True
+
+
+# ----- normalize_vehicle_label: robustes Fahrzeug-Matching (Issue #2) ------
+
+def test_normalize_vehicle_label_punkt_leerzeichen_und_kompakt_gleich():
+    # Produktionsvorfall 2026-09-27 (Jochen754, VW iD3): "ID.3", "ID 3" und
+    # "id3" muessen alle dasselbe ergeben.
+    assert normalize_vehicle_label("ID.3") == normalize_vehicle_label("ID 3") == normalize_vehicle_label("id3")
+
+
+def test_normalize_vehicle_label_diakritika_transliteriert():
+    assert normalize_vehicle_label("Škoda") == normalize_vehicle_label("Skoda")
+
+
+def test_normalize_vehicle_label_grossschreibung_und_bindestrich():
+    assert normalize_vehicle_label("e-Rifter") == normalize_vehicle_label("eRifter") == "erifter"
+
+
+def test_normalize_vehicle_label_leerer_string():
+    assert normalize_vehicle_label("") == ""
 
 
 # ----- apply_realtime_pv_override: Echtzeit-PV-Hochstufung pv->minpv -------

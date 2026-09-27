@@ -1846,6 +1846,170 @@ async def test_evcc_vehicle_api_key_ohne_evcc_state_gibt_none(hass, coordinators
     assert coordinator._evcc_vehicle_api_key() is None
 
 
+async def test_evcc_vehicle_key_matched_trotz_punkt_vs_leerzeichen(hass, coordinators):
+    # Produktionsvorfall 2026-09-27 (Issue #2, Jochen754, VW iD3): evccs
+    # Titel "iD3" matchte gegen konfiguriertes "ID.3" vorher NICHT.
+    from custom_components.ev_assistant.const import (
+        CONF_VEHICLE_HERSTELLER,
+        CONF_VEHICLE_MODELL,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "evak6",
+        options={CONF_VEHICLE_HERSTELLER: "VW", CONF_VEHICLE_MODELL: "ID.3"},
+    )
+    coordinator._evcc_state = {"vehicles": {"db:9": {"title": "iD3"}}}
+    assert coordinator._evcc_vehicle_key() == "iD3"
+    assert coordinator._evcc_vehicle_api_key() == "db:9"
+
+
+async def test_evcc_vehicle_key_matched_trotz_diakritika(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_VEHICLE_HERSTELLER,
+        CONF_VEHICLE_MODELL,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "evak7",
+        options={CONF_VEHICLE_HERSTELLER: "Skoda", CONF_VEHICLE_MODELL: "Enyaq"},
+    )
+    coordinator._evcc_state = {"vehicles": {"db:10": {"title": "Škoda Enyaq"}}}
+    assert coordinator._evcc_vehicle_key() == "Škoda Enyaq"
+
+
+# ----- _check_evcc_vehicle_match_issue: Repair-Issue bei riskantem Fallback ----
+
+async def test_check_evcc_vehicle_match_issue_erstellt_issue_bei_fehlgeschlagenem_matching(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_WALLBOX_ENERGY_ENTITY, DOMAIN
+
+    coordinator, entry = await _make_coordinator(
+        hass, coordinators, "evmi1", options={CONF_WALLBOX_ENERGY_ENTITY: "sensor.wallbox_energy"},
+    )
+    coordinator._evcc_state = {
+        "vehicles": {"db:1": {"title": "eRifter"}},
+        "statistics": {"total": {"chargedKWh": 500.0}},
+    }
+    coordinator._check_evcc_vehicle_match_issue()
+    issue_id = f"{entry.entry_id}_evcc_vehicle_match_fallback"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+
+async def test_check_evcc_vehicle_match_issue_kein_issue_ohne_wallbox_energy_entity(hass, coordinators):
+    from custom_components.ev_assistant.const import DOMAIN
+
+    coordinator, entry = await _make_coordinator(hass, coordinators, "evmi2")
+    coordinator._evcc_state = {
+        "vehicles": {"db:1": {"title": "eRifter"}},
+        "statistics": {"total": {"chargedKWh": 500.0}},
+    }
+    coordinator._check_evcc_vehicle_match_issue()
+    issue_id = f"{entry.entry_id}_evcc_vehicle_match_fallback"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_check_evcc_vehicle_match_issue_kein_issue_bei_explizit_konfiguriertem_namen(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_VEHICLE_NAME,
+        CONF_WALLBOX_ENERGY_ENTITY,
+        DOMAIN,
+    )
+
+    coordinator, entry = await _make_coordinator(
+        hass, coordinators, "evmi3",
+        options={CONF_WALLBOX_ENERGY_ENTITY: "sensor.wallbox_energy", CONF_EVCC_VEHICLE_NAME: "eRifter"},
+    )
+    coordinator._evcc_state = {
+        "vehicles": {"db:1": {"title": "eRifter"}},
+        "statistics": {"total": {"chargedKWh": 500.0}},
+    }
+    coordinator._check_evcc_vehicle_match_issue()
+    issue_id = f"{entry.entry_id}_evcc_vehicle_match_fallback"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+async def test_check_evcc_vehicle_match_issue_verschwindet_nach_erfolgreichem_matching(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_VEHICLE_NAME,
+        CONF_WALLBOX_ENERGY_ENTITY,
+        DOMAIN,
+    )
+
+    coordinator, entry = await _make_coordinator(
+        hass, coordinators, "evmi4", options={CONF_WALLBOX_ENERGY_ENTITY: "sensor.wallbox_energy"},
+    )
+    coordinator._evcc_state = {
+        "vehicles": {"db:1": {"title": "eRifter"}},
+        "statistics": {"total": {"chargedKWh": 500.0}},
+    }
+    coordinator._check_evcc_vehicle_match_issue()
+    issue_id = f"{entry.entry_id}_evcc_vehicle_match_fallback"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
+
+    # Simuliert den Nutzer, der CONF_EVCC_VEHICLE_NAME nach der Warnung
+    # manuell setzt (Handlungsempfehlung aus dem Issue-Text).
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, CONF_EVCC_VEHICLE_NAME: "eRifter"},
+    )
+    coordinator._check_evcc_vehicle_match_issue()
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+# ----- async_reset_lifetime_kpis: manuelle Neu-Baselinierung -------------------
+
+async def test_reset_lifetime_kpis_ohne_parameter_setzt_delta_auf_null(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "rlk1", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
+    )
+    coordinator.data["odo"] = 12000.0
+    coordinator.data["odo_unit"] = "km"
+    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 300.0, "cost": 60.0}}
+
+    await coordinator.async_reset_lifetime_kpis()
+
+    assert coordinator.data["odo_start"] == 12000.0
+    assert coordinator.data["savings_home_kwh_start"] == 300.0
+    assert coordinator.data["savings_home_cost_start"] == 60.0
+    assert coordinator._home_kwh_since_setup() == 0.0
+    assert coordinator._home_cost_since_setup() == 0.0
+    assert coordinator._km_driven() == 0.0
+
+
+async def test_reset_lifetime_kpis_mit_parametern_rechnet_anker_zurueck(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "rlk2", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
+    )
+    coordinator.data["odo"] = 12850.0
+    coordinator.data["odo_unit"] = "km"
+    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 420.0, "cost": 90.0}}
+
+    await coordinator.async_reset_lifetime_kpis(
+        home_kwh_since_setup=120.0, home_cost_since_setup=25.0, km_driven=850.0,
+    )
+
+    # savings_home_kwh_start = 420 - 120 = 300 -> Delta bleibt exakt 120.
+    assert coordinator.data["savings_home_kwh_start"] == 300.0
+    assert coordinator._home_kwh_since_setup() == 120.0
+    assert coordinator.data["savings_home_cost_start"] == 65.0
+    assert coordinator._home_cost_since_setup() == 25.0
+    # odo_start = 12850 - 850 = 12000 -> Delta bleibt exakt 850.
+    assert coordinator.data["odo_start"] == 12000.0
+    assert coordinator._km_driven() == 850.0
+
+
+async def test_reset_lifetime_kpis_faehrt_wallbox_energy_start_immer_unconditional(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "rlk3")
+    coordinator._wallbox_energy = 4200.0
+    coordinator.data["wallbox_energy_start"] = 1000.0
+
+    await coordinator.async_reset_lifetime_kpis(home_kwh_since_setup=5.0)
+
+    assert coordinator.data["wallbox_energy_start"] == 4200.0
+
+
 # ----- _migrate_weekday_usage_windows -----------------------------------------
 # Migration von den Lebenszeit-Skalar-Akkumulatoren (Summe + Tageszaehler je
 # Wochentag) auf das Sliding-Window-Modell (siehe engine.append_recent_

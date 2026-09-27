@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.5] - 2026-09-27
+
+### Added
+
+- **New "Einstellungen" panel tab**: a dedicated home for cross-cutting, less-frequently-used actions. Currently holds the event log export (moved from the Analyse tab) and the new lifetime-KPI reset below.
+- **New `reset_lifetime_kpis` service + panel form**: resets the "since setup" reference points for consumption (kWh/100km), savings and CO2 savings (`odo_start`, `savings_home_kwh_start`, `savings_home_cost_start`, `wallbox_energy_start`) — for cases where these were permanently skewed by bad sensor data in the first days after setup (Issue #2: a VW iD3 owner reported an implausible 1,944.8 kWh/100km, see the matching fix below). Without any input, each anchor resets to the current absolute value — the delta becomes 0 until new trips/charges accumulate, which is expected, not a bug. Optionally, the actual correct "since setup" value for home kWh, home cost and/or km driven can instead be entered, and the anchor is back-calculated so the delta matches exactly. Deliberately does NOT touch the trip log, charge history, leasing budget or maintenance plan — those use independent baselines already.
+
+### Fixed
+
+- **`_evcc_vehicle_key()`/`_evcc_vehicle_api_key()` vehicle-name matching is now robust against punctuation and diacritics** (e.g. "ID.3", "ID 3" and "id3" now all match each other, as does "Škoda" against "Skoda"): previously, a failed match (different formatting between the configured make/model and evcc's own vehicle title) silently made `_home_kwh()` fall back to evcc's site-wide lifetime charging statistic instead of the precise per-vehicle session sum, permanently freezing the "since setup" home-kWh baseline on the wrong (much larger) number — the root cause of the 1,944.8 kWh/100km report above.
+- **New repair issue when that risky fallback is actually in use**: if the automatic vehicle match fails (and no explicit `evcc_vehicle_name` is configured) while a wallbox energy entity is configured, a repair issue now points out that `evcc_vehicle_name` should be set manually — instead of silently and permanently skewing home_kwh with no indication anything was wrong. Non-blocking: the fallback can legitimately be the only value available in some setups.
+
 ## [0.99.4] - 2026-09-27
 
 ### Changed

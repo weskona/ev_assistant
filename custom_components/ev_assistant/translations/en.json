@@ -535,6 +535,10 @@
     "evcc_soc_scope_failed": {
       "title": "evcc SoC control not set up",
       "description": "Could not set up evcc vehicle/loadpoint SoC control (host: {host}) — the charge mode is still being set automatically, but min/target SoC is not. Check the evcc version or report an issue on GitHub."
+    },
+    "evcc_vehicle_match_fallback": {
+      "title": "evcc vehicle matching failed",
+      "description": "The automatic match to a vehicle in evcc failed. Home-charging kWh is therefore based on evcc's site-wide lifetime statistic instead of the precise per-vehicle session sum — this can be inaccurate with multiple vehicles/loadpoints on the same evcc instance. Set \"evcc vehicle name\" manually in the integration options to this vehicle's evcc display title."
     }
   }
 }

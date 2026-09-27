@@ -18,6 +18,8 @@ Energie (aussagekraeftig = AC am Ladepunkt, inkl. Ladeverluste):
   energy_batt_kwh = Batterie-netto
 """
 
+import re
+import unicodedata
 from calendar import monthrange
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -1147,6 +1149,26 @@ def weekly_balancing_time_ok(
     if pv_rest_heute_kwh is not None:
         return pv_rest_heute_kwh <= pv_rest_threshold_kwh
     return now_local_hour >= fallback_hour
+
+
+def normalize_vehicle_label(s: str) -> str:
+    """Normalisiert einen Fahrzeug-Bezeichner fuer robustes Matching in
+    coordinator.py::_evcc_vehicle_key()/_evcc_vehicle_api_key(): Diakritika/
+    Umlaute per Unicode-NFKD-Zerlegung in ASCII transliteriert (z.B.
+    "Škoda" -> "Skoda"), Kleinschreibung, und ALLE Nicht-alphanumerischen
+    Zeichen (Leerzeichen, Punkte, Bindestriche...) entfernt statt nur
+    ersetzt -- macht "ID.3", "ID 3" und "id3" zum identischen "id3"
+    (Produktionsvorfall 2026-09-27: falsches Matching bei einem VW iD3
+    fuehrte zu einem stillschweigenden Rueckfall auf evccs standortweite
+    Lifetime-Statistik statt der praezisen Pro-Fahrzeug-Session-Summe,
+    siehe _home_kwh()). Vollstaendiges Entfernen (statt Ersetzen durch
+    Leerzeichen) macht die anschliessende Teilstring-Pruefung robuster als
+    die vorherige wortweise Teilmengen-Pruefung, ohne sie zu ersetzen: die
+    Wortreihenfolge in Hersteller+Modell-Kombinationen bleibt erhalten, ein
+    zusammenhaengender Titel wie "eRifter" bleibt weiterhin als Teilstring
+    von "peugeot erifter" -> "peugeoterifter" auffindbar."""
+    ascii_s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"[^a-z0-9]", "", ascii_s.lower())
 
 
 def blended_charge_price(

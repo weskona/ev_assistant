@@ -39,6 +39,7 @@ from .const import (
     SERVICE_LOG,
     SERVICE_LOG_TRIP,
     SERVICE_MARK_MAINTENANCE_DONE,
+    SERVICE_RESET_LIFETIME_KPIS,
     SERVICE_SET_EVCC_CHARGE_PLAN,
     SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM,
     SERVICE_SET_EVCC_MANUAL_MODE,
@@ -271,6 +272,13 @@ EXPORT_TRIPS_SCHEMA = vol.Schema({
 
 EXPORT_EVENT_LOG_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
+})
+
+RESET_LIFETIME_KPIS_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Optional("home_kwh_since_setup"): vol.Coerce(float),
+    vol.Optional("home_cost_since_setup"): vol.Coerce(float),
+    vol.Optional("km_driven"): vol.Coerce(float),
 })
 
 SIMULATE_TRIP_SCHEMA = vol.Schema({
@@ -583,6 +591,15 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_export_event_log()
 
+    async def _handle_reset_lifetime_kpis(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_reset_lifetime_kpis(
+                home_kwh_since_setup=call.data.get("home_kwh_since_setup"),
+                home_cost_since_setup=call.data.get("home_cost_since_setup"),
+                km_driven=call.data.get("km_driven"),
+            )
+
     async def _handle_simulate_trip(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
@@ -762,6 +779,9 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_EXPORT_EVENT_LOG, _handle_export_event_log, schema=EXPORT_EVENT_LOG_SCHEMA
     )
+    hass.services.async_register(
+        DOMAIN, SERVICE_RESET_LIFETIME_KPIS, _handle_reset_lifetime_kpis, schema=RESET_LIFETIME_KPIS_SCHEMA
+    )
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE_TRIP, _handle_simulate_trip, schema=SIMULATE_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_EDIT_TRIP, _handle_edit_trip, schema=EDIT_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DELETE_TRIP, _handle_delete_trip, schema=DELETE_TRIP_SCHEMA)
@@ -853,6 +873,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SET_EVCC_CHARGE_PLAN, SERVICE_CLEAR_EVCC_CHARGE_PLAN,
                 SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM, SERVICE_SET_EVCC_MANUAL_MODE,
                 SERVICE_CLEAR_EVCC_MANUAL_MODE, SERVICE_SET_PANEL_LAYOUT,
+                SERVICE_RESET_LIFETIME_KPIS,
             ):
                 hass.services.async_remove(DOMAIN, service)
         else:
