@@ -3,13 +3,18 @@ evcc_live_attrs() fuer den generischen (nicht-evcc) Heimladen-Pfad, das die
 Wallbox-Karte im Uebersicht-Beta-Tab braucht (Nutzerbericht 2026-09-28:
 "die wallboxkarte wird bei nur zuhause laden nicht angezeigt" -- die Karte
 war zuvor ausschliesslich an evcc_live_attrs()/"connected" gebunden, das
-ohne evcc nie befuellt wird)."""
-from custom_components.ev_assistant.const import (
-    CONF_EVCC_HOST,
-    CONF_HOME_ENTITY,
-    CONF_WALLBOX_CHARGING_ENTITY,
-    CONF_WALLBOX_CONNECTED_ENTITY,
-)
+ohne evcc nie befuellt wird).
+
+Alle custom_components-Importe bewusst LOKAL in den Testfunktionen (nicht
+auf Modulebene) -- ein modulweiter Import scheitert unter dem reinen
+"pytest"-CLI-Einstiegspunkt (wie in CI verwendet, siehe .github/workflows/
+validate.yml) mit "ModuleNotFoundError: No module named 'custom_components'",
+da dort (anders als bei einem lokalen "python -m pytest"-Aufruf) das
+Arbeitsverzeichnis nicht automatisch auf sys.path landet -- erst
+pytest-homeassistant-custom-component's Fixtures richten das zur Testlaufzeit
+ein. Regression 2026-09-28: v0.99.11-Release brach genau daran (CI-Fehler
+"fehler" gemeldet), siehe auch alle anderen Testdateien in tests/ha/, die
+demselben Muster folgen."""
 
 
 async def _make_coordinator(hass, coordinators, entry_id, options=None):
@@ -40,6 +45,8 @@ async def test_mit_evcc_host_gibt_leeres_dict(hass, coordinators):
     Ausgangs-Optionen), damit _setup_evcc_client() waehrend des Setups
     keinen echten Netzwerkverbindungsversuch unternimmt (siehe
     test_home_charging_estimate.py fuer denselben Kniff)."""
+    from custom_components.ev_assistant.const import CONF_EVCC_HOST, CONF_HOME_ENTITY
+
     coordinator = await _make_coordinator(
         hass, coordinators, "gen2", {CONF_HOME_ENTITY: "sensor.wallbox_leistung"},
     )
@@ -51,13 +58,15 @@ async def test_mit_evcc_host_gibt_leeres_dict(hass, coordinators):
 
 
 async def test_laedt_gerade_ohne_plug_entity_connected_faellt_auf_charging_zurueck(hass, coordinators):
+    import time
+
+    from custom_components.ev_assistant.const import CONF_HOME_ENTITY
+
     coordinator = await _make_coordinator(
         hass, coordinators, "gen3", {CONF_HOME_ENTITY: "sensor.wallbox_leistung"},
     )
     coordinator._home = True
     coordinator._power = 7.4
-    coordinator._home_session_start_ts = 1000.0
-    import time
     now = time.time()
     coordinator._home_session_start_ts = now - 120.0
 
@@ -70,6 +79,8 @@ async def test_laedt_gerade_ohne_plug_entity_connected_faellt_auf_charging_zurue
 
 
 async def test_nicht_ladend_ohne_plug_entity_connected_ist_false(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_ENTITY
+
     coordinator = await _make_coordinator(
         hass, coordinators, "gen4", {CONF_HOME_ENTITY: "sensor.wallbox_leistung"},
     )
@@ -88,6 +99,8 @@ async def test_mit_plug_entity_connected_kann_von_charging_abweichen(hass, coord
     """Angesteckt (plug_entity bestaetigt True), aber gerade keine
     Ladeleistung -- der "verbunden"-Zustand der Panel-Karte, nicht
     "nicht verbunden"."""
+    from custom_components.ev_assistant.const import CONF_HOME_ENTITY
+
     coordinator = await _make_coordinator(
         hass, coordinators, "gen5", {CONF_HOME_ENTITY: "sensor.wallbox_leistung"},
     )
@@ -103,6 +116,8 @@ async def test_wallbox_connected_entity_override_hat_vorrang(hass, coordinators)
     """Konfigurierter eigener Statussensor ersetzt die abgeleitete
     Heuristik (Nutzerwunsch 2026-09-28: "im schritt wallbox, sensoren
     auswaehlbar machen die den status zeigen")."""
+    from custom_components.ev_assistant.const import CONF_HOME_ENTITY, CONF_WALLBOX_CONNECTED_ENTITY
+
     hass.states.async_set("binary_sensor.wallbox_verbunden", "on")
     coordinator = await _make_coordinator(
         hass, coordinators, "gen6",
@@ -122,6 +137,8 @@ async def test_wallbox_connected_entity_override_hat_vorrang(hass, coordinators)
 
 
 async def test_wallbox_charging_entity_override_hat_vorrang(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_HOME_ENTITY, CONF_WALLBOX_CHARGING_ENTITY
+
     hass.states.async_set("binary_sensor.wallbox_laedt", "off")
     coordinator = await _make_coordinator(
         hass, coordinators, "gen7",
@@ -144,6 +161,8 @@ async def test_wallbox_status_entity_unavailable_faellt_auf_heuristik_zurueck(ha
     """unavailable/unknown zaehlt nicht als Override -- sonst wuerde ein
     kurzzeitig ausgefallener Statussensor die Karte faelschlich auf
     "nicht verbunden" stellen, obwohl home_entity weiterhin ladet."""
+    from custom_components.ev_assistant.const import CONF_HOME_ENTITY, CONF_WALLBOX_CONNECTED_ENTITY
+
     hass.states.async_set("binary_sensor.wallbox_verbunden", "unavailable")
     coordinator = await _make_coordinator(
         hass, coordinators, "gen8",
