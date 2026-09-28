@@ -66,6 +66,10 @@ async def test_laedt_gerade_ohne_plug_entity_connected_faellt_auf_charging_zurue
         hass, coordinators, "gen3", {CONF_HOME_ENTITY: "sensor.wallbox_leistung"},
     )
     coordinator._home = True
+    # _power (power_entity, FAHRZEUG-seitig) nur als Fallback getestet --
+    # _home_power_raw bleibt hier bewusst None (kein _set_home()-Aufruf),
+    # siehe test_home_entity_liefert_ladeleistung_ohne_power_entity() fuer
+    # den eigentlichen (bevorzugten) Pfad ueber home_entity selbst.
     coordinator._power = 7.4
     now = time.time()
     coordinator._home_session_start_ts = now - 120.0
@@ -76,6 +80,25 @@ async def test_laedt_gerade_ohne_plug_entity_connected_faellt_auf_charging_zurue
     assert attrs["charge_power"] == 7.4
     assert attrs["charge_duration"] is not None
     assert 110 <= attrs["charge_duration"] <= 130
+
+
+async def test_home_entity_liefert_ladeleistung_ohne_power_entity(hass, coordinators):
+    """Regression (Bugbericht 2026-09-28: "zeigt keine ladeleistung"):
+    charge_power muss aus home_entity selbst kommen (der eigentlichen
+    Wallbox-Leistungsmessung, siehe _set_home()), nicht ausschliesslich aus
+    power_entity -- das ist die FAHRZEUG-seitige Ladeleistung fuer
+    Fremdladungs-Schaetzungen (siehe const.py), bei einem reinen
+    Heimlade-Setup typischerweise gar nicht konfiguriert."""
+    from custom_components.ev_assistant.const import CONF_HOME_ENTITY
+
+    hass.states.async_set("sensor.wallbox_leistung", "7.4")
+    coordinator = await _make_coordinator(
+        hass, coordinators, "gen9", {CONF_HOME_ENTITY: "sensor.wallbox_leistung"},
+    )
+
+    attrs = coordinator.home_generic_live_attrs()
+    assert attrs["charging"] is True
+    assert attrs["charge_power"] == 7.4
 
 
 async def test_nicht_ladend_ohne_plug_entity_connected_ist_false(hass, coordinators):

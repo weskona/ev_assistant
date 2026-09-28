@@ -142,20 +142,15 @@ class LastCostSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
+        # 2026-09-28: "historie" (komplette Ladehistorie) NICHT mehr hier
+        # anhaengen -- bei HISTORY_MAX_MONATE=24 Monaten kann das HAs
+        # 16KB-Attribut-Limit sprengen ("State attributes ... exceed maximum
+        # size of 16384 bytes", siehe identischer Fund bei LastTripSensor/
+        # "fahrtenbuch" unten). Das Panel holt die volle, nach start_ts
+        # sortierte Liste stattdessen ueber das WS-Kommando
+        # ev_assistant/charges (siehe websocket_api.py).
         hist = self.coordinator.data.get("history") or []
-        attrs: dict = dict(hist[0]) if hist else {}
-        # Anzeigereihenfolge nach tatsaechlichem Ladebeginn (start_ts), nicht
-        # nach Bestaetigungsreihenfolge (Speicherreihenfolge von "history",
-        # siehe async_log_charge()::insert(0, rec)) -- eine nachtraeglich
-        # manuell erfasste oder spaeter bestaetigte Ladung landet sonst an
-        # der falschen chronologischen Position im Panel. Nur die hier
-        # exponierte Kopie wird sortiert; "history" selbst (u.a. hist[0]
-        # oben, async_edit_charge()'s "war das der juengste Eintrag"-Check)
-        # bleibt bewusst in Bestaetigungsreihenfolge.
-        attrs["historie"] = sorted(
-            hist, key=lambda r: r.get("start_ts") or r.get("erfasst_ts") or 0, reverse=True
-        )
-        return attrs
+        return dict(hist[0]) if hist else {}
 
 
 class LastKwhSensor(EvAssistantEntity, SensorEntity):
@@ -769,20 +764,15 @@ class LastTripSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self):
+        # 2026-09-28: "fahrtenbuch" (komplettes Fahrtenbuch) NICHT mehr hier
+        # anhaengen -- bei FAHRTEN_MAX_MONATE=24 Monaten und ggf. mehreren
+        # Fahrten pro Tag sprengte das HAs 16KB-Attribut-Limit ("State
+        # attributes for sensor.*_fahrt_km_letzte exceed maximum size of
+        # 16384 bytes", 1019x im Log). Das Panel holt die volle, nach
+        # start_ts sortierte Liste stattdessen ueber das WS-Kommando
+        # ev_assistant/trips (siehe websocket_api.py).
         fahrten = self.coordinator.data.get("fahrten") or []
-        attrs: dict = dict(fahrten[0]) if fahrten else {}
-        # Anzeigereihenfolge nach start_ts, analog LastCostSensor: normale
-        # Fahrterkennung haelt "fahrten" zwar praktisch immer schon in
-        # dieser Reihenfolge (insert(0, rec) bei monoton steigendem
-        # start_ts, plus expliziter Re-Sort nach Import, siehe
-        # async_import_fahrtenbuch()), aber async_edit_trip(start_ts=...)
-        # aendert start_ts nachtraeglich OHNE Re-Sort -- ohne die Sortierung
-        # hier koennte eine solche Korrektur die Fahrt an der falschen
-        # Position zeigen. Nur die hier exponierte Kopie wird sortiert.
-        attrs["fahrtenbuch"] = sorted(
-            fahrten, key=lambda r: r.get("start_ts") or r.get("erfasst_ts") or 0, reverse=True
-        )
-        return attrs
+        return dict(fahrten[0]) if fahrten else {}
 
 
 class TripCountSensor(EvAssistantEntity, SensorEntity):

@@ -65,6 +65,12 @@ class EVAssistantPanel extends HTMLElement {
     this._homeSessions = null;
     this._homeSessionsFetching = false;
     this._homeSessionsFetchedAt = 0;
+    this._trips = null;
+    this._tripsFetching = false;
+    this._tripsFetchedAt = 0;
+    this._charges = null;
+    this._chargesFetching = false;
+    this._chargesFetchedAt = 0;
     this._homeVehicleFilter = null;
     this._homeVehicleFilterInitialized = false;
     this._vehicleIdx = 0;
@@ -2969,8 +2975,20 @@ class EVAssistantPanel extends HTMLElement {
     r.estTripItem.classList.toggle("hidden", pendingTrips.length === 0);
     this._renderPendingCharges(pendingCharges);
     this._renderPendingTrips(pendingTrips);
-    this._renderChargeHistory();
-    this._renderTripHistory();
+    // Ladehistorie/Fahrtenbuch kommen seit dem 16KB-Attribut-Fix (2026-09-28)
+    // per WS-Abruf statt reaktivem hass.states-Attribut (identisches Muster
+    // wie _fetchHomeSessions() oben) -- 5-Minuten-Cache, da beide Listen sich
+    // nur bei neuen Bestaetigungen/Bearbeitungen aendern.
+    if (this._charges === null || Date.now() - this._chargesFetchedAt > 300000) {
+      this._fetchCharges();
+    } else {
+      this._renderChargeHistory();
+    }
+    if (this._trips === null || Date.now() - this._tripsFetchedAt > 300000) {
+      this._fetchTrips();
+    } else {
+      this._renderTripHistory();
+    }
     // evcc-Sessions kommen per WS-Abruf (keine reaktive hass.states-Aktualisierung wie
     // sonst) — daher alle 5 Minuten neu holen, damit neu abgeschlossene Heimladungen
     // auftauchen, ohne bei jedem hass-Update (praktisch dauernd) nachzufragen. Ohne
@@ -3059,12 +3077,14 @@ class EVAssistantPanel extends HTMLElement {
       r.vhSocFill.style.background = soc < 20 ? "#ef4444" : soc < 40 ? "#f97316" : "var(--accent)";
     }
 
-    // Letzte Fahrt aus Fahrtenbuch-Attribut
+    // Letzte Fahrt: seit dem 16KB-Attribut-Fix (2026-09-28) haengt der
+    // Sensor keine "fahrtenbuch"-Liste mehr an, sondern nur noch die Felder
+    // der letzten Fahrt selbst direkt als Attribute (siehe sensor.py::
+    // LastTripSensor). Die volle Historie kommt per WS ueber _fetchTrips().
     const tripEid = this._eid("last_trip_km");
     const tripState = tripEid && this._hass ? this._hass.states[tripEid] : null;
-    const trips = tripState && Array.isArray((tripState.attributes || {}).fahrtenbuch)
-      ? tripState.attributes.fahrtenbuch : [];
-    const lastTrip = trips.length > 0 ? trips[0] : null;
+    const lastTrip = tripState && tripState.attributes && "start_ort" in tripState.attributes
+      ? tripState.attributes : null;
     r.vhTripKmLast.textContent   = lastTrip ? this._fmtNum(lastTrip.km, 1) : "—";
     r.vhTripRouteLast.textContent = lastTrip ? `${lastTrip.start_ort} → ${lastTrip.end_ort}` : "—";
   }
@@ -3334,9 +3354,7 @@ class EVAssistantPanel extends HTMLElement {
   _renderChargeHistory() {
     const list = this._r.histChargeList;
     if (!list) return;
-    const eid = this._eid("last_cost");
-    const s = eid && this._hass ? this._hass.states[eid] : null;
-    const full = (s && Array.isArray((s.attributes || {}).historie)) ? s.attributes.historie : [];
+    const full = Array.isArray(this._charges) ? this._charges : [];
     const expanded = this._histChargeExpanded;
     const hist = expanded ? full : full.slice(0, 5);
     const karten = this._ladekartenList();
@@ -3492,9 +3510,7 @@ class EVAssistantPanel extends HTMLElement {
   _renderTripHistory() {
     const list = this._r.histTripList;
     if (!list) return;
-    const eid = this._eid("last_trip_km");
-    const s = eid && this._hass ? this._hass.states[eid] : null;
-    const full = (s && Array.isArray((s.attributes || {}).fahrtenbuch)) ? s.attributes.fahrtenbuch : [];
+    const full = Array.isArray(this._trips) ? this._trips : [];
     const expanded = this._histTripExpanded;
     const hist = expanded ? full : full.slice(0, 5);
     const sig = expanded + "|" + full.map((h) => h.erfasst_ts).join(",");
@@ -3660,6 +3676,57 @@ class EVAssistantPanel extends HTMLElement {
   // unabhaengig davon, welcher Tab den Abruf ausgeloest hat.
   _refreshBetaWallboxIfActive() {
     if (this._view === "uebersicht_beta" && this._r.betaWallboxCard) this._updateBetaWallbox();
+  }
+
+  // --- Fahrtenbuch/Ladehistorie: seit 2026-09-28 per WS statt Entity-Attribut ---
+  // (sensor.py::LastTripSensor/LastCostSensor haengten frueher die komplette
+  // "fahrtenbuch"/"historie"-Liste als Attribut an -- bei FAHRTEN_MAX_MONATE=
+  // 24 Monaten sprengte das HAs 16KB-Attribut-Limit, siehe websocket_api.py::
+  // _handle_trips()/_handle_charges(). Gleiches Muster wie _fetchHomeSessions()
+  // oben: eigener WS-Abruf mit Staleness-Cache statt reaktivem hass.states.
+
+  async _fetchTrips() {
+    if (this._tripsFetching) return;
+    this._tripsFetching = true;
+    this._tripsFetchedAt = Date.now();
+    const entryId = this._configEntryId();
+    if (!entryId || !this._hass || !this._hass.callWS) {
+      this._tripsFetching = false;
+      this._renderTripHistory();
+      return;
+    }
+    try {
+      const res = await this._hass.callWS({ type: "ev_assistant/trips", config_entry_id: entryId });
+      this._trips = Array.isArray(res && res.trips) ? res.trips : [];
+    } catch (err) {
+      this._trips = [];
+    } finally {
+      this._tripsFetching = false;
+      this._renderTripHistory();
+    }
+  }
+
+  async _fetchCharges() {
+    if (this._chargesFetching) return;
+    this._chargesFetching = true;
+    this._chargesFetchedAt = Date.now();
+    const entryId = this._configEntryId();
+    if (!entryId || !this._hass || !this._hass.callWS) {
+      this._chargesFetching = false;
+      this._renderChargeHistory();
+      this._renderAllCharts();
+      return;
+    }
+    try {
+      const res = await this._hass.callWS({ type: "ev_assistant/charges", config_entry_id: entryId });
+      this._charges = Array.isArray(res && res.charges) ? res.charges : [];
+    } catch (err) {
+      this._charges = [];
+    } finally {
+      this._chargesFetching = false;
+      this._renderChargeHistory();
+      this._renderAllCharts();
+    }
   }
 
   // --- Ereignisprotokoll: scrollbare Live-Ansicht (Nutzerwunsch 2026-09-27) ----
@@ -3985,9 +4052,7 @@ class EVAssistantPanel extends HTMLElement {
   }
 
   _extHist() {
-    const eid = this._eid("last_cost");
-    const st  = eid && this._hass ? this._hass.states[eid] : null;
-    return (st && Array.isArray((st.attributes || {}).historie)) ? st.attributes.historie : [];
+    return Array.isArray(this._charges) ? this._charges : [];
   }
 
   _svgBarChart(wrap, buckets, series, opts = {}) {

@@ -574,6 +574,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Anzeige auch OHNE vollstaendige Sensor-Ausstattung fuer die
         # Schaetzung sinnvoll ist.
         self._home_session_start_ts: Optional[float] = None
+        # Roher home_entity-Zahlenwert (kW), FALLS es sich um eine Leistungs-
+        # Entitaet handelt (siehe _set_home()) -- None bei einem reinen
+        # Text-/Boolean-Signal (z.B. Status-Text "charging" oder ein
+        # binary_sensor). Fuer die Wallbox-Karte im generischen Pfad
+        # (home_generic_live_attrs()), separat von self._power (das kommt
+        # von power_entity, der FAHRZEUG-seitigen Ladeleistung fuer
+        # Fremdladungs-Schaetzungen, nicht der Wallbox selbst).
+        self._home_power_raw: Optional[float] = None
         # Optionale eigene Wallbox-Status-Sensoren (siehe
         # _wire_wallbox_status_entities()/home_generic_live_attrs()) --
         # None ohne konfigurierten Sensor oder bei dessen unavailable/
@@ -1269,9 +1277,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         evcc_live_attrs(), aber bewusst nur der Ladestatus selbst (kein
         Modus/Tarife/PV-Site-Werte, die gibt es ohne evcc-Anbindung
         schlicht nicht). Nutzt ausschliesslich ohnehin schon getrackte
-        interne Zustaende (self._home/self._power/self._plugged_in/
-        self._home_session_start_ts aus _set_home()/_set_power()/
-        _wire_plug()) -- keine neue Signalquelle, kein zusaetzliches Polling.
+        interne Zustaende (self._home/self._home_power_raw/self._power/
+        self._plugged_in/self._home_session_start_ts aus _set_home()/
+        _set_power()/_wire_plug()) -- keine neue Signalquelle, kein
+        zusaetzliches Polling.
         Leeres Dict mit konfiguriertem CONF_EVCC_HOST (dann liefert
         stattdessen evcc_live_attrs(), die beiden schliessen sich also
         gegenseitig aus) oder ohne konfigurierten CONF_HOME_ENTITY (dann
@@ -1302,10 +1311,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             connected = self._plugged_in
         else:
             connected = self._home
+        # home_entity selbst (die Wallbox-Leistung, siehe _set_home()) hat
+        # Vorrang -- das ist die eigentliche Wallbox-Leistungsmessung. Nur
+        # falls dort kein numerischer Wert vorliegt (rein textueller/
+        # Boolean-Statuswert, kein Leistungssensor), Fallback auf power_
+        # entity (FAHRZEUG-seitige Ladeleistung, eigentlich fuer Fremd-
+        # ladungs-Schaetzungen gedacht, siehe const.py) als besser-als-
+        # nichts-Ersatz. Bugreport 2026-09-28: "zeigt keine ladeleistung" --
+        # vorher wurde ausschliesslich self._power (power_entity) gezeigt,
+        # das bei einem reinen Heimlade-Setup ohne Fremdladungs-Schaetzung
+        # typischerweise gar nicht konfiguriert ist.
+        charge_power = self._home_power_raw if self._home_power_raw is not None else self._power
         return {
             "charging": charging,
             "connected": connected,
-            "charge_power": self._power,
+            "charge_power": charge_power,
             "charge_duration": duration,
         }
 
@@ -1996,10 +2016,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         was_home = self._home
         try:
             # Power-Entitaet (z.B. Wallbox-Ladeleistung): numerischer
-            # Schwellwert statt Text-Vergleich.
-            self._home = float(raw) > _HOME_POWER_THRESHOLD_KW
+            # Schwellwert statt Text-Vergleich. Roher Wert zusaetzlich fuer
+            # die Wallbox-Karte im generischen Pfad gemerkt (siehe
+            # self._home_power_raw/home_generic_live_attrs()).
+            self._home_power_raw = float(raw)
+            self._home = self._home_power_raw > _HOME_POWER_THRESHOLD_KW
         except (ValueError, TypeError):
-            # Text-/Boolean-artiges Signal (z.B. Status-Text wie "charging").
+            # Text-/Boolean-artiges Signal (z.B. Status-Text wie "charging")
+            # -- kein numerischer Leistungswert vorhanden.
+            self._home_power_raw = None
             self._home = str(raw).strip().lower() in _HOME_TRUE
         if self._calibrator is None or self._soc is None:
             return

@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.13] - 2026-09-28
+
+### Fixed
+
+- **Trip log sensor attributes exceeded Home Assistant's 16KB state-attribute limit** (log finding: "State attributes for sensor.*_fahrt_km_letzte exceed maximum size of 16384 bytes", 1019 occurrences across all 3 configured vehicles in ~7 hours): `LastTripSensor` used to attach the *entire* trip log (`fahrtenbuch`, up to `FAHRTEN_MAX_MONATE` = 24 months of entries) as a single sensor attribute. Since trips are logged far more often than charges, this list grows large enough over 24 months to blow past HA's limit — "Attributes will not be stored" and a flagged database-performance risk. `LastCostSensor`'s `historie` attribute has the identical structural issue (same 24-month, unbounded-count list), just less likely to hit the limit in practice since charges happen far less often than trips — fixed the same way as a precaution. Both sensors now only expose the fields of their own latest entry, matching every other "last X" sensor in this integration. The panel gets the full, sorted list via two new dedicated WebSocket commands instead (`ev_assistant/trips`, `ev_assistant/charges`) — the same pattern already used for the event log (`ev_assistant/event_log`), which hit this exact class of problem before.
+
+## [0.99.12] - 2026-09-28
+
+### Fixed
+
+- **Wallbox card (generic/non-evcc "Home only" charging) showed no charging power while charging** (bug report: "die nur zuhause wallboxkarte. zeigt keine ladeleistung"): the live power figure was sourced exclusively from `power_entity`, which is the *vehicle's own* charge-power sensor used for external-charge estimates — on a plain home-charging setup without that (common, since it's unrelated to home charging), it's simply not configured, so the card always showed "—". It now reads the actual wallbox charge power directly off `home_entity` itself (which is exactly this — a live power reading, only thresholded at >0.1 kW for the charging/not-charging detection), falling back to `power_entity` only if `home_entity` turns out to carry a non-numeric (text/boolean) signal instead.
+
 ## [0.99.11] - 2026-09-27
 
 ### Changed

@@ -58,6 +58,61 @@ async def _handle_event_log(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], {"event_log": list(coordinator.data.get("event_log") or [])})
 
 
+TRIPS_COMMAND_TYPE = "ev_assistant/trips"
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): TRIPS_COMMAND_TYPE,
+    vol.Required("config_entry_id"): str,
+})
+@websocket_api.async_response
+async def _handle_trips(hass: HomeAssistant, connection, msg) -> None:
+    """Liefert das komplette Fahrtenbuch (data['fahrten']), sortiert nach
+    start_ts absteigend -- identisches Muster wie _handle_event_log() oben:
+    das Panel zeigt in der Fahrten-Historie (siehe _renderTripHistory()) bei
+    "alle anzeigen" ALLE Eintraege, nicht nur die letzten 5 -- bei
+    FAHRTEN_MAX_MONATE=24 Monaten und ggf. mehreren Fahrten pro Tag kann das
+    weit ueber HAs 16KB-Attribut-Limit hinauswachsen (siehe frueherer Bug:
+    "State attributes for sensor.*_fahrt_km_letzte exceed maximum size of
+    16384 bytes"). Deshalb eigenes WS-Kommando statt Sensor-Attribut
+    (sensor.py::LastTripSensor haengt seit diesem Fix nur noch die Felder
+    der letzten Fahrt selbst an, keine "fahrtenbuch"-Liste mehr)."""
+    coordinator = hass.data.get(DOMAIN, {}).get(msg["config_entry_id"])
+    if coordinator is None:
+        connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "unknown config_entry_id")
+        return
+    fahrten = list(coordinator.data.get("fahrten") or [])
+    fahrten.sort(key=lambda r: r.get("start_ts") or r.get("erfasst_ts") or 0, reverse=True)
+    connection.send_result(msg["id"], {"trips": fahrten})
+
+
+CHARGES_COMMAND_TYPE = "ev_assistant/charges"
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): CHARGES_COMMAND_TYPE,
+    vol.Required("config_entry_id"): str,
+})
+@websocket_api.async_response
+async def _handle_charges(hass: HomeAssistant, connection, msg) -> None:
+    """Liefert die komplette Ladehistorie (data['history']), sortiert nach
+    start_ts absteigend -- gleicher Grund/gleiches Muster wie
+    _handle_trips() oben, fuer sensor.py::LastCostSensor ("historie"-
+    Attribut). Bei HISTORY_MAX_MONATE=24 Monaten bisher seltener ueber
+    16KB gewachsen als das Fahrtenbuch (Ladevorgaenge sind seltener als
+    Fahrten), aber strukturell dieselbe Schwachstelle -- vorsorglich
+    gleich mitbehoben."""
+    coordinator = hass.data.get(DOMAIN, {}).get(msg["config_entry_id"])
+    if coordinator is None:
+        connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "unknown config_entry_id")
+        return
+    history = list(coordinator.data.get("history") or [])
+    history.sort(key=lambda r: r.get("start_ts") or r.get("erfasst_ts") or 0, reverse=True)
+    connection.send_result(msg["id"], {"charges": history})
+
+
 def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, _handle_evcc_sessions)
     websocket_api.async_register_command(hass, _handle_event_log)
+    websocket_api.async_register_command(hass, _handle_trips)
+    websocket_api.async_register_command(hass, _handle_charges)
