@@ -2,6 +2,60 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.22] - 2026-09-29
+
+### Fixed
+
+- **0.99.21's cross-period check could itself be defeated by a subtle side effect of 0.99.19's first self-heal pass**: while iterating through today's incident, the week baseline had briefly (and wrongly) been recalibrated against an also-still-incomplete total, erasing the very reference value 0.99.21 needed to detect the day baseline as inconsistent. Added a third, more direct check: a period baseline with a negative "prev" (a fully completed period can never show negative consumption/cost) is always self-evidently wrong and gets discarded, regardless of what any other period's baseline currently says. This is what finally clears the incident from 2026-09-29 without depending on any other, possibly also-affected reference point.
+
+## [0.99.21] - 2026-09-29
+
+### Fixed
+
+- **The already-recorded, bogus "kWh/Kosten heute" baseline (from before 0.99.19/0.99.20) still didn't correct itself**: the self-heal added in 0.99.19 only compared a stored baseline against the *current* total — but external (non-home) charging is added on top, so the current total had already climbed back above the understated baseline by the time the self-heal ran, making it look "normal" even though it wasn't. Added a second check that compares each period's baseline against the next-longer period's baseline (day vs. week vs. month vs. year) — a later period must never show a lower value than an earlier one, since the tracked total only grows. That catches exactly this case, since the week/month/year baselines predate the incident and stayed correct.
+
+## [0.99.20] - 2026-09-29
+
+### Fixed
+
+- **0.99.19's fix didn't fully take effect after a restart**: `async_setup()` seeded `kwh_periods`/`cost_periods` synchronously, before the very first evcc-sessions fetch (scheduled moments earlier, but not yet run) had a chance to complete — capturing a baseline that was momentarily missing the home-charging share entirely (`_ev_kwh_total_since_setup()`'s `home_kwh or 0.0` fallback), which then produced the same kind of bogus "since today/this week" jump once real data arrived a few seconds later. That synchronous seed is now skipped whenever an evcc client is configured; `_refresh_evcc_sessions()` (see 0.99.19) seeds it instead, once real data is actually available.
+
+## [0.99.19] - 2026-09-29
+
+### Fixed
+
+- **"kWh (heute)"/"Kosten (heute)" showed a bizarrely large value (e.g. 93.3 kWh for a single day)** (bug report: "warun hab ich heute über 90 kwh verbrauch?"): root cause was evcc's own charging-session logbook for the vehicle losing older sessions (a rolling retention window in the addon) — `_home_kwh()`/`_home_cost()` re-summed evcc's *entire currently-visible* session log on every refresh and treated it, unguarded, as the complete lifetime home-charging total. When that log shrank, the lifetime total appeared to drop overnight, and every "since period start" display (today/this week/...) misread the drop as an implausible surge once new (smaller) session data arrived again. Both methods now clamp against the last known value (never allowed to decrease) — mirroring the same self-guard pattern already used elsewhere in this integration for exactly this failure class. Additionally, `kwh_periods`/`cost_periods` day/week/month/year baselines now self-heal: a stored baseline that's arithmetically impossible (above the current total) is discarded and recalibrated without inventing a "vs. previous period" value, instead of silently carrying a false comparison forward until the next real rollover.
+
+## [0.99.18] - 2026-09-29
+
+### Changed
+
+- **Manual-mode and charge-plan sections also share one row now** (feedback: "modus und kadeplan auch in eine zeile" — same compacting request as 0.99.17, extended to the remaining two sections): one shared divider/margin instead of two. Each section keeps its own independent visibility condition (manual mode gated by the profile-based control being enabled, charge plan gated by evcc supporting it) — only the layout got denser.
+
+## [0.99.17] - 2026-09-29
+
+### Changed
+
+- **More compact "Automatische Ladesteuerung" card layout** (feedback: "das layout der karte muss kompakter werden. die ist zu groß" — after 0.99.16 merged three cards' worth of content into this one card): the status list (Min-/Ziel-SoC, Rest-Bedarf, PV fürs Auto, ...) is now a 2-column grid instead of a single stacked column; the Max-Ziel-SoC and Puffer sliders now sit side by side in one row instead of two separate stacked sections; the Pause and Wöchentliche-Vollladung toggles likewise share one row. Each control keeps its own independent visibility condition exactly as before — only the layout got denser, one shared divider/margin per row instead of one per control. Falls back to single-column on very narrow phone screens.
+
+## [0.99.16] - 2026-09-29
+
+### Changed
+
+- **Consolidated the panel's automatic-charging-related cards into one** (feedback: "option im panel wöchentliche vollladung auch in die automatische ladesteuerungskarte verschieben genau wie ladeplan. puffer auch"): the "Wöchentliche Vollladung (Balancing)" toggle and the "Puffer (Min-/Ziel-SoC)" slider (previously part of the Wallbox card) and the entire "Ladeplan" card (previously its own card) now live as sections inside the "Automatische Ladesteuerung" card — no more hunting across three cards for closely related settings. Each section keeps its own independent visibility condition exactly as before (buffer/balancing show whenever evcc is configured, independent of whether the profile-based mode control itself is enabled; the charge plan section shows whenever evcc supports it) — only their location moved, not their behavior. The "Ladeplan" card is removed from the panel-layout customization list as a result (nothing to configure separately for it anymore).
+
+## [0.99.15] - 2026-09-29
+
+### Added
+
+- **Max. Ziel-SoC (0.99.14) jetzt auch direkt in der Karte "Automatische Ladesteuerung" einstellbar** (Nutzerfeedback: "in der automatischen ladesteuerungskarte gibt es kein feld dafür zum direkten einstellen im panel"): neuer Schieberegler in der Panel-Karte, kein Umweg mehr über den Options-Flow nötig. Schreibt wie der Wochen-Vollladung-Schalter direkt in die Konfiguration (kurzer Neuladen der Integration), damit der Options-Flow nie einen abweichenden Wert zeigt. Neuer Service `set_evcc_mode_control_target_soc_max`.
+
+## [0.99.14] - 2026-09-29
+
+### Added
+
+- **New field: max. target SoC for the automatic evcc charge control** (feature request: "füge in der automatischen ladesteuerung ein feld hinzu mit der sich das soc ziel setzen läßt. standard 80%", clarified: "das soll auch für die automatische ladung dann das max sein. um nicht immer bis 100% zu laden"): the daily profile-based target SoC that `CONF_EVCC_MODE_CONTROL_ENABLED` writes to evcc is now capped at a configurable percentage (default 80%) — protects the vehicle battery from being charged to 100% every single day, which many manufacturers say accelerates battery aging. The cap also applies to the opportunistic-surplus target boost (raising the target when real PV surplus would otherwise go to waste) — it now boosts up to the cap instead of always to 100%. Deliberately does **not** affect the separate, opt-in weekly full charge for cell balancing, which still reaches a true 100% when due, since that's the whole point of that feature. New `target_soc_max` attribute on the "evcc Modus-Steuerung" sensor for transparency.
+
 ## [0.99.13] - 2026-09-28
 
 ### Fixed

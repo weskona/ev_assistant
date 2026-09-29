@@ -364,6 +364,19 @@ CONF_EVCC_LOADPOINT_TITLE   = "evcc_loadpoint_title"
 # ohne sie aendert sich am bisherigen Verhalten (nur Lese-/Anzeige-
 # Empfehlungen wie charge_before_pv_recommended()) nichts.
 CONF_EVCC_MODE_CONTROL_ENABLED = "evcc_mode_control_enabled"
+# Optional, nur relevant bei aktiver evcc-Steuerung oben: Obergrenze fuer
+# das taeglich profilbasierte Ziel-SoC (siehe coordinator.py::
+# _evcc_mode_targets()), in Prozent (0-100) -- schuetzt die Fahrzeug-
+# batterie vor taeglichem Vollladen, das laut vielen Herstellerempfehlungen
+# die Batteriealterung beschleunigt (Nutzerwunsch 2026-09-29: "feld
+# hinzufuegen mit der sich das soc ziel setzen laesst", Standard 80%).
+# Wirkt auf das profilbasierte Tages-Ziel UND die Ueberschuss-Zielanhebung
+# (siehe engine.apply_opportunistic_surplus_target()/ceiling_soc) -- NICHT
+# auf die woechentliche Balancing-Vollladung (siehe CONF_WEEKLY_FULL_
+# CHARGE_ENABLED/engine.apply_weekly_balancing_override()), die bewusst
+# separat opt-in ist und genau deswegen gelegentlich eine echte
+# 100%-Vollladung braucht (Zellbalancing).
+CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX = "evcc_mode_control_target_soc_max"
 # Optional, nur relevant bei aktiver evcc-Steuerung oben: Mindestladeleistung
 # der Wallbox, gegen die engine.apply_realtime_pv_override() den aktuellen
 # PV-Ueberschuss (siehe coordinator.py::_evcc_realtime_pv_surplus_w()) prueft,
@@ -559,6 +572,7 @@ MIN_USAGE_PROFILE_DAYS = 7
 # Feature komplett deaktiviert, bis aktiv per CONF_EVCC_MODE_CONTROL_ENABLED
 # freigeschaltet (siehe coordinator.py::_async_apply_evcc_mode_control()).
 DEFAULT_EVCC_MODE_CONTROL_ENABLED = False
+DEFAULT_EVCC_MODE_CONTROL_TARGET_SOC_MAX = 80
 # Siehe CONF_WALLBOX_MIN_POWER_W-Kommentar oben: 6A x 230V einphasig.
 DEFAULT_WALLBOX_MIN_POWER_W = 1380.0
 # Feature komplett deaktiviert, bis aktiv per CONF_EVCC_BATTERY_PRIORITY_
@@ -684,6 +698,7 @@ SERVICE_DELETE_MAINTENANCE = "delete_maintenance"
 SERVICE_MARK_MAINTENANCE_DONE = "mark_maintenance_done"
 SERVICE_SET_USAGE_PROFILE_BUFFER_PCT = "set_usage_profile_buffer_pct"
 SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED = "set_weekly_full_charge_enabled"
+SERVICE_SET_EVCC_MODE_CONTROL_TARGET_SOC_MAX = "set_evcc_mode_control_target_soc_max"
 SERVICE_SET_EVCC_MODE_CONTROL_PAUSE = "set_evcc_mode_control_pause"
 SERVICE_SET_EVCC_CHARGE_PLAN = "set_evcc_charge_plan"
 SERVICE_CLEAR_EVCC_CHARGE_PLAN = "clear_evcc_charge_plan"
@@ -713,7 +728,7 @@ SERVICE_RESTORE_BACKUP = "restore_backup"
 # eine kaputte Karte zu erzeugen.
 PANEL_LAYOUT_KEYS = (
     "hero_cost", "hero_secondary", "wallbox", "kpi",
-    "comparison", "location", "evcc_mode", "evcc_plan",
+    "comparison", "location", "evcc_mode",
 )
 
 # Tabs, die der Nutzer ueber set_hidden_tabs()/die "Sichtbare Tabs"-Kachel im

@@ -1657,6 +1657,7 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             "urlaub_aktiv": urlaub_aktiv,
             "min_soc": targets["min_soc"],
             "target_soc": targets["target_soc"],
+            "target_soc_max": targets["target_soc_max"],
             # Echtzeit-PV-Uebersteuerung (siehe engine.apply_realtime_pv_
             # override()) -- "modus" oben (native_value) ist bereits
             # "modus_effektiv"; diese beiden Attribute zeigen, OB und WARUM

@@ -1352,6 +1352,36 @@ set_weekly_full_charge_enabled:
       selector:
         boolean:
 
+set_evcc_mode_control_target_soc_max:
+  name: Max. Ziel-SoC für automatische Ladung setzen
+  description: >
+    Setzt die Obergrenze für das täglich profilbasierte Ziel-SoC direkt
+    (z.B. Panel-Feld in der Karte "Automatische Ladesteuerung"), ohne den
+    Options-Flow öffnen zu müssen — schreibt den Wert aber trotzdem
+    dauerhaft in die Konfiguration (löst einen kurzen Neuladen der
+    Integration aus), damit ein späteres Öffnen des Options-Flows nie
+    einen anderen Wert zeigt als zuletzt per Panel gesetzt. Ohne
+    target_soc_max wird auf den Standardwert (80%) zurückgesetzt. Wirkt
+    NICHT auf die separate wöchentliche Vollladung fürs Zellbalancing, die
+    weiterhin auf echte 100% kommt.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    target_soc_max:
+      name: Max. Ziel-SoC in % (optional)
+      description: Ohne Angabe wird der Wert auf den Standard (80%) zurückgesetzt.
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 100
+          unit_of_measurement: "%"
+
 set_evcc_mode_control_pause:
   name: evcc-Modus-/SoC-Steuerung pausieren
   description: >

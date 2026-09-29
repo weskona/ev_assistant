@@ -1465,6 +1465,34 @@ def test_opportunistic_surplus_target_aktiviert_erst_nach_hold_zeit():
     assert pending is None
 
 
+def test_opportunistic_surplus_target_ceiling_soc_deckelt_statt_100():
+    # ceiling_soc (Nutzerwunsch 2026-09-29: max. Ziel-SoC fuer die
+    # automatische Ladung, "um nicht immer bis 100% zu laden") -- die
+    # Anhebung darf nur bis zu diesem Wert gehen, nicht bis 100.
+    soc, active, pending = apply_opportunistic_surplus_target(
+        mode="pv", target_soc=13, pv_surplus_w=2000.0, pv_power_w=2000.0,
+        was_active=False, pending_since_ts=None, now_ts=1000.0, min_hold_s=300.0,
+        ceiling_soc=80,
+    )
+    assert (soc, active) == (13, False)
+    soc, active, pending = apply_opportunistic_surplus_target(
+        mode="pv", target_soc=13, pv_surplus_w=2000.0, pv_power_w=2000.0,
+        was_active=False, pending_since_ts=pending, now_ts=1300.0, min_hold_s=300.0,
+        ceiling_soc=80,
+    )
+    assert (soc, active, pending) == (80, True, None)
+
+
+def test_opportunistic_surplus_target_bereits_bei_ceiling_soc_bleibt_inaktiv():
+    # target_soc == ceiling_soc (nicht < ceiling_soc): es gibt nichts mehr
+    # anzuheben -- darf gar nicht erst versuchen zu aktivieren.
+    assert apply_opportunistic_surplus_target(
+        mode="pv", target_soc=80, pv_surplus_w=2000.0, pv_power_w=2000.0,
+        was_active=False, pending_since_ts=None, now_ts=1000.0, min_hold_s=300.0,
+        ceiling_soc=80,
+    ) == (80, False, None)
+
+
 def test_opportunistic_surplus_target_greift_auch_unter_wallbox_mindestleistung():
     # Ueberschuss reicht NICHT fuer reines PV-Laden (z.B. 1280W bei 1400W
     # Wallbox-Mindestleistung) -- soll trotzdem aktivieren, da die separate

@@ -22,6 +22,7 @@ from .const import (
     CONF_EVCC_HOST,
     CONF_EVCC_LOADPOINT_TITLE,
     CONF_EVCC_MODE_CONTROL_ENABLED,
+    CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
     CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
     CONF_EVCC_VEHICLE_NAME,
     CONF_GPS_ENTITY,
@@ -80,6 +81,7 @@ from .const import (
     DEFAULT_EFFICIENCY,
     DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED,
     DEFAULT_EVCC_MODE_CONTROL_ENABLED,
+    DEFAULT_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
     DEFAULT_IDLE_TIMEOUT,
     DEFAULT_LADE_MODUS,
     DEFAULT_MOTOR_DEBOUNCE,
@@ -294,8 +296,10 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
     """Schritt 3 (nur bei home_charging_method == "evcc"): evcc-Host
     (Addon-API direkt, optional), Fahrzeugname. Zusätzlich (rein additiv,
     alle optional): die automatische evcc-Modus-/SoC-Steuerung (siehe
-    coordinator.py:: _async_apply_evcc_mode_control(), Default aus) sowie
-    deren optionales Haus-Nutzungsprofil (PV-Restprognose heute), die
+    coordinator.py:: _async_apply_evcc_mode_control(), Default aus), deren
+    max. Ziel-SoC (CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX, Default 80% --
+    siehe coordinator.py::_evcc_mode_targets()-Docstring, deckelt taegliches
+    Vollladen) sowie deren optionales Haus-Nutzungsprofil (PV-Restprognose heute), die
     Wallbox-Mindestladeleistung fuer die Echtzeit-PV-Über-
     steuerung (siehe engine.apply_realtime_pv_override()/const.py::
     CONF_WALLBOX_MIN_POWER_W), die dynamische Speicher-Vorrang-Steuerung
@@ -334,6 +338,10 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
             CONF_EVCC_MODE_CONTROL_ENABLED,
             default=cur.get(CONF_EVCC_MODE_CONTROL_ENABLED, DEFAULT_EVCC_MODE_CONTROL_ENABLED),
         ): bool,
+        vol.Optional(
+            CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
+            default=cur.get(CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX, DEFAULT_EVCC_MODE_CONTROL_TARGET_SOC_MAX),
+        ): vol.All(vol.Coerce(int), vol.Range(min=1, max=100)),
         vol.Optional(
             CONF_EVCC_BATTERY_PRIORITY_ENABLED,
             default=cur.get(CONF_EVCC_BATTERY_PRIORITY_ENABLED, DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED),

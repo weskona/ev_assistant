@@ -725,6 +725,97 @@ async def test_evcc_mode_targets_grosser_pv_ueberschuss_deckt_gesamten_puffer(ha
     assert targets["modus"] == "pv"
 
 
+# ----- CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX: Deckel gegen taegliches Vollladen ---
+
+async def test_evcc_mode_targets_target_soc_max_default_deckelt_auf_80(hass, coordinators):
+    """Nutzerwunsch 2026-09-29: 'das soll auch fuer die automatische ladung
+    dann das max sein. um nicht immer bis 100% zu laden' -- ohne explizite
+    Konfiguration deckelt der Default (80%) ein profilbasiertes Ziel, das
+    sonst (wie hier) rechnerisch ueber 100% laege (kwh_to_soc_percent()
+    klemmt selbst schon auf 100, die neue Obergrenze zusaetzlich auf 80)."""
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "emt_socmax1", options={CONF_USABLE_KWH: 10.0})
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 0.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    targets = coordinator._evcc_mode_targets()
+    assert targets["target_soc_max"] == 80
+    assert targets["target_soc"] == 80
+
+
+async def test_evcc_mode_targets_target_soc_max_konfigurierbar(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
+        CONF_USABLE_KWH,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "emt_socmax2",
+        options={CONF_USABLE_KWH: 10.0, CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX: 60},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 0.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    targets = coordinator._evcc_mode_targets()
+    assert targets["target_soc_max"] == 60
+    assert targets["target_soc"] == 60
+
+
+async def test_evcc_mode_targets_target_soc_max_wirkt_nicht_unter_eigenem_wert(hass, coordinators):
+    """Liegt das profilbasierte Ziel ohnehin schon unter der Obergrenze,
+    bleibt es unveraendert -- die Deckelung greift nur nach oben, nicht als
+    Mindestwert."""
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "emt_socmax3", options={CONF_USABLE_KWH: 50.0},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    targets = coordinator._evcc_mode_targets()
+    assert targets["target_soc"] < 80
+    assert targets["target_soc_max"] == 80
+
+
+async def test_async_set_evcc_mode_control_target_soc_max_schreibt_in_entry_data(hass, coordinators):
+    """Panel-Feld in der Karte 'Automatische Ladesteuerung' (Nutzerwunsch
+    2026-09-29) -- gleiches Muster wie async_set_weekly_full_charge_
+    enabled(): entry.data statt Laufzeit-Override, damit der Options-Flow
+    nie einen anderen Wert zeigt."""
+    from custom_components.ev_assistant.const import CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX
+
+    coordinator, entry = await _make_coordinator(hass, coordinators, "socmax_set1")
+    await coordinator.async_set_evcc_mode_control_target_soc_max(65)
+    assert entry.data[CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX] == 65
+
+
+async def test_async_set_evcc_mode_control_target_soc_max_klemmt_auf_1_100(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX
+
+    coordinator, entry = await _make_coordinator(hass, coordinators, "socmax_set2")
+    await coordinator.async_set_evcc_mode_control_target_soc_max(150)
+    assert entry.data[CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX] == 100
+    await coordinator.async_set_evcc_mode_control_target_soc_max(-5)
+    assert entry.data[CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX] == 1
+
+
+async def test_async_set_evcc_mode_control_target_soc_max_none_entfernt_key(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX
+
+    coordinator, entry = await _make_coordinator(
+        hass, coordinators, "socmax_set3", options={CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX: 50},
+    )
+    # Options bleiben unberuehrt (schreibt nur entry.data), aber der Key
+    # muss dort verschwinden, damit _opt() wieder auf den Default faellt --
+    # dafuer muss er zunaechst ueberhaupt in entry.data stehen.
+    await coordinator.async_set_evcc_mode_control_target_soc_max(65)
+    assert entry.data[CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX] == 65
+    await coordinator.async_set_evcc_mode_control_target_soc_max(None)
+    assert CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX not in entry.data
+
+
 async def test_evcc_mode_targets_mit_hausverbrauch_reduziert_pv_fuer_auto(hass, coordinators):
     from custom_components.ev_assistant.const import (
         CONF_HOME_CONSUMPTION_ENTITY,
@@ -1952,6 +2043,204 @@ async def test_check_evcc_vehicle_match_issue_verschwindet_nach_erfolgreichem_ma
     )
     coordinator._check_evcc_vehicle_match_issue()
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
+
+
+# ----- _home_kwh/_home_cost: Monotonie-Schutz gegen schrumpfendes evcc-Logbuch --
+
+async def test_home_kwh_klemmt_bei_schrumpfendem_evcc_sessions_logbuch(hass, coordinators):
+    """Produktionsvorfall 2026-09-29: evccs Sessions-Logbuch fuer ein
+    Fahrzeug verlor ueber Nacht aeltere Sessions (rollierendes Fenster im
+    Addon) -- die dafuer aufsummierte chargedEnergy fiel dadurch von ~309
+    auf 93.3 kWh, was nachgelagert (Tages-/Wochen-Perioden-Baseline) einen
+    riesigen, falschen "seit heute geladen"-Wert erzeugte. _home_kwh() darf
+    einen solchen Ruecksprung nicht mehr durchreichen."""
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "hk1", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
+    )
+    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 309.12, "cost": 0.0}}
+    assert coordinator._home_kwh() == 309.12
+
+    # evcc verliert aeltere Sessions -- rohe Summe faellt auf 93.3.
+    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 93.3, "cost": 0.0}}
+    assert coordinator._home_kwh() == 309.12  # geklemmt auf den zuletzt bekannten Wert
+
+
+async def test_home_kwh_folgt_weiterhin_echten_anstiegen(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "hk2", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
+    )
+    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 100.0, "cost": 0.0}}
+    assert coordinator._home_kwh() == 100.0
+
+    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 105.5, "cost": 0.0}}
+    assert coordinator._home_kwh() == 105.5
+
+
+async def test_home_cost_klemmt_bei_schrumpfendem_evcc_sessions_logbuch(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "hc1", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
+    )
+    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 0.0, "cost": 65.0}}
+    assert coordinator._home_cost() == 65.0
+
+    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 0.0, "cost": 12.4}}
+    assert coordinator._home_cost() == 65.0  # geklemmt auf den zuletzt bekannten Wert
+
+
+async def test_update_kwh_periods_heilt_unmoegliche_baseline_selbst(hass, coordinators):
+    """_discard_impossible_period_baselines(): eine gespeicherte Tages-
+    Baseline UEBER dem aktuellen Gesamtwert ist unmoeglich unter normalem
+    Betrieb -- muss verworfen (statt beibehalten) und beim naechsten Aufruf
+    prev-los neu kalibriert werden."""
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "ukp1", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
+    )
+    coordinator.data["savings_home_kwh_start"] = 0.0  # bereits laengst etabliert, wie im echten Vorfall
+    coordinator.data["kwh_periods"] = {
+        "day": {"key": coordinator._period_keys()["day"], "kwh": 309.12, "prev": -89.83},
+        "week": {"key": coordinator._period_keys()["week"], "kwh": 50.0, "prev": 10.0},
+    }
+    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 93.3, "cost": 0.0}}
+
+    coordinator._update_kwh_periods()
+
+    day = coordinator.data["kwh_periods"]["day"]
+    assert day["kwh"] == 93.3
+    assert "prev" not in day  # keine erfundene Differenz
+    # Woche liegt unter dem aktuellen Wert -> bleibt unangetastet.
+    assert coordinator.data["kwh_periods"]["week"] == {
+        "key": coordinator._period_keys()["week"], "kwh": 50.0, "prev": 10.0,
+    }
+
+
+async def test_update_kwh_periods_heilt_baseline_die_unter_der_wochen_baseline_liegt(hass, coordinators):
+    """Realistischere Nachstellung des tatsaechlichen Produktionsvorfalls
+    2026-09-29 (siehe _home_kwh()-Docstring): externe Ladungen (totals.kwh)
+    zaehlen zusaetzlich zum Heimladen-Anteil, wodurch der AKTUELLE
+    Gesamtwert trotz verfaelschter Tages-Baseline schon wieder DARUEBER
+    liegt -- _discard_impossible_period_baselines() (Vergleich gegen jetzt)
+    erkennt das allein NICHT, aber _discard_inconsistent_period_baselines()
+    (Vergleich gegen die Wochen-Baseline, die den Bruch nicht miterlebte)
+    schon."""
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "ukp2", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
+    )
+    coordinator.data["savings_home_kwh_start"] = 0.0
+    coordinator.data["totals"] = {"kwh": 309.12, "kosten": 137.07, "count": 20}
+    coordinator.data["kwh_periods"] = {
+        # Tages-Baseline wurde mit Heimladen-Anteil=0 gesetzt (async_setup()
+        # lief vor dem ersten evcc-Sessions-Abruf) -- nur der externe Anteil.
+        "day": {"key": coordinator._period_keys()["day"], "kwh": 309.12, "prev": -89.83},
+        # Wochen-Baseline wurde VOR dem Bruch gesetzt, ist also noch korrekt
+        # (Heimladen-Anteil 89.83 + extern 309.12).
+        "week": {"key": coordinator._period_keys()["week"], "kwh": 398.95, "prev": 56.22},
+    }
+    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 93.3, "cost": 0.0}}
+
+    coordinator._update_kwh_periods()
+
+    day = coordinator.data["kwh_periods"]["day"]
+    assert day["kwh"] == 402.42  # 93.3 (Heimladen) + 309.12 (extern)
+    assert "prev" not in day
+    # Wochen-Baseline war in sich konsistent -- bleibt unangetastet.
+    assert coordinator.data["kwh_periods"]["week"] == {
+        "key": coordinator._period_keys()["week"], "kwh": 398.95, "prev": 56.22,
+    }
+
+
+async def test_update_kwh_periods_heilt_negatives_prev_auch_wenn_wochen_referenz_bereits_kompromittiert(
+    hass, coordinators,
+):
+    """Deckt die tatsaechliche Reihenfolge des Produktionsvorfalls
+    2026-09-29 ab: eine FRUEHERE, noch unvollstaendige Selbstheilung hatte
+    die Wochen-Baseline bereits selbst faelschlich auf denselben (damals
+    noch unvollstaendigen) Wert wie die Tages-Baseline zurueckgesetzt --
+    _discard_inconsistent_period_baselines() findet dadurch keinen
+    Widerspruch mehr (Tag == Woche, nicht Tag < Woche). Nur das direkt am
+    Eintrag selbst ablesbare negative "prev" bleibt zuverlaessig."""
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "ukp3", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
+    )
+    coordinator.data["savings_home_kwh_start"] = 0.0
+    coordinator.data["totals"] = {"kwh": 309.12, "kosten": 137.07, "count": 20}
+    coordinator.data["kwh_periods"] = {
+        "day": {"key": coordinator._period_keys()["day"], "kwh": 309.12, "prev": -89.83},
+        # Woche wurde von einer frueheren (unvollstaendigen) Selbstheilung
+        # bereits prev-los auf denselben Wert wie Tag zurueckgesetzt.
+        "week": {"key": coordinator._period_keys()["week"], "kwh": 309.12},
+        "month": {"key": coordinator._period_keys()["month"], "kwh": 212.22, "prev": 78.97},
+    }
+    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 93.3, "cost": 0.0}}
+
+    coordinator._update_kwh_periods()
+
+    day = coordinator.data["kwh_periods"]["day"]
+    assert day["kwh"] == 402.42
+    assert "prev" not in day
+
+
+async def test_refresh_evcc_sessions_stoesst_perioden_selbstheilung_an(hass, coordinators):
+    """async_setup() seedet kwh_periods/cost_periods synchron, BEVOR der
+    erste _refresh_evcc_sessions()-Task fertig ist (siehe dortigen
+    Docstring) -- die Selbstheilung greift deshalb erst hier, sobald echte
+    evcc-Sessions-Daten eintreffen."""
+    from unittest.mock import AsyncMock
+
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "res1", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
+    )
+    coordinator.data["savings_home_kwh_start"] = 0.0  # bereits laengst etabliert, wie im echten Vorfall
+    coordinator.data["kwh_periods"] = {
+        "day": {"key": coordinator._period_keys()["day"], "kwh": 309.12, "prev": -89.83},
+    }
+    coordinator._evcc_client = AsyncMock()
+    coordinator._evcc_client.async_get_sessions.return_value = [
+        {"vehicle": "eRifter", "chargedEnergy": 93.3, "price": 16.98},
+    ]
+
+    await coordinator._refresh_evcc_sessions()
+
+    day = coordinator.data["kwh_periods"]["day"]
+    assert day["kwh"] == 93.3
+    assert "prev" not in day
+
+
+async def test_refresh_evcc_sessions_leere_liste_loest_keine_selbstheilung_aus(hass, coordinators):
+    """Leere `sessions` (evcc_client.py::async_get_sessions() gibt bei
+    Netzwerkfehler/Timeout ebenfalls `[]` zurueck) darf eine intakte
+    Baseline NICHT anfassen -- sonst wuerde ein transienter evcc-Ausfall
+    dieselbe Art Datenverlust ausloesen, die die Selbstheilung eigentlich
+    verhindern soll."""
+    from unittest.mock import AsyncMock
+
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "res2", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
+    )
+    coordinator.data["savings_home_kwh_start"] = 0.0
+    intact = {"key": coordinator._period_keys()["day"], "kwh": 309.12, "prev": 12.3}
+    coordinator.data["kwh_periods"] = {"day": dict(intact)}
+    coordinator._evcc_client = AsyncMock()
+    coordinator._evcc_client.async_get_sessions.return_value = []
+
+    await coordinator._refresh_evcc_sessions()
+
+    assert coordinator.data["kwh_periods"]["day"] == intact
 
 
 # ----- async_reset_lifetime_kpis: manuelle Neu-Baselinierung -------------------

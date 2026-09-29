@@ -34,6 +34,7 @@ from .const import (
     CONF_EVCC_HOST,
     CONF_EVCC_LOADPOINT_TITLE,
     CONF_EVCC_MODE_CONTROL_ENABLED,
+    CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
     CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
     CONF_EVCC_VEHICLE_NAME,
     CONF_GPS_ENTITY,
@@ -96,6 +97,7 @@ from .const import (
     DEFAULT_EFFICIENCY,
     DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED,
     DEFAULT_EVCC_MODE_CONTROL_ENABLED,
+    DEFAULT_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
     DEFAULT_IDLE_TIMEOUT,
     DEFAULT_MOTOR_DEBOUNCE,
     DEFAULT_NOISE,
@@ -345,6 +347,8 @@ def _empty_data() -> dict:
         "evcc_vehicle_cost_start": None,
         "savings_home_kwh_start": None,
         "savings_home_cost_start": None,
+        "home_kwh_last_known": None,
+        "home_cost_last_known": None,
         "detector_state": None,
         "soc_thresholds_notified": [],
         "soc_thresholds_was_charging": False,
@@ -869,9 +873,26 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Seedet die Kosten-/kWh-Perioden-Baselines sofort statt erst beim
         # naechsten taeglichen Rollover (siehe _daily_cost_period_rollover()/
         # _daily_kwh_period_rollover()) -- sonst waeren "Kosten/kWh
-        # heute/Woche/..." bis Mitternacht unknown.
-        self._update_cost_periods()
-        self._update_kwh_periods()
+        # heute/Woche/..." bis Mitternacht unknown. NICHT bei aktivem evcc-
+        # Client: _home_kwh()/_home_cost() lesen dann aus self._evcc_
+        # session_sums, das synchron an dieser Stelle noch LEER ist (der
+        # gerade oben in _setup_evcc_client() angestossene erste
+        # _refresh_evcc_sessions()-Task laeuft erst nach dem naechsten
+        # Event-Loop-Tick) -- ein Seed hier wuerde faelschlich nur den
+        # externen Ladeanteil als Baseline festschreiben (Heimladen-Anteil
+        # per "or 0.0"-Fallback in _ev_kwh_total_since_setup() unsichtbar
+        # auf 0 geklemmt), was nach dem naechsten erfolgreichen evcc-
+        # Sessions-Abruf einen riesigen, falschen "seit heute/dieser
+        # Woche"-Sprung erzeugt (Produktionsvorfall 2026-09-29, siehe
+        # _home_kwh()-Docstring). _refresh_evcc_sessions() seedet die
+        # Perioden stattdessen selbst, sobald echte Daten vorliegen (siehe
+        # dortigen Docstring) -- bewusst OHNE Nachhol-Sonderfall fuer ein
+        # Fahrzeug ganz ohne jemals eine Heimladung: dort bleiben die
+        # Perioden-Sensoren bis zur ersten Heimladung (oder dem naechsten
+        # taeglichen Rollover) "unknown" statt eines erfundenen Werts.
+        if self._evcc_client is None:
+            self._update_cost_periods()
+            self._update_kwh_periods()
         # Periodischer Re-Check zusaetzlich zu den SoC-/Kilometerstand-
         # getriebenen Updates: idle_timeout_s wird nur ausgewertet, wenn
         # _run_detection()/_run_trip_detection() laufen, was normalerweise
@@ -1156,11 +1177,38 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         engine.aggregate_sessions_by_vehicle()) -- _home_kwh()/_home_cost()
         lesen nur noch synchron aus self._evcc_session_sums. Periodisch
         (alle _EVCC_SESSIONS_CACHE_S) UND sofort nach Ende einer
-        Heim-Session (siehe _set_home())."""
+        Heim-Session (siehe _set_home()).
+
+        Stoesst danach _update_kwh_periods()/_update_cost_periods() erneut
+        an (Produktionsvorfall 2026-09-29, siehe _home_kwh()-Docstring):
+        async_setup() seedet diese Perioden-Baselines zwar bereits einmalig
+        beim Start, aber SYNCHRON, bevor der erste _refresh_evcc_sessions()-
+        Task (siehe async_setup() weiter unten) ueberhaupt fertig ist --
+        self._evcc_session_sums ist zu diesem fruehen Zeitpunkt also noch
+        leer. Ohne diesen erneuten Anstoss haette die dortige Selbstheilung
+        (siehe _discard_impossible_period_baselines()) beim Start noch
+        nichts zum Heilen, weil _ev_kwh_total_since_setup() dort faelschlich
+        noch den ALTEN (durch evccs Sessions-Logbuch-Schrumpfung
+        verfaelschten) Stand sieht -- erst hier, sobald echte evcc-Daten
+        vorliegen, wird der tatsaechliche Bruch erkannt und die betroffene
+        Periode (still, ohne "prev") neu kalibriert.
+
+        Der Neu-Anstoss unterbleibt bewusst, wenn `sessions` leer
+        zurueckkommt: evcc_client.py::async_get_sessions() gibt bei einem
+        Netzwerkfehler/Timeout ebenfalls `[]` zurueck (nicht unterscheidbar
+        von "evcc hat wirklich keine einzige Session") -- ein transienter
+        Ausfall wuerde sonst self._evcc_session_sums kurzzeitig leeren und
+        die gerade erst eingefuehrte Selbstheilung faelschlich auf eine in
+        Wahrheit intakte Baseline anwenden."""
         if self._evcc_client is None:
             return
         sessions = await self._evcc_client.async_get_sessions()
         self._evcc_session_sums = aggregate_sessions_by_vehicle(sessions)
+        if sessions:
+            self._update_kwh_periods()
+            self._update_cost_periods()
+            self.async_set_updated_data(self.data)
+            self._save_soon()
 
     def _current_loadpoint(self) -> Optional[dict]:
         """Der fuer dieses Fahrzeug zustaendige evcc-Loadpoint aus dem
@@ -2348,6 +2396,94 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             if entry is None or entry.get("key") != key:
                 periods[period] = {"key": key, "odo_km": odo_km}
 
+    @staticmethod
+    def _discard_impossible_period_baselines(periods: dict, value: float, field: str) -> dict:
+        """Verwirft Perioden-Eintraege, deren gespeicherte Baseline UEBER
+        dem aktuellen (monoton beobachteten) Gesamtwert liegt -- unter
+        normalem Betrieb unmoeglich, kann nur von einem inzwischen
+        behobenen Ruecksprung der zugrundeliegenden Quelle stammen (siehe
+        _home_kwh()-Docstring, Produktionsvorfall 2026-09-29: evccs
+        Sessions-Logbuch verlor aeltere Sessions, wodurch die aufsummierte
+        chargedEnergy kurzzeitig unter eine bereits gespeicherte Tages-/
+        Wochen-Baseline fiel). engine.update_period_baseline() behandelt
+        einen fehlenden Eintrag wie eine allererste Baseline (kein "prev"),
+        wird also beim naechsten Aufruf automatisch prev-los neu kalibriert
+        -- so wird nie eine erfundene "prev"-Differenz auf Dauer
+        festgeschrieben. Aufgerufen VOR jedem update_period_baseline()-
+        Aufruf (also auch beim Seeding in async_setup(), siehe dort), damit
+        eine bereits verfaelschte Baseline nicht erst bis zum naechsten
+        echten Kalender-Rollover falsch bleibt."""
+        return {k: v for k, v in periods.items() if v.get(field, 0.0) <= value}
+
+    @staticmethod
+    def _discard_negative_prev_period_baselines(periods: dict) -> dict:
+        """Verwirft Perioden-Eintraege mit negativem "prev" -- eine bereits
+        VOLLSTAENDIG ABGESCHLOSSENE Periode (z.B. "gestern") kann nicht
+        weniger geladen/gekostet haben als 0, ein negativer Wert ist also
+        IMMER ein Anzeichen fuer eine verfaelschte Baseline, unabhaengig
+        vom aktuellen Wert oder anderen Perioden-Baselines.
+
+        Direktere, robustere Ergaenzung zu _discard_impossible_period_
+        baselines()/_discard_inconsistent_period_baselines(): Produktions-
+        vorfall 2026-09-29 (siehe _home_kwh()-Docstring) zeigte, dass beide
+        durch eine VORHERIGE, noch unvollstaendige Selbstheilung selbst
+        wieder ausgehebelt werden koennen (ein zu diesem Zeitpunkt
+        faelschlich als "unmoeglich" erkannter Wochen-Eintrag wurde bereits
+        einmal prev-los auf den damals ebenfalls noch unvollstaendigen
+        Wert neu kalibriert, wodurch der Vergleichswert fuer die
+        Inkonsistenzpruefung verloren ging) -- "prev" < 0 bleibt davon
+        unabhaengig zuverlaessig erkennbar, da es direkt aus dem
+        gespeicherten Eintrag selbst kommt, nicht aus einem Vergleich mit
+        einer moeglicherweise ebenfalls kompromittierten anderen Quelle.
+
+        Ein legitim negatives "prev" ist zwar theoretisch denkbar (z.B.
+        nachtraegliches Loeschen/Bearbeiten einer Ladung, die in einer
+        bereits abgeschlossenen Periode lag, siehe _CostPeriodSensor-
+        Docstring fuer den analogen Live-Fall) -- der Eintrag verliert
+        dadurch bestenfalls einmalig seinen "Vormonat/-woche/-tag"-
+        Vergleich (self-heilt beim naechsten echten Rollover von selbst),
+        was den false-positive-Fall klar akzeptabler macht als ein auf
+        Dauer falsch angezeigter Wert."""
+        return {k: v for k, v in periods.items() if v.get("prev", 0.0) >= 0}
+
+    _PERIOD_ORDER_ASCENDING = ("year", "month", "week", "day")
+
+    @classmethod
+    def _discard_inconsistent_period_baselines(cls, periods: dict, field: str) -> dict:
+        """Verwirft eine Perioden-Baseline, die NIEDRIGER ist als die einer
+        Periode mit FRUEHEREM Start (Jahr < Monat < Woche < Tag, siehe
+        _PERIOD_ORDER_ASCENDING) -- unter normalem Betrieb unmoeglich, der
+        beobachtete Gesamtwert waechst nur (der Wochenstart liegt vor dem
+        heutigen Tagesstart, die Tages-Baseline muss also mindestens so
+        gross sein wie die Wochen-Baseline).
+
+        Ergaenzt _discard_impossible_period_baselines() (Vergleich gegen den
+        AKTUELLEN Wert): Produktionsvorfall 2026-09-29 (siehe _home_kwh()-
+        Docstring) zeigte, dass ein reiner "gegen jetzt"-Vergleich eine
+        bereits verfaelschte Tages-Baseline NICHT erkennt, wenn der aktuelle
+        Gesamtwert beim naechsten Aufruf laengst wieder darueber liegt (die
+        Tages-Baseline wurde mit einem noch unvollstaendigen Heimladen-
+        Anteil gesetzt -- async_setup() lief vor dem ersten evccs Sessions-
+        Abruf --, danach lieferte evcc aber sofort wieder einen hoeheren,
+        korrekten Gesamtwert, der ganz normal ueber der [zu niedrigen]
+        Baseline liegt). Der Vergleich gegen die Wochen-/Monats-/Jahres-
+        Baseline (die den Bruch nicht miterlebt haben, da laengst zuvor
+        gesetzt) deckt genau diesen Fall zusaetzlich auf."""
+        result = dict(periods)
+        prev_value = None
+        for period in cls._PERIOD_ORDER_ASCENDING:
+            entry = result.get(period)
+            if entry is None:
+                continue
+            value = entry.get(field)
+            if not isinstance(value, (int, float)):
+                continue
+            if prev_value is not None and value < prev_value:
+                del result[period]
+                continue
+            prev_value = value
+        return result
+
     def _update_cost_periods(self) -> None:
         """Perioden-Baselines (Tag/Woche/Monat/Jahr) fuer die EV-
         Gesamtkosten (Heim + Fremd seit Einrichtung, siehe
@@ -2355,11 +2491,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         engine.update_period_baseline() (inkl. "prev" bei echtem Rollover,
         Grundlage fuer "vs. Vormonat" o.ae., siehe CostMonthSensor), hier
         nur die HA-Verdrahtung (aktueller Kostenstand rein, Ergebnis
-        zurueck in self.data)."""
+        zurueck in self.data). Siehe _discard_impossible_period_baselines()/
+        _discard_inconsistent_period_baselines()/_discard_negative_prev_
+        period_baselines() fuer die Selbstheilung gegen einen inzwischen
+        behobenen Ruecksprung."""
         cost = self._ev_cost_total_since_setup()
-        self.data["cost_periods"] = update_period_baseline(
-            self.data.get("cost_periods") or {}, self._period_keys(), cost, "cost",
+        periods = self._discard_impossible_period_baselines(
+            self.data.get("cost_periods") or {}, cost, "cost",
         )
+        periods = self._discard_inconsistent_period_baselines(periods, "cost")
+        periods = self._discard_negative_prev_period_baselines(periods)
+        self.data["cost_periods"] = update_period_baseline(periods, self._period_keys(), cost, "cost")
 
     def _update_kwh_periods(self) -> None:
         """Perioden-Baselines (Tag/Woche/Monat/Jahr) fuer die EV-Gesamt-kWh
@@ -2367,11 +2509,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         -- exakt analog _update_cost_periods(), nur fuer kWh statt Kosten.
         Eigenes Feld ("kwh_periods"), da kWh und Kosten unabhaengig
         voneinander variieren koennen (z.B. unterschiedliche Preise je
-        Ladeort/Zeitpunkt)."""
+        Ladeort/Zeitpunkt). Siehe _discard_impossible_period_baselines()/
+        _discard_inconsistent_period_baselines()/_discard_negative_prev_
+        period_baselines() fuer die Selbstheilung gegen einen inzwischen
+        behobenen Ruecksprung."""
         kwh = self._ev_kwh_total_since_setup()
-        self.data["kwh_periods"] = update_period_baseline(
-            self.data.get("kwh_periods") or {}, self._period_keys(), kwh, "kwh",
+        periods = self._discard_impossible_period_baselines(
+            self.data.get("kwh_periods") or {}, kwh, "kwh",
         )
+        periods = self._discard_inconsistent_period_baselines(periods, "kwh")
+        periods = self._discard_negative_prev_period_baselines(periods)
+        self.data["kwh_periods"] = update_period_baseline(periods, self._period_keys(), kwh, "kwh")
 
     @callback
     def _daily_lts_refresh(self, now) -> None:
@@ -5174,21 +5322,42 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Wallbox-Energiezaehlers seit Einrichtung. (1) und (2) sind evccs
         eigene, kumulative Statistiken -- werden ungekuerzt uebernommen, da
         evcc die praeziseste Quelle ist. Fuer Savings/kWh100km gibt
-        _home_kwh_since_setup() das Delta seit ev_assistant-Einrichtung."""
+        _home_kwh_since_setup() das Delta seit ev_assistant-Einrichtung.
+
+        Monotonie-Schutz (max gegen self.data["home_kwh_last_known"]):
+        Produktionsvorfall 2026-09-29 -- evccs Sessions-Logbuch (Quelle 1)
+        behaelt nachweislich NICHT die komplette Historie seit Einrichtung,
+        sondern kann aeltere Sessions verlieren (rollierendes Fenster im
+        Addon, hier auf 16 Sessions/~10 Tage geschrumpft). Die dafuer
+        aufsummierte chargedEnergy fiel dadurch ueber Nacht von ~309 auf
+        93.3 kWh -- ohne diesen Schutz wertet _home_kwh_since_setup() sowie
+        jede Tages-/Wochen-/Monats-Perioden-Baseline (siehe kwh_periods/
+        cost_periods) einen solchen Ruecksprung faelschlich als echten
+        Verbrauchsrueckgang, was die naechste "seit Periodenbeginn"-Anzeige
+        (z.B. "kWh heute") auf einen bizarr hohen Wert springen laesst."""
         veh = self._evcc_vehicle_key()
+        raw = None
         if veh:
             veh_data = self._evcc_session_sums.get(veh)
             if veh_data:
-                return round(veh_data["chargedEnergy"], 2)
-        if self._opt(CONF_WALLBOX_ENERGY_ENTITY) and self._evcc_state is not None:
+                raw = round(veh_data["chargedEnergy"], 2)
+        if raw is None and self._opt(CONF_WALLBOX_ENERGY_ENTITY) and self._evcc_state is not None:
             statistics = self._evcc_state.get("statistics") or {}
             value = (statistics.get("total") or {}).get("chargedKWh")
             if isinstance(value, (int, float)):
-                return round(value, 2)
-        start = self.data.get("wallbox_energy_start")
-        if self._wallbox_energy is None or start is None:
+                raw = round(value, 2)
+        if raw is None:
+            start = self.data.get("wallbox_energy_start")
+            if self._wallbox_energy is not None and start is not None:
+                raw = round(self._wallbox_energy - start, 2)
+        if raw is None:
             return None
-        return round(self._wallbox_energy - start, 2)
+        last_known = self.data.get("home_kwh_last_known")
+        guarded = raw if last_known is None else max(raw, last_known)
+        if guarded != last_known:
+            self.data["home_kwh_last_known"] = guarded
+            self._save_soon()
+        return guarded
 
     def _home_cost(self) -> Optional[float]:
         """Heimladen-Kosten direkt aus evccs Ladelogbuch je Fahrzeug
@@ -5196,13 +5365,25 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Session mit dem tatsaechlichen Tarif rechnet statt mit dem
         standortweiten Durchschnittspreis. Wie bei _home_kwh() wird der
         kumulative Wert ungekuerzt uebernommen; das Delta seit
-        ev_assistant-Einrichtung liefert _home_cost_since_setup()."""
+        ev_assistant-Einrichtung liefert _home_cost_since_setup(). Gleicher
+        Monotonie-Schutz wie _home_kwh() (siehe dortigen Docstring,
+        Produktionsvorfall 2026-09-29) -- evccs Sessions-Logbuch kann
+        aeltere Sessions verlieren, wodurch die aufsummierten Kosten
+        genauso wie die kWh scheinbar sinken wuerden."""
         veh = self._evcc_vehicle_key()
+        raw = None
         if veh:
             veh_data = self._evcc_session_sums.get(veh)
             if veh_data:
-                return round(veh_data["cost"], 2)
-        return None
+                raw = round(veh_data["cost"], 2)
+        if raw is None:
+            return None
+        last_known = self.data.get("home_cost_last_known")
+        guarded = raw if last_known is None else max(raw, last_known)
+        if guarded != last_known:
+            self.data["home_cost_last_known"] = guarded
+            self._save_soon()
+        return guarded
 
     def _home_kwh_since_setup(self) -> Optional[float]:
         """home_kwh-Anteil seit ev_assistant-Einrichtung — fuer Savings und
@@ -5549,6 +5730,29 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # nur vor einem echten HA-Shutdown, NICHT vor einem Reload waehrend
         # HA weiterlaeuft (siehe dortigen Docstring), der Log-Eintrag ginge
         # sonst bei jedem Umschalten verloren.
+        await self._save()
+        self.hass.config_entries.async_update_entry(self.entry, data=new_data)
+
+    async def async_set_evcc_mode_control_target_soc_max(self, target_soc_max: Optional[int]) -> None:
+        """Schreibt CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX direkt in
+        entry.data -- gleiches Muster wie async_set_weekly_full_charge_
+        enabled() oben (siehe dortigen Docstring): selten genutzt (kein
+        Schieberegler-Dauerbetrieb), daher bewusst der entry.data-Weg statt
+        eines reinen Laufzeit-Overrides wie bei async_set_usage_profile_
+        buffer_pct() -- der Options-Flow zeigt so nie einen veralteten Wert.
+        `target_soc_max=None` entfernt den Key wieder (zurueck auf
+        DEFAULT_EVCC_MODE_CONTROL_TARGET_SOC_MAX). async_update_entry()
+        loest ueber den bestehenden Update-Listener automatisch einen
+        Reload aus, der die evcc-Modus-/SoC-Ziele neu bewertet."""
+        new_data = dict(self.entry.data)
+        if target_soc_max is None:
+            new_data.pop(CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX, None)
+        else:
+            new_data[CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX] = max(1, min(100, int(target_soc_max)))
+        self._log_event(
+            "evcc_ziel_soc_max_geaendert",
+            f"target_soc_max={new_data.get(CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX, DEFAULT_EVCC_MODE_CONTROL_TARGET_SOC_MAX)}",
+        )
         await self._save()
         self.hass.config_entries.async_update_entry(self.entry, data=new_data)
 
@@ -5999,9 +6203,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         profilbasierten Werte (nur Anzeige/Transparenz, nicht das, was
         tatsaechlich an evcc geschrieben wird, siehe dortigen Docstring).
         Zusaetzlich hebt engine.apply_opportunistic_surplus_target() das
-        zurueckgegebene "target_soc" auf 100 an, solange bei mode == "pv"
-        ausreichend echter PV-Ueberschuss anliegt -- "ueberschuss_ziel_
-        erweitert_aktiv" zeigt, ob das gerade der Fall ist."""
+        zurueckgegebene "target_soc" auf "target_soc_max" an (Default 100,
+        siehe naechster Absatz), solange bei mode == "pv" ausreichend echter
+        PV-Ueberschuss anliegt -- "ueberschuss_ziel_erweitert_aktiv" zeigt,
+        ob das gerade der Fall ist.
+
+        "target_soc_max" (CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX, Default 80)
+        deckelt sowohl das profilbasierte Tages-Ziel als auch die
+        Ueberschuss-Zielanhebung oben -- schuetzt die Fahrzeugbatterie vor
+        taeglichem Vollladen (Nutzerwunsch 2026-09-29). Greift NICHT bei
+        einer faelligen woechentlichen Balancing-Vollladung: die Deckelung
+        wird im Funktionskoerper VOR apply_weekly_balancing_override()
+        angewandt, welche target_soc bei Faelligkeit danach explizit
+        (unabhaengig vom gedeckelten Wert) auf 100 setzt -- bewusst so, da
+        diese Vollladung separat opt-in ist und genau deswegen gelegentlich
+        eine echte 100%-Vollladung braucht."""
         profile = self._effective_vehicle_usage_profile()
         available = self.available_kwh()
         if profile is None or available is None:
@@ -6054,6 +6270,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
         mode = determine_evcc_mode(available, min_kwh, target_kwh)
         target_soc = kwh_to_soc_percent(target_kwh, usable_kwh)
+        # Obergrenze fuers taeglich-profilbasierte Ziel-SoC (siehe CONF_EVCC_
+        # MODE_CONTROL_TARGET_SOC_MAX-Kommentar in const.py, Nutzerwunsch
+        # 2026-09-29: "das soll auch fuer die automatische ladung dann das
+        # max sein. um nicht immer bis 100% zu laden") -- VOR dem Balancing-
+        # Override unten geklemmt, damit eine faellige woechentliche
+        # Vollladung (bewusst separat opt-in, siehe CONF_WEEKLY_FULL_CHARGE_
+        # ENABLED) weiterhin auf echte 100% kommt, statt hier schon
+        # gedeckelt zu werden.
+        target_soc_max = int(self._opt(CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX, DEFAULT_EVCC_MODE_CONTROL_TARGET_SOC_MAX))
+        if target_soc is not None:
+            target_soc = min(target_soc, target_soc_max)
         balancing_enabled = bool(self._opt(CONF_WEEKLY_FULL_CHARGE_ENABLED, DEFAULT_WEEKLY_FULL_CHARGE_ENABLED))
         balancing_due = False
         naechste_vollladung_faellig_ts = None
@@ -6155,6 +6382,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # als auch vom Sensor aufgerufen, beide sollen denselben (bereits
         # angehobenen) target_soc sehen.
         pv_power_w = self._evcc_state.get("pvPower") if self._evcc_state is not None else None
+        # ceiling_soc=target_soc_max (statt des Funktions-Defaults 100):
+        # ohne diese Uebergabe wuerde die Ueberschuss-Zielanhebung das
+        # taeglich gedeckelte Ziel-SoC oben bei echtem PV-Ueberschuss
+        # trotzdem auf 100 hochsetzen -- genau das Verhalten, das die neue
+        # Obergrenze ja gerade verhindern soll ("nicht immer bis 100% laden").
         target_soc, self._ueberschuss_ziel_aktiv, self._ueberschuss_ziel_pending_seit_ts = (
             apply_opportunistic_surplus_target(
                 mode,
@@ -6165,6 +6397,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 self._ueberschuss_ziel_pending_seit_ts,
                 dt_util.utcnow().timestamp(),
                 EVCC_UEBERSCHUSS_ZIEL_HOLD_S,
+                ceiling_soc=target_soc_max,
             )
         )
         return {
@@ -6176,6 +6409,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "target_kwh": target_kwh,
             "min_soc": kwh_to_soc_percent(min_kwh, usable_kwh),
             "target_soc": target_soc,
+            "target_soc_max": target_soc_max,
             "ueberschuss_ziel_erweitert_aktiv": self._ueberschuss_ziel_aktiv,
             "verfuegbare_kwh": available,
             "rest_heute_kwh": rest_heute,
