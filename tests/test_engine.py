@@ -354,16 +354,16 @@ def test_active_property_zeigt_idle_zu_ladung_uebergang():
     det.update(ChargeSample(ts=0, soc=70, home_charging=False))  # Anker-Init
     assert det.active is False
 
-    det.update(ChargeSample(ts=30, soc=70, home_charging=False))  # kein Anstieg
+    det.update(ChargeSample(ts=300, soc=70, home_charging=False))  # kein Anstieg
     assert det.active is False
 
-    det.update(ChargeSample(ts=60, soc=73, home_charging=False))  # Ladung beginnt
+    det.update(ChargeSample(ts=600, soc=73, home_charging=False))  # Ladung beginnt
     assert det.active is True
 
-    det.update(ChargeSample(ts=90, soc=75, home_charging=False))  # laedt weiter
+    det.update(ChargeSample(ts=900, soc=75, home_charging=False))  # laedt weiter
     assert det.active is True
 
-    det.update(ChargeSample(ts=160, soc=75, home_charging=False))  # 100s Timeout -> Ende
+    det.update(ChargeSample(ts=1000, soc=75, home_charging=False))  # 100s Timeout -> Ende
     assert det.active is False
 
 
@@ -3995,3 +3995,25 @@ def test_wartung_uebersicht_reminder_km_override():
     # der Punkt-eigene reminder_km=1500 macht daraus "bald_faellig".
     assert result["punkte"][0]["rest_km"] == 500.0
     assert result["punkte"][0]["status"] == "bald_faellig"
+
+
+def test_kurzer_soc_dip_mit_rueckkehr_startet_keine_ladung():
+    # Produktionsfall 2026-09-29: SoC stand auf 79%, fiel fuer 2.5s auf 74%
+    # (Wach-Fenster-Glitch) und kehrte auf 78/79% zurueck -- keine Ladung.
+    det = ChargeDetector(usable_kwh=50, start_delta=2.0, idle_timeout_s=600)
+    samples = [
+        ChargeSample(ts=0.0, soc=79.0, home_charging=False),
+        ChargeSample(ts=6000.0, soc=74.0, home_charging=False),
+        ChargeSample(ts=6002.5, soc=78.0, home_charging=False),
+        ChargeSample(ts=6005.0, soc=79.0, home_charging=False),
+        ChargeSample(ts=6072.0, soc=79.0, home_charging=False),
+        ChargeSample(ts=7000.0, soc=79.0, home_charging=False),
+    ]
+    assert run(det, samples) == []
+    assert not det.active
+
+
+def test_echte_ladung_nach_dip_wird_weiter_erkannt():
+    det = ChargeDetector(usable_kwh=50, start_delta=2.0, idle_timeout_s=9999)
+    ev = run(det, stream([60, 62, 70, 80, 78], start_ts=0, step=600))
+    assert ev and (ev[0].soc_start, ev[0].soc_end) == (60, 80)

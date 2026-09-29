@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.25] - 2026-09-29
+
+### Fixed
+
+- **False external charge from a brief SoC dip that recovers** (report: "wieder eine nicht korrekte fremdladung ... durch einen kurzen peak nach unten"): the raw CAN-bus SoC sat at 79 % for 1h38m, dropped to 74 % for 2.5 s (wake-up glitch, plug sensor flickered at the same moment) and jumped back to 78/79 %. The detector's anchor followed the dip down, so the recovery looked like a 74 → 79 % charge; the 0.99.x plausibility check only looked at the *whole session* (142 kW, just under the 150 kW ceiling) and at steps *after* a charge had already started. The same per-step rate check is now also applied to the step that would *start* a charge (SoC rise vs. time since the anchor) — 4 percentage points in 2.5 s is physically impossible, so the anchor is just moved and no charge is started. Real charges (including ones missed over long telemetry gaps) are unaffected, as their rise spans enough time.
+
 ## [0.99.24] - 2026-09-29
 
 ### Fixed

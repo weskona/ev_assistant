@@ -225,6 +225,21 @@ class ChargeDetector:
                 self._anchor_soc = s.soc
                 self._anchor_ts = s.ts
                 return None
+            # Plausibilitaets-Check auf den STARTSCHRITT (Vorfall 2026-09-29:
+            # SoC stand 1h38m auf 79%, fiel fuer 2.5s auf 74% -- Wach-Fenster-
+            # Glitch, Stecker flackerte zeitgleich -- und sprang auf 78/79%
+            # zurueck; der Anker rutschte auf den Dip, die Rueckkehr wurde als
+            # Ladung gewertet, die Gesamtrate von 142 kW lag knapp unter
+            # max_plausible_charge_kw). Gleiche Logik wie der Einzelschritt-
+            # Check in _update_charging(): ein Anstieg mit unmoeglicher Rate
+            # ueber die seit dem Anker vergangene Zeit ist ein Sensor-Glitch.
+            # Anker nachfuehren, keine Ladung starten. Echte, ueber lange
+            # Telemetrie-Luecken verpasste Ladungen bleiben unberuehrt (grosse
+            # Zeitspanne -> kleine Rate).
+            if self._implied_soc_kw(delta, (s.ts - self._anchor_ts) / 3600.0) > self.max_plausible_charge_kw:
+                self._anchor_soc = s.soc
+                self._anchor_ts = s.ts
+                return None
             self._active = True
             self._start_ts = self._anchor_ts
             self._start_soc = self._anchor_soc
