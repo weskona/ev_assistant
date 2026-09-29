@@ -719,16 +719,37 @@ SERVICE_RESTORE_BACKUP = "restore_backup"
 # kann") -- siehe coordinator.py::async_set_panel_layout()/panel_layout()
 # sowie frontend/ev-assistant-panel.js::_panelSectionBuilders(). Die
 # vormals festen 2-Spalten-Paare ("hero"/"bottom") sind hier in ihre
-# Einzelkarten aufgetrennt (hero_cost/hero_secondary, comparison/location),
-# damit wirklich jede Karte mit jeder anderen frei kombinierbar ist -- auf
-# Kosten des vorher bewusst ungleichen Spaltenverhaeltnisses der Hero-Zeile
-# (Nutzerentscheidung 2026-09-23). Nur hier gelistete Schluessel werden von
-# async_set_panel_layout() uebernommen -- ein unbekannter/veralteter Wert
-# (z.B. aus einer alten Panel-Version) wird stillschweigend verworfen statt
-# eine kaputte Karte zu erzeugen.
+# Einzelkarten aufgetrennt (hero_cost/soc/last_charge, comparison/
+# ladeorte/acdc), damit wirklich jede Karte mit jeder anderen frei
+# kombinierbar ist -- auf Kosten des vorher bewusst ungleichen
+# Spaltenverhaeltnisses der Hero-Zeile (Nutzerentscheidung 2026-09-23).
+#
+# "soc"/"last_charge" sowie "ladeorte"/"acdc" waren urspruenglich je EIN
+# gemeinsamer Schluessel ("hero_secondary"/"location"), der je nach
+# Lademodus eine von zwei strukturell verschiedenen Karten baute (z.B.
+# "location" -> Ladeorte in gemischt/nur_zuhause, aber AC/DC-Aufschluesselung
+# in nur_auswaerts) -- Nutzerfeedback 2026-09-29: "im panel auch karten
+# auswaehlbar die nix mit nur fremdladen zu tun haben, und ac dc
+# aufschluesselung zb wird garnich angezeigt" / "die karten mal vernuenftig
+# den jeweiligen lademodi zuweisen". Ein gemeinsamer Schluessel bedeutete,
+# dass Sichtbarkeit/Groesse zwischen den beiden Karten "durchsickerte": wer
+# z.B. "Ladeorte" in gemischt einmal ausblendete, hatte damit (unsichtbar,
+# unter demselben Schluessel) automatisch auch "AC/DC-Aufschluesselung"
+# ausgeblendet, sobald spaeter auf nur_auswaerts umgestellt wurde -- ohne
+# jede Moeglichkeit, das fuer nur eine der beiden Karten zu unterscheiden.
+# Jede Karte hat jetzt einen eigenen, modusunabhaengigen Schluessel; welche
+# davon im aktuellen Modus ueberhaupt existiert, entscheidet weiterhin
+# _panelSectionBuilders() (null fuer die im aktuellen Modus nicht
+# zutreffende Karte).
+#
+# Nur hier gelistete Schluessel werden von async_set_panel_layout()
+# uebernommen -- ein unbekannter/veralteter Wert (z.B. aus einer alten
+# Panel-Version, oder die inzwischen aufgeteilten "hero_secondary"/
+# "location") wird stillschweigend verworfen statt eine kaputte Karte zu
+# erzeugen.
 PANEL_LAYOUT_KEYS = (
-    "hero_cost", "hero_secondary", "wallbox", "kpi",
-    "comparison", "location", "evcc_mode",
+    "hero_cost", "soc", "last_charge", "wallbox", "kpi",
+    "comparison", "ladeorte", "acdc", "evcc_mode",
 )
 
 # Tabs, die der Nutzer ueber set_hidden_tabs()/die "Sichtbare Tabs"-Kachel im

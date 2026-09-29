@@ -4218,22 +4218,40 @@ class EVAssistantPanel extends HTMLElement {
   _panelSectionBuilders(modus) {
     return {
       hero_cost: () => this._buildBetaHeroCard(),
-      // "nur_auswaerts" behaelt bewusst den bisherigen zweiten Hero-Slot
-      // (letzte Fremdladung statt Fahrzeug-SoC, das dort strukturell nicht
-      // zutrifft).
-      hero_secondary: modus === "nur_auswaerts"
-        ? () => this._buildBetaLastChargeCard()
-        : () => this._buildBetaSocCard(),
+      // "soc"/"last_charge" waren frueher EIN gemeinsamer Schluessel
+      // ("hero_secondary"), der je nach Modus eine von zwei strukturell
+      // verschiedenen Karten baute -- Nutzerfeedback 2026-09-29 (siehe
+      // const.py::PANEL_LAYOUT_KEYS-Kommentar): Sichtbarkeit/Groesse
+      // "sickerte" dadurch zwischen den beiden Karten durch, sobald der
+      // Modus wechselte. Jetzt je eigener Schluessel, nur einer von beiden
+      // existiert (nicht-null) im jeweiligen Modus -- "nur_auswaerts"
+      // behaelt bewusst den bisherigen zweiten Hero-Slot (letzte
+      // Fremdladung statt Fahrzeug-SoC, das dort strukturell nicht zutrifft).
+      soc: modus !== "nur_auswaerts" ? () => this._buildBetaSocCard() : null,
+      last_charge: modus === "nur_auswaerts" ? () => this._buildBetaLastChargeCard() : null,
       // Nur wo ueberhaupt eine eigene Wallbox relevant ist -- in
       // "nur_auswaerts" komplett weggelassen statt leer/mit Nur-Nullen
       // gerendert (siehe Kartenkopf-Kommentar dort).
       wallbox: modus !== "nur_auswaerts" ? () => this._buildBetaWallboxCard() : null,
       kpi: () => this._buildBetaKpiCard(),
       comparison: () => this._buildBetaComparisonBarsCard(),
-      location: modus === "nur_auswaerts"
-        ? () => this._buildBetaAcDcCard()
-        : () => this._buildBetaLadeortBarsCard(),
-      evcc_mode: () => this._buildBetaEvccModeCard(),
+      // "ladeorte"/"acdc": ebenfalls vormals ein gemeinsamer Schluessel
+      // ("location"), aus demselben Grund wie "soc"/"last_charge" oben
+      // aufgeteilt.
+      ladeorte: modus !== "nur_auswaerts" ? () => this._buildBetaLadeortBarsCard() : null,
+      acdc: modus === "nur_auswaerts" ? () => this._buildBetaAcDcCard() : null,
+      // Nicht bei "nur_auswaerts": evcc/die automatische Modus-/SoC-
+      // Steuerung betreffen ausschliesslich Heimladen -- der evcc- UND der
+      // Heimladen-Konfigurationsschritt werden fuer diesen Modus im
+      // Config-Flow komplett uebersprungen (siehe config_flow.py), es
+      // KANN also nie etwas zum Anzeigen geben. Vorher trotzdem immer
+      // waehlbar (Nutzerfeedback 2026-09-29: "bei nur fremdladen ist die
+      // automatische ladesteuerungskarte immer noch auswaehlbar") -- lief
+      // zur Laufzeit zwar leer und blieb per CSS versteckt (siehe
+      // _updateBetaEvccMode()), tauchte aber trotzdem faelschlich in der
+      // Panel-anpassen-Auswahl auf, analog dem juengst behobenen
+      // hero_secondary/location-Fall.
+      evcc_mode: modus !== "nur_auswaerts" ? () => this._buildBetaEvccModeCard() : null,
     };
   }
 
@@ -5184,11 +5202,17 @@ class EVAssistantPanel extends HTMLElement {
   _panelLayoutLabel(key, modus) {
     const labels = {
       hero_cost: "Kosten (diesen Monat)",
-      hero_secondary: modus === "nur_auswaerts" ? "Letzte Fremdladung" : "Fahrzeug-SoC",
+      // "soc"/"last_charge" und "ladeorte"/"acdc" existieren nie
+      // gleichzeitig im selben Modus (siehe _panelSectionBuilders()) --
+      // feste statt modus-abhaengige Labels seit der Schluessel-Aufteilung
+      // (Nutzerfeedback 2026-09-29, siehe const.py::PANEL_LAYOUT_KEYS).
+      soc: "Fahrzeug-SoC",
+      last_charge: "Letzte Fremdladung",
       wallbox: "Wallbox",
       kpi: "Kennzahlen",
       comparison: "Vergleich ggü. Verbrenner",
-      location: modus === "nur_auswaerts" ? "AC/DC-Aufschlüsselung" : "Ladeorte",
+      ladeorte: "Ladeorte",
+      acdc: "AC/DC-Aufschlüsselung",
       evcc_mode: "Automatische Ladesteuerung",
     };
     return labels[key] || key;

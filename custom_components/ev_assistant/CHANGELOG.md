@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.24] - 2026-09-29
+
+### Fixed
+
+- **"Automatische Ladesteuerung" card still selectable in "nur auswärts" mode** (feedback: "bei nur fremdladen ist die automatische ladesteuerungskarte immer noch auswählbar"): evcc/the automatic mode-/SoC-control exclusively concern home charging — both the "evcc" and "Heimladen" config-flow steps are skipped entirely for this mode, so the card could never show anything (it stayed correctly hidden at runtime, same as before) but was still wrongly offered as a choice in the panel-layout picker, same root cause as 0.99.23's `hero_secondary`/`location` fix.
+
+## [0.99.23] - 2026-09-29
+
+### Fixed
+
+- **Panel layout customization: visibility/size "leaked" between mode-specific cards sharing one key** (bug report: "im panel auch karten auswählbar die nix mit nur fremdladen zu tun haben, und ac dc aufschlüsselung zb wird garnich angezeigt" / "die karten mal vernünftig den jeweiligen lademodi zuweisen"): `hero_secondary` used to build either the vehicle-SoC card or the "Letzte Ladung" card depending on charge mode, and `location` either "Ladeorte" or "AC/DC-Aufschlüsselung" — sharing one key meant hiding one of a pair in one mode silently hid the *other* card too as soon as you switched to the mode where it applies, with no way to tell them apart. Each of these four cards now has its own stable key (`soc`/`last_charge`, `ladeorte`/`acdc`) — visibility, size and ordering are now independent per card, and each only ever shows up as selectable in the panel-layout picker for the mode it actually applies to.
+
 ## [0.99.22] - 2026-09-29
 
 ### Fixed
