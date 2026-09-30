@@ -13,7 +13,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_call_later, async_track_state_change_event, async_track_time_change, async_track_time_interval
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_state_change_event,
+    async_track_time_change,
+    async_track_time_interval,
+)
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.template import Template
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -144,7 +149,6 @@ from .const import (
     LEASING_KNAPP_SCHWELLE_PCT,
     LEASING_TOLERANZ_PCT,
     MAX_PLAUSIBLE_CHARGE_KW,
-    TANKERKOENIG_GRACE_S,
     MAX_POWER_GAP_S,
     MILES_TO_KM,
     MIN_USAGE_PROFILE_DAYS,
@@ -160,6 +164,7 @@ from .const import (
     PANEL_LAYOUT_SIZES,
     STORAGE_KEY,
     STORAGE_VERSION,
+    TANKERKOENIG_GRACE_S,
     TEMP_BUCKET_BOUNDARIES,
     TEMP_BUCKET_MIN_SAMPLES,
     TRIP_CONSUMPTION_CHECK_MIN_KM,
@@ -184,7 +189,6 @@ from .engine import (
     ChargeSample,
     EfficiencyCalibrator,
     SignalDebouncer,
-    tankerkoenig_should_notify,
     TripDetector,
     TripSample,
     ac_dc_breakdown_from_totals,
@@ -236,6 +240,7 @@ from .engine import (
     rolling_km_per_day,
     soc_reached_full_charge,
     split_by_age,
+    tankerkoenig_should_notify,
     temp_bucket_contribution,
     temperature_bucket,
     trip_avg_consumption_kwh_from_totals,
