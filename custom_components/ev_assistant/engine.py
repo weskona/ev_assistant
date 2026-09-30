@@ -3188,3 +3188,12 @@ def wartung_uebersicht(
         "anzahl_ueberfaellig": anzahl_ueberfaellig,
         "naechste": naechste,
     }
+
+
+def tankerkoenig_should_notify(has_price: bool, already_notified: bool, grace_expired: bool) -> bool:
+    """Ob die "Tankerkoenig nicht verfuegbar"-Meldung jetzt ausgeloest wird
+    (siehe coordinator.py::_wire_tankerkoenig_price()): nur ohne gueltigen
+    Preis, nur einmal (nicht erneut solange die Meldung steht) und erst NACH
+    der Karenzzeit -- beim HA-Start haben die Sensoren oft noch keinen State,
+    das ist kein Ausfall."""
+    return (not has_price) and (not already_notified) and grace_expired

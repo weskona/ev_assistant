@@ -9,6 +9,7 @@ from engine import (
     ChargeSample,
     EfficiencyCalibrator,
     SignalDebouncer,
+    tankerkoenig_should_notify,
     TripDetector,
     TripSample,
     ac_dc_breakdown,
@@ -4017,3 +4018,15 @@ def test_echte_ladung_nach_dip_wird_weiter_erkannt():
     det = ChargeDetector(usable_kwh=50, start_delta=2.0, idle_timeout_s=9999)
     ev = run(det, stream([60, 62, 70, 80, 78], start_ts=0, step=600))
     assert ev and (ev[0].soc_start, ev[0].soc_end) == (60, 80)
+
+
+def test_tankerkoenig_meldung_erst_nach_karenzzeit():
+    # Start-Rennen: Sensoren noch ohne State -> vor Ablauf der Karenzzeit
+    # keine Meldung.
+    assert tankerkoenig_should_notify(False, False, False) is False
+    assert tankerkoenig_should_notify(False, False, True) is True
+
+
+def test_tankerkoenig_meldung_nur_einmal_und_nie_mit_preis():
+    assert tankerkoenig_should_notify(False, True, True) is False
+    assert tankerkoenig_should_notify(True, False, True) is False

@@ -167,6 +167,11 @@ MAX_POWER_GAP_S = 3600.0
 # bleibt). Interne Heuristik, kein Config-Flow-Feld, analog
 # IMPLAUSIBLE_REGEN_DELTA_PCT.
 MAX_PLAUSIBLE_CHARGE_KW = 150.0
+# Karenzzeit (s) nach dem Setup, in der eine fehlende Tankerkoenig-Preisquelle
+# NICHT gemeldet wird und auf neue Registry-Eintraege/erste States gewartet
+# wird (siehe coordinator.py::_wire_tankerkoenig_price()) -- beim HA-Start sind
+# die Sensoren oft noch ohne State. Danach einmalige Meldung wie bisher.
+TANKERKOENIG_GRACE_S = 600
 
 # Fahrzeug-Eckdaten
 CONF_VEHICLE_HERSTELLER = "vehicle_hersteller"

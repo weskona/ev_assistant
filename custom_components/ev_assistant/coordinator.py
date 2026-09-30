@@ -13,7 +13,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.event import async_track_state_change_event, async_track_time_change, async_track_time_interval
+from homeassistant.helpers.event import async_call_later, async_track_state_change_event, async_track_time_change, async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.template import Template
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
@@ -144,6 +144,7 @@ from .const import (
     LEASING_KNAPP_SCHWELLE_PCT,
     LEASING_TOLERANZ_PCT,
     MAX_PLAUSIBLE_CHARGE_KW,
+    TANKERKOENIG_GRACE_S,
     MAX_POWER_GAP_S,
     MILES_TO_KM,
     MIN_USAGE_PROFILE_DAYS,
@@ -183,6 +184,7 @@ from .engine import (
     ChargeSample,
     EfficiencyCalibrator,
     SignalDebouncer,
+    tankerkoenig_should_notify,
     TripDetector,
     TripSample,
     ac_dc_breakdown_from_totals,
@@ -624,6 +626,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # aktiv ist -- verhindert wiederholte create/dismiss-Serviceaufrufe
         # bei jedem einzelnen _recompute()-Tick (siehe _wire_tankerkoenig_price()).
         self._tankerkoenig_notified: bool = False
+        # Karenzzeit-/Nachlade-Zustand der Tankerkoenig-Verdrahtung (siehe
+        # _wire_tankerkoenig_price()): Timer, ob die Karenzzeit abgelaufen
+        # ist, Abmelder der State-/Registry-Listener und die aktuell
+        # ueberwachten Preis-Sensoren.
+        self._tankerkoenig_grace_unsub: Optional[Callable] = None
+        self._tankerkoenig_grace_expired: bool = False
+        self._tankerkoenig_state_unsub: Optional[Callable] = None
+        self._tankerkoenig_registry_unsub: Optional[Callable] = None
+        self._tankerkoenig_price_ids: list[str] = []
+        self._tankerkoenig_recompute: Optional[Callable] = None
         self._detector: Optional[ChargeDetector] = None
         self._calibrator: Optional[EfficiencyCalibrator] = None
         self._trip_detector: Optional[TripDetector] = None
@@ -1612,11 +1624,37 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         ein -- inklusive der dort bereits vorhandenen km-gewichteten
         Durchschnittsbildung (siehe _verbrenner_price_average()). Sind alle bekannten
         Stationen geschlossen, wird trotzdem der guenstigste (wenn auch
-        veraltete) Preis verwendet, statt ganz auszufallen."""
+        veraltete) Preis verwendet, statt ganz auszufallen.
+
+        Start-Reihenfolge: Beim HA-Start haben die Tankerkoenig-Sensoren
+        oft noch keinen State (oder tauchen erst spaeter in der Registry auf,
+        z.B. Erstinstallation / Tankerkoenig erst nach EV Assistant
+        eingerichtet). Deshalb (1) startet hier eine Karenzzeit
+        (TANKERKOENIG_GRACE_S), vor deren Ablauf KEINE "nicht verfuegbar"-
+        Meldung ausgeloest wird, und (2) wird bei leerer Sensor-Liste nicht
+        aufgegeben, sondern auf neue Registry-Eintraege gewartet
+        (EVENT_ENTITY_REGISTRY_UPDATED, siehe _tankerkoenig_on_registry_event()).
+        Nach der Karenzzeit endet das Warten, und eine noch fehlende Preis-
+        Quelle wird einmalig gemeldet."""
         fuel_type = self._opt(CONF_TANKERKOENIG_FUEL_TYPE)
         if not fuel_type:
             return
 
+        self._tankerkoenig_grace_expired = False
+        self._tankerkoenig_grace_unsub = async_call_later(
+            self.hass, TANKERKOENIG_GRACE_S, self._tankerkoenig_on_grace_expired
+        )
+        self._unsub.append(self._tankerkoenig_teardown)
+
+        from homeassistant.helpers import entity_registry as er
+
+        self._tankerkoenig_registry_unsub = self.hass.bus.async_listen(
+            er.EVENT_ENTITY_REGISTRY_UPDATED, self._tankerkoenig_on_registry_event
+        )
+        self._tankerkoenig_rescan()
+
+    def _tankerkoenig_find_price_ids(self) -> list[str]:
+        fuel_type = self._opt(CONF_TANKERKOENIG_FUEL_TYPE)
         from homeassistant.helpers import entity_registry as er
 
         ent_reg = er.async_get(self.hass)
@@ -1627,14 +1665,25 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                     continue
                 if e.entity_id.startswith("sensor.") and e.entity_id.endswith(f"_{fuel_type}"):
                     price_ids.append(e.entity_id)
+        return sorted(price_ids)
+
+    def _tankerkoenig_rescan(self) -> None:
+        """Sucht die Preis-Sensoren und (ver)drahtet die State-Listener neu,
+        falls sich die Liste geaendert hat. Idempotent."""
+        fuel_type = self._opt(CONF_TANKERKOENIG_FUEL_TYPE)
+        price_ids = self._tankerkoenig_find_price_ids()
         if not price_ids:
-            _LOGGER.warning(
-                "ev_assistant: keine Tankerkoenig-Preis-Sensoren fuer Kraftstoffsorte '%s' gefunden",
+            _LOGGER.debug(
+                "ev_assistant: noch keine Tankerkoenig-Preis-Sensoren fuer Kraftstoffsorte '%s' -- warte auf Registry",
                 fuel_type,
             )
-            self._tankerkoenig_notified = True
-            self.hass.async_create_task(self._notify_tankerkoenig_unavailable())
             return
+        if price_ids == self._tankerkoenig_price_ids:
+            return
+        self._tankerkoenig_price_ids = price_ids
+        if self._tankerkoenig_state_unsub is not None:
+            self._tankerkoenig_state_unsub()
+            self._tankerkoenig_state_unsub = None
 
         def _status_id(price_id: str) -> str:
             station = price_id[len("sensor."):-len(f"_{fuel_type}")]
@@ -1661,17 +1710,69 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             chosen = min(open_prices) if open_prices else (min(all_prices) if all_prices else None)
             if chosen is not None:
                 self._set_verbrenner_price(chosen)
+                self._tankerkoenig_cancel_grace()
                 if self._tankerkoenig_notified:
                     self._tankerkoenig_notified = False
                     self.hass.async_create_task(self._dismiss_tankerkoenig_unavailable())
-            elif not self._tankerkoenig_notified:
+            elif tankerkoenig_should_notify(False, self._tankerkoenig_notified, self._tankerkoenig_grace_expired):
                 self._tankerkoenig_notified = True
                 self.hass.async_create_task(self._notify_tankerkoenig_unavailable())
 
-        self._unsub.append(
-            async_track_state_change_event(self.hass, price_ids + status_ids, _recompute)
+        self._tankerkoenig_recompute = _recompute
+        self._tankerkoenig_state_unsub = async_track_state_change_event(
+            self.hass, price_ids + status_ids, _recompute
         )
         _recompute()
+
+    @callback
+    def _tankerkoenig_on_registry_event(self, event) -> None:
+        """Neuer Tankerkoenig-Sensor in der Entity-Registry -> erneut suchen."""
+        if event.data.get("action") != "create":
+            return
+        fuel_type = self._opt(CONF_TANKERKOENIG_FUEL_TYPE)
+        entity_id = event.data.get("entity_id", "")
+        if entity_id.startswith("sensor.") and entity_id.endswith(f"_{fuel_type}"):
+            self._tankerkoenig_rescan()
+
+    @callback
+    def _tankerkoenig_on_grace_expired(self, _now=None) -> None:
+        """Karenzzeit vorbei: nicht mehr auf die Registry warten; fehlt noch
+        immer jeder gueltige Preis, wird jetzt einmalig gemeldet."""
+        self._tankerkoenig_grace_unsub = None
+        self._tankerkoenig_grace_expired = True
+        if self._tankerkoenig_registry_unsub is not None:
+            self._tankerkoenig_registry_unsub()
+            self._tankerkoenig_registry_unsub = None
+        if self._tankerkoenig_recompute is not None:
+            self._tankerkoenig_recompute()
+        elif not self._tankerkoenig_notified:
+            _LOGGER.warning(
+                "ev_assistant: keine Tankerkoenig-Preis-Sensoren fuer Kraftstoffsorte '%s' gefunden",
+                self._opt(CONF_TANKERKOENIG_FUEL_TYPE),
+            )
+            self._tankerkoenig_notified = True
+            self.hass.async_create_task(self._notify_tankerkoenig_unavailable())
+
+    def _tankerkoenig_cancel_grace(self) -> None:
+        """Erster gueltiger Preis da: Karenzzeit-Timer wird nicht mehr
+        gebraucht (der Registry-Listener bleibt bis zum Shutdown, um spaeter
+        erscheinende weitere Stationen noch aufzunehmen)."""
+        if self._tankerkoenig_grace_unsub is not None:
+            self._tankerkoenig_grace_unsub()
+            self._tankerkoenig_grace_unsub = None
+            # Ab jetzt zaehlt ein wieder ausfallender Preis nicht mehr als
+            # "Start-Rennen", sondern wird sofort gemeldet.
+            self._tankerkoenig_grace_expired = True
+
+    def _tankerkoenig_teardown(self) -> None:
+        for attr in ("_tankerkoenig_grace_unsub", "_tankerkoenig_state_unsub", "_tankerkoenig_registry_unsub"):
+            unsub = getattr(self, attr)
+            if unsub is not None:
+                try:
+                    unsub()
+                except Exception:  # noqa: BLE001
+                    pass
+                setattr(self, attr, None)
 
     def _wire_odo(self) -> None:
         """Kilometerstand: reine Anzeige-Entitaet (kein Erkennungssignal)."""

@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.26] - 2026-09-30
+
+### Fixed
+
+- **"Tankerkönig nicht verfügbar" notification (mobile push + persistent) after every HA restart, and fuel price never picked up if the sensors weren't registered yet** (GitHub issue #1): `_wire_tankerkoenig_price()` ran once at setup and reported "unavailable" immediately whenever no valid price was readable at that instant. At HA startup the Tankerkönig sensors usually still have no state, so this fired on every restart — the persistent notification cleared itself once the first price arrived, but the push message could not be recalled. Worse, if the entity registry contained no matching sensors yet (fresh install, or Tankerkönig set up after EV Assistant), the function gave up completely without registering any listener, so the fuel price stayed unresolved for the rest of the HA session. Now: (1) a 10-minute grace period before any "unavailable" message (cancelled as soon as the first valid price arrives), (2) when no sensors are found yet, EV Assistant listens for new entity-registry entries and wires them as they appear (also picking up further stations added later), (3) `tankerkoenig` was added to the manifest's `after_dependencies` so it loads first when both are present. After the grace period a still-missing price source is reported once, as before.
+
 ## [0.99.25] - 2026-09-29
 
 ### Fixed
