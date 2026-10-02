@@ -81,6 +81,7 @@ from engine import (
     wartung_festes_datum_fortschreiben,
     wartung_status,
     wartung_uebersicht,
+    watt_to_kw,
     weekday_plug_window_profile_from_recent_days,
     weekday_profile_from_recent_days,
     weekday_usage_profile,
@@ -88,6 +89,7 @@ from engine import (
     weekday_usage_profile_window_kwh,
     weekly_balancing_due,
     weekly_balancing_time_ok,
+    wh_to_kwh,
 )
 
 
@@ -4030,3 +4032,30 @@ def test_tankerkoenig_meldung_erst_nach_karenzzeit():
 def test_tankerkoenig_meldung_nur_einmal_und_nie_mit_preis():
     assert tankerkoenig_should_notify(False, True, True) is False
     assert tankerkoenig_should_notify(True, False, True) is False
+
+
+def test_watt_to_kw_normalfall_und_null():
+    assert watt_to_kw(6100) == 6.1
+    assert watt_to_kw(6100.0) == pytest.approx(6.1)
+    assert watt_to_kw(0) == 0.0
+
+
+def test_watt_to_kw_fehlende_oder_ungueltige_werte():
+    assert watt_to_kw(None) is None
+    assert watt_to_kw("6100") is None
+    assert watt_to_kw(True) is None
+    assert watt_to_kw(float("nan")) is None
+    assert watt_to_kw(float("inf")) is None
+
+
+def test_watt_to_kw_negativ_wird_auf_null_begrenzt():
+    assert watt_to_kw(-50) == 0.0
+
+
+def test_wh_to_kwh_umrechnung_und_ungueltig():
+    assert wh_to_kwh(250.0) == 0.25
+    assert wh_to_kwh(0) == 0.0
+    assert wh_to_kwh(None) is None
+    assert wh_to_kwh(False) is None
+    # anders als watt_to_kw() keine Begrenzung nach unten
+    assert wh_to_kwh(-1000) == -1.0

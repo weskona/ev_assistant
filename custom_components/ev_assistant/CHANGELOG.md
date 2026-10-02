@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.27] - 2026-10-02
+
+### Fixed
+
+- **Charging power shown in watts instead of kilowatts (factor 1000 too high)** (GitHub issue #4: "6100 kW instead of 6.1 kW"): evcc reports a loadpoint's `chargePower` in **watts**, but it was passed to the panel unchanged and shown with a "kW" label. The panel's "is charging" threshold (`> 0.05`, i.e. 50 W if kW) was also being compared against raw watts. Fixed once at the source (new `engine.watt_to_kw()`, used in `evcc_live_attrs()`) so the displayed value and the threshold are consistent; negative/invalid values map to 0/none. The panel code itself is unchanged.
+- **evcc `sessionEnergy` (watt-hours) was stored and treated as kWh, so the home-charging "price per kWh" was off by a factor of 1000** (found while fixing the above): evcc's `sessionEnergy` is in **Wh**, but `home_sessions` stored it as `kwh` (e.g. `250.0` next to a cost of `0.02` €, i.e. really 0.25 kWh). The solar-share average was unaffected (it only uses ratios), but `preis_je_kwh` (total cost ÷ summed "kWh") was ~1000× too low. New sessions are now converted (`engine.wh_to_kwh()`), the live `session_energy` attribute is in kWh as well, and **existing `home_sessions` are migrated once on startup** (÷ 1000, guarded by the new `home_sessions_wh_migrated` flag since the division is not idempotent).
+
 ## [0.99.26] - 2026-09-30
 
 ### Fixed

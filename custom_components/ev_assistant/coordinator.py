@@ -252,12 +252,14 @@ from .engine import (
     vehicle_discharge_update,
     wartung_festes_datum_fortschreiben,
     wartung_uebersicht,
+    watt_to_kw,
     weekday_plug_window_profile_from_recent_days,
     weekday_profile_from_recent_days,
     weekday_usage_profile_from_totals,
     weekday_usage_profile_window_kwh,
     weekly_balancing_due,
     weekly_balancing_time_ok,
+    wh_to_kwh,
 )
 from .evcc_client import EvccClient
 
@@ -452,6 +454,7 @@ def _empty_data() -> dict:
         "weekday_kwh_exact_totals": {},
         "weekday_km_est_totals": {},
         "lifetime_baselines_migrated": False,
+        "home_sessions_wh_migrated": False,
         # Haus-Nutzungsprofil (siehe _update_house_usage_profile()) fuer die
         # evcc-Modus-/SoC-Steuerung -- bewusst einfach gehalten, analog
         # odo_periods/kwh_periods (nur die "day"-Periode wird gebraucht).
@@ -854,6 +857,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # oben laufen, damit ein gerade erst getaggter Punkt sofort mit
         # umbenannt wird.
         if self._migrate_wartung_hu_name():
+            await self._save()
+        # Migration: home_sessions-"kwh" war bis 0.99.26 in Wh gespeichert
+        # (siehe _migrate_home_sessions_wh()). Sofort persistiert, aus
+        # demselben Grund wie oben -- die Division ist NICHT idempotent.
+        if self._migrate_home_sessions_wh():
             await self._save()
         # Migration: Kraftstoffpreis-Durchschnitt von zeit- auf km-gewichtet
         # (siehe _migrate_verbrenner_price_weighting()). Ebenfalls sofort
@@ -1284,7 +1292,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         loadpoint = self._current_loadpoint() or {}
         statistics = (site.get("statistics") or {}).get("total") or {}
         return {
-            "charge_power": loadpoint.get("chargePower"),
+            # evcc liefert chargePower in WATT -- das Panel erwartet kW (Anzeige
+            # und isCharging-Schwelle "> 0.05"), siehe engine.watt_to_kw().
+            "charge_power": watt_to_kw(loadpoint.get("chargePower")),
             "charging": loadpoint.get("charging"),
             # "connected" ist eine ANDERE Frage als "charging": ein Fahrzeug
             # kann angesteckt UND verbunden sein, ohne gerade Leistung zu
@@ -1311,7 +1321,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # ohne "effective*"-Felder.
             "min_soc": loadpoint.get("effectiveMinSoc", loadpoint.get("minSoc")),
             "limit_soc": loadpoint.get("effectiveLimitSoc", loadpoint.get("limitSoc")),
-            "session_energy": loadpoint.get("sessionEnergy"),
+            "session_energy": wh_to_kwh(loadpoint.get("sessionEnergy")),
             "session_price": loadpoint.get("sessionPrice"),
             "session_solar_pct": loadpoint.get("sessionSolarPercentage"),
             "charge_duration": loadpoint.get("chargeDuration"),
@@ -2252,9 +2262,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # in Waehrung, KEIN Preis/kWh -- das getrennte
             # "sessionPricePerKWh" waere Waehrung/kWh. Deshalb bei der
             # Aggregation nur aufsummieren, nicht mit kWh multiplizieren.
-            session_kwh = self._evcc_session_value("sessionEnergy")
+            # sessionEnergy kommt von evcc in Wh (nicht kWh) -- siehe
+            # engine.wh_to_kwh() / _migrate_home_sessions_wh().
+            session_kwh = wh_to_kwh(self._evcc_session_value("sessionEnergy"))
             if session_kwh is not None and session_kwh > 0:
-                session_rec: dict = {"ts": time.time(), "kwh": round(session_kwh, 2)}
+                session_rec: dict = {"ts": time.time(), "kwh": round(session_kwh, 3)}
                 solar_pct = self._evcc_session_value("sessionSolarPercentage")
                 if solar_pct is not None:
                     session_rec["solar_pct"] = round(solar_pct, 1)
@@ -3721,6 +3733,29 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 punkt["zeit_intervall_monate"] = max(1, round(alte_tage / WARTUNG_TAGE_PRO_MONAT))
             geaendert = True
         return geaendert
+
+    def _migrate_home_sessions_wh(self) -> bool:
+        """Einmalige Migration bestehender home_sessions: evccs
+        "sessionEnergy" ist in Wh, wurde aber bis 0.99.26 unveraendert als
+        "kwh" gespeichert (z.B. 250.0 bei 0.02 EUR Kosten = 0.25 kWh). Das
+        verfaelschte engine.home_session_solar_and_cost()["preis_je_kwh"]
+        (Kosten / "kWh"-Summe) um Faktor 1000 nach unten. Alle bisher
+        gespeicherten Eintraege stammen aus dem direkten evcc-Zugriff (also
+        Wh), eine Heuristik pro Eintrag ist daher unnoetig und waere bei
+        kleinen Sessions sogar mehrdeutig. NICHT idempotent -- deshalb das
+        Flag "home_sessions_wh_migrated". Frische Installationen ohne
+        Sessions werden nur markiert. Gibt True zurueck, wenn sich etwas
+        geaendert hat (Aufrufer muss dann sofort speichern, siehe
+        async_setup())."""
+        if self.data.get("home_sessions_wh_migrated"):
+            return False
+        for rec in self.data.get("home_sessions") or []:
+            kwh = rec.get("kwh") if isinstance(rec, dict) else None
+            if isinstance(kwh, (int, float)) and not isinstance(kwh, bool):
+                rec["kwh"] = round(kwh / 1000.0, 3)
+        self.data["home_sessions_wh_migrated"] = True
+        self._home_capacity_version += 1
+        return True
 
     def _migrate_wartung_hu_typ(self) -> bool:
         """Einmalige Migration bestehender HU/TUEV-Wartungspunkte von vor

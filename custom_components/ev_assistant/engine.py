@@ -3197,3 +3197,32 @@ def tankerkoenig_should_notify(has_price: bool, already_notified: bool, grace_ex
     der Karenzzeit -- beim HA-Start haben die Sensoren oft noch keinen State,
     das ist kein Ausfall."""
     return (not has_price) and (not already_notified) and grace_expired
+
+
+def _scale_down_1000(value) -> Optional[float]:
+    """Gemeinsame Grundlage fuer watt_to_kw()/wh_to_kwh(): Division durch
+    1000 fuer evccs Rohwerte (W bzw. Wh). None bei fehlendem/nicht
+    numerischem/nicht endlichem Wert (bool zaehlt bewusst NICHT als Zahl,
+    obwohl es in Python ein int ist)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value != value or value in (float("inf"), float("-inf")):
+        return None
+    return float(value) / 1000.0
+
+
+def watt_to_kw(value) -> Optional[float]:
+    """evccs chargePower (Watt) -> kW fuers Panel (siehe coordinator.py::
+    evcc_live_attrs()). Bugreport Issue #4: der Rohwert wurde bisher
+    unveraendert mit kW-Label angezeigt (6100 W als "6100 kW"). Negative
+    Werte (evcc-Rauschen / Rueckspeisung) werden auf 0 begrenzt -- eine
+    Ladeleistung kann nicht negativ sein."""
+    kw = _scale_down_1000(value)
+    return None if kw is None else max(kw, 0.0)
+
+
+def wh_to_kwh(value) -> Optional[float]:
+    """evccs sessionEnergy (Wh, NICHT kWh wie der Name nahelegt) -> kWh.
+    Gleiche Gueltigkeitspruefung wie watt_to_kw(), aber ohne Begrenzung
+    nach unten (siehe coordinator.py::_set_home())."""
+    return _scale_down_1000(value)
