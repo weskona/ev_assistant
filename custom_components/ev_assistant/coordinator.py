@@ -5593,6 +5593,31 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # last_known-Schutz gilt nur noch fuer die Rueckfallstufen 2/3.
             return raw
         last_known = self.data.get("home_kwh_last_known")
+        start = self.data.get("savings_home_kwh_start")
+        if (
+            last_known is not None
+            and raw < last_known
+            and isinstance(start, (int, float))
+            and abs(start - last_known) <= 0.01
+        ):
+            # Selbstheilung (Issue #1, fugazzy): Startwert == Hoechststand
+            # bei GEFALLENEM Rohwert ist in gesundem Betrieb unmoeglich (bei
+            # Stufe 3 ist der Startwert ca. 0, der Hoechststand waechst mit
+            # dem Rohwert) -- es ist die Signatur eines frueheren Resets
+            # (siehe async_reset_lifetime_kpis()), der wallbox_energy_start
+            # zurueckgesetzt, den Hoechststand aber stehen gelassen hat:
+            # "seit Einrichtung" blieb dann bis zum Ueberschreiten des alten
+            # Stands bei 0. Beide Anker auf den aktuellen Rohwert neu setzen,
+            # der Wert waechst ab jetzt normal weiter.
+            self.data["home_kwh_last_known"] = raw
+            self.data["savings_home_kwh_start"] = raw
+            self._log_event(
+                "home_baseline_repariert",
+                f"Heimladen-kWh: Hoechststand {last_known} lag ueber dem aktuellen Wert {raw} "
+                "(frueherer Reset) -- Anker neu gesetzt",
+            )
+            self._save_soon()
+            return raw
         guarded = raw if last_known is None else max(raw, last_known)
         if guarded != last_known:
             self.data["home_kwh_last_known"] = guarded
@@ -5696,6 +5721,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 self.data["odo_start"] = odo
         if self._wallbox_energy is not None:
             self.data["wallbox_energy_start"] = self._wallbox_energy
+        # Hoechststand (Monotonie-Schutz der Rueckfallstufen 2/3, siehe
+        # _home_kwh()) mit zuruecksetzen -- sonst liefert _home_kwh() gleich
+        # unten trotz des gerade neu gesetzten wallbox_energy_start weiter
+        # den ALTEN Hoechststand, und "seit Einrichtung" bleibt bis zu dessen
+        # Ueberschreiten bei 0 (Issue #1, fugazzy: 236 kWh eingefroren).
+        self.data["home_kwh_last_known"] = None
         home_kwh = self._home_kwh()
         if home_kwh is not None:
             self.data["savings_home_kwh_start"] = (

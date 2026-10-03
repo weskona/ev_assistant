@@ -2,6 +2,14 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.29] - 2026-10-03
+
+### Fixed
+
+- **"Kennzahlen seit Einrichtung" reset froze home charging at the old value without evcc** (GitHub issue #1, fugazzy: "Heimladen 236 kWh 55,20 €, but EV 0 € in the combustion comparison and 0 € this month, even though I charged at home"): the reset moved the wallbox-meter anchor (`wallbox_energy_start`) to "now", so the wallbox-based home-kWh counter started again at 0 — but the monotonic high-water mark (`home_kwh_last_known`) kept the old value. `_home_kwh()` therefore kept returning 236, the new start value was set to 236 as well, and "since setup" stayed at 0 until another 236 kWh had been charged. The reset now clears the high-water mark first. Not affected: installs using evcc's session log (since 0.99.28 they have no such guard).
+- **Self-repair for installs already frozen this way**: if the wallbox/statistics-based value is *below* the high-water mark while the stored start value equals that high-water mark (impossible in healthy operation), both anchors are set to the current value and the event log notes `home_baseline_repariert`. The displayed value then simply continues from the next charge. Nothing is lost that the reset hadn't already zeroed on purpose.
+- Note: the home-charging *cost* shown without evcc was never zero by itself — it is derived as home kWh × home price whenever no evcc cost is available, so it was frozen together with the kWh. A solar-share-aware cost estimate without evcc remains a separate follow-up.
+
 ## [0.99.28] - 2026-10-03
 
 ### Fixed

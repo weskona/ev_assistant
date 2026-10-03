@@ -2592,3 +2592,65 @@ async def test_evcc_mode_targets_balancing_faellig_ohne_pv_prognose_fallback_stu
     coordinator._local_hour = lambda: 23
     targets = coordinator._evcc_mode_targets()
     assert targets["balancing_aktiv"] is True
+
+
+# ----- Issue #1 (fugazzy): Reset einfrierte "seit Einrichtung" (Stufe 3) -------
+
+async def _make_wallbox_coordinator(hass, coordinators, entry_id):
+    from custom_components.ev_assistant.const import CONF_HOME_PRICE_KWH, CONF_WALLBOX_ENERGY_ENTITY
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, entry_id,
+        options={CONF_WALLBOX_ENERGY_ENTITY: "sensor.wb", CONF_HOME_PRICE_KWH: 0.23},
+    )
+    coordinator.data["wallbox_energy_start"] = 1000.0
+    coordinator.data["savings_home_kwh_start"] = 0.0
+    coordinator._wallbox_energy = 1236.0
+    assert coordinator._home_kwh() == 236.0
+    return coordinator
+
+
+async def test_reset_lifetime_kpis_stufe3_waechst_danach_weiter(hass, coordinators):
+    coordinator = await _make_wallbox_coordinator(hass, coordinators, "rst1")
+    await coordinator.async_reset_lifetime_kpis()
+    assert coordinator._home_kwh() == 0.0
+    assert coordinator._home_kwh_since_setup() == 0.0
+
+    coordinator._wallbox_energy = 1256.0  # 20 kWh Heimladen nach dem Reset
+    assert coordinator._home_kwh() == 20.0
+    assert coordinator._home_kwh_since_setup() == 20.0
+
+
+async def test_reset_lifetime_kpis_stufe3_mit_vorgabewert(hass, coordinators):
+    coordinator = await _make_wallbox_coordinator(hass, coordinators, "rst2")
+    await coordinator.async_reset_lifetime_kpis(home_kwh_since_setup=50.0)
+    assert coordinator._home_kwh_since_setup() == 50.0
+    coordinator._wallbox_energy = 1246.0
+    assert coordinator._home_kwh_since_setup() == 60.0
+
+
+async def test_home_kwh_stufe3_heilt_eingefrorenen_stand_nach_altem_reset(hass, coordinators):
+    """Zustand wie bei fugazzy nach dem Reset VOR dem Fix: wallbox_energy_start
+    neu, Hoechststand == Startwert == 236 bei Rohwert 20."""
+    coordinator = await _make_wallbox_coordinator(hass, coordinators, "rst3")
+    coordinator.data["wallbox_energy_start"] = 1236.0
+    coordinator._wallbox_energy = 1256.0  # raw = 20
+    coordinator.data["home_kwh_last_known"] = 236.0
+    coordinator.data["savings_home_kwh_start"] = 236.0
+
+    assert coordinator._home_kwh() == 20.0
+    assert coordinator._home_kwh_since_setup() == 0.0
+    assert any(e["kategorie"] == "home_baseline_repariert" for e in coordinator.data["event_log"])
+
+    coordinator._wallbox_energy = 1261.0  # +5 kWh danach
+    assert coordinator._home_kwh_since_setup() == 5.0
+
+
+async def test_home_kwh_stufe3_schutz_bleibt_bei_gesundem_rueckgang(hass, coordinators):
+    """Fallender Rohwert OHNE Reset-Signatur (Startwert != Hoechststand,
+    "seit Einrichtung" > 0) bleibt wie bisher auf dem Hoechststand geklemmt."""
+    coordinator = await _make_wallbox_coordinator(hass, coordinators, "rst4")
+    assert coordinator._home_kwh_since_setup() == 236.0
+    coordinator._wallbox_energy = 1200.0  # Zaehler springt zurueck, raw = 200
+    assert coordinator._home_kwh() == 236.0
+    assert not any(e["kategorie"] == "home_baseline_repariert" for e in coordinator.data.get("event_log", []))
