@@ -14,6 +14,7 @@ from engine import (
     ac_dc_breakdown,
     ac_dc_breakdown_from_totals,
     ac_dc_bucket_key,
+    accumulate_new_sessions,
     add_months,
     aggregate_sessions_by_vehicle,
     anbieter_breakdown,
@@ -60,12 +61,15 @@ from engine import (
     normalize_anbieter,
     normalize_evcc_mode,
     normalize_vehicle_label,
+    open_session_sums,
+    parse_evcc_timestamp,
     pop_pending,
     range_km_to_soc_percent,
     remaining_today_kwh,
     remove_weekday_day,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
+    session_totals_since,
     soc_reached_full_charge,
     split_by_age,
     tankerkoenig_should_notify,
@@ -4059,3 +4063,101 @@ def test_wh_to_kwh_umrechnung_und_ungueltig():
     assert wh_to_kwh(False) is None
     # anders als watt_to_kw() keine Begrenzung nach unten
     assert wh_to_kwh(-1000) == -1.0
+
+
+def _sess(created, finished="2026-10-03T12:00:00+02:00", vehicle="eRifter", energy=10.0, price=2.0):
+    return {"created": created, "finished": finished, "vehicle": vehicle, "chargedEnergy": energy, "price": price}
+
+
+def test_parse_evcc_timestamp_nanosekunden_und_ungueltig():
+    assert parse_evcc_timestamp("2026-10-03T10:45:57.530763933+02:00") == pytest.approx(1791017157.530763)
+    assert parse_evcc_timestamp(None) is None
+    assert parse_evcc_timestamp("kaputt") is None
+    # Go-Nullzeit (laufende Session) ist ein gueltiger, aber <= 0 Epoch
+    assert parse_evcc_timestamp("0001-01-01T00:00:00Z") < 0
+
+
+def test_wasserzeichen_alle_sessions_neuer():
+    sessions = [_sess("2026-10-01T10:00:00+02:00", energy=5), _sess("2026-10-02T10:00:00+02:00", energy=7, price=1)]
+    wm, kwh, cost = accumulate_new_sessions(sessions, {}, {}, {})
+    assert kwh == {"eRifter": 12.0} and cost == {"eRifter": 3.0}
+    assert wm["eRifter"] == parse_evcc_timestamp("2026-10-02T10:00:00+02:00")
+
+
+def test_wasserzeichen_alle_sessions_aelter_zaehlt_nichts():
+    sessions = [_sess("2026-10-01T10:00:00+02:00")]
+    wm0 = {"eRifter": parse_evcc_timestamp("2026-10-02T00:00:00+02:00")}
+    wm, kwh, cost = accumulate_new_sessions(sessions, wm0, {"eRifter": 50.0}, {"eRifter": 9.0})
+    assert kwh == {"eRifter": 50.0} and cost == {"eRifter": 9.0} and wm == wm0
+
+
+def test_wasserzeichen_gemischt_und_idempotent():
+    sessions = [_sess("2026-10-01T10:00:00+02:00", energy=5), _sess("2026-10-03T10:00:00+02:00", energy=7)]
+    wm0 = {"eRifter": parse_evcc_timestamp("2026-10-02T00:00:00+02:00")}
+    wm, kwh, _ = accumulate_new_sessions(sessions, wm0, {"eRifter": 100.0}, {})
+    assert kwh["eRifter"] == 107.0
+    wm2, kwh2, _ = accumulate_new_sessions(sessions, wm, kwh, {})
+    assert kwh2 == kwh and wm2 == wm
+
+
+def test_wasserzeichen_leere_liste_und_eingabe_unveraendert():
+    acc = {"eRifter": 3.0}
+    wm, kwh, cost = accumulate_new_sessions([], {}, acc, {})
+    assert kwh == {"eRifter": 3.0} and wm == {} and cost == {}
+    assert acc == {"eRifter": 3.0}
+
+
+def test_wasserzeichen_robust_bei_fehlendem_created_und_fahrzeug():
+    sessions = [
+        {"vehicle": "eRifter", "finished": "2026-10-03T12:00:00+02:00", "chargedEnergy": 9},  # kein created
+        {"created": "murks", "finished": "2026-10-03T12:00:00+02:00", "vehicle": "eRifter", "chargedEnergy": 9},
+        _sess("2026-10-01T10:00:00+02:00", vehicle=""),
+        "kein dict",
+        _sess("2026-10-01T10:00:00+02:00", energy="x", price=None),
+    ]
+    wm, kwh, cost = accumulate_new_sessions(sessions, {}, {}, {})
+    assert kwh == {"eRifter": 0.0} and cost == {"eRifter": 0.0}
+
+
+def test_wasserzeichen_laufende_session_wird_nicht_eingefroren():
+    laufend = _sess("2026-10-03T10:00:00+02:00", finished="0001-01-01T00:00:00Z", energy=4)
+    wm, kwh, _ = accumulate_new_sessions([laufend], {}, {}, {})
+    assert kwh == {} and wm == {}
+    assert open_session_sums([laufend], wm) == {"eRifter": {"chargedEnergy": 4.0, "cost": 2.0}}
+    # nach Ende wird sie gezaehlt und taucht nicht mehr als "offen" auf
+    fertig = dict(laufend, finished="2026-10-03T12:00:00+02:00", chargedEnergy=11)
+    wm, kwh, _ = accumulate_new_sessions([fertig], wm, kwh, {})
+    assert kwh == {"eRifter": 11.0}
+    assert open_session_sums([fertig], wm) == {}
+
+
+def test_wasserzeichen_pro_fahrzeug_getrennt():
+    sessions = [
+        _sess("2026-10-01T10:00:00+02:00", vehicle="A", energy=1),
+        _sess("2026-10-02T10:00:00+02:00", vehicle="B", energy=2),
+    ]
+    wm, kwh, _ = accumulate_new_sessions(sessions, {}, {}, {})
+    assert kwh == {"A": 1.0, "B": 2.0}
+    assert set(wm) == {"A", "B"}
+
+
+def test_wasserzeichen_summe_bleibt_trotz_herausfallender_sessions():
+    # Kern von Issue #5: evccs Log verliert die aelteste Session -- die
+    # persistierte Summe darf nicht sinken.
+    s1, s2, s3 = (_sess(f"2026-10-0{d}T10:00:00+02:00", energy=10) for d in (1, 2, 3))
+    wm, kwh, _ = accumulate_new_sessions([s1, s2], {}, {}, {})
+    assert kwh["eRifter"] == 20.0
+    wm, kwh, _ = accumulate_new_sessions([s2, s3], wm, kwh, {})
+    assert kwh["eRifter"] == 30.0
+
+
+def test_session_totals_since_filter_und_baseline_reparatur_beispiel():
+    sessions = [
+        _sess("2026-09-01T10:00:00+02:00", energy=100, price=20),
+        _sess("2026-10-01T10:00:00+02:00", energy=10, price=2),
+        _sess("2026-10-02T10:00:00+02:00", energy=5, price=1),
+    ]
+    since = parse_evcc_timestamp("2026-09-27T00:00:00+02:00")
+    assert session_totals_since(sessions, "eRifter", None) == (115.0, 23.0)
+    assert session_totals_since(sessions, "eRifter", since) == (15.0, 3.0)
+    assert session_totals_since(sessions, "anderes", since) == (0.0, 0.0)

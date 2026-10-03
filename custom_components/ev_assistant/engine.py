@@ -22,7 +22,7 @@ import re
 import unicodedata
 from calendar import monthrange
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 
@@ -2274,6 +2274,114 @@ def aggregate_sessions_by_vehicle(sessions: list) -> dict:
         entry["cost"] += cost
         entry["chargeDuration"] += duration_s
     return sums
+
+
+def parse_evcc_timestamp(value) -> Optional[float]:
+    """evccs "created"/"finished" (RFC3339 MIT NANOSEKUNDEN und Zeitzone,
+    z.B. "2026-10-03T10:45:57.530763933+02:00") -> UTC-Epoch. None bei
+    fehlendem/ungueltigem Wert (kein Absturz). Ein noch LAUFENDE Session
+    meldet evcc mit Go-Nullzeit ("0001-01-01T00:00:00Z") -- wird als
+    regulaerer (stark negativer) Epoch zurueckgegeben, die Aufrufer
+    (accumulate_new_sessions()) behandeln Werte <= 0 als "nicht beendet"."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value).timestamp()
+    except (ValueError, OverflowError, OSError):
+        return None
+
+
+def _session_number(session: dict, key: str) -> float:
+    value = session.get(key, 0)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    return float(value)
+
+
+def accumulate_new_sessions(
+    sessions: list,
+    watermarks: dict,
+    kwh_acc: dict,
+    cost_acc: dict,
+) -> tuple[dict, dict, dict]:
+    """Wasserzeichen-Verfahren fuer evccs Ladelogbuch (siehe coordinator.py::
+    _refresh_evcc_sessions()): addiert nur BEENDETE Sessions (evcc-Feld
+    "finished" gesetzt, nicht die Go-Nullzeit), deren "created" strikt NEUER
+    ist als das je Fahrzeug gespeicherte Wasserzeichen, zur persistierten
+    Laufsumme (kWh aus "chargedEnergy", Kosten aus "price") und setzt das
+    Wasserzeichen auf das neueste gezaehlte "created". Einmal gezaehlte
+    Energie/Kosten bleiben damit bestehen, auch wenn die Session spaeter aus
+    evccs Log herausfaellt (geloescht/rollierendes Fenster/DB-Reset) -- und
+    ein Teilwert einer noch laufenden Session wird nie eingefroren.
+
+    Rein funktional: die Eingabe-Dicts bleiben unveraendert, Rueckgabe ist
+    (watermarks, kwh_acc, cost_acc) als NEUE Dicts. Sessions ohne
+    "vehicle" oder ohne lesbares "created" werden ausgelassen. Idempotent --
+    ein zweiter Lauf mit derselben Session-Liste aendert nichts."""
+    wm = dict(watermarks)
+    kwh = dict(kwh_acc)
+    cost = dict(cost_acc)
+    fresh = []
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        vehicle = session.get("vehicle")
+        if not vehicle:
+            continue
+        created = parse_evcc_timestamp(session.get("created"))
+        finished = parse_evcc_timestamp(session.get("finished"))
+        if created is None or finished is None or finished <= 0:
+            continue
+        if created <= wm.get(vehicle, float("-inf")):
+            continue
+        fresh.append((created, vehicle, _session_number(session, "chargedEnergy"), _session_number(session, "price")))
+    for created, vehicle, energy, price in sorted(fresh, key=lambda x: x[0]):
+        kwh[vehicle] = kwh.get(vehicle, 0.0) + energy
+        cost[vehicle] = cost.get(vehicle, 0.0) + price
+        wm[vehicle] = created
+    return wm, kwh, cost
+
+
+def open_session_sums(sessions: list, watermarks: dict) -> dict:
+    """Energie/Kosten der NOCH LAUFENDEN (noch nicht beendeten) Sessions je
+    Fahrzeug, die neuer als das Wasserzeichen sind -- wird NUR fuer die
+    Live-Anzeige temporaer auf die persistierte Laufsumme aufgeschlagen
+    (nie persistiert, siehe accumulate_new_sessions()). Rueckgabe:
+    {vehicle: {"chargedEnergy": kWh, "cost": Waehrung}}."""
+    sums: dict = {}
+    for session in sessions:
+        if not isinstance(session, dict):
+            continue
+        vehicle = session.get("vehicle")
+        if not vehicle:
+            continue
+        created = parse_evcc_timestamp(session.get("created"))
+        finished = parse_evcc_timestamp(session.get("finished"))
+        if created is None or (finished is not None and finished > 0):
+            continue
+        if created <= watermarks.get(vehicle, float("-inf")):
+            continue
+        entry = sums.setdefault(vehicle, {"chargedEnergy": 0.0, "cost": 0.0})
+        entry["chargedEnergy"] += _session_number(session, "chargedEnergy")
+        entry["cost"] += _session_number(session, "price")
+    return sums
+
+
+def session_totals_since(sessions: list, vehicle: str, since_ts: Optional[float]) -> tuple[float, float]:
+    """(kWh, Kosten) ALLER aktuell sichtbaren Sessions (beendet oder laufend)
+    eines Fahrzeugs, mit "created" >= since_ts (None = ohne Zeitgrenze) --
+    Grundlage der Baseline-Reparatur in coordinator.py::
+    _accumulate_home_sessions()."""
+    kwh = cost = 0.0
+    for session in sessions:
+        if not isinstance(session, dict) or session.get("vehicle") != vehicle:
+            continue
+        created = parse_evcc_timestamp(session.get("created"))
+        if since_ts is not None and (created is None or created < since_ts):
+            continue
+        kwh += _session_number(session, "chargedEnergy")
+        cost += _session_number(session, "price")
+    return kwh, cost
 
 
 def charging_location_breakdown(

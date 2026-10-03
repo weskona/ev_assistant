@@ -2,6 +2,17 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.28] - 2026-10-03
+
+### Fixed
+
+- **Home-charging kWh ("Ladeort-Aufschlüsselung" / overview) did not add up new charging sessions** (GitHub issue #5): the structural cause, as opposed to the symptom treatment in 0.99.19–0.99.22. Two things combined:
+  1. **Start race**: right after HA started, before the first evcc sessions request had finished, `_home_kwh()` fell back to evcc's *site-wide lifetime* statistic (`statistics.total.chargedKWh`) and stored that as both the "since setup" start value and the monotonic high-water mark (`home_kwh_last_known`). The real per-vehicle session sum never reaches that number, so "since setup" stayed at 0 forever (the cost figure was unaffected — it has no such fallback). The reporter's export shows exactly this: start = last-known = 2370.0 while the sessions only add up to ~200 kWh.
+  2. **Re-summing the whole evcc log on every refresh**: the sum could structurally never exceed what evcc's session log currently shows. The 0.99.19+ "never decrease" guard only hid drops, it did not fix this.
+- **New approach — watermark instead of live re-summing**: per vehicle, the `created` timestamp of the last counted session is persisted (`home_session_watermark`) together with running totals (`home_kwh_accumulated`, `home_cost_accumulated`). On each refresh only *finished* sessions newer than the watermark are added once. Energy/cost already counted stays counted even if the session later disappears from evcc's log (deleted, rolling window, DB reset). A still-running session is added only temporarily for the live display and never frozen at a partial value. `_home_kwh()` also no longer falls back to the site-wide statistic while the first sessions request is still pending.
+- **Migration for existing installs** (runs once per vehicle, noted in the event log when it changes something): the running total starts at `max(visible session sum, previous high-water mark)`, so the displayed value never drops and also does not jump up (sessions that evcc already lost cannot be reconstructed). **Poisoned baselines are repaired**: if the stored "since setup" start value is larger than everything evcc's log can show — impossible in healthy operation — it is reset so that "since setup" counts the sessions created since the integration was set up. Affected installs will therefore see their home-charging kWh/cost **jump up once to the correct value**; that is the fix, not a new bug.
+- The period-baseline self-healing from 0.99.19–0.99.22 is intentionally kept: the watermark prevents new breaks, but the one-time baseline repair can lower the total once, which that logic then absorbs.
+
 ## [0.99.27] - 2026-10-02
 
 ### Fixed

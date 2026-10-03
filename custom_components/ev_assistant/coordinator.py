@@ -192,6 +192,7 @@ from .engine import (
     TripDetector,
     TripSample,
     ac_dc_breakdown_from_totals,
+    accumulate_new_sessions,
     aggregate_sessions_by_vehicle,
     anbieter_breakdown_from_totals,
     append_recent_weekday_day,
@@ -232,12 +233,14 @@ from .engine import (
     net_need_after_pv_kwh,
     normalize_evcc_mode,
     normalize_vehicle_label,
+    open_session_sums,
     pop_pending,
     range_km_to_soc_percent,
     remaining_today_kwh,
     remove_weekday_day,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
+    session_totals_since,
     soc_reached_full_charge,
     split_by_age,
     tankerkoenig_should_notify,
@@ -357,6 +360,13 @@ def _empty_data() -> dict:
         "savings_home_kwh_start": None,
         "savings_home_cost_start": None,
         "home_kwh_last_known": None,
+        # Wasserzeichen-Verfahren fuer evccs Ladelogbuch (siehe engine.
+        # accumulate_new_sessions()/_accumulate_home_sessions()): je Fahrzeug
+        # "created" der zuletzt gezaehlten Session sowie die persistierten
+        # Laufsummen kWh/Kosten.
+        "home_session_watermark": {},
+        "home_kwh_accumulated": {},
+        "home_cost_accumulated": {},
         "home_cost_last_known": None,
         "detector_state": None,
         "soc_thresholds_notified": [],
@@ -724,6 +734,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._evcc_client: Optional[EvccClient] = None
         self._evcc_state: Optional[dict] = None
         self._evcc_session_sums: dict = {}
+        # Noch LAUFENDE evcc-Sessions je Fahrzeug (nur temporaer, nie
+        # persistiert -- siehe engine.open_session_sums()) und ob der erste
+        # Sessions-Abruf schon versucht wurde (siehe _home_kwh()).
+        self._evcc_open_sums: dict = {}
+        self._evcc_sessions_loaded: bool = False
         # Debounce-Zustand fuer engine.apply_opportunistic_surplus_target()
         # (siehe dortigen Docstring) -- rein im Arbeitsspeicher, analog
         # _soc_scope_issue_active: ein Neustart faengt konservativ bei
@@ -1197,6 +1212,67 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # Praeferenz zwischenzeitlich direkt in evcc geaendert hat.
             self.data["evcc_battery_priority_baseline_soc"] = int(current_priority_soc)
 
+    def _accumulate_home_sessions(self, sessions: list) -> None:
+        """Wasserzeichen-Verfahren (Issue #5): beendete evcc-Sessions werden
+        EINMALIG zur persistierten Laufsumme addiert (siehe engine.
+        accumulate_new_sessions()), statt bei jedem Refresh das komplette --
+        moeglicherweise verkuerzte -- Log neu zu summieren. Die laufende
+        Session wird nur temporaer aufgeschlagen (self._evcc_open_sums).
+
+        Erstlauf je Fahrzeug (kein Wasserzeichen gespeichert) = Migration
+        von Bestandsinstallationen:
+        - Normalfall: Laufsumme = max(Summe der sichtbaren Sessions,
+          bisheriger Hoechststand home_kwh_last_known/_cost_last_known) --
+          der angezeigte Wert faellt also nie und springt auch nicht hoch
+          (verlorene Sessions sind ohnehin nicht rekonstruierbar).
+        - VERGIFTETE Baseline: liegt savings_home_kwh_start (bzw. _cost_)
+          ueber der Summe aller sichtbaren Sessions, ist das bei gesundem
+          Betrieb unmoeglich -- Ursache war ein Start-Rennen, bei dem
+          _home_kwh() vor dem ersten Sessions-Abruf auf evccs STANDORTWEITE
+          Lifetime-Statistik zurueckfiel (Issue #2/#5) und diese als Start-
+          und Hoechstwert festschrieb, den die echte Summe nie erreicht ->
+          "seit Einrichtung" blieb dauerhaft 0. Reparatur: Start so setzen,
+          dass "seit Einrichtung" die Sessions ab Einrichtungsdatum des
+          Config-Entries summiert, last_known verwerfen, im Event-Log
+          vermerken."""
+        veh = self._evcc_vehicle_key()
+        wm_store = self.data.setdefault("home_session_watermark", {})
+        first_run = bool(veh) and veh not in wm_store
+        wm, kwh_acc, cost_acc = accumulate_new_sessions(
+            sessions,
+            wm_store,
+            self.data.get("home_kwh_accumulated") or {},
+            self.data.get("home_cost_accumulated") or {},
+        )
+        if first_run:
+            wm.setdefault(veh, 0.0)
+            visible_kwh, visible_cost = session_totals_since(sessions, veh, None)
+            created_at = getattr(self.entry, "created_at", None)
+            since_ts = created_at.timestamp() if created_at is not None else None
+            since_kwh, since_cost = session_totals_since(sessions, veh, since_ts)
+            for acc, visible, since, start_key, last_key, label in (
+                (kwh_acc, visible_kwh, since_kwh, "savings_home_kwh_start", "home_kwh_last_known", "kWh"),
+                (cost_acc, visible_cost, since_cost, "savings_home_cost_start", "home_cost_last_known", "Kosten"),
+            ):
+                start = self.data.get(start_key)
+                last_known = self.data.get(last_key)
+                if isinstance(start, (int, float)) and start > visible + 0.01:
+                    self.data[start_key] = round(max(0.0, visible - since), 2)
+                    self.data[last_key] = None
+                    self._log_event(
+                        "home_baseline_repariert",
+                        f"Heimladen-{label}: Startwert {start} lag ueber der evcc-Session-Summe "
+                        f"{round(visible, 2)} (Start-Rennen/Lifetime-Statistik) -- neu gesetzt, "
+                        f"seit Einrichtung nun {round(since, 2)}",
+                    )
+                elif isinstance(last_known, (int, float)):
+                    acc[veh] = max(acc.get(veh, 0.0), float(last_known))
+                acc.setdefault(veh, 0.0)
+        self.data["home_session_watermark"] = wm
+        self.data["home_kwh_accumulated"] = kwh_acc
+        self.data["home_cost_accumulated"] = cost_acc
+        self._evcc_open_sums = open_session_sums(sessions, wm)
+
     async def _refresh_evcc_sessions(self, _now=None) -> None:
         """evccs Ladelogbuch neu holen und je Fahrzeug aufsummieren (siehe
         engine.aggregate_sessions_by_vehicle()) -- _home_kwh()/_home_cost()
@@ -1228,8 +1304,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if self._evcc_client is None:
             return
         sessions = await self._evcc_client.async_get_sessions()
+        self._evcc_sessions_loaded = True
         self._evcc_session_sums = aggregate_sessions_by_vehicle(sessions)
         if sessions:
+            self._accumulate_home_sessions(sessions)
             self._update_kwh_periods()
             self._update_cost_periods()
             self.async_set_updated_data(self.data)
@@ -5465,7 +5543,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         evcc die praeziseste Quelle ist. Fuer Savings/kWh100km gibt
         _home_kwh_since_setup() das Delta seit ev_assistant-Einrichtung.
 
-        Monotonie-Schutz (max gegen self.data["home_kwh_last_known"]):
+        Seit 0.99.28 (Issue #5) kommt Quelle 1 aus einer PERSISTIERTEN
+        Wasserzeichen-Laufsumme (siehe _accumulate_home_sessions()) statt aus
+        einer Neu-Summierung des evcc-Logs -- monoton per Konstruktion, der
+        last_known-Schutz unten gilt nur noch fuer die Rueckfallstufen 2/3.
+        Bis der erste Sessions-Abruf durch ist, liefert die Funktion None
+        (sonst wuerde Stufe 2 -- evccs standortweite Lifetime-Statistik --
+        als Start-/Hoechstwert festgeschrieben).
+
+        Frueherer Monotonie-Schutz (max gegen self.data["home_kwh_last_known"]):
         Produktionsvorfall 2026-09-29 -- evccs Sessions-Logbuch (Quelle 1)
         behaelt nachweislich NICHT die komplette Historie seit Einrichtung,
         sondern kann aeltere Sessions verlieren (rollierendes Fenster im
@@ -5476,12 +5562,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         cost_periods) einen solchen Ruecksprung faelschlich als echten
         Verbrauchsrueckgang, was die naechste "seit Periodenbeginn"-Anzeige
         (z.B. "kWh heute") auf einen bizarr hohen Wert springen laesst."""
+        if self._evcc_client is not None and not self._evcc_sessions_loaded:
+            # Erster Sessions-Abruf laeuft noch -- NICHT auf evccs standort-
+            # weite Lifetime-Statistik (Stufe 2) ausweichen, die sonst als
+            # Start-/Hoechstwert festgeschrieben wuerde (Issue #5, siehe
+            # _accumulate_home_sessions()). Analog _home_cost().
+            return None
         veh = self._evcc_vehicle_key()
         raw = None
+        from_sessions = False
         if veh:
-            veh_data = self._evcc_session_sums.get(veh)
-            if veh_data:
-                raw = round(veh_data["chargedEnergy"], 2)
+            acc = (self.data.get("home_kwh_accumulated") or {}).get(veh)
+            if acc is not None:
+                open_kwh = (self._evcc_open_sums.get(veh) or {}).get("chargedEnergy", 0.0)
+                raw = round(acc + open_kwh, 2)
+                from_sessions = True
         if raw is None and self._opt(CONF_WALLBOX_ENERGY_ENTITY) and self._evcc_state is not None:
             statistics = self._evcc_state.get("statistics") or {}
             value = (statistics.get("total") or {}).get("chargedKWh")
@@ -5493,6 +5588,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 raw = round(self._wallbox_energy - start, 2)
         if raw is None:
             return None
+        if from_sessions:
+            # Wasserzeichen-Laufsumme ist per Konstruktion monoton -- der
+            # last_known-Schutz gilt nur noch fuer die Rueckfallstufen 2/3.
+            return raw
         last_known = self.data.get("home_kwh_last_known")
         guarded = raw if last_known is None else max(raw, last_known)
         if guarded != last_known:
@@ -5510,21 +5609,19 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Monotonie-Schutz wie _home_kwh() (siehe dortigen Docstring,
         Produktionsvorfall 2026-09-29) -- evccs Sessions-Logbuch kann
         aeltere Sessions verlieren, wodurch die aufsummierten Kosten
-        genauso wie die kWh scheinbar sinken wuerden."""
+        genauso wie die kWh scheinbar sinken wuerden. Seit 0.99.28
+        (Issue #5) aus der persistierten Wasserzeichen-Laufsumme (siehe
+        _accumulate_home_sessions()), daher ohne last_known-Schutz."""
         veh = self._evcc_vehicle_key()
-        raw = None
-        if veh:
-            veh_data = self._evcc_session_sums.get(veh)
-            if veh_data:
-                raw = round(veh_data["cost"], 2)
-        if raw is None:
+        if not veh:
             return None
-        last_known = self.data.get("home_cost_last_known")
-        guarded = raw if last_known is None else max(raw, last_known)
-        if guarded != last_known:
-            self.data["home_cost_last_known"] = guarded
-            self._save_soon()
-        return guarded
+        acc = (self.data.get("home_cost_accumulated") or {}).get(veh)
+        if acc is None:
+            return None
+        # Wasserzeichen-Laufsumme (siehe _accumulate_home_sessions()) ist per
+        # Konstruktion monoton -- kein last_known-Schutz mehr noetig.
+        open_cost = (self._evcc_open_sums.get(veh) or {}).get("cost", 0.0)
+        return round(acc + open_cost, 2)
 
     def _home_kwh_since_setup(self) -> Optional[float]:
         """home_kwh-Anteil seit ev_assistant-Einrichtung — fuer Savings und
