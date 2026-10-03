@@ -36,6 +36,8 @@ from engine import (
     charge_before_pv_decision,
     charge_cost,
     charge_pct_of_history_entry,
+    charge_ts,
+    charges_sum_in_period,
     charging_location_breakdown,
     clamp_weekday_contribution,
     consumption_by_temp_bucket,
@@ -53,6 +55,7 @@ from engine import (
     ladekarte_accrued_cost,
     ladekarte_current_fee,
     ladekarten_summary,
+    latest_charge,
     leasing_status,
     max_achievable_target_soc,
     merge_pending,
@@ -63,7 +66,10 @@ from engine import (
     normalize_vehicle_label,
     open_session_sums,
     parse_evcc_timestamp,
+    period_key_for_date,
+    period_start_date,
     pop_pending,
+    previous_period_date,
     range_km_to_soc_percent,
     remaining_today_kwh,
     remove_weekday_day,
@@ -72,6 +78,7 @@ from engine import (
     session_totals_since,
     soc_reached_full_charge,
     split_by_age,
+    split_period_baseline_entry,
     tankerkoenig_should_notify,
     temp_bucket_contribution,
     temperature_bucket,
@@ -4161,3 +4168,97 @@ def test_session_totals_since_filter_und_baseline_reparatur_beispiel():
     assert session_totals_since(sessions, "eRifter", None) == (115.0, 23.0)
     assert session_totals_since(sessions, "eRifter", since) == (15.0, 3.0)
     assert session_totals_since(sessions, "anderes", since) == (0.0, 0.0)
+
+
+def _rec(start_ts=None, erfasst_ts=0, kosten=1.0, kwh=1.0, preis=0.5):
+    rec = {"erfasst_ts": erfasst_ts, "kosten": kosten, "kwh": kwh, "preis_kwh": preis}
+    if start_ts is not None:
+        rec["start_ts"] = start_ts
+    return rec
+
+
+def test_charge_ts_fallback_und_ungueltig():
+    assert charge_ts({"start_ts": 5, "erfasst_ts": 9}) == 5.0
+    assert charge_ts({"erfasst_ts": 9}) == 9.0
+    assert charge_ts({"start_ts": None, "erfasst_ts": 9}) == 9.0
+    assert charge_ts({"start_ts": True}) is None
+    assert charge_ts({}) is None
+
+
+def test_latest_charge_nachgetragener_aelterer_eintrag_vorn_in_der_liste():
+    # history ist "neuester ERFASSTER zuerst" -- der aeltere Nachtrag steht vorn.
+    nachtrag = _rec(start_ts=1000, erfasst_ts=9000, preis=0.99)
+    echte_letzte = _rec(start_ts=5000, erfasst_ts=5100, preis=0.40)
+    assert latest_charge([nachtrag, echte_letzte]) is echte_letzte
+
+
+def test_latest_charge_ohne_start_ts_faellt_auf_erfasst_ts_zurueck():
+    manuell = _rec(erfasst_ts=7000)
+    mit_start = _rec(start_ts=6000, erfasst_ts=6100)
+    assert latest_charge([mit_start, manuell]) is manuell
+
+
+def test_latest_charge_gleichstand_entscheidet_erfasst_ts():
+    a = _rec(start_ts=100, erfasst_ts=200)
+    b = _rec(start_ts=100, erfasst_ts=300)
+    assert latest_charge([a, b]) is b
+    assert latest_charge([b, a]) is b
+
+
+def test_latest_charge_leer_und_ohne_zeitangabe():
+    assert latest_charge([]) is None
+    assert latest_charge([{"kwh": 1}, "kein dict"]) is None
+
+
+def test_period_key_und_start_roundtrip_iso_woche():
+    d = date(2026, 1, 1)  # Donnerstag -> ISO-Woche 1/2026
+    assert period_key_for_date("week", d) == "2026-W01"
+    assert period_key_for_date("week", date(2027, 1, 1)) == "2026-W53"  # Jahreswechsel-Woche
+    assert period_start_date("week", "2026-W01") == date(2025, 12, 29)
+    assert period_start_date("month", "2026-10") == date(2026, 10, 1)
+    assert period_start_date("year", "2026") == date(2026, 1, 1)
+    assert period_start_date("day", "kaputt") is None
+
+
+def test_previous_period_date_grenzen():
+    assert previous_period_date("day", date(2026, 3, 1)) == date(2026, 2, 28)
+    assert previous_period_date("month", date(2026, 1, 15)) == date(2025, 12, 31)
+    assert previous_period_date("year", date(2026, 6, 1)) == date(2025, 12, 31)
+    assert period_key_for_date("week", previous_period_date("week", date(2026, 1, 3))) == "2025-W52"
+
+
+def _to_date(ts):
+    return date.fromtimestamp(ts)
+
+
+def test_charges_sum_in_period_verschiedene_monate_und_nachtrag():
+    from datetime import datetime as _dt
+
+    def ts(y, m, d):
+        return _dt(y, m, d, 12, 0).timestamp()
+
+    history = [
+        _rec(start_ts=ts(2026, 10, 2), erfasst_ts=ts(2026, 10, 2), kosten=10.0, kwh=20.0),
+        _rec(start_ts=ts(2026, 8, 15), erfasst_ts=ts(2026, 10, 3), kosten=30.0, kwh=60.0),  # Nachtrag
+        _rec(erfasst_ts=ts(2026, 10, 1), kosten=5.0, kwh=10.0),  # ohne start_ts -> erfasst_ts
+        {"erfasst_ts": ts(2026, 10, 1), "start_ts": ts(2026, 10, 1), "kosten": "kaputt"},
+    ]
+    assert charges_sum_in_period(history, "kosten", "month", "2026-10", _to_date) == 15.0
+    assert charges_sum_in_period(history, "kosten", "month", "2026-08", _to_date) == 30.0
+    assert charges_sum_in_period(history, "kwh", "year", "2026", _to_date) == 90.0
+    assert charges_sum_in_period(history, "kosten", "day", "2026-10-02", _to_date) == 10.0
+    assert charges_sum_in_period([], "kosten", "month", "2026-10", _to_date) == 0.0
+
+
+def test_split_period_baseline_entry_zerlegt_und_begrenzt():
+    day0 = lambda d: float(__import__("datetime").datetime.combine(d, __import__("datetime").time.min).timestamp())  # noqa: E731
+    start = day0(date(2026, 10, 3))
+    history = [{"erfasst_ts": start + 100, "kosten": 30.0}, {"erfasst_ts": start - 100, "kosten": 100.0}]
+    entry = {"key": "2026-10-03", "cost": 100.0, "prev": 100.0}
+    out = split_period_baseline_entry(entry, "cost", "kosten", "day", history, 130.0, day0)
+    assert out["cost"] == 0.0  # 100 - (130 - 30)
+    assert out["prev"] == 0.0  # 100 - 100 (gestern erfasst)
+    assert entry == {"key": "2026-10-03", "cost": 100.0, "prev": 100.0}  # Eingabe unveraendert
+    # nie negativ
+    out2 = split_period_baseline_entry({"key": "2026-10-03", "cost": 5.0}, "cost", "kosten", "day", history, 500.0, day0)
+    assert out2["cost"] == 0.0

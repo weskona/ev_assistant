@@ -1766,6 +1766,148 @@ def rolling_km_per_day(fahrten: list, now_ts: float, window_days: float) -> Opti
     return round(km_sum / window_days, 2)
 
 
+def charge_ts(rec: dict) -> Optional[float]:
+    """Zeitpunkt einer bestaetigten Fremdladung fuer Sortierung/Perioden-
+    zuordnung: der tatsaechliche Ladestart "start_ts", sonst (manuelle
+    Eintraege/Altbestand ohne start_ts) der Erfassungszeitpunkt "erfasst_ts".
+    None, wenn beides fehlt/keine Zahl ist."""
+    for key in ("start_ts", "erfasst_ts"):
+        value = rec.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return float(value)
+    return None
+
+
+def latest_charge(history: list) -> Optional[dict]:
+    """Zeitlich LETZTE Fremdladung der Historie (Issue #6): groesster
+    charge_ts(), bei Gleichstand der spaeter erfasste Eintrag (groesseres
+    "erfasst_ts"). NICHT history[0] -- die Liste ist nach Erfassungs-
+    reihenfolge gefuehrt (neuester Eintrag zuerst, siehe coordinator.py::
+    async_log_charge()), ein rueckwirkend nachgetragener Eintrag stuende
+    sonst faelschlich ganz vorn. Eintraege ganz ohne Zeitangabe werden
+    ignoriert; None bei leerer/unbrauchbarer Historie."""
+    best = None
+    best_key = None
+    for rec in history:
+        if not isinstance(rec, dict):
+            continue
+        ts = charge_ts(rec)
+        if ts is None:
+            continue
+        erfasst = rec.get("erfasst_ts")
+        erfasst = float(erfasst) if isinstance(erfasst, (int, float)) and not isinstance(erfasst, bool) else 0.0
+        key = (ts, erfasst)
+        if best_key is None or key >= best_key:
+            best, best_key = rec, key
+    return best
+
+
+def period_key_for_date(period: str, day: date) -> str:
+    """Perioden-Schluessel eines Datums -- IDENTISCHE Definition wie
+    coordinator.py::_period_keys(): Tag = ISO-Datum, Woche = ISO-Kalenderwoche
+    (Mo-So, "JJJJ-Www"), Monat "JJJJ-MM", Jahr "JJJJ"."""
+    if period == "day":
+        return str(day)
+    if period == "week":
+        iso = day.isocalendar()
+        return f"{iso.year}-W{iso.week:02d}"
+    if period == "month":
+        return f"{day.year}-{day.month:02d}"
+    return str(day.year)
+
+
+def period_start_date(period: str, key: str) -> Optional[date]:
+    """Erster Tag der durch `key` benannten Periode (Umkehrung von
+    period_key_for_date()); None bei unlesbarem Schluessel."""
+    try:
+        if period == "day":
+            return date.fromisoformat(key)
+        if period == "week":
+            year, week = key.split("-W")
+            return date.fromisocalendar(int(year), int(week), 1)
+        if period == "month":
+            year, month = key.split("-")
+            return date(int(year), int(month), 1)
+        return date(int(key), 1, 1)
+    except (ValueError, TypeError):
+        return None
+
+
+def previous_period_date(period: str, today: date) -> date:
+    """Ein beliebiges Datum INNERHALB der Vorperiode zu `today` (Tag: gestern,
+    Woche: vor 7 Tagen, Monat/Jahr: letzter Tag des Vormonats/Vorjahres)."""
+    if period == "day":
+        return today - timedelta(days=1)
+    if period == "week":
+        return today - timedelta(days=7)
+    if period == "month":
+        return today.replace(day=1) - timedelta(days=1)
+    return date(today.year - 1, 12, 31)
+
+
+def charges_sum_in_period(history: list, field: str, period: str, key: str, to_date) -> float:
+    """Summe von `field` ("kosten"/"kwh") aller Fremdladungen, deren
+    charge_ts() (Ladestart, sonst Erfassungszeitpunkt) in die Periode `key`
+    faellt -- direkt aus der Historie statt ueber einen eingefrorenen
+    Snapshot (Issue #6: ein rueckwirkend nachgetragener Eintrag landete
+    sonst in der AKTUELLEN Periode). `to_date` wandelt einen Epoch-Wert in
+    ein lokales Datum (siehe coordinator.py, Zeitzone gehoert nicht in die
+    reine Logik). Eintraege ohne Zeit oder ohne Zahlenwert zaehlen nicht."""
+    total = 0.0
+    for rec in history:
+        if not isinstance(rec, dict):
+            continue
+        ts = charge_ts(rec)
+        value = rec.get(field)
+        if ts is None or isinstance(value, bool) or not isinstance(value, (int, float)):
+            continue
+        if period_key_for_date(period, to_date(ts)) == key:
+            total += float(value)
+    return round(total, 2)
+
+
+def split_period_baseline_entry(
+    entry: dict, field: str, hist_field: str, period: str, history: list, extern_total: float, start_ts_of,
+) -> dict:
+    """Einmalige Migration (0.99.30): zerlegt eine bisherige Perioden-Baseline
+    (Snapshot der GESAMTsumme Heim + Fremd + Ladekarten) in die Baseline der
+    Nicht-Fremd-Summe -- Fremdladungen werden seither live aus der Historie
+    gefiltert (siehe charges_sum_in_period()). Naeherung:
+      Fremd-Anteil im Snapshot ~ extern_total - (Summe der seit
+      Periodenbeginn ERFASSTEN Eintraege),
+    d.h. alles, was NACH Periodenbeginn hinzukam, steckte noch nicht in der
+    Baseline. Ungenau nur, wenn die Baseline nicht zum Periodenbeginn,
+    sondern spaeter gesetzt wurde (z.B. Selbstheilung mitten im Monat).
+    "prev" (alter Wert enthielt die in der Vorperiode erfassten Fremd-
+    ladungen) wird analog um die in der Vorperiode erfassten Eintraege
+    bereinigt. `field` ist der Schluessel im Perioden-Eintrag ("cost"/"kwh"),
+    `hist_field` der in der Historie ("kosten"/"kwh"). `start_ts_of(date)` liefert den Epoch-Beginn eines Tages
+    (Zeitzone vom Aufrufer). Ergebnisse auf >= 0 begrenzt; Eingabe bleibt
+    unveraendert."""
+    result = dict(entry)
+    start = period_start_date(period, entry.get("key", ""))
+    if start is None:
+        return result
+    start_ts = start_ts_of(start)
+    added_since = sum(
+        float(r.get(hist_field, 0.0)) for r in history
+        if isinstance(r, dict) and isinstance(r.get("erfasst_ts"), (int, float)) and r["erfasst_ts"] >= start_ts
+        and isinstance(r.get(hist_field), (int, float)) and not isinstance(r.get(hist_field), bool)
+    )
+    extern_at_snapshot = max(0.0, extern_total - added_since)
+    result[field] = round(max(0.0, entry.get(field, 0.0) - extern_at_snapshot), 2)
+    if isinstance(entry.get("prev"), (int, float)):
+        prev_start = start_ts_of(period_start_date(period, period_key_for_date(period, previous_period_date(period, start))))
+        added_prev = sum(
+            float(r.get(hist_field, 0.0)) for r in history
+            if isinstance(r, dict) and isinstance(r.get("erfasst_ts"), (int, float))
+            and prev_start <= r["erfasst_ts"] < start_ts
+            and isinstance(r.get(hist_field), (int, float)) and not isinstance(r.get(hist_field), bool)
+        )
+        result["prev"] = round(max(0.0, entry["prev"] - added_prev), 2)
+    return result
+
+
 def update_period_baseline(periods: dict, period_keys: dict, value: float, field: str) -> dict:
     """Aktualisiert Perioden-Baselines (z.B. Tag/Woche/Monat/Jahr) fuer
     einen monoton beobachteten Gesamtwert (Kosten, kWh, ...) -- reine Logik

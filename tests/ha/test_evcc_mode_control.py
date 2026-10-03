@@ -2224,24 +2224,25 @@ async def test_update_kwh_periods_heilt_baseline_die_unter_der_wochen_baseline_l
     )
     coordinator.data["savings_home_kwh_start"] = 0.0
     coordinator.data["totals"] = {"kwh": 309.12, "kosten": 137.07, "count": 20}
+    # Seit 0.99.30 gelten die Baselines nur noch fuer die Nicht-Fremd-Summe
+    # (Heimladen) -- Fremdladungen kommen live aus der Historie.
     coordinator.data["kwh_periods"] = {
         # Tages-Baseline wurde mit Heimladen-Anteil=0 gesetzt (async_setup()
-        # lief vor dem ersten evcc-Sessions-Abruf) -- nur der externe Anteil.
-        "day": {"key": coordinator._period_keys()["day"], "kwh": 309.12, "prev": -89.83},
-        # Wochen-Baseline wurde VOR dem Bruch gesetzt, ist also noch korrekt
-        # (Heimladen-Anteil 89.83 + extern 309.12).
-        "week": {"key": coordinator._period_keys()["week"], "kwh": 398.95, "prev": 56.22},
+        # lief vor dem ersten evcc-Sessions-Abruf).
+        "day": {"key": coordinator._period_keys()["day"], "kwh": 0.0, "prev": -89.83},
+        # Wochen-Baseline wurde VOR dem Bruch gesetzt, ist also noch korrekt.
+        "week": {"key": coordinator._period_keys()["week"], "kwh": 89.83, "prev": 56.22},
     }
     _set_home_sums(coordinator, 93.3, 0.0)
 
     coordinator._update_kwh_periods()
 
     day = coordinator.data["kwh_periods"]["day"]
-    assert day["kwh"] == 402.42  # 93.3 (Heimladen) + 309.12 (extern)
+    assert day["kwh"] == 93.3  # aktueller Heimladen-Stand
     assert "prev" not in day
     # Wochen-Baseline war in sich konsistent -- bleibt unangetastet.
     assert coordinator.data["kwh_periods"]["week"] == {
-        "key": coordinator._period_keys()["week"], "kwh": 398.95, "prev": 56.22,
+        "key": coordinator._period_keys()["week"], "kwh": 89.83, "prev": 56.22,
     }
 
 
@@ -2263,18 +2264,18 @@ async def test_update_kwh_periods_heilt_negatives_prev_auch_wenn_wochen_referenz
     coordinator.data["savings_home_kwh_start"] = 0.0
     coordinator.data["totals"] = {"kwh": 309.12, "kosten": 137.07, "count": 20}
     coordinator.data["kwh_periods"] = {
-        "day": {"key": coordinator._period_keys()["day"], "kwh": 309.12, "prev": -89.83},
+        "day": {"key": coordinator._period_keys()["day"], "kwh": 0.0, "prev": -89.83},
         # Woche wurde von einer frueheren (unvollstaendigen) Selbstheilung
         # bereits prev-los auf denselben Wert wie Tag zurueckgesetzt.
-        "week": {"key": coordinator._period_keys()["week"], "kwh": 309.12},
-        "month": {"key": coordinator._period_keys()["month"], "kwh": 212.22, "prev": 78.97},
+        "week": {"key": coordinator._period_keys()["week"], "kwh": 0.0},
+        "month": {"key": coordinator._period_keys()["month"], "kwh": 0.0, "prev": 78.97},
     }
     _set_home_sums(coordinator, 93.3, 0.0)
 
     coordinator._update_kwh_periods()
 
     day = coordinator.data["kwh_periods"]["day"]
-    assert day["kwh"] == 402.42
+    assert day["kwh"] == 93.3
     assert "prev" not in day
 
 
@@ -2654,3 +2655,89 @@ async def test_home_kwh_stufe3_schutz_bleibt_bei_gesundem_rueckgang(hass, coordi
     coordinator._wallbox_energy = 1200.0  # Zaehler springt zurueck, raw = 200
     assert coordinator._home_kwh() == 236.0
     assert not any(e["kategorie"] == "home_baseline_repariert" for e in coordinator.data.get("event_log", []))
+
+
+# ----- Issue #6: nachgetragene Fremdladungen ---------------------------------
+
+def _charge_rec(start_ts, erfasst_ts, kwh=10.0, kosten=5.0, preis=0.5):
+    return {
+        "config_entry_id": "x", "kwh": kwh, "preis_kwh": preis, "kosten": kosten,
+        "startgebuehr": 0.0, "blockiergebuehr": 0.0, "zeitgebuehr": 0.0,
+        "erfasst_ts": erfasst_ts, "start_ts": start_ts,
+    }
+
+
+async def test_nachgetragene_fremdladung_landet_nicht_in_aktuellem_monat(hass, coordinators):
+    """Issue #6: eine heute fuer einen frueheren Monat nachgetragene Ladung
+    darf den aktuellen Monat/Woche/Tag/Jahr nicht veraendern, solange sie
+    dort nicht stattgefand."""
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "bf1")
+    coordinator._update_cost_periods()
+    coordinator._update_kwh_periods()
+    assert coordinator.cost_period_value("month") == 0.0
+
+    # Ladung vor ~100 Tagen: anderer Monat und andere Woche (das Jahr kann je
+    # nach Testdatum dasselbe oder ein anderes sein -- deshalb dort nicht geprueft).
+    alt = (dt_util.now() - timedelta(days=100)).timestamp()
+    await coordinator.async_log_charge(kwh=20.0, price=0.5, start_ts=alt)
+    assert coordinator.data["totals"]["kosten"] == 10.0  # Lebenszeit zaehlt sie
+    assert coordinator.cost_period_value("day") == 0.0
+    assert coordinator.cost_period_value("week") == 0.0
+    assert coordinator.cost_period_value("month") == 0.0
+    assert coordinator.kwh_period_value("month") == 0.0
+
+    # Eine Ladung von heute zaehlt dagegen sofort.
+    await coordinator.async_log_charge(kwh=10.0, price=0.5, start_ts=dt_util.now().timestamp() - 60)
+    assert coordinator.cost_period_value("day") == 5.0
+    assert coordinator.cost_period_value("month") == 5.0
+    assert coordinator.kwh_period_value("month") == 10.0
+
+
+async def test_letzte_fremdladung_ist_zeitlich_letzte_nicht_zuletzt_eingetragene(hass, coordinators):
+    """Issue #6: Sensor-Werte "(letzte)" und last_price folgen start_ts."""
+    import time
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "bf2")
+    now = time.time()
+    await coordinator.async_log_charge(kwh=30.0, price=0.40, start_ts=now - 3600)
+    await coordinator.async_log_charge(kwh=5.0, price=0.99, start_ts=now - 86400 * 60)  # nachgetragen, aelter
+    from custom_components.ev_assistant.engine import latest_charge
+
+    # erfasst_ts ist die Eintrags-ID -- im Test kommen beide in derselben Sekunde.
+    coordinator.data["history"][0]["erfasst_ts"] += 5
+
+    assert latest_charge(coordinator.data["history"])["kwh"] == 30.0
+    assert coordinator.data["last_price"] == 0.40
+
+    # Loeschen der (zeitlich) letzten Ladung: die aeltere wird wieder "letzte".
+    newest = latest_charge(coordinator.data["history"])
+    assert await coordinator.async_delete_charge(newest["erfasst_ts"])
+    assert coordinator.data["last_price"] == 0.99
+
+
+async def test_migration_zerlegt_alte_gesamt_baseline(hass, coordinators):
+    """0.99.30: alte Baseline = Snapshot der Gesamtsumme (Heim + Fremd). Die
+    seit Periodenbeginn ERFASSTEN Fremdladungen steckten noch nicht darin."""
+    import time
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "bf3")
+    now = time.time()
+    day_key = coordinator._period_keys()["day"]
+    # Bis gestern: 100 EUR Fremd in der Baseline; heute nachtraeglich eine
+    # 30-EUR-Ladung fuer einen alten Monat erfasst (steckt NICHT in der Baseline).
+    coordinator.data["history"] = [
+        _charge_rec(now - 86400 * 90, int(now) - 10, kwh=60.0, kosten=30.0),
+        _charge_rec(now - 86400 * 5, int(now) - 86400 * 4, kwh=200.0, kosten=100.0),
+    ]
+    coordinator.data["totals"] = {"kwh": 260.0, "kosten": 130.0, "count": 2}
+    coordinator.data["cost_periods"] = {"day": {"key": day_key, "cost": 100.0, "prev": 100.0}}
+    coordinator.data["kwh_periods"] = {}
+    coordinator.data["period_baselines_split_migrated"] = False
+
+    assert coordinator._migrate_period_baselines_split() is True
+    assert coordinator.data["cost_periods"]["day"]["cost"] == 0.0  # 100 - (130 - 30)
+    assert coordinator._migrate_period_baselines_split() is False  # Flag, idempotent

@@ -212,6 +212,7 @@ from .engine import (
     charge_before_pv_decision,
     charge_cost,
     charge_pct_of_history_entry,
+    charges_sum_in_period,
     charging_location_breakdown,
     clamp_weekday_contribution,
     consumption_by_temp_bucket_from_totals,
@@ -226,6 +227,7 @@ from .engine import (
     kwh_to_soc_percent,
     ladekarte_legacy_gebuehren,
     ladekarten_summary,
+    latest_charge,
     leasing_status,
     max_achievable_target_soc,
     merge_pending,
@@ -234,7 +236,9 @@ from .engine import (
     normalize_evcc_mode,
     normalize_vehicle_label,
     open_session_sums,
+    period_key_for_date,
     pop_pending,
+    previous_period_date,
     range_km_to_soc_percent,
     remaining_today_kwh,
     remove_weekday_day,
@@ -243,6 +247,7 @@ from .engine import (
     session_totals_since,
     soc_reached_full_charge,
     split_by_age,
+    split_period_baseline_entry,
     tankerkoenig_should_notify,
     temp_bucket_contribution,
     temperature_bucket,
@@ -465,6 +470,7 @@ def _empty_data() -> dict:
         "weekday_km_est_totals": {},
         "lifetime_baselines_migrated": False,
         "home_sessions_wh_migrated": False,
+        "period_baselines_split_migrated": False,
         # Haus-Nutzungsprofil (siehe _update_house_usage_profile()) fuer die
         # evcc-Modus-/SoC-Steuerung -- bewusst einfach gehalten, analog
         # odo_periods/kwh_periods (nur die "day"-Periode wird gebraucht).
@@ -877,6 +883,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # (siehe _migrate_home_sessions_wh()). Sofort persistiert, aus
         # demselben Grund wie oben -- die Division ist NICHT idempotent.
         if self._migrate_home_sessions_wh():
+            await self._save()
+        # Migration: Perioden-Baselines (kwh_periods/cost_periods) von der
+        # GESAMTsumme auf die Nicht-Fremd-Summe umgestellt, Fremdladungen
+        # werden live aus der Historie gefiltert (siehe
+        # _migrate_period_baselines_split()). Nicht idempotent -> Flag,
+        # sofort persistiert, MUSS vor dem ersten _update_*_periods() laufen.
+        if self._migrate_period_baselines_split():
             await self._save()
         # Migration: Kraftstoffpreis-Durchschnitt von zeit- auf km-gewichtet
         # (siehe _migrate_verbrenner_price_weighting()). Ebenfalls sofort
@@ -2691,7 +2704,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         _discard_inconsistent_period_baselines()/_discard_negative_prev_
         period_baselines() fuer die Selbstheilung gegen einen inzwischen
         behobenen Ruecksprung."""
-        cost = self._ev_cost_total_since_setup()
+        cost = self._ev_cost_nonexternal_total_since_setup()
         periods = self._discard_impossible_period_baselines(
             self.data.get("cost_periods") or {}, cost, "cost",
         )
@@ -2709,7 +2722,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         _discard_inconsistent_period_baselines()/_discard_negative_prev_
         period_baselines() fuer die Selbstheilung gegen einen inzwischen
         behobenen Ruecksprung."""
-        kwh = self._ev_kwh_total_since_setup()
+        kwh = self._ev_kwh_nonexternal_total_since_setup()
         periods = self._discard_impossible_period_baselines(
             self.data.get("kwh_periods") or {}, kwh, "kwh",
         )
@@ -4456,7 +4469,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         totals["count"] = totals.get("count", 0) + 1
         self._apply_charge_baselines(rec, 1)
         self._history_version += 1
-        self.data["last_price"] = price
+        self._refresh_last_price()
         self._log_event("fremdladung_bestaetigt", f"{kwh} kWh, {price} EUR/kWh")
         await self._save()
         self.hass.bus.async_fire(EVENT_LOGGED, rec)
@@ -4465,6 +4478,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         else:
             await self._dismiss()
         self.async_set_updated_data(self.data)
+
+    def _refresh_last_price(self) -> None:
+        """last_price = Preis der zeitlich LETZTEN Fremdladung (siehe engine.
+        latest_charge(), Issue #6), 0.0 bei leerer Historie -- nach jedem
+        Hinzufuegen/Bearbeiten/Loeschen neu bestimmt statt "Eintrag an
+        Position 0"."""
+        rec = latest_charge(self.data.get("history") or [])
+        self.data["last_price"] = rec["preis_kwh"] if rec is not None and rec.get("preis_kwh") is not None else 0.0
 
     async def async_edit_charge(
         self,
@@ -4541,11 +4562,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 if soc_start is not None or soc_end is not None:
                     if rec.get("soc_start") is not None and rec.get("soc_end") is not None:
                         rec["delta_soc"] = round(rec["soc_end"] - rec["soc_start"], 1)
-                if history[0] is rec:
-                    self.data["last_price"] = price
                 self._apply_charge_baselines(old_rec, -1)
                 self._apply_charge_baselines(rec, 1)
                 self._history_version += 1
+                self._refresh_last_price()
                 await self._save()
                 self.hass.bus.async_fire(EVENT_EDITED, rec)
                 self.async_set_updated_data(self.data)
@@ -4563,16 +4583,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         history = self.data.get("history") or []
         for i, rec in enumerate(history):
             if rec.get("erfasst_ts") == erfasst_ts:
-                was_newest = i == 0
                 history.pop(i)
                 totals = self.data["totals"]
                 totals["kwh"] = round(totals.get("kwh", 0.0) - rec["kwh"], 2)
                 totals["kosten"] = round(totals.get("kosten", 0.0) - rec["kosten"], 2)
                 totals["count"] = max(0, totals.get("count", 0) - 1)
-                if was_newest:
-                    self.data["last_price"] = history[0]["preis_kwh"] if history else 0.0
                 self._apply_charge_baselines(rec, -1)
                 self._history_version += 1
+                self._refresh_last_price()
                 await self._save()
                 self.hass.bus.async_fire(EVENT_DELETED, rec)
                 self.async_set_updated_data(self.data)
@@ -5060,31 +5078,124 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             delta *= MILES_TO_KM
         return round(delta, 1)
 
+    def _ev_kwh_nonexternal_total_since_setup(self) -> float:
+        """Heimladen-kWh seit Einrichtung OHNE Fremdladungen -- Bezugsgroesse
+        der kwh_periods-Baselines (Fremdladungen werden seit 0.99.30 live aus
+        der Historie gefiltert, siehe kwh_period_value())."""
+        return self._home_kwh_since_setup() or 0.0
+
     def _ev_kwh_total_since_setup(self) -> float:
         """(Heimladen + Fremdladen) kWh gesamt seit Einrichtung -- dieselbe
         Energiebilanz wie savings()/_vehicle_avg_consumption_kwh_per_100km()/
         co2_savings(), an einer Stelle gebuendelt."""
-        home_kwh = self._home_kwh_since_setup() or 0.0
         external_kwh = self.data.get("totals", {}).get("kwh", 0.0)
-        return home_kwh + external_kwh
+        return self._ev_kwh_nonexternal_total_since_setup() + external_kwh
 
-    def _ev_cost_total_since_setup(self) -> float:
-        """(Heimladen + Fremdladen + Ladekarten-Grundgebuehren) Kosten
-        gesamt seit Einrichtung -- dieselbe Kosten-Prioritaet wie
+    def _ev_cost_nonexternal_total_since_setup(self) -> float:
+        """(Heimladen + Ladekarten-Grundgebuehren) Kosten seit Einrichtung OHNE
+        Fremdladungen -- Bezugsgroesse der cost_periods-Baselines
+        (Fremdladungen werden seit 0.99.30 live aus der Historie gefiltert,
+        siehe cost_period_value()). Dieselbe Kosten-Prioritaet wie
         calculate_savings() (home_cost, falls vorhanden, sonst home_kwh *
-        home_price), fuer die Perioden-Baselines (siehe
-        _update_cost_periods()). Ladekarten-Grundgebuehren (siehe
-        _ladekarten_cost_total()) zaehlen hier mit, da diese Summe "was
-        kostet mich das Fahrzeug insgesamt" abbilden soll -- anders als
-        totals["kosten"] (reine Ladekosten-Summe, unveraendert, siehe
-        charging_location_stats() fuer die bewusste Trennung)."""
+        home_price)."""
         home_cost = self._home_cost_since_setup()
         if home_cost is None:
             home_kwh = self._home_kwh_since_setup()
             home_price = self._home_price()
             home_cost = round(home_kwh * home_price, 2) if (home_kwh is not None and home_price is not None) else 0.0
+        return home_cost + self._ladekarten_cost_total()
+
+    def _ev_cost_total_since_setup(self) -> float:
+        """(Heimladen + Fremdladen + Ladekarten-Grundgebuehren) Kosten
+        gesamt seit Einrichtung. Ladekarten-Grundgebuehren (siehe
+        _ladekarten_cost_total()) zaehlen hier mit, da diese Summe "was
+        kostet mich das Fahrzeug insgesamt" abbilden soll -- anders als
+        totals["kosten"] (reine Ladekosten-Summe, unveraendert, siehe
+        charging_location_stats() fuer die bewusste Trennung)."""
         external_cost = self.data.get("totals", {}).get("kosten", 0.0)
-        return home_cost + external_cost + self._ladekarten_cost_total()
+        return self._ev_cost_nonexternal_total_since_setup() + external_cost
+
+    # ----- Perioden-Anzeige (Tag/Woche/Monat/Jahr), Fremdladung live ---------
+
+    @staticmethod
+    def _local_date_of(ts: float):
+        return dt_util.as_local(dt_util.utc_from_timestamp(ts)).date()
+
+    @staticmethod
+    def _local_day_start_ts(day) -> float:
+        return datetime.combine(day, datetime.min.time(), tzinfo=dt_util.DEFAULT_TIME_ZONE).timestamp()
+
+    def _external_period_sum(self, field: str, period: str, previous: bool = False) -> float:
+        """Fremdladungs-Summe (history[field], "kosten"/"kwh") der aktuellen
+        bzw. Vorperiode, direkt nach Ladezeitpunkt gefiltert (siehe engine.
+        charges_sum_in_period()). Bewusst OHNE Cache: die Historie ist auf
+        HISTORY_MAX_MONATE begrenzt (typisch wenige hundert Eintraege), ein
+        Durchlauf kostet Mikrosekunden. Das aktuelle Jahr ist immer
+        vollstaendig enthalten, da jede Ladung dieses Jahres ein erfasst_ts
+        innerhalb der 24 Monate hat."""
+        today = dt_util.now().date()
+        day = previous_period_date(period, today) if previous else today
+        key = period_key_for_date(period, day)
+        return charges_sum_in_period(self.data.get("history") or [], field, period, key, self._local_date_of)
+
+    def cost_period_value(self, period: str) -> Optional[float]:
+        """EV-Gesamtkosten der Periode: Baseline-Delta der Nicht-Fremd-Summe
+        (Heim + Ladekarten, Snapshot) + Fremdladungen live nach Ladezeit."""
+        entry = (self.data.get("cost_periods") or {}).get(period)
+        if not entry:
+            return None
+        base = max(0.0, round(self._ev_cost_nonexternal_total_since_setup() - entry["cost"], 2))
+        return round(base + self._external_period_sum("kosten", period), 2)
+
+    def kwh_period_value(self, period: str) -> Optional[float]:
+        """Analog cost_period_value(), fuer kWh."""
+        entry = (self.data.get("kwh_periods") or {}).get(period)
+        if not entry:
+            return None
+        base = max(0.0, round(self._ev_kwh_nonexternal_total_since_setup() - entry["kwh"], 2))
+        return round(base + self._external_period_sum("kwh", period), 2)
+
+    def cost_period_prev(self, period: str) -> Optional[float]:
+        """Kosten der letzten abgeschlossenen Periode (gespeicherter
+        Nicht-Fremd-Anteil + Fremdladungen der Vorperiode live); None, wenn
+        noch kein echter Rollover stattgefunden hat."""
+        entry = (self.data.get("cost_periods") or {}).get(period)
+        if not entry or "prev" not in entry:
+            return None
+        return round(entry["prev"] + self._external_period_sum("kosten", period, previous=True), 2)
+
+    def kwh_period_prev(self, period: str) -> Optional[float]:
+        entry = (self.data.get("kwh_periods") or {}).get(period)
+        if not entry or "prev" not in entry:
+            return None
+        return round(entry["prev"] + self._external_period_sum("kwh", period, previous=True), 2)
+
+    def _migrate_period_baselines_split(self) -> bool:
+        """Einmalige Migration (0.99.30, Issue #6): die bisherigen
+        cost_periods/kwh_periods-Baselines waren Snapshots der GESAMTsumme
+        inkl. Fremdladungen -- ein rueckwirkend nachgetragener Eintrag
+        landete dadurch komplett in der aktuellen Periode. Jetzt gilt die
+        Baseline nur noch fuer die Nicht-Fremd-Summe (Heim + Ladekarten),
+        Fremdladungen werden live aus der Historie gefiltert. Die alten
+        Baselines werden dafuer zerlegt (Naeherung, siehe engine.
+        split_period_baseline_entry()). NICHT idempotent -> Flag
+        "period_baselines_split_migrated". Gibt True zurueck, wenn etwas
+        migriert wurde (Aufrufer speichert dann sofort)."""
+        if self.data.get("period_baselines_split_migrated"):
+            return False
+        history = self.data.get("history") or []
+        totals = self.data.get("totals") or {}
+        for store, field, total_key in (("cost_periods", "cost", "kosten"), ("kwh_periods", "kwh", "kwh")):
+            periods = self.data.get(store) or {}
+            hist_field = "kosten" if field == "cost" else "kwh"
+            for period, entry in list(periods.items()):
+                if isinstance(entry, dict) and isinstance(entry.get(field), (int, float)):
+                    periods[period] = split_period_baseline_entry(
+                        entry, field, hist_field, period, history,
+                        float(totals.get(total_key, 0.0)), self._local_day_start_ts,
+                    )
+        self.data["period_baselines_split_migrated"] = True
+        return True
 
     def _ladekarten_cost_total(self) -> float:
         """Aufgelaufene Summe aller Ladekarten-Grundgebuehren bis heute

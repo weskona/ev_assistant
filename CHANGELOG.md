@@ -2,6 +2,15 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.30] - 2026-10-04
+
+### Fixed
+
+- **"Last external charge" showed the most recently *entered* charge, not the most recent one in time** (GitHub issue #6, ElBartko): new charges are always inserted at the top of the history (entry order), and the "(letzte)" sensors (cost, kWh, price, duration, charging power) as well as `last_price` simply read position 0. A charge added retroactively for an earlier month therefore pushed the really latest charge out of all "last" values. They now use the entry with the latest charge time (`start_ts`, falling back to `erfasst_ts`; ties go to the later-recorded entry); `last_price` is re-derived the same way on add/edit/delete instead of via "was it at index 0". Derived at read time, so existing data is correct right after the update.
+- **Retroactively added external charges were counted in the *current* day/week/month/year** (same issue): the period sensors (`cost_*`, `kwh_*`, plus the panel's vehicle-overview and monthly hero values) were snapshot deltas of the *total* (home + external + charge-card fees) — a charge entered today for August increased the total after October's baseline was frozen and so showed up as "this month". The period value is now split: baseline delta of the non-external part (home charging + charge-card fees, unchanged snapshot logic) **plus external charges filtered live from the history by charge time** (`start_ts`, else `erfasst_ts`) — same period definitions as before (calendar day, ISO week Mon–Sun, calendar month/year in the local time zone). "Previous period" (`differenz_vorperiode`) is split the same way. The history is limited to 24 months, so the current year is always fully covered; filtering a few hundred entries per read is negligible, no cache needed.
+- **Existing installs**: the external part corrects itself immediately and retroactively for all current periods (it is computed fresh from the history). The stored baselines still contained the old *total*; they are split once on first start (flag `period_baselines_split_migrated`) using `external at snapshot ≈ lifetime external − charges recorded since the period began`. This is an approximation: if a baseline was not set at the beginning of its period but later (e.g. by the 0.99.19+ self-healing in the middle of a month), the home-charging part of that one period can be slightly off until the next rollover.
+- Not changed: charge-card fees with a start date in the past (`add_ladekarte`) can cause the same kind of retroactive jump — separate follow-up.
+
 ## [0.99.29] - 2026-10-03
 
 ### Fixed

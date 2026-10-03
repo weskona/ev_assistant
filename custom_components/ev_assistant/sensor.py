@@ -25,6 +25,7 @@ from .const import (
     EFF_MIN_SAMPLES,
     WARTUNG_PRESETS,
 )
+from .engine import latest_charge
 from .entity import EvAssistantEntity
 
 
@@ -127,8 +128,8 @@ class LastCostSensor(EvAssistantEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:cash"
     # force_update: edit_charge/delete_charge auf einen AELTEREN (nicht den
-    # juengsten) Historien-Eintrag aendert die historie-Liste, aber nicht
-    # den native_value (hist[0]) -- ohne force_update kommt die Aenderung
+    # zeitlich letzten) Historien-Eintrag aendert die historie-Liste, aber
+    # nicht den native_value (engine.latest_charge()) -- ohne force_update kommt die Aenderung
     # sonst nicht zuverlaessig in der Karte/UI an.
     _attr_force_update = True
 
@@ -137,8 +138,8 @@ class LastCostSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def native_value(self):
-        hist = self.coordinator.data.get("history") or []
-        return hist[0]["kosten"] if hist else None
+        rec = latest_charge(self.coordinator.data.get("history") or [])
+        return rec["kosten"] if rec else None
 
     @property
     def extra_state_attributes(self):
@@ -149,8 +150,8 @@ class LastCostSensor(EvAssistantEntity, SensorEntity):
         # "fahrtenbuch" unten). Das Panel holt die volle, nach start_ts
         # sortierte Liste stattdessen ueber das WS-Kommando
         # ev_assistant/charges (siehe websocket_api.py).
-        hist = self.coordinator.data.get("history") or []
-        return dict(hist[0]) if hist else {}
+        rec = latest_charge(self.coordinator.data.get("history") or [])
+        return dict(rec) if rec else {}
 
 
 class LastKwhSensor(EvAssistantEntity, SensorEntity):
@@ -164,8 +165,8 @@ class LastKwhSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def native_value(self):
-        hist = self.coordinator.data.get("history") or []
-        return hist[0]["kwh"] if hist else None
+        rec = latest_charge(self.coordinator.data.get("history") or [])
+        return rec["kwh"] if rec else None
 
 
 class TotalKwhSensor(EvAssistantEntity, SensorEntity):
@@ -246,6 +247,9 @@ class LastPriceSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def native_value(self):
+        rec = latest_charge(self.coordinator.data.get("history") or [])
+        if rec is not None and rec.get("preis_kwh") is not None:
+            return rec["preis_kwh"]
         return self.coordinator.data.get("last_price", 0.0)
 
 
@@ -265,8 +269,8 @@ class LastDurationSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def native_value(self):
-        hist = self.coordinator.data.get("history") or []
-        return hist[0].get("dauer_min") if hist else None
+        rec = latest_charge(self.coordinator.data.get("history") or [])
+        return rec.get("dauer_min") if rec else None
 
 
 class LastChargePowerSensor(EvAssistantEntity, SensorEntity):
@@ -281,10 +285,9 @@ class LastChargePowerSensor(EvAssistantEntity, SensorEntity):
 
     @property
     def native_value(self):
-        hist = self.coordinator.data.get("history") or []
-        if not hist:
+        h = latest_charge(self.coordinator.data.get("history") or [])
+        if h is None:
             return None
-        h = hist[0]
         kwh = h.get("kwh")
         dauer_min = h.get("dauer_min")
         if not kwh or not dauer_min or dauer_min < 5:
@@ -1239,15 +1242,12 @@ class _CostPeriodSensor(EvAssistantEntity, SensorEntity):
         entry = self._entry()
         if not entry:
             return None
-        cost = self.coordinator._ev_cost_total_since_setup()
-        return max(0.0, round(cost - entry["cost"], 2))
+        return self.coordinator.cost_period_value(self._PERIOD)
 
     @property
     def extra_state_attributes(self):
-        entry = self._entry()
-        if entry and "prev" in entry:
-            return {"differenz_vorperiode": entry["prev"]}
-        return {}
+        prev = self.coordinator.cost_period_prev(self._PERIOD)
+        return {"differenz_vorperiode": prev} if prev is not None else {}
 
 
 class CostDaySensor(_CostPeriodSensor):
@@ -1311,15 +1311,12 @@ class _KwhPeriodSensor(EvAssistantEntity, SensorEntity):
         entry = self._entry()
         if not entry:
             return None
-        kwh = self.coordinator._ev_kwh_total_since_setup()
-        return max(0.0, round(kwh - entry["kwh"], 2))
+        return self.coordinator.kwh_period_value(self._PERIOD)
 
     @property
     def extra_state_attributes(self):
-        entry = self._entry()
-        if entry and "prev" in entry:
-            return {"differenz_vorperiode": entry["prev"]}
-        return {}
+        prev = self.coordinator.kwh_period_prev(self._PERIOD)
+        return {"differenz_vorperiode": prev} if prev is not None else {}
 
 
 class KwhDaySensor(_KwhPeriodSensor):
