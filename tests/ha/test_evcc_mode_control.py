@@ -2045,26 +2045,106 @@ async def test_check_evcc_vehicle_match_issue_verschwindet_nach_erfolgreichem_ma
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is None
 
 
+def _set_home_sums(coordinator, kwh, cost, veh="eRifter"):
+    """Setzt die Wasserzeichen-Laufsummen direkt (siehe coordinator.py::
+    _accumulate_home_sessions()), wie sie _home_kwh()/_home_cost() lesen --
+    und markiert den ersten Sessions-Abruf als erledigt."""
+    coordinator._evcc_sessions_loaded = True
+    coordinator.data.setdefault("home_kwh_accumulated", {})[veh] = kwh
+    coordinator.data.setdefault("home_cost_accumulated", {})[veh] = cost
+    coordinator._evcc_open_sums = {}
+
+
 # ----- _home_kwh/_home_cost: Monotonie-Schutz gegen schrumpfendes evcc-Logbuch --
 
-async def test_home_kwh_klemmt_bei_schrumpfendem_evcc_sessions_logbuch(hass, coordinators):
-    """Produktionsvorfall 2026-09-29: evccs Sessions-Logbuch fuer ein
-    Fahrzeug verlor ueber Nacht aeltere Sessions (rollierendes Fenster im
-    Addon) -- die dafuer aufsummierte chargedEnergy fiel dadurch von ~309
-    auf 93.3 kWh, was nachgelagert (Tages-/Wochen-Perioden-Baseline) einen
-    riesigen, falschen "seit heute geladen"-Wert erzeugte. _home_kwh() darf
-    einen solchen Ruecksprung nicht mehr durchreichen."""
+def _evcc_session(day, kwh, cost, finished=True, vehicle="eRifter"):
+    return {
+        "vehicle": vehicle,
+        "created": f"2026-09-{day:02d}T10:00:00+02:00",
+        "finished": f"2026-09-{day:02d}T12:00:00+02:00" if finished else "0001-01-01T00:00:00Z",
+        "chargedEnergy": kwh,
+        "price": cost,
+    }
+
+
+async def test_home_kwh_bleibt_bei_schrumpfendem_evcc_sessions_logbuch(hass, coordinators):
+    """Produktionsvorfall 2026-09-29 (Issue #5): evccs Sessions-Logbuch fuer
+    ein Fahrzeug verlor aeltere Sessions -- die frueher bei jedem Refresh
+    neu summierte chargedEnergy fiel dadurch von ~309 auf 93.3 kWh. Seit dem
+    Wasserzeichen-Verfahren bleibt die persistierte Laufsumme erhalten und
+    waechst nur durch NEUE beendete Sessions."""
+    from unittest.mock import AsyncMock
+
     from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
 
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hk1", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
     )
-    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 309.12, "cost": 0.0}}
+    coordinator._evcc_client = AsyncMock()
+    coordinator._evcc_client.async_get_sessions.return_value = [
+        _evcc_session(1, 215.82, 40.0), _evcc_session(20, 93.3, 16.98),
+    ]
+    await coordinator._refresh_evcc_sessions()
     assert coordinator._home_kwh() == 309.12
 
-    # evcc verliert aeltere Sessions -- rohe Summe faellt auf 93.3.
-    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 93.3, "cost": 0.0}}
-    assert coordinator._home_kwh() == 309.12  # geklemmt auf den zuletzt bekannten Wert
+    # evcc verliert die aeltere Session -- Laufsumme bleibt.
+    coordinator._evcc_client.async_get_sessions.return_value = [_evcc_session(20, 93.3, 16.98)]
+    await coordinator._refresh_evcc_sessions()
+    assert coordinator._home_kwh() == 309.12
+
+    # Eine neue beendete Session wird zusaetzlich gezaehlt.
+    coordinator._evcc_client.async_get_sessions.return_value = [
+        _evcc_session(20, 93.3, 16.98), _evcc_session(25, 10.0, 2.0),
+    ]
+    await coordinator._refresh_evcc_sessions()
+    assert coordinator._home_kwh() == 319.12
+
+
+async def test_home_kwh_ohne_ersten_sessions_abruf_kein_stufe2_rueckfall(hass, coordinators):
+    """Issue #5: vor dem ersten Sessions-Abruf darf _home_kwh() NICHT auf
+    evccs standortweite Lifetime-Statistik zurueckfallen (wuerde als Start-/
+    Hoechstwert festgeschrieben)."""
+    from unittest.mock import AsyncMock
+
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME, CONF_WALLBOX_ENERGY_ENTITY
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "hk0",
+        options={CONF_EVCC_VEHICLE_NAME: "eRifter", CONF_WALLBOX_ENERGY_ENTITY: "sensor.wb"},
+    )
+    coordinator._evcc_client = AsyncMock()
+    coordinator._evcc_sessions_loaded = False
+    coordinator._evcc_state = {"statistics": {"total": {"chargedKWh": 2370.0}}}
+    assert coordinator._home_kwh() is None
+    assert coordinator._home_kwh_since_setup() is None
+    assert coordinator.data.get("savings_home_kwh_start") is None
+
+
+async def test_accumulate_home_sessions_repariert_vergiftete_baseline(hass, coordinators):
+    """Jochens Fall (Issue #5): Startwert = last_known = 2370 (evccs
+    Lifetime-Statistik) ueber der echten Session-Summe -> Start wird so
+    gesetzt, dass "seit Einrichtung" die Sessions ab Einrichtung zaehlt."""
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock
+
+    from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
+
+    coordinator, entry = await _make_coordinator(
+        hass, coordinators, "hk9", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
+    )
+    entry.created_at = datetime(2026, 9, 10, tzinfo=UTC)
+    coordinator.data["savings_home_kwh_start"] = 2370.0
+    coordinator.data["home_kwh_last_known"] = 2370.0
+    coordinator._evcc_client = AsyncMock()
+    coordinator._evcc_client.async_get_sessions.return_value = [
+        _evcc_session(1, 200.0, 40.0), _evcc_session(15, 12.0, 2.0), _evcc_session(20, 8.0, 1.0),
+    ]
+    await coordinator._refresh_evcc_sessions()
+
+    assert coordinator._home_kwh() == 220.0
+    assert coordinator._home_kwh_since_setup() == 20.0
+    assert coordinator.data["home_kwh_last_known"] is None
+    assert any(e["kategorie"] == "home_baseline_repariert" for e in coordinator.data["event_log"])
 
 
 async def test_home_kwh_folgt_weiterhin_echten_anstiegen(hass, coordinators):
@@ -2073,24 +2153,31 @@ async def test_home_kwh_folgt_weiterhin_echten_anstiegen(hass, coordinators):
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hk2", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
     )
-    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 100.0, "cost": 0.0}}
+    _set_home_sums(coordinator, 100.0, 0.0)
     assert coordinator._home_kwh() == 100.0
 
-    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 105.5, "cost": 0.0}}
+    _set_home_sums(coordinator, 105.5, 0.0)
     assert coordinator._home_kwh() == 105.5
 
 
-async def test_home_cost_klemmt_bei_schrumpfendem_evcc_sessions_logbuch(hass, coordinators):
+async def test_home_cost_bleibt_bei_schrumpfendem_evcc_sessions_logbuch(hass, coordinators):
+    from unittest.mock import AsyncMock
+
     from custom_components.ev_assistant.const import CONF_EVCC_VEHICLE_NAME
 
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hc1", options={CONF_EVCC_VEHICLE_NAME: "eRifter"},
     )
-    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 0.0, "cost": 65.0}}
+    coordinator._evcc_client = AsyncMock()
+    coordinator._evcc_client.async_get_sessions.return_value = [
+        _evcc_session(1, 0.0, 52.6), _evcc_session(20, 0.0, 12.4),
+    ]
+    await coordinator._refresh_evcc_sessions()
     assert coordinator._home_cost() == 65.0
 
-    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 0.0, "cost": 12.4}}
-    assert coordinator._home_cost() == 65.0  # geklemmt auf den zuletzt bekannten Wert
+    coordinator._evcc_client.async_get_sessions.return_value = [_evcc_session(20, 0.0, 12.4)]
+    await coordinator._refresh_evcc_sessions()
+    assert coordinator._home_cost() == 65.0
 
 
 async def test_update_kwh_periods_heilt_unmoegliche_baseline_selbst(hass, coordinators):
@@ -2108,7 +2195,7 @@ async def test_update_kwh_periods_heilt_unmoegliche_baseline_selbst(hass, coordi
         "day": {"key": coordinator._period_keys()["day"], "kwh": 309.12, "prev": -89.83},
         "week": {"key": coordinator._period_keys()["week"], "kwh": 50.0, "prev": 10.0},
     }
-    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 93.3, "cost": 0.0}}
+    _set_home_sums(coordinator, 93.3, 0.0)
 
     coordinator._update_kwh_periods()
 
@@ -2145,7 +2232,7 @@ async def test_update_kwh_periods_heilt_baseline_die_unter_der_wochen_baseline_l
         # (Heimladen-Anteil 89.83 + extern 309.12).
         "week": {"key": coordinator._period_keys()["week"], "kwh": 398.95, "prev": 56.22},
     }
-    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 93.3, "cost": 0.0}}
+    _set_home_sums(coordinator, 93.3, 0.0)
 
     coordinator._update_kwh_periods()
 
@@ -2182,7 +2269,7 @@ async def test_update_kwh_periods_heilt_negatives_prev_auch_wenn_wochen_referenz
         "week": {"key": coordinator._period_keys()["week"], "kwh": 309.12},
         "month": {"key": coordinator._period_keys()["month"], "kwh": 212.22, "prev": 78.97},
     }
-    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 93.3, "cost": 0.0}}
+    _set_home_sums(coordinator, 93.3, 0.0)
 
     coordinator._update_kwh_periods()
 
@@ -2208,9 +2295,7 @@ async def test_refresh_evcc_sessions_stoesst_perioden_selbstheilung_an(hass, coo
         "day": {"key": coordinator._period_keys()["day"], "kwh": 309.12, "prev": -89.83},
     }
     coordinator._evcc_client = AsyncMock()
-    coordinator._evcc_client.async_get_sessions.return_value = [
-        {"vehicle": "eRifter", "chargedEnergy": 93.3, "price": 16.98},
-    ]
+    coordinator._evcc_client.async_get_sessions.return_value = [_evcc_session(20, 93.3, 16.98)]
 
     await coordinator._refresh_evcc_sessions()
 
@@ -2253,7 +2338,7 @@ async def test_reset_lifetime_kpis_ohne_parameter_setzt_delta_auf_null(hass, coo
     )
     coordinator.data["odo"] = 12000.0
     coordinator.data["odo_unit"] = "km"
-    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 300.0, "cost": 60.0}}
+    _set_home_sums(coordinator, 300.0, 60.0)
 
     await coordinator.async_reset_lifetime_kpis()
 
@@ -2273,7 +2358,7 @@ async def test_reset_lifetime_kpis_mit_parametern_rechnet_anker_zurueck(hass, co
     )
     coordinator.data["odo"] = 12850.0
     coordinator.data["odo_unit"] = "km"
-    coordinator._evcc_session_sums = {"eRifter": {"chargedEnergy": 420.0, "cost": 90.0}}
+    _set_home_sums(coordinator, 420.0, 90.0)
 
     await coordinator.async_reset_lifetime_kpis(
         home_kwh_since_setup=120.0, home_cost_since_setup=25.0, km_driven=850.0,
