@@ -2,6 +2,39 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.31] - 2026-10-04
+
+### Fixed
+
+Findings of a code review across the whole integration (several of them in the 0.99.27–0.99.30 changes):
+
+- **Period values (today/week/month/year) could be wiped to 0 / show the whole since-setup total**: the daily rollover (and the sessions refresh) re-seeded all period baselines at 0 whenever the home-charging source returned nothing at that moment (evcc unreachable at 00:05, wallbox meter not ready after a restart), because the missing value counted as 0 and every baseline above it was discarded as "impossible". Updates are now skipped while the home source is pending/unavailable and baselines already exist.
+- **"This week" baseline was deleted in weeks that contain a month or year change** (since 0.99.21): the consistency check assumed year ≤ month ≤ week ≤ day, but a week can start before the month it ends in (e.g. Mon 28 Sep with the month starting 1 Oct) and then correctly has the *lower* baseline. Baselines are now ordered by their real start date.
+- **A too-high "year" baseline wiped the (correct) month and week baselines** (seen live after the 0.99.30 split migration: a year baseline that had been re-seeded late sat above the month/week baselines, and the consistency check deleted those instead): the year baseline is now lowered to the smallest later baseline instead of deleting the others — the year starts before every other period, its baseline can never be higher.
+- **Home-charging "since setup" lost the energy charged since a reset** (0.99.29 self-repair): for wallbox-meter installs the repaired start value is now 0 (the raw value already is the energy since the reset) instead of the current raw value.
+- **evcc session sync could skip the baseline repair (0.99.28)**: without an explicitly configured evcc vehicle name the sessions request can finish before evcc's state, so the vehicle was still unknown; the one-time migration then never ran for it. It now has its own "seeded" marker per vehicle, and `_home_kwh()` waits for both the sessions and (if needed) the state before falling back to the site-wide statistic. A *failed* sessions request (returned as an empty list) no longer counts as "loaded" either.
+- **Home-charging sessions without evcc were shrunk by factor 1000 by the 0.99.27 Wh→kWh migration** (they were already in kWh): `preis_je_kwh` of the session statistics showed e.g. 245 €/kWh. They are repaired once at startup where the damage is unambiguous (kWh < 0.1 with an implausible price above 5 €/kWh). Sessions that cost 0 € or were below ~0.5 kWh cannot be recognised and stay as they are (tiny weight in the solar-share average).
+- **Solar/cost estimate without evcc raised a TypeError on every tick** when PV generation, house consumption or the wallbox meter had no value yet at session start (e.g. inverter asleep after a restart); the anchors are now set on the first valid tick.
+- **Unload never removed the panel and services**: the flag keys stored next to the coordinators in `hass.data[DOMAIN]` kept it from ever being empty. Config-entry lookups (services, websocket) also ignore those internal keys now.
+- **Config flow**: battery efficiency (0.1–1.0) and usable capacity (1–500 kWh) are range-checked; an efficiency of 0 used to crash the charge detector with a division by zero on the first SoC rise.
+- **Maintenance due date**: a tiny daily mileage (e.g. after a holiday) could overflow the date and raise in the maintenance sensor/odometer update; no due date is shown instead.
+- **evcc client** no longer raises on an empty or truncated JSON body (e.g. while evcc restarts).
+
+- **Odometer stuck forever after a gap above 1500 km** (or after a replaced speedometer/sensor): readings that jumped more than 1500 km up or more than 10 km down were ignored, but the stored reference never advanced, so every later reading was ignored as well — even across restarts. A rejected value that repeats three times in a row (±1 km) is now accepted as the new reading; after a downward reset the "since setup" start and the odometer period baselines are shifted so the driven distance continues instead of going negative.
+- **Options flow could not clear `home_consumption_entity` / `battery_charge_entity`** (they appear in both the evcc and the home-charging step, and the mode step pre-copies the skipped path's value): fields the user clears in the active step are now really removed.
+- **Average-distance sensors ignored miles** (`odo_avg_*`, projected year): the statistic sum is now converted like the other odometer sensors.
+- **evcc min/target-SoC scope probe was cached as failed forever**: a failed probe (mistyped vehicle name on first activation, evcc briefly unreachable) was persisted as `None` and never retried, so min-SoC was silently never written. Failures are now only throttled in memory (10 minutes) and never persisted; an old persisted `None` is retried too.
+- **House usage profile booked a missed multi-day rollover as a single day** (HA down over midnight): that rollover is no longer booked.
+- **Trip dates used the process time zone** (`date.fromtimestamp`): now the Home Assistant time zone.
+- **Archiving could drop a charge/trip recorded during the archive write** (stale list snapshot): archived entries are now removed from the *current* lists by identity.
+- **Period rollover ran only at 00:05**: charging between 00:00 and 00:05 still counted for the previous period; the cost/kWh/odometer period rollover now also runs right after midnight.
+- **Startup edge cases in the home-charging tracker**: a restart-suppression flag survived when the first reading after a restart said "not charging" (the next genuinely new session got no solar/cost estimate), and a charge start while the SoC entity had no value yet was lost; both are handled.
+- **evcc manual mode was not reset** when the car was unplugged while evcc was unreachable (the unknown state overwrote "was connected").
+- **Maintenance overview** compared remaining days with remaining kilometres when picking the most urgent point; kilometres are now converted via the daily mileage (40 km/day assumed if unknown).
+- **evcc URLs**: the vehicle name is URL-encoded.
+
+Known and not changed: home-charging sessions without evcc that were shrunk by the 0.99.27 migration but cost 0 € or were below ~0.5 kWh cannot be recognised, so they stay too small (negligible weight in the solar-share average).
+
 ## [0.99.30] - 2026-10-04
 
 ### Fixed

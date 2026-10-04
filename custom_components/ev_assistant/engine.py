@@ -3318,7 +3318,12 @@ def wartung_status(
     if km_intervall and last_done_km is not None and aktueller_km is not None:
         rest_km = round(last_done_km + km_intervall - aktueller_km, 0)
         if km_pro_tag:
-            faellig_datum_km = heute_date + timedelta(days=rest_km / km_pro_tag)
+            try:
+                faellig_datum_km = heute_date + timedelta(days=rest_km / km_pro_tag)
+            except OverflowError:
+                # Winzige Tagesfahrleistung (z.B. nach dem Urlaub) -> Datum jenseits
+                # von date.max: kein Faelligkeitsdatum statt Absturz.
+                faellig_datum_km = None
 
     faellig_datum_zeit = None
     if zeit_intervall_monate and last_done_datum is not None:
@@ -3425,7 +3430,12 @@ def wartung_uebersicht(
             anzahl_ueberfaellig += 1
         if rang == 0:
             continue
-        sort_key = status.get("rest_tage", status.get("rest_km"))
+        # Einheiten NICHT mischen: Tage und km sind nicht vergleichbar -- rest_km
+        # ueber die Tagesfahrleistung in Tage umrechnen (ohne bekannte Leistung
+        # grobe Annahme 40 km/Tag, nur fuer die Reihenfolge innerhalb einer Stufe).
+        sort_key = status.get("rest_tage")
+        if sort_key is None and status.get("rest_km") is not None:
+            sort_key = status["rest_km"] / (km_pro_tag if km_pro_tag and km_pro_tag > 0 else 40.0)
         if rang > naechste_rang or (rang == naechste_rang and sort_key is not None and (
             naechste_sort is None or sort_key < naechste_sort
         )):

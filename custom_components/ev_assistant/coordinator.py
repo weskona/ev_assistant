@@ -159,6 +159,7 @@ from .const import (
     NOTIFY_EVENT_TANKERKOENIG,
     NOTIFY_EVENT_WARTUNG,
     NOTIFY_TAG,
+    ODO_ACCEPT_REPEATS,
     OUTLIER_DAMPING_FACTOR,
     PANEL_LAYOUT_KEYS,
     PANEL_LAYOUT_SIZES,
@@ -237,6 +238,7 @@ from .engine import (
     normalize_vehicle_label,
     open_session_sums,
     period_key_for_date,
+    period_start_date,
     pop_pending,
     previous_period_date,
     range_km_to_soc_percent,
@@ -281,6 +283,8 @@ _EVCC_POLL_INTERVAL_S = 15
 # Ladelogbuch (/api/sessions) aendert sich nur, wenn eine Session endet --
 # muss daher nicht im selben Takt wie der Live-State neu geholt werden.
 _EVCC_SESSIONS_CACHE_S = 300
+# Mindestabstand (s) zwischen zwei fehlgeschlagenen evcc-Scope-Proben (siehe _evcc_scope()).
+_EVCC_SCOPE_RETRY_S = 600
 # Ab dieser Leistung (kW) gilt eine Power-Entitaet als "laedt". Der
 # Home-Entitaet-Picker im Config Flow filtert auf device_class: power (z.B.
 # eine Wallbox-Ladeleistung von evcc/Warp), daher muss ein numerischer Wert
@@ -471,6 +475,10 @@ def _empty_data() -> dict:
         "lifetime_baselines_migrated": False,
         "home_sessions_wh_migrated": False,
         "period_baselines_split_migrated": False,
+        "home_sessions_generic_repaired": False,
+        # Fahrzeugschluessel, fuer die der Erstlauf von _accumulate_home_sessions()
+        # (Migration/Baseline-Reparatur) bereits gelaufen ist.
+        "home_acc_seeded": [],
         # Haus-Nutzungsprofil (siehe _update_house_usage_profile()) fuer die
         # evcc-Modus-/SoC-Steuerung -- bewusst einfach gehalten, analog
         # odo_periods/kwh_periods (nur die "day"-Periode wird gebraucht).
@@ -597,6 +605,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._home_consumption_live_raw: Optional[float] = None
         self._battery_charge_live_raw: Optional[float] = None
         self._home_tick_restart_suppress: bool = False
+        # Ausgangszustand eines wegen fehlendem SoC aufgeschobenen Heim-Uebergangs (siehe _set_home()).
+        self._home_deferred_was: Optional[bool] = None
         # Sessiondauer fuer die Wallbox-Karte im generischen (nicht-evcc)
         # Heimladen-Pfad (siehe home_generic_live_attrs()) -- unabhaengig
         # von self._home_tick_acc (das nur bei erfuellter Solaranteil-/
@@ -744,6 +754,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # persistiert -- siehe engine.open_session_sums()) und ob der erste
         # Sessions-Abruf schon versucht wurde (siehe _home_kwh()).
         self._evcc_open_sums: dict = {}
+        # (Wert in km, Anzahl) eines zuletzt verworfenen Kilometerstands, siehe _set_odo().
+        self._odo_candidate: Optional[tuple[float, int]] = None
+        # Zeitpunkt (monotonic) der letzten fehlgeschlagenen evcc-Scope-Probe je Schluessel.
+        self._evcc_scope_failed: dict[str, float] = {}
         self._evcc_sessions_loaded: bool = False
         # Debounce-Zustand fuer engine.apply_opportunistic_surplus_target()
         # (siehe dortigen Docstring) -- rein im Arbeitsspeicher, analog
@@ -891,6 +905,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # sofort persistiert, MUSS vor dem ersten _update_*_periods() laufen.
         if self._migrate_period_baselines_split():
             await self._save()
+        # Reparatur: die Wh->kWh-Migration von 0.99.27 hat auch home_sessions
+        # OHNE evcc (bereits in kWh) durch 1000 geteilt (siehe
+        # _repair_generic_home_sessions_kwh()).
+        if self._repair_generic_home_sessions_kwh():
+            await self._save()
         # Migration: Kraftstoffpreis-Durchschnitt von zeit- auf km-gewichtet
         # (siehe _migrate_verbrenner_price_weighting()). Ebenfalls sofort
         # persistiert, aus demselben Grund wie oben.
@@ -959,6 +978,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         )
         self._unsub.append(
             async_track_time_change(self.hass, self._daily_lts_refresh, hour=0, minute=5, second=0)
+        )
+        # Perioden-Rollover zusaetzlich direkt nach Mitternacht (der Tagesjob
+        # oben laeuft erst um 00:05, weil er auf die Statistik-Kompilierung
+        # wartet) -- sonst zaehlt eine Ladung zwischen 00:00 und 00:05 noch zur
+        # alten Periode, z.B. bei Nachtstrom-Fenstern ab Mitternacht.
+        self._unsub.append(
+            async_track_time_change(self.hass, self._midnight_period_rollover, hour=0, minute=0, second=3)
         )
         self.hass.async_create_task(self.async_refresh_lts_data())
         self.async_set_updated_data(self.data)
@@ -1100,7 +1126,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         loadpoint = self._current_loadpoint()
         connected = loadpoint.get("connected") if loadpoint is not None else None
         was_connected = self._evcc_connected_prev
-        self._evcc_connected_prev = connected
+        # Unbekannt (evcc kurz nicht erreichbar -> State None) ueberschreibt den
+        # letzten bekannten Zustand NICHT: wird das Auto waehrend des Ausfalls
+        # abgesteckt, soll der naechste erfolgreiche Poll die Flanke noch sehen.
+        if connected is not None:
+            self._evcc_connected_prev = connected
         if was_connected and connected is False and self.data.get("evcc_manual_mode_active"):
             self.data["evcc_manual_mode_active"] = False
             self.data["evcc_manual_mode"] = None
@@ -1250,7 +1280,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
           vermerken."""
         veh = self._evcc_vehicle_key()
         wm_store = self.data.setdefault("home_session_watermark", {})
-        first_run = bool(veh) and veh not in wm_store
+        # Eigene Erstlauf-Markierung statt "kein Wasserzeichen": ohne explizit
+        # konfigurierten Fahrzeugnamen kann der erste Sessions-Abruf VOR dem
+        # evcc-State fertig sein (Fahrzeugschluessel noch None) -- die
+        # Wasserzeichen aller Fahrzeuge waeren dann schon gesetzt, die
+        # Migration/Baseline-Reparatur fuer dieses Fahrzeug liefe nie.
+        seeded = self.data.setdefault("home_acc_seeded", [])
+        first_run = bool(veh) and veh not in seeded
         wm, kwh_acc, cost_acc = accumulate_new_sessions(
             sessions,
             wm_store,
@@ -1281,6 +1317,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 elif isinstance(last_known, (int, float)):
                     acc[veh] = max(acc.get(veh, 0.0), float(last_known))
                 acc.setdefault(veh, 0.0)
+        if first_run and veh not in seeded:
+            seeded.append(veh)
         self.data["home_session_watermark"] = wm
         self.data["home_kwh_accumulated"] = kwh_acc
         self.data["home_cost_accumulated"] = cost_acc
@@ -1317,7 +1355,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if self._evcc_client is None:
             return
         sessions = await self._evcc_client.async_get_sessions()
-        self._evcc_sessions_loaded = True
+        # Nur bei erfolgreichem Abruf als "geladen" markieren -- bei einem Fehler
+        # liefert der Client ebenfalls [], und _home_kwh() wuerde sonst auf die
+        # Rueckfallstufen 2/3 ausweichen (siehe _evcc_home_pending()).
+        if self._evcc_client.last_sessions_ok is not False:
+            self._evcc_sessions_loaded = True
         self._evcc_session_sums = aggregate_sessions_by_vehicle(sessions)
         if sessions:
             self._accumulate_home_sessions(sessions)
@@ -2268,7 +2310,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     @callback
     def _set_home(self, raw) -> None:
-        was_home = self._home
+        # Ein wegen fehlendem SoC aufgeschobener Uebergang (siehe unten) zaehlt
+        # als "vorheriger" Zustand, damit der Session-Start nicht verloren geht.
+        was_home = self._home if self._home_deferred_was is None else self._home_deferred_was
         try:
             # Power-Entitaet (z.B. Wallbox-Ladeleistung): numerischer
             # Schwellwert statt Text-Vergleich. Roher Wert zusaetzlich fuer
@@ -2281,8 +2325,23 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # -- kein numerischer Leistungswert vorhanden.
             self._home_power_raw = None
             self._home = str(raw).strip().lower() in _HOME_TRUE
+        # Persistiertes "Session offen"-Flag/Neustart-Unterdrueckung nur bei einem
+        # Uebergang False->True verbraucht -- meldet die ERSTE Messung nach dem
+        # Neustart "laedt nicht" (Session endete waehrend der Downtime), bliebe
+        # die Unterdrueckung sonst stehen und wuerde die naechste, wirklich neue
+        # Session faelschlich unterdruecken.
+        if self._home_tick_restart_suppress and not self._home:
+            self._home_tick_restart_suppress = False
+            self.data["home_generic_estimate_open"] = False
+            self._save_soon()
         if self._calibrator is None or self._soc is None:
+            # Uebergang nicht verlieren: noch kein SoC (z.B. Entitaet beim
+            # Start noch ohne Wert) -- den Ausgangszustand merken, der Uebergang
+            # wird mit der naechsten Messung nachgeholt.
+            if self._home_deferred_was is None:
+                self._home_deferred_was = was_home
             return
+        self._home_deferred_was = None
         if not was_home and self._home:
             self._home_session_start_ts = time.time()
             self._calibrator.start(self._soc, self._wallbox_energy)
@@ -2422,6 +2481,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return
         if self._pv_generation is None or self._home_consumption_live_raw is None or self._wallbox_energy is None:
             return
+        if acc["last_pv"] is None or acc["last_home"] is None or acc["last_auto"] is None:
+            # Eine Quelle hatte beim Session-Start noch keinen Wert (z.B. Wechsel-
+            # richter nachts nach einem Neustart) -- nur Anker nachziehen, sonst
+            # TypeError bei jedem weiteren Tick der ganzen Session.
+            acc["last_pv"] = self._pv_generation
+            acc["last_home"] = self._home_consumption_live_raw
+            acc["last_auto"] = self._wallbox_energy
+            return
         pv_delta = self._pv_generation - acc["last_pv"]
         home_delta = self._home_consumption_live_raw - acc["last_home"]
         auto_delta = self._wallbox_energy - acc["last_auto"]
@@ -2547,14 +2614,44 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Plausibilitaetscheck: Kilometerstand faellt nie signifikant zurueck
         # (Sensor-Glitch), und ein einzelner Update-Sprung > 1500 km ist
         # unrealistisch (z.B. falscher Initialisierungswert oder Einheitenfehler).
+        # ABER: ein Wert, der ODO_ACCEPT_REPEATS-mal in Folge (+-1 km) wiederkehrt,
+        # ist kein Glitch, sondern der neue Stand (z.B. >1500 km ohne Meldung
+        # gefahren, Tacho/Sensor getauscht) -- sonst bliebe der Referenzwert
+        # (self.data["odo"]) dauerhaft stehen und JEDE weitere Messung wuerde
+        # ebenfalls verworfen (auch ueber einen Neustart hinweg).
         prev_km = self._odo_km()
+        went_back = False
         if prev_km is not None:
+            reason = None
             if value_km < prev_km - 10:
-                _LOGGER.debug("ODO-Glitch ignoriert: %.1f -> %.1f km", prev_km, value_km)
-                return
-            if value_km - prev_km > 1500:
-                _LOGGER.warning("ODO-Sprung zu groß, ignoriert: %.1f -> %.1f km", prev_km, value_km)
-                return
+                reason = "Glitch"
+                went_back = True
+            elif value_km - prev_km > 1500:
+                reason = "Sprung zu gross"
+            if reason is not None:
+                cand = self._odo_candidate
+                count = cand[1] + 1 if cand is not None and abs(cand[0] - value_km) <= 1.0 else 1
+                self._odo_candidate = (value_km, count)
+                if count < ODO_ACCEPT_REPEATS:
+                    _LOGGER.debug(
+                        "ODO-%s ignoriert: %.1f -> %.1f km (%d/%d)", reason, prev_km, value_km, count, ODO_ACCEPT_REPEATS,
+                    )
+                    return
+                _LOGGER.warning(
+                    "ODO-Wert %.1f -> %.1f km (%s) wiederholt gemeldet -- als neuer Stand uebernommen",
+                    prev_km, value_km, reason,
+                )
+            else:
+                went_back = False
+        self._odo_candidate = None
+        if went_back and self.data.get("odo") is not None:
+            # Tacho zurueckgesetzt/getauscht: gefahrene Strecke seit Einrichtung
+            # und Perioden-Baselines kontinuierlich weiterfuehren statt negativ
+            # zu werden.
+            delta_raw = value - self.data["odo"]
+            if self.data.get("odo_start") is not None:
+                self.data["odo_start"] = round(self.data["odo_start"] + delta_raw, 2)
+            self.data["odo_periods"] = {}
 
         # Referenzwert fuer die gefahrene Strecke im Kostenvergleich (siehe
         # savings()). Wird neu gesetzt, wenn noch keiner existiert ODER die
@@ -2678,20 +2775,65 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Baseline liegt). Der Vergleich gegen die Wochen-/Monats-/Jahres-
         Baseline (die den Bruch nicht miterlebt haben, da laengst zuvor
         gesetzt) deckt genau diesen Fall zusaetzlich auf."""
+        # Nach TATSAECHLICHEM Periodenbeginn ordnen (nicht nach fester Reihenfolge
+        # Jahr<Monat<Woche<Tag): eine Woche kann VOR dem Monats-/Jahresbeginn
+        # starten (z.B. Mo 28.09. in der Woche, die den 01.10. enthaelt) --
+        # ihre Baseline ist dann zu Recht NIEDRIGER als die des Monats und darf
+        # nicht verworfen werden. Bei gleichem Beginn gilt die feste Reihenfolge.
         result = dict(periods)
-        prev_value = None
+        # Ein zu HOHER Jahres-Eintrag (z.B. bei spaetem Seeding/der Zerlegung in
+        # _migrate_period_baselines_split() ungenau, oder nach einer Neu-
+        # Kalibrierung) wird auf die kleinste spaetere Baseline abgesenkt statt
+        # die korrekten Monats-/Wochen-/Tageseintraege zu loeschen -- das Jahr
+        # beginnt vor allen anderen Perioden, seine Baseline kann nie hoeher sein.
+        year = result.get("year")
+        later = [
+            e[field] for p in ("month", "week", "day")
+            if isinstance((e := result.get(p)), dict)
+            and isinstance(e.get(field), (int, float)) and not isinstance(e.get(field), bool)
+        ]
+        if (
+            isinstance(year, dict) and isinstance(year.get(field), (int, float))
+            and later and year[field] > min(later)
+        ):
+            result["year"] = dict(year, **{field: min(later)})
+        dated = []
         for period in cls._PERIOD_ORDER_ASCENDING:
             entry = result.get(period)
-            if entry is None:
+            if not isinstance(entry, dict):
                 continue
             value = entry.get(field)
-            if not isinstance(value, (int, float)):
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
                 continue
+            start = period_start_date(period, entry.get("key", ""))
+            if start is None:
+                continue
+            dated.append((start, cls._PERIOD_ORDER_ASCENDING.index(period), period, value))
+        prev_value = None
+        for _start, _order, period, value in sorted(dated):
             if prev_value is not None and value < prev_value:
                 del result[period]
                 continue
             prev_value = value
         return result
+
+    def _period_update_blocked(self, store: str) -> bool:
+        """True, wenn die Perioden-Baselines JETZT nicht angefasst werden
+        duerfen: die Heimlade-Quelle ist noch nicht belastbar (evcc-Abruf
+        laeuft/fehlgeschlagen, siehe _evcc_home_pending()) oder liefert gerade
+        keinen Wert (z.B. Wallbox-Zaehler nach einem Neustart noch nicht da)
+        UND es gibt bereits Baselines. Sonst waere der Heim-Anteil per
+        "or 0.0" unsichtbar 0, _discard_impossible_period_baselines() wuerde
+        ALLE Baselines verwerfen und auf 0 neu setzen -- die Perioden-Anzeige
+        zeigte danach die komplette Summe seit Einrichtung. Ohne bestehende
+        Baselines (und ohne laufenden evcc-Abruf) wird wie bisher mit 0
+        geseedet."""
+        if self._evcc_home_pending():
+            return True
+        if not self.data.get(store):
+            return False
+        configured = self._evcc_client is not None or bool(self._opt(CONF_WALLBOX_ENERGY_ENTITY))
+        return configured and self._home_kwh_since_setup() is None
 
     def _update_cost_periods(self) -> None:
         """Perioden-Baselines (Tag/Woche/Monat/Jahr) fuer die EV-
@@ -2704,6 +2846,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         _discard_inconsistent_period_baselines()/_discard_negative_prev_
         period_baselines() fuer die Selbstheilung gegen einen inzwischen
         behobenen Ruecksprung."""
+        if self._period_update_blocked("cost_periods"):
+            return
         cost = self._ev_cost_nonexternal_total_since_setup()
         periods = self._discard_impossible_period_baselines(
             self.data.get("cost_periods") or {}, cost, "cost",
@@ -2722,6 +2866,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         _discard_inconsistent_period_baselines()/_discard_negative_prev_
         period_baselines() fuer die Selbstheilung gegen einen inzwischen
         behobenen Ruecksprung."""
+        if self._period_update_blocked("kwh_periods"):
+            return
         kwh = self._ev_kwh_nonexternal_total_since_setup()
         periods = self._discard_impossible_period_baselines(
             self.data.get("kwh_periods") or {}, kwh, "kwh",
@@ -2729,6 +2875,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         periods = self._discard_inconsistent_period_baselines(periods, "kwh")
         periods = self._discard_negative_prev_period_baselines(periods)
         self.data["kwh_periods"] = update_period_baseline(periods, self._period_keys(), kwh, "kwh")
+
+    @callback
+    def _midnight_period_rollover(self, now=None) -> None:
+        self.hass.async_create_task(self._daily_odo_period_rollover())
+        self.hass.async_create_task(self._daily_cost_period_rollover())
+        self.hass.async_create_task(self._daily_kwh_period_rollover())
 
     @callback
     def _daily_lts_refresh(self, now) -> None:
@@ -2788,16 +2940,22 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         history_cutoff = now - HISTORY_MAX_MONATE * 30.44 * 86400
         fahrten = self.data.get("fahrten") or []
         history = self.data.get("history") or []
-        aktuelle_fahrten, alte_fahrten = split_by_age(fahrten, "start_ts", fahrten_cutoff)
-        aktuelle_history, alte_history = split_by_age(history, "erfasst_ts", history_cutoff)
+        _, alte_fahrten = split_by_age(fahrten, "start_ts", fahrten_cutoff)
+        _, alte_history = split_by_age(history, "erfasst_ts", history_cutoff)
         if not alte_fahrten and not alte_history:
             return
         archiv = await self._load_archive()
         archiv["fahrten"].extend(alte_fahrten)
         archiv["history"].extend(alte_history)
         await self._archive_store.async_save(archiv)
-        self.data["fahrten"] = aktuelle_fahrten
-        self.data["history"] = aktuelle_history
+        # Die archivierten Eintraege nach den awaits ueber IDENTITAET aus den
+        # AKTUELLEN Listen entfernen statt die vorher berechneten Teil-Listen
+        # zuzuweisen -- ein waehrend der awaits neu erfasster/bearbeiteter
+        # Eintrag ginge sonst verloren (veraltete Momentaufnahme).
+        archived_fahrten = {id(r) for r in alte_fahrten}
+        archived_history = {id(r) for r in alte_history}
+        self.data["fahrten"] = [r for r in self.data.get("fahrten") or [] if id(r) not in archived_fahrten]
+        self.data["history"] = [r for r in self.data.get("history") or [] if id(r) not in archived_history]
         if alte_fahrten:
             self._fahrten_version += 1
         if alte_history:
@@ -3659,7 +3817,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         CONF_GPS_ENTITY keinen anderen Wert."""
         rec = {
             "config_entry_id": self.entry.entry_id,
-            "datum": date.fromtimestamp(pend["start_ts"]).isoformat(),
+            "datum": self._local_date_of(pend["start_ts"]).isoformat(),
             "start_ts": pend["start_ts"], "end_ts": pend["end_ts"],
             "odo_start": pend["odo_start"], "odo_end": pend["odo_end"],
             "km": pend["km"], "start_ort": start_ort or "", "end_ort": end_ort or "",
@@ -4051,7 +4209,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                     rec["end_ort"] = end_ort
                 if start_ts is not None:
                     rec["start_ts"] = start_ts
-                    rec["datum"] = date.fromtimestamp(start_ts).isoformat()
+                    rec["datum"] = self._local_date_of(start_ts).isoformat()
                 if end_ts is not None:
                     rec["end_ts"] = end_ts
                 if km is not None:
@@ -5142,7 +5300,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         """EV-Gesamtkosten der Periode: Baseline-Delta der Nicht-Fremd-Summe
         (Heim + Ladekarten, Snapshot) + Fremdladungen live nach Ladezeit."""
         entry = (self.data.get("cost_periods") or {}).get(period)
-        if not entry:
+        if not entry or self._evcc_home_pending():
             return None
         base = max(0.0, round(self._ev_cost_nonexternal_total_since_setup() - entry["cost"], 2))
         return round(base + self._external_period_sum("kosten", period), 2)
@@ -5150,7 +5308,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     def kwh_period_value(self, period: str) -> Optional[float]:
         """Analog cost_period_value(), fuer kWh."""
         entry = (self.data.get("kwh_periods") or {}).get(period)
-        if not entry:
+        if not entry or self._evcc_home_pending():
             return None
         base = max(0.0, round(self._ev_kwh_nonexternal_total_since_setup() - entry["kwh"], 2))
         return round(base + self._external_period_sum("kwh", period), 2)
@@ -5169,6 +5327,42 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if not entry or "prev" not in entry:
             return None
         return round(entry["prev"] + self._external_period_sum("kwh", period, previous=True), 2)
+
+    def _repair_generic_home_sessions_kwh(self) -> bool:
+        """Einmalige Reparatur (0.99.31): _migrate_home_sessions_wh() (0.99.27)
+        teilte ALLE home_sessions durch 1000 -- aber ohne evcc stammen die
+        Eintraege aus der Solaranteil-/Kosten-Schaetzung (_set_home(), generischer
+        Zweig) und waren bereits in kWh. Folge: kWh 1000x zu klein, daher
+        preis_je_kwh 1000x zu hoch und alte Eintraege in der kWh-gewichteten
+        Solaranteil-Mittelung kaum noch gewichtet. Nur OHNE CONF_EVCC_HOST.
+        Betroffen sind eindeutig an einem unplausiblen Preis erkennbare
+        Eintraege (kwh < 0.1 UND kosten/kwh > 5 EUR/kWh) -- sie werden mit 1000
+        zurueckgerechnet (auf 3 Nachkommastellen gerundete Alt-Werte, daher
+        auf ca. 0,5 kWh genau); nach der Migration geschriebene Eintraege und
+        solche ohne erkennbaren Schaden bleiben unberuehrt. Flag, weil sonst
+        jeder Start erneut pruefen wuerde. True, wenn etwas geaendert wurde."""
+        if self.data.get("home_sessions_generic_repaired"):
+            return False
+        changed = False
+        if not self._opt(CONF_EVCC_HOST):
+            for rec in self.data.get("home_sessions") or []:
+                kwh = rec.get("kwh") if isinstance(rec, dict) else None
+                kosten = rec.get("kosten") if isinstance(rec, dict) else None
+                if (
+                    isinstance(kwh, (int, float)) and not isinstance(kwh, bool) and 0 < kwh < 0.1
+                    and isinstance(kosten, (int, float)) and not isinstance(kosten, bool)
+                    and kosten / kwh > 5.0
+                ):
+                    rec["kwh"] = round(kwh * 1000.0, 2)
+                    changed = True
+            if changed:
+                self._home_capacity_version += 1
+                self._log_event(
+                    "home_sessions_repariert",
+                    "Heimlade-Sessions ohne evcc: durch fruehere Migration um Faktor 1000 verkleinerte kWh-Werte korrigiert",
+                )
+        self.data["home_sessions_generic_repaired"] = True
+        return True
 
     def _migrate_period_baselines_split(self) -> bool:
         """Einmalige Migration (0.99.30, Issue #6): die bisherigen
@@ -5639,6 +5833,19 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             start = value
         return round(max(0.0, value - start), 2)
 
+    def _evcc_home_pending(self) -> bool:
+        """True, solange die Heimlade-Quellen mit evcc noch nicht belastbar
+        sind: erster Sessions-Abruf nicht durch, oder (ohne explizit
+        konfigurierten Fahrzeugnamen) der evcc-State fuer die automatische
+        Fahrzeug-Zuordnung (_evcc_vehicle_key()) noch nicht da -- beide
+        Abrufe laufen nebenlaeufig beim Start, die Reihenfolge ist nicht
+        garantiert."""
+        if self._evcc_client is None:
+            return False
+        if not self._evcc_sessions_loaded:
+            return True
+        return not self._opt(CONF_EVCC_VEHICLE_NAME) and self._evcc_state is None
+
     def _home_kwh(self) -> Optional[float]:
         """Heimladen kWh seit Einrichtung. Prioritaet: (1) aus evccs
         eigenem Ladelogbuch je Fahrzeug aufsummiert (siehe
@@ -5673,8 +5880,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         cost_periods) einen solchen Ruecksprung faelschlich als echten
         Verbrauchsrueckgang, was die naechste "seit Periodenbeginn"-Anzeige
         (z.B. "kWh heute") auf einen bizarr hohen Wert springen laesst."""
-        if self._evcc_client is not None and not self._evcc_sessions_loaded:
-            # Erster Sessions-Abruf laeuft noch -- NICHT auf evccs standort-
+        if self._evcc_home_pending():
+            # Erster Sessions-Abruf (bzw. der evcc-State fuer die automatische
+            # Fahrzeug-Zuordnung) laeuft noch -- NICHT auf evccs standort-
             # weite Lifetime-Statistik (Stufe 2) ausweichen, die sonst als
             # Start-/Hoechstwert festgeschrieben wuerde (Issue #5, siehe
             # _accumulate_home_sessions()). Analog _home_cost().
@@ -5682,6 +5890,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         veh = self._evcc_vehicle_key()
         raw = None
         from_sessions = False
+        from_wallbox = False
         if veh:
             acc = (self.data.get("home_kwh_accumulated") or {}).get(veh)
             if acc is not None:
@@ -5697,6 +5906,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             start = self.data.get("wallbox_energy_start")
             if self._wallbox_energy is not None and start is not None:
                 raw = round(self._wallbox_energy - start, 2)
+                from_wallbox = True
         if raw is None:
             return None
         if from_sessions:
@@ -5718,10 +5928,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # (siehe async_reset_lifetime_kpis()), der wallbox_energy_start
             # zurueckgesetzt, den Hoechststand aber stehen gelassen hat:
             # "seit Einrichtung" blieb dann bis zum Ueberschreiten des alten
-            # Stands bei 0. Beide Anker auf den aktuellen Rohwert neu setzen,
-            # der Wert waechst ab jetzt normal weiter.
+            # Stands bei 0. Hoechststand auf den aktuellen Rohwert. Startwert:
+            # bei Stufe 3 (Wallbox-Delta seit wallbox_energy_start, das der
+            # Reset auf "jetzt" gesetzt hat) ist der Rohwert bereits die
+            # Energie SEIT dem Reset -- Start 0, damit sie nicht verloren
+            # geht und synchron zum ebenfalls zurueckgesetzten Kilometerstand-
+            # Anker zaehlt; bei Stufe 2 (Lifetime-Statistik) der Rohwert.
             self.data["home_kwh_last_known"] = raw
-            self.data["savings_home_kwh_start"] = raw
+            self.data["savings_home_kwh_start"] = 0.0 if from_wallbox else raw
             self._log_event(
                 "home_baseline_repariert",
                 f"Heimladen-kWh: Hoechststand {last_known} lag ueber dem aktuellen Wert {raw} "
@@ -6349,6 +6563,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             if self._urlaub_aktiv():
                 return
             yesterday = dt_util.now().date() - timedelta(days=1)
+            # Wurde der Rollover mehr als einen Tag verpasst (HA lag ueber
+            # Mitternacht still), steckt in "prev" der Verbrauch MEHRERER Tage --
+            # als ein einzelner Tageswert gebucht verfaelschte er den Wochentag
+            # (und damit PV-Abzug/Restbedarf). Dann gar nicht buchen (analog
+            # Urlaub); Baseline ist oben bereits neu gesetzt.
+            try:
+                missed = (dt_util.now().date() - date.fromisoformat(old_entry["key"])).days
+            except (ValueError, TypeError):
+                missed = 1
+            if missed != 1:
+                return
             yesterday_wd = yesterday.weekday()
             house_days = dict(self.data.get("house_weekday_days") or {})
             avg_kwh = (weekday_profile_from_recent_days(house_days) or {}).get(yesterday_wd)
@@ -6866,10 +7091,25 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         statt "is None" pruefen: eine fehlgeschlagene Probe (scope=None)
         muss von "noch nie geprobt" unterscheidbar bleiben, sonst wuerde sie
         bei JEDEM Zyklus wiederholt (siehe _empty_data()-Kommentar)."""
-        if key in self.data:
-            return self.data[key]
+        cached = self.data.get(key)
+        if cached is not None:
+            return cached
+        # Eine fehlgeschlagene Probe (z.B. Fahrzeugname beim ersten Mal falsch/
+        # nicht zugeordnet, evcc gerade nicht erreichbar) wird NICHT mehr
+        # dauerhaft persistiert -- sonst haette sie nie wieder zu einer neuen
+        # Probe gefuehrt (ein gecachtes None ueberspringt das Schreiben ganz).
+        # Stattdessen nur im Speicher gedrosselt (_EVCC_SCOPE_RETRY_S), damit
+        # nicht jeder Zyklus erneut probt.
+        last_fail = self._evcc_scope_failed.get(key)
+        if last_fail is not None and time.monotonic() - last_fail < _EVCC_SCOPE_RETRY_S:
+            return None
         scope = await self._evcc_client.async_probe_scope(loadpoint_id, vehicle_name, prop, state_field)
-        self.data[key] = scope  # auch None wird gecacht -> keine Probe jeden Zyklus
+        if scope is None:
+            self._evcc_scope_failed[key] = time.monotonic()
+            self.data.pop(key, None)
+            return None
+        self._evcc_scope_failed.pop(key, None)
+        self.data[key] = scope
         await self._store.async_save(self.data)
         return scope
 
@@ -6885,7 +7125,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Re-Probe-Stand fuer die naechste Session bewusst wieder (kein
         Sonderfall noetig)."""
         scope = await self._evcc_client.async_probe_scope(loadpoint_id, vehicle_name, prop, state_field)
-        self.data[key] = scope
+        if scope is None:
+            self._evcc_scope_failed[key] = time.monotonic()
+            self.data.pop(key, None)
+        else:
+            self._evcc_scope_failed.pop(key, None)
+            self.data[key] = scope
         return scope
 
     async def _async_apply_evcc_mode_control(self) -> None:

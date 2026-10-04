@@ -185,3 +185,42 @@ async def test_heimladen_schema_enthaelt_wallbox_status_felder():
     keys = {str(key) for key in build_heimladen_schema({}).schema}
     assert CONF_WALLBOX_CONNECTED_ENTITY in keys
     assert CONF_WALLBOX_CHARGING_ENTITY in keys
+
+
+async def test_geteiltes_feld_laesst_sich_im_evcc_pfad_leeren(hass):
+    """Review 2026-10-04: home_consumption_entity steht im evcc- UND im
+    Heimladen-Schema. Der Modus-Schritt kopiert den Wert des uebersprungenen
+    Pfads vorab nach _data -- Leeren im aktiven Schritt muss ihn trotzdem
+    entfernen."""
+    from custom_components.ev_assistant.config_flow import EvAssistantOptionsFlow
+    from custom_components.ev_assistant.const import (
+        CONF_HOME_CHARGING_METHOD,
+        CONF_HOME_CONSUMPTION_ENTITY,
+        CONF_LADE_MODUS,
+        CONF_SOC_ENTITY,
+        CONF_USABLE_KWH,
+        CONF_VEHICLE_HERSTELLER,
+        CONF_VEHICLE_MODELL,
+        HOME_CHARGING_METHOD_EVCC,
+        LADE_MODUS_GEMISCHT,
+    )
+
+    entry = _make_entry(hass)
+    hass.config_entries.async_update_entry(
+        entry, data={**entry.data, CONF_HOME_CONSUMPTION_ENTITY: "sensor.hausverbrauch"},
+    )
+    flow = EvAssistantOptionsFlow(entry)
+    flow.hass = hass
+    await flow.async_step_init()
+    await flow.async_step_fahrzeug({
+        CONF_VEHICLE_HERSTELLER: "Testmarke", CONF_VEHICLE_MODELL: "Testmodell",
+        CONF_SOC_ENTITY: "sensor.test_soc", CONF_USABLE_KWH: 50.0,
+    })
+    result = await flow.async_step_modus({
+        CONF_LADE_MODUS: LADE_MODUS_GEMISCHT, CONF_HOME_CHARGING_METHOD: HOME_CHARGING_METHOD_EVCC,
+    })
+    assert result["step_id"] == "evcc"
+    assert flow._data.get(CONF_HOME_CONSUMPTION_ENTITY) == "sensor.hausverbrauch"  # vorab kopiert
+    # evcc-Schritt ohne das Feld (Nutzer hat es geleert), ohne Host -> kein Netzwerk
+    await flow.async_step_evcc({})
+    assert CONF_HOME_CONSUMPTION_ENTITY not in flow._data

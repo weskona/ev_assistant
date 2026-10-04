@@ -1269,10 +1269,12 @@ async def test_apply_evcc_mode_control_repair_issue_verschwindet_nach_erfolgreic
     issue_id = f"{entry.entry_id}_evcc_soc_scope_failed"
     assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id) is not None
 
-    # Scope-Cache manuell zuruecksetzen (simuliert eine erneute Aktivierung/
-    # Options-Aenderung) und dieses Mal erfolgreich probieren.
-    del coordinator.data["evcc_min_soc_scope"]
-    del coordinator.data["evcc_limit_soc_scope"]
+    # Fehlgeschlagene Probe wird nicht mehr persistiert, nur gedrosselt -- die
+    # Drosselung zuruecksetzen (simuliert den Ablauf von _EVCC_SCOPE_RETRY_S)
+    # und dieses Mal erfolgreich probieren.
+    assert "evcc_min_soc_scope" not in coordinator.data
+    assert "evcc_limit_soc_scope" not in coordinator.data
+    coordinator._evcc_scope_failed.clear()
     coordinator._evcc_client = _fake_evcc_client(probe_result="loadpoint")
     coordinator._soc = 20.0  # Empfehlung aendern, damit ueberhaupt neu geschrieben wird
     await coordinator._async_apply_evcc_mode_control()
@@ -2640,11 +2642,13 @@ async def test_home_kwh_stufe3_heilt_eingefrorenen_stand_nach_altem_reset(hass, 
     coordinator.data["savings_home_kwh_start"] = 236.0
 
     assert coordinator._home_kwh() == 20.0
-    assert coordinator._home_kwh_since_setup() == 0.0
+    # Stufe 3: der Rohwert ist bereits die Energie SEIT dem Reset -- sie darf
+    # durch die Heilung nicht verloren gehen (synchron zum Kilometerstand-Anker).
+    assert coordinator._home_kwh_since_setup() == 20.0
     assert any(e["kategorie"] == "home_baseline_repariert" for e in coordinator.data["event_log"])
 
     coordinator._wallbox_energy = 1261.0  # +5 kWh danach
-    assert coordinator._home_kwh_since_setup() == 5.0
+    assert coordinator._home_kwh_since_setup() == 25.0
 
 
 async def test_home_kwh_stufe3_schutz_bleibt_bei_gesundem_rueckgang(hass, coordinators):
@@ -2741,3 +2745,250 @@ async def test_migration_zerlegt_alte_gesamt_baseline(hass, coordinators):
     assert coordinator._migrate_period_baselines_split() is True
     assert coordinator.data["cost_periods"]["day"]["cost"] == 0.0  # 100 - (130 - 30)
     assert coordinator._migrate_period_baselines_split() is False  # Flag, idempotent
+
+
+# ----- Review 2026-10-04: Startrennen Fahrzeug-Zuordnung, generische Sessions ---
+
+async def test_auto_zuordnung_sessions_vor_evcc_state_migration_laeuft_trotzdem(hass, coordinators):
+    """Ohne konfigurierten Fahrzeugnamen kann der Sessions-Abruf VOR dem
+    evcc-State fertig sein (Schluessel noch None): bis dahin kein Rueckfall
+    auf Stufe 2, und die Baseline-Reparatur laeuft, sobald der Schluessel da ist."""
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock
+
+    from custom_components.ev_assistant.const import (
+        CONF_VEHICLE_HERSTELLER,
+        CONF_VEHICLE_MODELL,
+        CONF_WALLBOX_ENERGY_ENTITY,
+    )
+
+    coordinator, entry = await _make_coordinator(
+        hass, coordinators, "rv1",
+        options={CONF_VEHICLE_HERSTELLER: "Peugeot", CONF_VEHICLE_MODELL: "eRifter", CONF_WALLBOX_ENERGY_ENTITY: "sensor.wb"},
+    )
+    entry.created_at = datetime(2026, 9, 10, tzinfo=UTC)
+    coordinator.data["savings_home_kwh_start"] = 2370.0
+    coordinator.data["home_kwh_last_known"] = 2370.0
+    coordinator._evcc_client = AsyncMock()
+    coordinator._evcc_client.async_get_sessions.return_value = [
+        _evcc_session(1, 200.0, 40.0), _evcc_session(20, 20.0, 3.0),
+    ]
+    coordinator._evcc_state = None
+    await coordinator._refresh_evcc_sessions()
+    assert coordinator._home_kwh() is None  # Zuordnung noch offen, kein Stufe-2-Rueckfall
+    assert coordinator.cost_period_value("month") is None
+
+    coordinator._evcc_state = {
+        "vehicles": {"db:1": {"title": "eRifter"}}, "statistics": {"total": {"chargedKWh": 2370.0}},
+    }
+    await coordinator._refresh_evcc_sessions()
+    assert coordinator._home_kwh() == 220.0
+    assert coordinator._home_kwh_since_setup() == 20.0  # Baseline repariert
+
+
+async def test_generische_home_sessions_werden_nach_wh_migration_repariert(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "rv2")  # ohne evcc
+    coordinator.data["home_sessions"] = [
+        {"ts": 1.0, "kwh": 0.012, "solar_pct": 80.0, "kosten": 2.9},   # 12.34 kWh, durch Migration /1000
+        {"ts": 2.0, "kwh": 8.0, "solar_pct": 50.0, "kosten": 2.0},     # nach der Migration geschrieben
+    ]
+    coordinator.data["home_sessions_generic_repaired"] = False
+    assert coordinator._repair_generic_home_sessions_kwh() is True
+    assert coordinator.data["home_sessions"][0]["kwh"] == 12.0
+    assert coordinator.data["home_sessions"][1]["kwh"] == 8.0
+    assert coordinator.home_session_stats()["preis_je_kwh"] < 1.0
+    assert any(e["kategorie"] == "home_sessions_repariert" for e in coordinator.data["event_log"])
+    assert coordinator._repair_generic_home_sessions_kwh() is False  # Flag
+
+
+async def test_generische_home_sessions_reparatur_nicht_bei_evcc(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_HOST
+
+    coordinator, entry = await _make_coordinator(hass, coordinators, "rv3")
+    # erst nach dem Setup setzen -- sonst wuerde ein echter evcc-Client aufgebaut
+    hass.config_entries.async_update_entry(entry, options={CONF_EVCC_HOST: "h:7070"})
+    coordinator.data["home_sessions"] = [{"ts": 1.0, "kwh": 0.012, "solar_pct": 80.0, "kosten": 2.9}]
+    coordinator.data["home_sessions_generic_repaired"] = False
+    coordinator._repair_generic_home_sessions_kwh()
+    assert coordinator.data["home_sessions"][0]["kwh"] == 0.012  # evcc-Pfad: war echt Wh
+
+
+async def test_perioden_baselines_bleiben_bei_nicht_erreichbarem_evcc_erhalten(hass, coordinators):
+    """Review 2026-10-04: erreicht der taegliche Rollover evcc nicht (State
+    None, kein expliziter Fahrzeugname), darf er die Baselines nicht auf 0
+    zuruecksetzen."""
+    from unittest.mock import AsyncMock
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "rv4")
+    coordinator._evcc_client = AsyncMock()
+    coordinator._evcc_sessions_loaded = True
+    coordinator._evcc_state = None
+    coordinator.data["kwh_periods"] = {"day": {"key": coordinator._period_keys()["day"], "kwh": 310.0, "prev": 5.0}}
+    coordinator.data["cost_periods"] = {"day": {"key": coordinator._period_keys()["day"], "cost": 90.0}}
+    coordinator._update_kwh_periods()
+    coordinator._update_cost_periods()
+    assert coordinator.data["kwh_periods"]["day"] == {"key": coordinator._period_keys()["day"], "kwh": 310.0, "prev": 5.0}
+    assert coordinator.data["cost_periods"]["day"]["cost"] == 90.0
+
+
+async def test_inkonsistenz_pruefung_loescht_keine_woche_die_vor_dem_monat_beginnt(hass, coordinators):
+    """Review 2026-10-04: eine Woche, die vor dem Monatsbeginn startet (Mo 28.09.,
+    Monat ab 01.10.), hat zu Recht eine NIEDRIGERE Baseline als der Monat."""
+    from custom_components.ev_assistant.coordinator import EvAssistantCoordinator
+
+    periods = {
+        "week": {"key": "2026-W40", "kwh": 200.0, "prev": 5.0},   # Mo 28.09.
+        "month": {"key": "2026-10", "kwh": 230.0, "prev": 9.0},   # 01.10.
+        "day": {"key": "2026-10-04", "kwh": 240.0},
+    }
+    result = EvAssistantCoordinator._discard_inconsistent_period_baselines(periods, "kwh")
+    assert set(result) == {"week", "month", "day"}
+    # echte Inkonsistenz (Tag vor Monat zu niedrig) wird weiterhin erkannt
+    periods["day"]["kwh"] = 100.0
+    assert "day" not in EvAssistantCoordinator._discard_inconsistent_period_baselines(periods, "kwh")
+
+
+async def test_sessions_fehlschlag_markiert_nicht_als_geladen(hass, coordinators):
+    from unittest.mock import AsyncMock
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "rv5")
+    coordinator._evcc_client = AsyncMock()
+    coordinator._evcc_client.async_get_sessions.return_value = []
+    coordinator._evcc_client.last_sessions_ok = False
+    await coordinator._refresh_evcc_sessions()
+    assert coordinator._evcc_sessions_loaded is False
+    coordinator._evcc_client.last_sessions_ok = True
+    await coordinator._refresh_evcc_sessions()
+    assert coordinator._evcc_sessions_loaded is True
+
+
+async def test_home_tick_ohne_anker_wirft_nicht(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "rv6")
+    coordinator._home = True
+    coordinator._pv_generation = 100.0
+    coordinator._home_consumption_live_raw = 50.0
+    coordinator._wallbox_energy = 10.0
+    coordinator._home_tick_acc = {
+        "solar_kwh": 0.0, "grid_kwh": 0.0, "kosten": 0.0,
+        "last_pv": None, "last_home": 50.0, "last_auto": 10.0, "last_battery": None,
+        "last_feedin_price": 0.08, "last_grid_price": 0.3,
+    }
+    coordinator._process_home_tick()  # darf nicht werfen
+    assert coordinator._home_tick_acc["last_pv"] == 100.0
+
+
+async def test_inkonsistenz_pruefung_senkt_zu_hohes_jahr_ab_statt_andere_zu_loeschen(hass, coordinators):
+    """Live-Fall 2026-10-04: Jahres-Baseline (spaet geseedet) 113.75 liegt ueber den
+    korrekten Monats-/Wochen-Baselines 98.07 -- diese duerfen nicht geloescht werden."""
+    from custom_components.ev_assistant.coordinator import EvAssistantCoordinator
+
+    periods = {
+        "year": {"key": "2026", "kwh": 113.75},
+        "month": {"key": "2026-10", "kwh": 98.07, "prev": 9.0},
+        "week": {"key": "2026-W40", "kwh": 98.07},
+        "day": {"key": "2026-10-04", "kwh": 113.75, "prev": 1.0},
+    }
+    result = EvAssistantCoordinator._discard_inconsistent_period_baselines(periods, "kwh")
+    assert set(result) == {"year", "month", "week", "day"}
+    assert result["year"]["kwh"] == 98.07
+    assert result["month"]["prev"] == 9.0
+    assert periods["year"]["kwh"] == 113.75  # Eingabe unveraendert
+
+
+# ----- Review 2026-10-04 (2): Kilometerstand-Plausibilitaet -------------------
+
+async def test_odo_grosser_sprung_wird_nach_wiederholung_uebernommen(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "odo1")
+    coordinator._set_odo(1000, "km")
+    assert coordinator.data["odo"] == 1000
+    coordinator._set_odo(3000, "km")  # >1500 km Sprung: 1. Mal ignoriert
+    coordinator._set_odo(3001, "km")  # 2. Mal ignoriert (+-1 km gleicher Kandidat)
+    assert coordinator.data["odo"] == 1000
+    coordinator._set_odo(3001, "km")  # 3. Mal -> neuer Stand
+    assert coordinator.data["odo"] == 3001
+    coordinator._set_odo(3005, "km")
+    assert coordinator.data["odo"] == 3005
+
+
+async def test_odo_einzelner_glitch_wird_weiter_ignoriert(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "odo2")
+    coordinator._set_odo(1000, "km")
+    coordinator._set_odo(50, "km")      # Glitch
+    coordinator._set_odo(1002, "km")    # normaler Wert setzt den Kandidaten zurueck
+    coordinator._set_odo(50, "km")
+    coordinator._set_odo(51, "km")
+    assert coordinator.data["odo"] == 1002  # nie 3x in Folge derselbe Wert
+
+
+async def test_odo_ruecksprung_dauerhaft_fuehrt_odo_start_mit(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "odo3")
+    coordinator._set_odo(1000, "km")
+    coordinator._set_odo(1100, "km")
+    assert coordinator.data["odo"] - coordinator.data["odo_start"] == 100
+    for _ in range(3):
+        coordinator._set_odo(20, "km")  # neuer Tacho
+    assert coordinator.data["odo"] == 20
+    # gefahrene Strecke seit Einrichtung bleibt kontinuierlich (100 km), nicht negativ
+    assert coordinator.data["odo"] - coordinator.data["odo_start"] == 100
+
+
+async def test_evcc_scope_fehlgeschlagene_probe_wird_gedrosselt_nicht_dauerhaft_gecacht(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "scp1")
+    coordinator._evcc_client = _fake_evcc_client(probe_result=None)
+    assert await coordinator._evcc_scope("evcc_min_soc_scope", 1, None, "minsoc", "minSoc") is None
+    assert "evcc_min_soc_scope" not in coordinator.data
+    # innerhalb der Drosselung keine zweite Probe
+    await coordinator._evcc_scope("evcc_min_soc_scope", 1, None, "minsoc", "minSoc")
+    assert coordinator._evcc_client.async_probe_scope.await_count == 1
+    # nach Ablauf der Drosselung wird erneut geprobt und ein Erfolg persistiert
+    coordinator._evcc_scope_failed.clear()
+    coordinator._evcc_client = _fake_evcc_client(probe_result="vehicle")
+    assert await coordinator._evcc_scope("evcc_min_soc_scope", 1, "eRifter", "minsoc", "minSoc") == "vehicle"
+    assert coordinator.data["evcc_min_soc_scope"] == "vehicle"
+
+
+async def test_haus_profil_bucht_verpassten_mehrtages_rollover_nicht_als_einen_tag(hass, coordinators):
+    from datetime import timedelta
+
+    from homeassistant.util import dt as dt_util
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "hp1")
+    coordinator._house_combined_reading_kwh = lambda: 200.0
+    today = dt_util.now().date()
+    coordinator.data["house_periods"] = {"day": {"key": str(today - timedelta(days=3)), "kwh": 100.0}}
+    coordinator._update_house_usage_profile()
+    assert not coordinator.data.get("house_weekday_days")
+    assert coordinator.data["house_periods"]["day"]["key"] == str(today)
+
+    # normaler Rollover (gestern -> heute) wird weiterhin gebucht
+    coordinator.data["house_periods"] = {"day": {"key": str(today - timedelta(days=1)), "kwh": 150.0}}
+    coordinator._update_house_usage_profile()
+    assert coordinator.data.get("house_weekday_days")
+
+
+async def test_mitternachts_rollover_ruft_perioden_rollover_auf(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "mid1")
+    coordinator.data["cost_periods"] = {"day": {"key": "2000-01-01", "cost": 0.0}}
+    coordinator._midnight_period_rollover()
+    await hass.async_block_till_done()
+    assert coordinator.data["cost_periods"]["day"]["key"] == coordinator._period_keys()["day"]
+
+
+async def test_restart_unterdrueckung_wird_bei_nicht_ladender_erster_messung_verbraucht(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "sup1")
+    coordinator._home_tick_restart_suppress = True
+    coordinator.data["home_generic_estimate_open"] = True
+    coordinator._set_home("0")
+    assert coordinator._home_tick_restart_suppress is False
+    assert coordinator.data["home_generic_estimate_open"] is False
+
+
+async def test_heim_uebergang_ohne_soc_wird_nachgeholt(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "sup2")
+    coordinator._set_home("0")  # nicht ladend
+    coordinator._soc = None
+    coordinator._set_home("7.4")  # Ladebeginn, aber noch kein SoC -> wird gemerkt
+    assert coordinator._home_session_start_ts is None
+    coordinator._soc = 50.0
+    coordinator._set_home("7.4")  # naechste Messung: Uebergang wird nachgeholt
+    assert coordinator._home_session_start_ts is not None

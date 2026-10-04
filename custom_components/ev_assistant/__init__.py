@@ -541,8 +541,10 @@ async def _async_reload(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 def _coordinator_for(hass: HomeAssistant, config_entry_id: str) -> EvAssistantCoordinator | None:
     coordinator = hass.data.get(DOMAIN, {}).get(config_entry_id)
-    if coordinator is None:
+    if not isinstance(coordinator, EvAssistantCoordinator):
+        # auch die internen Flag-Schluessel (_ev_panel, ...) liegen in hass.data[DOMAIN]
         _LOGGER.warning("ev_assistant: unbekannte config_entry_id %s", config_entry_id)
+        return None
     return coordinator
 
 
@@ -917,7 +919,10 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator = hass.data[DOMAIN].pop(entry.entry_id, None)
         if coordinator is not None:
             await coordinator.async_shutdown()
-        if not hass.data[DOMAIN]:
+        # hass.data[DOMAIN] enthaelt neben den Coordinators auch die Flags
+        # _ev_panel/_ev_panel_static/_ev_websocket -- "leer" wird es nie,
+        # deshalb nur auf verbleibende Coordinators pruefen.
+        if not any(isinstance(v, EvAssistantCoordinator) for v in hass.data[DOMAIN].values()):
             _async_unregister_panel(hass)
             for service in (
                 SERVICE_LOG, SERVICE_DISCARD, SERVICE_SIMULATE, SERVICE_EDIT, SERVICE_DELETE,

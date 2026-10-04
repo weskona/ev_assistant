@@ -31,12 +31,17 @@ class EvccClient:
             host = f"http://{host}"
         self._host = host.rstrip("/")
         self._session = session
+        # Ob der letzte /api/sessions-Abruf wirklich geklappt hat -- async_get_
+        # sessions() gibt bei Fehlern ebenfalls [] zurueck (nicht unterscheidbar
+        # von "keine Session"), siehe coordinator.py::_refresh_evcc_sessions().
+        self.last_sessions_ok: bool | None = None
 
     async def async_get_state(self) -> dict | None:
         return await self._get_json(f"{self._host}/api/state")
 
     async def async_get_sessions(self) -> list:
         data = await self._get_json(f"{self._host}/api/sessions")
+        self.last_sessions_ok = isinstance(data, list)
         return data if isinstance(data, list) else []
 
     async def _get_json(self, url: str):
@@ -46,7 +51,9 @@ class EvccClient:
                     _LOGGER.debug("evcc_client: %s -> HTTP %s", url, resp.status)
                     return None
                 return await resp.json()
-        except (aiohttp.ClientError, TimeoutError) as err:
+        except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+            # ValueError: leerer/abgeschnittener Body (json.JSONDecodeError),
+            # z.B. waehrend evcc oder ein Proxy gerade neu startet.
             _LOGGER.debug("evcc_client: %s -> %s: %s", url, type(err).__name__, err)
             return None
 
@@ -80,7 +87,7 @@ class EvccClient:
             return None
         if await self._post(f"{self._host}/api/loadpoints/{loadpoint_id}/{prop}/{int(current)}"):
             return "loadpoint"
-        if vehicle_name and await self._post(f"{self._host}/api/vehicles/{vehicle_name}/{prop}/{int(current)}"):
+        if vehicle_name and await self._post(f"{self._host}/api/vehicles/{quote(vehicle_name, safe='')}/{prop}/{int(current)}"):
             return "vehicle"
         return None
 
@@ -90,14 +97,14 @@ class EvccClient:
     async def async_set_min_soc(self, loadpoint_id: int, vehicle_name: str | None, scope: str, soc: int) -> bool:
         url = (
             f"{self._host}/api/loadpoints/{loadpoint_id}/minsoc/{soc}" if scope == "loadpoint"
-            else f"{self._host}/api/vehicles/{vehicle_name}/minsoc/{soc}"
+            else f"{self._host}/api/vehicles/{quote(vehicle_name, safe='')}/minsoc/{soc}"
         )
         return await self._post(url)
 
     async def async_set_limit_soc(self, loadpoint_id: int, vehicle_name: str | None, scope: str, soc: int) -> bool:
         url = (
             f"{self._host}/api/loadpoints/{loadpoint_id}/limitsoc/{soc}" if scope == "loadpoint"
-            else f"{self._host}/api/vehicles/{vehicle_name}/limitsoc/{soc}"
+            else f"{self._host}/api/vehicles/{quote(vehicle_name, safe='')}/limitsoc/{soc}"
         )
         return await self._post(url)
 
@@ -111,10 +118,11 @@ class EvccClient:
         async_set_limit_soc()). Nur auf Fahrzeug-Ebene verfuegbar (siehe
         evcc-API-Doku https://docs.evcc.io/integrations/rest-api) --
         anders als minsoc/limitsoc kein Loadpoint-Scope-Fallback noetig."""
-        return await self._post(f"{self._host}/api/vehicles/{vehicle_name}/plan/soc/{soc}/{quote(target_time_iso, safe='')}")
+        name = quote(vehicle_name, safe="")
+        return await self._post(f"{self._host}/api/vehicles/{name}/plan/soc/{soc}/{quote(target_time_iso, safe='')}")
 
     async def async_clear_vehicle_plan_soc(self, vehicle_name: str) -> bool:
-        return await self._delete(f"{self._host}/api/vehicles/{vehicle_name}/plan/soc")
+        return await self._delete(f"{self._host}/api/vehicles/{quote(vehicle_name, safe='')}/plan/soc")
 
     async def async_set_priority_soc(self, soc: int) -> bool:
         """Setzt evccs site-weite Speicher-Vorrang-Schwelle ("prioritySoc",

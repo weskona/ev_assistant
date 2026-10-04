@@ -527,6 +527,10 @@ AC_MAX_KW = 22.0
 # separaten Lebenszeit-Baselines (siehe die *_totals-Felder in
 # coordinator._empty_data()), die von der Kuerzung unberuehrt bleiben.
 FAHRTEN_MAX_MONATE = 24
+# Wie oft ein zunaechst als unplausibel verworfener Kilometerstand (Sprung
+# > 1500 km oder Ruecksprung > 10 km) in Folge wiederkehren muss, bis er als
+# neuer Stand uebernommen wird (siehe coordinator.py::_set_odo()).
+ODO_ACCEPT_REPEATS = 3
 HISTORY_MAX_MONATE = 24
 
 # Wie lange das Ereignisprotokoll (coordinator._log_event()/self.data

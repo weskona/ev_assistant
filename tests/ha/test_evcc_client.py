@@ -197,3 +197,33 @@ async def test_post_loggt_warning_bei_http_fehler(caplog):
         result = await client.async_set_mode(1, "now")
     assert result is False
     assert any("HTTP 503" in r.message for r in caplog.records)
+
+
+# ----- Review 2026-10-04 ------------------------------------------------------
+
+class _BrokenJsonResponse(_FakeResponse):
+    async def json(self):
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+
+async def test_kaputtes_json_liefert_none_statt_exception():
+    client, _ = _client({"http://evcc.local/api/state": _BrokenJsonResponse(200)})
+    assert await client.async_get_state() is None
+
+
+async def test_sessions_abruf_merkt_sich_erfolg_und_fehlschlag():
+    client, _ = _client({"http://evcc.local/api/sessions": _FakeResponse(200, [{"id": 1}])})
+    assert await client.async_get_sessions() == [{"id": 1}]
+    assert client.last_sessions_ok is True
+    client, _ = _client({"http://evcc.local/api/sessions": _FakeResponse(500)})
+    assert await client.async_get_sessions() == []
+    assert client.last_sessions_ok is False
+    client, _ = _client({"http://evcc.local/api/sessions": _FakeResponse(200, [])})
+    assert await client.async_get_sessions() == []
+    assert client.last_sessions_ok is True  # echt leer != Fehler
+
+
+async def test_fahrzeugname_wird_in_url_kodiert():
+    client, session = _client({"http://evcc.local/api/vehicles/a%2Fb%20c/minsoc/40": _FakeResponse(200)})
+    assert await client.async_set_min_soc(1, "a/b c", "vehicle", 40) is True
+    assert session.calls == [("POST", "http://evcc.local/api/vehicles/a%2Fb%20c/minsoc/40")]

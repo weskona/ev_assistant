@@ -263,8 +263,10 @@ def build_vehicle_schema(cur: dict) -> vol.Schema:
         vol.Optional(CONF_ERSTZULASSUNG, description=sv(CONF_ERSTZULASSUNG)): selector.DateSelector(),
         vol.Optional(CONF_ODO_ENTITY, description=sv(CONF_ODO_ENTITY)): _ODO_ENTITY,
         vol.Required(CONF_SOC_ENTITY, description=sv(CONF_SOC_ENTITY)): _SOC_ENTITY,
-        vol.Required(CONF_USABLE_KWH, default=cur.get(CONF_USABLE_KWH, DEFAULT_USABLE_KWH)): vol.Coerce(float),
-        vol.Optional(CONF_EFFICIENCY, default=cur.get(CONF_EFFICIENCY, DEFAULT_EFFICIENCY)): vol.Coerce(float),
+        vol.Required(CONF_USABLE_KWH, default=cur.get(CONF_USABLE_KWH, DEFAULT_USABLE_KWH)): vol.All(
+            vol.Coerce(float), vol.Range(min=1.0, max=500.0)),
+        vol.Optional(CONF_EFFICIENCY, default=cur.get(CONF_EFFICIENCY, DEFAULT_EFFICIENCY)): vol.All(
+            vol.Coerce(float), vol.Range(min=0.1, max=1.0)),
     })
 
 
@@ -613,6 +615,24 @@ def _carry_forward(current: dict, data: dict, schema: vol.Schema) -> dict:
     return result
 
 
+def _merge_step(data: dict, cleaned: dict, schema: vol.Schema) -> dict:
+    """Ergebnis eines Options-Schritts in die bisherige Konfiguration
+    uebernehmen -- Felder dieses Schritts, die der Nutzer GELEERT hat (fehlen
+    in `cleaned`), werden entfernt. Noetig, weil einzelne Felder (z.B.
+    home_consumption_entity/battery_charge_entity) in mehreren Schritten
+    vorkommen und der Lade-Modus-Schritt den Wert des jeweils uebersprungenen
+    Pfads aus der alten Konfiguration vorab in `data` kopiert (siehe
+    _carry_forward()) -- ohne dieses Entfernen liesse sich so ein Feld in
+    keinem der beiden Pfade je loeschen."""
+    result = dict(data)
+    for key in schema.schema:
+        k = str(key)
+        if k not in cleaned:
+            result.pop(k, None)
+    result.update(cleaned)
+    return result
+
+
 class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
     """Mehrschrittige Ersteinrichtung (9 Schritte, davon 2 fuer
     LADE_MODUS_NUR_AUSWAERTS uebersprungen -- siehe async_step_modus()).
@@ -882,7 +902,7 @@ class EvAssistantOptionsFlow(OptionsFlow):
                 else:
                     titles = found
             if not errors:
-                self._data = {**self._data, **cleaned}
+                self._data = _merge_step(self._data, cleaned, build_evcc_schema({}))
                 if len(titles) > 1:
                     self._evcc_loadpoints = titles
                     return await self.async_step_evcc_loadpoint()
@@ -905,7 +925,7 @@ class EvAssistantOptionsFlow(OptionsFlow):
 
     async def async_step_heimladen(self, user_input=None) -> FlowResult:
         if user_input is not None:
-            self._data = {**self._data, **_clean(user_input)}
+            self._data = _merge_step(self._data, _clean(user_input), build_heimladen_schema({}))
             return await self.async_step_ladeleistung()
 
         return self.async_show_form(

@@ -15,6 +15,15 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN
+from .coordinator import EvAssistantCoordinator
+
+
+def _lookup(hass: HomeAssistant, config_entry_id: str):
+    """Coordinator zur config_entry_id -- hass.data[DOMAIN] enthaelt auch interne
+    Flag-Schluessel (_ev_panel, ...), die nie als Coordinator gelten duerfen."""
+    coordinator = hass.data.get(DOMAIN, {}).get(config_entry_id)
+    return coordinator if isinstance(coordinator, EvAssistantCoordinator) else None
+
 
 COMMAND_TYPE = "ev_assistant/evcc_sessions"
 
@@ -25,7 +34,7 @@ COMMAND_TYPE = "ev_assistant/evcc_sessions"
 })
 @websocket_api.async_response
 async def _handle_evcc_sessions(hass: HomeAssistant, connection, msg) -> None:
-    coordinator = hass.data.get(DOMAIN, {}).get(msg["config_entry_id"])
+    coordinator = _lookup(hass, msg["config_entry_id"])
     if coordinator is None:
         connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "unknown config_entry_id")
         return
@@ -51,7 +60,7 @@ async def _handle_event_log(hass: HomeAssistant, connection, msg) -> None:
     HAs Attribut-Groessenwarnung ausloesen -- ein WS-Abruf bei Tab-Oeffnen/
     -Auffrischung (siehe _fetchEventLog() im Panel) umgeht das komplett,
     identisches Muster wie _handle_evcc_sessions() oben."""
-    coordinator = hass.data.get(DOMAIN, {}).get(msg["config_entry_id"])
+    coordinator = _lookup(hass, msg["config_entry_id"])
     if coordinator is None:
         connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "unknown config_entry_id")
         return
@@ -77,7 +86,7 @@ async def _handle_trips(hass: HomeAssistant, connection, msg) -> None:
     16384 bytes"). Deshalb eigenes WS-Kommando statt Sensor-Attribut
     (sensor.py::LastTripSensor haengt seit diesem Fix nur noch die Felder
     der letzten Fahrt selbst an, keine "fahrtenbuch"-Liste mehr)."""
-    coordinator = hass.data.get(DOMAIN, {}).get(msg["config_entry_id"])
+    coordinator = _lookup(hass, msg["config_entry_id"])
     if coordinator is None:
         connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "unknown config_entry_id")
         return
@@ -102,7 +111,7 @@ async def _handle_charges(hass: HomeAssistant, connection, msg) -> None:
     16KB gewachsen als das Fahrtenbuch (Ladevorgaenge sind seltener als
     Fahrten), aber strukturell dieselbe Schwachstelle -- vorsorglich
     gleich mitbehoben."""
-    coordinator = hass.data.get(DOMAIN, {}).get(msg["config_entry_id"])
+    coordinator = _lookup(hass, msg["config_entry_id"])
     if coordinator is None:
         connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "unknown config_entry_id")
         return

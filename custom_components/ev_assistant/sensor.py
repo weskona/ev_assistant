@@ -440,7 +440,15 @@ class _OdoLtsSensor(EvAssistantEntity, SensorEntity):
         if s is None or e is None:
             return None
         d = e - s
-        return d if d >= 0 else None
+        if d < 0:
+            return None
+        # Statistik-"sum" liegt in der Einheit der Quell-Entitaet vor -- die
+        # Sensoren hier deklarieren km (siehe _OdoPeriodSensor, gleiche Umrechnung).
+        if self.coordinator.data.get("odo_unit") == "mi":
+            from .const import MILES_TO_KM
+
+            d *= MILES_TO_KM
+        return d
 
 
 class OdoAvgDaySensor(_OdoLtsSensor):

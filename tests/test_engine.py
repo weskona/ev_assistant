@@ -4262,3 +4262,25 @@ def test_split_period_baseline_entry_zerlegt_und_begrenzt():
     # nie negativ
     out2 = split_period_baseline_entry({"key": "2026-10-03", "cost": 5.0}, "cost", "kosten", "day", history, 500.0, day0)
     assert out2["cost"] == 0.0
+
+
+def test_wartung_status_ueberlauf_bei_winziger_tagesfahrleistung():
+    from engine import wartung_status
+
+    result = wartung_status(
+        aktueller_km=2000, km_pro_tag=0.003, last_done={"km": 1000, "datum": "2026-01-01"},
+        km_intervall=30000, zeit_intervall_monate=None, festes_datum=None, heute="2026-10-04",
+    )
+    assert result["rest_km"] == 29000
+    assert result.get("faellig_datum") is None or isinstance(result.get("faellig_datum"), str)
+
+
+def test_wartung_uebersicht_vergleicht_tage_nicht_mit_km():
+    from engine import wartung_uebersicht
+
+    # A: zeitbasiert bald faellig in 25 Tagen; B: nur km-basiert, 10 km Rest (bei 40 km/Tag ~0.25 Tage)
+    a = {"id": 1, "name": "A", "zeit_intervall_monate": 12, "last_done": {"datum": "2025-10-29"}}
+    b = {"id": 2, "name": "B", "km_intervall": 15000, "last_done": {"km": 1000}}
+    r = wartung_uebersicht([a, b], aktueller_km=15990, km_pro_tag=None, heute="2026-10-04")
+    assert r["naechste"] is not None
+    assert r["naechste"]["name"] == "B"  # 10 km Rest ist dringender als 25 Tage
