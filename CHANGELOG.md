@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.32] - 2026-10-07
+
+### Fixed
+
+- **BMS rebalancing after the end of a charge was detected as an external charge** (issue #7): after charging stops the SoC can keep creeping up (60 → 61 → 62 % over several hours) while the car is still connected to the wallbox and the charging power is long 0 W. As soon as "home charging" went false, every rise was checked against the start threshold like a charge at a foreign charger. The charge detector now gets a new signal "vehicle is connected to your own charge point" and does not start an external charge while it is true — the anchor simply follows the SoC. The signal comes from the optional wallbox "connected" sensor (if configured), otherwise from evcc's charge-point field `connected` (if the evcc connection is set up; if evcc reports a *different* vehicle on the charge point, it is not used).
+  **Only effective with evcc or a configured wallbox "connected" sensor.** Without either, behaviour is unchanged — the manual workaround (raising the start threshold) remains the only protection there. The optional plug sensor (`plug_entity`) is deliberately *not* used for this: it is also "on" at a foreign charging station, where the rise is exactly the external charge to be detected.
+
 ## [0.99.31] - 2026-10-04
 
 ### Fixed

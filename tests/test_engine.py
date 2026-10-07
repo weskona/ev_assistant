@@ -104,9 +104,12 @@ from engine import (
 )
 
 
-def stream(socs, start_ts=0, step=60, home=False, power=None, plug=None):
+def stream(socs, start_ts=0, step=60, home=False, power=None, plug=None, connected=None):
     return [
-        ChargeSample(ts=start_ts + i * step, soc=v, home_charging=home, power_kw=power, plugged_in=plug)
+        ChargeSample(
+            ts=start_ts + i * step, soc=v, home_charging=home, power_kw=power, plugged_in=plug,
+            home_connected=connected,
+        )
         for i, v in enumerate(socs)
     ]
 
@@ -289,6 +292,47 @@ def test_plugged_in_none_faellt_auf_idle_timeout_zurueck():
     samples = stream([30, 40, 50], start_ts=0, step=600) + stream([50], start_ts=3000)
     ev = run(det, samples)[0]
     assert (ev.soc_start, ev.soc_end) == (30, 50)
+
+
+# ----- home_connected: am eigenen Ladepunkt angesteckt -> keine Fremdladung --
+
+def test_home_connected_true_unterdrueckt_rebalancing_nach_ladeende():
+    # Issue #7: SoC steigt nach Ladeende (Ladeleistung 0, home_charging False)
+    # ueber Stunden 60 -> 61 -> 62 -> ... -> 70, waehrend das Fahrzeug am
+    # eigenen Ladepunkt haengt. Auch ein ueber start_delta hinausgehender
+    # Sprung darf KEINE Fremdladung ausloesen.
+    det = ChargeDetector(start_delta=3.0, idle_timeout_s=1200)
+    samples = stream([60, 61, 62, 70, 75], step=600, connected=True)
+    assert run(det, samples) == []
+    assert det.active is False
+
+
+def test_home_connected_true_fuehrt_anker_nach():
+    # Nach dem unterdrueckten Anstieg gilt der neue SoC als Anker: ist das
+    # Fahrzeug spaeter nicht mehr am Ladepunkt (connected False), zaehlt nur
+    # der Anstieg AB dort -- nicht nochmal der alte Rebalancing-Anstieg.
+    det = ChargeDetector(start_delta=3.0, idle_timeout_s=1200)
+    assert run(det, stream([60, 70], step=600, connected=True)) == []
+    assert run(det, stream([71], start_ts=1200, step=600, connected=False)) == []
+    assert det.active is False
+
+
+def test_home_connected_false_und_none_startet_weiter_fremdladung():
+    # Regressionsschutz: ohne bestaetigtes "am eigenen Ladepunkt" (False oder
+    # None = kein Ladepunkt-Status) bleibt die Erkennung unveraendert.
+    for connected in (False, None):
+        det = ChargeDetector(start_delta=3.0, idle_timeout_s=1200)
+        run(det, stream([30, 40, 50, 60], step=600, connected=connected))
+        assert det.active is True, connected
+
+
+def test_plugged_in_true_allein_unterdrueckt_fremdladung_nicht():
+    # Regressionsschutz fuer die Fehlannahme "steckt noch -> keine
+    # Fremdladung": der Stecker-Sensor ist auch an einer fremden Ladesaeule
+    # True, dort ist der SoC-Anstieg genau die zu erkennende Fremdladung.
+    det = ChargeDetector(start_delta=3.0, idle_timeout_s=1200)
+    run(det, stream([30, 40, 50, 60], step=600, plug=True))
+    assert det.active is True
 
 
 def test_soc_anstieg_bei_bestaetigt_ausgesteckt_startet_keine_ladung():

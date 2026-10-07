@@ -37,6 +37,14 @@ class ChargeSample:
     # (kein Steckersensor konfiguriert, oder Bestaetigung steht noch aus) --
     # ChargeDetector faellt bei None auf die idle_timeout_s-Heuristik zurueck.
     plugged_in: Optional[bool] = None
+    # Ob das Fahrzeug nachweislich am EIGENEN Ladepunkt (Wallbox) angesteckt
+    # ist -- ANDERS als plugged_in (beliebiger Stecker-Sensor, der auch an
+    # einer fremden Ladesaeule True ist, dort aber gerade die zu erkennende
+    # Fremdladung bedeutet). True/False aus dem Ladepunkt-Status
+    # (wallbox_connected_entity bzw. evcc "connected", siehe coordinator.py::
+    # _home_connected()), None wenn keiner von beiden vorliegt -- dann
+    # unveraendertes Verhalten.
+    home_connected: Optional[bool] = None
 
 
 @dataclass
@@ -195,6 +203,20 @@ class ChargeDetector:
 
     def _update_idle(self, s: ChargeSample) -> Optional[ChargeEvent]:
         if s.home_charging:
+            self._anchor_soc = s.soc
+            self._anchor_ts = s.ts
+            return None
+        if s.home_connected is True:
+            # Fahrzeug haengt nachweislich am eigenen Ladepunkt, laedt aber
+            # gerade nicht (home_charging False): ein SoC-Anstieg ist dann
+            # keine Fremdladung, sondern z.B. BMS-Rebalancing nach Ladeende
+            # (SoC steigt ueber Stunden um 1-2 %, Issue #7). Anker trotzdem
+            # nachfuehren (auch bei Anstieg), sonst wuerde derselbe Anstieg
+            # bei der naechsten Messung erneut gegen start_delta geprueft.
+            # Bewusst NICHT ueber plugged_in: der Stecker-Sensor ist auch an
+            # einer fremden Ladesaeule True, wo genau die Fremdladung laeuft.
+            # Kein Ladepunkt-Status verfuegbar (home_connected bleibt None):
+            # unveraendertes Verhalten.
             self._anchor_soc = s.soc
             self._anchor_ts = s.ts
             return None

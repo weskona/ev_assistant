@@ -3221,12 +3221,44 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.async_set_updated_data(self.data)
         self._save_soon()
 
+    def _home_connected(self) -> Optional[bool]:
+        """Ob das Fahrzeug nachweislich am eigenen Ladepunkt angesteckt ist
+        (ChargeSample.home_connected, siehe engine.py -- unterdrueckt
+        faelschliche Fremdladungs-Erkennung durch BMS-Rebalancing nach
+        Ladeende, Issue #7). Quellen in dieser Reihenfolge: optionaler
+        wallbox_connected_entity (_wallbox_connected_override, vom Nutzer
+        gesetzt und damit massgeblich), sonst evccs Ladepunkt-Feld
+        "connected" des zustaendigen Loadpoints. None ohne beides oder
+        solange der Zustand unbekannt ist (evcc nicht erreichbar) --
+        ChargeDetector verhaelt sich dann wie bisher.
+
+        Ist am evcc-Ladepunkt laut "vehicleName" ein ANDERES Fahrzeug
+        angesteckt als dieses (Haushalt mit mehreren Fahrzeugen), sagt
+        "connected" nichts ueber dieses Fahrzeug aus -> None statt True,
+        damit eine echte Fremdladung dieses Fahrzeugs nicht unterdrueckt
+        wird. Bewusst NICHT ueber CONF_PLUG_ENTITY (_plugged_in): der
+        Stecker-Sensor ist auch an einer fremden Ladesaeule True."""
+        if self._wallbox_connected_override is not None:
+            return self._wallbox_connected_override
+        loadpoint = self._current_loadpoint()
+        if loadpoint is None:
+            return None
+        connected = loadpoint.get("connected")
+        if not isinstance(connected, bool):
+            return None
+        if connected:
+            plugged_vehicle = loadpoint.get("vehicleName")
+            own_key = self._evcc_vehicle_api_key()
+            if plugged_vehicle and own_key and plugged_vehicle != own_key:
+                return None
+        return connected
+
     async def _run_detection(self) -> None:
         if self._soc is None or self._detector is None:
             return
         sample = ChargeSample(
             ts=time.time(), soc=self._soc, home_charging=self._home, power_kw=self._power,
-            plugged_in=self._plugged_in,
+            plugged_in=self._plugged_in, home_connected=self._home_connected(),
         )
         event = self._detector.update(sample)
         self.data["detector_state"] = self._detector.get_state()
