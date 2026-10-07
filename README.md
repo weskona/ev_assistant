@@ -21,7 +21,7 @@ A comprehensive **EV monitoring integration for Home Assistant**. EV Assistant c
 
 EV Assistant is in **active 0.x development** — pre-1.0. Behavior and configuration can still change between releases; check the [CHANGELOG](custom_components/ev_assistant/CHANGELOG.md) when updating.
 
-It's been tested primarily against **one real setup**: a Stellantis-based vehicle (SoC via the manufacturer's cloud integration), one evcc version, one wallbox. That's a narrow slice of the "any vehicle, any evcc version, any wallbox" space this integration aims to cover — feedback from different vehicles, SoC reporting behavior, evcc versions, and wallboxes is genuinely wanted, not just tolerated.
+It was developed primarily against **one real setup**: a Stellantis-based vehicle (SoC via the manufacturer's cloud integration), one evcc version, one wallbox. Reports from other setups have since shaped several fixes — e.g. a VW ID.3 with a different SoC source and a go-e wallbox — but that is still a narrow slice of the "any vehicle, any evcc version, any wallbox" space this integration aims to cover. Feedback from different vehicles, SoC reporting behavior, evcc versions, and wallboxes is genuinely wanted, not just tolerated.
 
 A few known limitations, stated plainly:
 

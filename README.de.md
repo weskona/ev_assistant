@@ -21,7 +21,7 @@ Eine umfassende **EV-Überwachungs-Integration für Home Assistant**. EV Assista
 
 EV Assistant befindet sich in **aktiver 0.x-Entwicklung** — vor 1.0. Verhalten und Konfiguration können sich zwischen Releases noch ändern; beim Update das [CHANGELOG](custom_components/ev_assistant/CHANGELOG.md) prüfen.
 
-Getestet wurde primär gegen **eine reale Installation**: ein Stellantis-basiertes Fahrzeug (SoC über die Cloud-Integration des Herstellers), eine evcc-Version, eine Wallbox. Das ist nur ein schmaler Ausschnitt des angestrebten „jedes Fahrzeug, jede evcc-Version, jede Wallbox"-Spektrums — Feedback von anderen Fahrzeugen, SoC-Meldeverhalten, evcc-Versionen und Wallboxen ist ausdrücklich erwünscht, nicht nur geduldet.
+Entwickelt wurde primär gegen **eine reale Installation**: ein Stellantis-basiertes Fahrzeug (SoC über die Cloud-Integration des Herstellers), eine evcc-Version, eine Wallbox. Meldungen von anderen Installationen haben seitdem mehrere Korrekturen geprägt — z.B. ein VW ID.3 mit anderer SoC-Quelle und eine go-e-Wallbox —, trotzdem bleibt das nur ein schmaler Ausschnitt des angestrebten „jedes Fahrzeug, jede evcc-Version, jede Wallbox"-Spektrums. Feedback von anderen Fahrzeugen, SoC-Meldeverhalten, evcc-Versionen und Wallboxen ist ausdrücklich erwünscht, nicht nur geduldet.
 
 Ein paar bekannte Grenzen, unverblümt:
 
