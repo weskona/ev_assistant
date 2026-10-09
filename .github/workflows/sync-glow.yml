@@ -1,0 +1,82 @@
+name: Sync Glow card
+
+# Haelt die Kopie der Glow-Karte auf dem Branch glow-panel auf dem Stand eines
+# gepinnten Releases von deepblue120/glow-dashboard (siehe #12).
+#   - Quelle der Wahrheit ist glow-dashboard; die Datei wird nie von Hand editiert.
+#   - frontend/GLOW_VERSION enthaelt genau eine Referenz (Tag oder Commit).
+#   - Gibt es einen neueren v*-Tag, oeffnet dieser Workflow einen PR gegen
+#     glow-panel. Gemergt wird von Hand, nichts landet ungeprueft bei Testern.
+# Der Workflow liegt auf main, weil GitHub zeitgesteuerte und manuell gestartete
+# Workflows nur vom Standard-Branch ausfuehrt. Er aendert nur glow-panel.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Tag oder Commit aus deepblue120/glow-dashboard (leer = neuester v*-Tag)"
+        required: false
+        type: string
+  schedule:
+    - cron: "17 5 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Glow-Karte abgleichen
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout glow-panel
+        uses: actions/checkout@v4
+        with:
+          ref: glow-panel
+
+      - name: Zielversion bestimmen und Karte laden
+        id: glow
+        env:
+          INPUT_REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          REPO=https://github.com/deepblue120/glow-dashboard
+          DIR=custom_components/ev_assistant/frontend
+          REF="$INPUT_REF"
+          if [ -z "$REF" ]; then
+            REF=$(git ls-remote --tags --refs --sort=-v:refname "$REPO" 'v*' | head -n1 | sed 's|.*refs/tags/||')
+          fi
+          if [ -z "$REF" ]; then
+            echo "Im glow-dashboard gibt es noch keinen v*-Tag, nichts zu tun."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          CURRENT=$(tr -d '[:space:]' < "$DIR/GLOW_VERSION")
+          if [ "$REF" = "$CURRENT" ]; then
+            echo "Kopie ist bereits auf $CURRENT."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          curl -fsSL "https://raw.githubusercontent.com/deepblue120/glow-dashboard/$REF/dist/mg-car-dashboard.js" -o "$DIR/mg-car-dashboard.js"
+          printf '%s\n' "$REF" > "$DIR/GLOW_VERSION"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+
+      - name: PR gegen glow-panel oeffnen
+        if: steps.glow.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          base: glow-panel
+          branch: sync/glow-${{ steps.glow.outputs.ref }}
+          add-paths: |
+            custom_components/ev_assistant/frontend/mg-car-dashboard.js
+            custom_components/ev_assistant/frontend/GLOW_VERSION
+          commit-message: "Glow-Karte auf ${{ steps.glow.outputs.ref }} aktualisiert"
+          title: "Glow-Karte auf ${{ steps.glow.outputs.ref }} aktualisieren"
+          body: |
+            Automatischer Abgleich mit [deepblue120/glow-dashboard](https://github.com/deepblue120/glow-dashboard).
+
+            - Vorher: `${{ steps.glow.outputs.current }}`
+            - Nachher: `${{ steps.glow.outputs.ref }}`
+
+            Ersetzt `frontend/mg-car-dashboard.js` durch die Datei dieser Version und setzt `frontend/GLOW_VERSION`. Nach dem Merge kann ein neues Pre-Release getaggt werden (siehe #12).
