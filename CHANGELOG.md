@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.35-glow.2] - 2026-10-09
+
+### Changed
+
+- **Pre-release (branch `glow-panel`): Glow card updated to glow-dashboard v3.2.4** (no vehicle-specific defaults any more, trip log from ev_assistant, vehicle selection). The "EV Assistant Glow" wrapper now passes the whole panel configuration to the card, and the panel configuration carries `api_version: 1`, which the card checks and warns about on a mismatch. The classic panel is unchanged. Only for testers with "Show beta versions" enabled in HACS (see #12).
+
 ## [0.99.35-glow.1] - 2026-10-09
 
 ### Added

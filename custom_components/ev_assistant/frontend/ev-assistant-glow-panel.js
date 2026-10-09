@@ -3,9 +3,11 @@
  * Kopie aus deepblue120/glow-dashboard, Stand siehe GLOW_VERSION) als zweites
  * Sidebar-Panel einbettet. Das klassische Panel bleibt unveraendert.
  *
- * PLATZHALTER: Die Karte bringt noch MG-spezifische Standardwerte mit. Der
- * Wrapper setzt nur die Felder, die die Panel-Konfiguration kennt; alles andere
- * bleibt, bis die Karte entkoppelt ist (siehe weskona/ev_assistant#12).
+ * Die Karte (ab glow-dashboard v3.2) bringt keine fahrzeugspezifischen Defaults
+ * mehr mit: Der Wrapper reicht die komplette Panel-Konfiguration als
+ * `ev_assistant_panel` durch (Fahrzeugauswahl, api_version-Pruefung) und setzt
+ * zusaetzlich die car-Optionen des ersten Fahrzeugs, die die Karte bei
+ * mehreren Fahrzeugen selbst wieder verwirft. Siehe weskona/ev_assistant#12.
  */
 class EvAssistantGlowPanel extends HTMLElement {
   constructor() {
@@ -65,7 +67,7 @@ class EvAssistantGlowPanel extends HTMLElement {
     if (ent.plug_entity) car.cable = ent.plug_entity;
     const power = ent.power_entity || ent.home_entity;
     if (power) energy.car_power = power;
-    return { car, energy };
+    return { ev_assistant_panel: cfg, car, energy };
   }
 }
 

@@ -78,6 +78,9 @@ _PANEL_ICON = "mdi:ev-station"
 _GLOW_PANEL_URL_PATH = "ev-assistant-glow"
 _GLOW_PANEL_TITLE = "EV Assistant Glow"
 _GLOW_PANEL_ICON = "mdi:flare"
+# Version der Panel-Konfiguration/WebSocket-Schnittstelle, die Frontends (Glow-Karte)
+# pruefen. Bei inkompatiblen Aenderungen an "entities"/"vehicles" erhoehen.
+_PANEL_API_VERSION = 1
 _STATIC_REGISTERED = "_ev_panel_static"
 _PANEL_REGISTERED = "_ev_panel"
 _WEBSOCKET_REGISTERED = "_ev_websocket"
@@ -205,6 +208,7 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
             "entities": entity_map,
             "config_entry_id": entry.entry_id,
             "vehicles": vehicles,
+            "api_version": _PANEL_API_VERSION,
         }
         evcc_vehicle_name = entry.options.get(CONF_EVCC_VEHICLE_NAME) or entry.data.get(CONF_EVCC_VEHICLE_NAME)
         if evcc_vehicle_name:
