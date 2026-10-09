@@ -41,6 +41,8 @@ from .const import (
     CONF_LEASING_PREIS_MINDER_KM,
     CONF_LEASING_START_DATUM,
     CONF_LEASING_START_KM,
+    CONF_LEASING_TOLERANZ_MEHR_KM,
+    CONF_LEASING_TOLERANZ_MINDER_KM,
     CONF_MOTOR_DEBOUNCE,
     CONF_MOTOR_ENTITY,
     CONF_NOISE,
@@ -543,6 +545,12 @@ def build_leasing_schema(cur: dict) -> vol.Schema:
         vol.Optional(CONF_LEASING_INKL_KM, description=sv(CONF_LEASING_INKL_KM)): vol.Coerce(float),
         vol.Optional(CONF_LEASING_PREIS_MEHR_KM, description=sv(CONF_LEASING_PREIS_MEHR_KM)): vol.Coerce(float),
         vol.Optional(CONF_LEASING_PREIS_MINDER_KM, description=sv(CONF_LEASING_PREIS_MINDER_KM)): vol.Coerce(float),
+        vol.Optional(
+            CONF_LEASING_TOLERANZ_MEHR_KM, description=sv(CONF_LEASING_TOLERANZ_MEHR_KM)
+        ): vol.Coerce(float),
+        vol.Optional(
+            CONF_LEASING_TOLERANZ_MINDER_KM, description=sv(CONF_LEASING_TOLERANZ_MINDER_KM)
+        ): vol.Coerce(float),
     })
 
 

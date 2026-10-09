@@ -2034,6 +2034,8 @@ class EVAssistantPanel extends HTMLElement {
               <div class="km-item"><span class="km-label">Laufzeit</span><span class="km-val" id="leasing-laufzeit">—</span><span class="km-unit"></span></div>
               <div class="km-item"><span class="km-label">Kilometerstand bei Beginn</span><span class="km-val" id="leasing-start-km">—</span><span class="km-unit">km</span></div>
               <div class="km-item"><span class="km-label">Inklusive</span><span class="km-val" id="leasing-inkl-km">—</span><span class="km-unit">km</span></div>
+              <div class="km-item hidden" id="leasing-tol-mehr-row"><span class="km-label">Toleranz Mehr-km (frei)</span><span class="km-val" id="leasing-tol-mehr">—</span><span class="km-unit">km</span></div>
+              <div class="km-item hidden" id="leasing-tol-minder-row"><span class="km-label">Toleranz Minder-km (frei)</span><span class="km-val" id="leasing-tol-minder">—</span><span class="km-unit">km</span></div>
             </div>
             <div class="km-col">
               <div class="sub-head">Kilometer</div>
@@ -2065,7 +2067,8 @@ class EVAssistantPanel extends HTMLElement {
             Beide Projektionen sind Schätzungen: linear rechnet den Gesamtschnitt seit Vertragsbeginn hoch,
             rollierend die letzten 30 Fahrtage — reagiert schneller auf verändertes Fahrverhalten. Eine
             Gutschrift für Minderkilometer erscheint nur, wenn dafür ein Preis hinterlegt ist (viele Verträge
-            erstatten das nicht).
+            erstatten das nicht). Eine hinterlegte Toleranz ist ein Freibetrag: die ersten km Abweichung
+            sind kostenfrei, berechnet wird nur der Teil darüber.
           </div>
         </div>
       </div>`;
@@ -2093,6 +2096,10 @@ class EVAssistantPanel extends HTMLElement {
       leasingPreisMehr:     q("#leasing-preis-mehr"),
       leasingPreisMinderRow: q("#leasing-preis-minder-row"),
       leasingPreisMinder:   q("#leasing-preis-minder"),
+      leasingTolMehrRow:    q("#leasing-tol-mehr-row"),
+      leasingTolMehr:       q("#leasing-tol-mehr"),
+      leasingTolMinderRow:  q("#leasing-tol-minder-row"),
+      leasingTolMinder:     q("#leasing-tol-minder"),
       leasingLinTempo:      q("#leasing-lin-tempo"),
       leasingLinEnd:        q("#leasing-lin-end"),
       leasingLinDiff:       q("#leasing-lin-diff"),
@@ -2163,6 +2170,13 @@ class EVAssistantPanel extends HTMLElement {
     const hasPreisMinder = typeof attrs.preis_minder_km === "number";
     r.leasingPreisMinderRow.classList.toggle("hidden", !hasPreisMinder);
     if (hasPreisMinder) r.leasingPreisMinder.textContent = this._fmtNum(attrs.preis_minder_km, 2);
+    // Vertragliche Toleranz (Freibetrag, Issue #9) -- Zeilen nur, wenn gesetzt (> 0).
+    const hasTolMehr = typeof attrs.toleranz_mehr_km === "number" && attrs.toleranz_mehr_km > 0;
+    r.leasingTolMehrRow.classList.toggle("hidden", !hasTolMehr);
+    if (hasTolMehr) r.leasingTolMehr.textContent = this._fmtNum(attrs.toleranz_mehr_km, 0);
+    const hasTolMinder = typeof attrs.toleranz_minder_km === "number" && attrs.toleranz_minder_km > 0;
+    r.leasingTolMinderRow.classList.toggle("hidden", !hasTolMinder);
+    if (hasTolMinder) r.leasingTolMinder.textContent = this._fmtNum(attrs.toleranz_minder_km, 0);
 
     const inklKm = attrs.vertrag_inkl_km;
     const hasInklKm = typeof inklKm === "number" && inklKm > 0;
@@ -2192,13 +2206,19 @@ class EVAssistantPanel extends HTMLElement {
       endEl.textContent = this._fmtNum(proj.erwartete_end_km, 0);
       const diff = proj.erwartete_mehr_bzw_minder_km;
       diffEl.textContent = typeof diff === "number" ? `${diff > 0 ? "+" : ""}${this._fmtNum(diff, 0)}` : "—";
+      // Mit Toleranz (proj.innerhalb_toleranz gesetzt): im Label kenntlich machen,
+      // ob die Abweichung komplett kostenfrei ist oder nur der Teil ueber der
+      // Toleranz berechnet wurde.
+      const tolHinweis = proj.innerhalb_toleranz === true
+        ? " (innerhalb Toleranz)"
+        : (proj.innerhalb_toleranz === false ? " (nach Toleranz)" : "");
       if (typeof proj.mehrkosten_eur === "number") {
         eurRowEl.classList.remove("hidden");
-        eurLabelEl.textContent = "Mehrkosten";
+        eurLabelEl.textContent = `Mehrkosten${tolHinweis}`;
         eurEl.textContent = this._fmtNum(proj.mehrkosten_eur, 2);
       } else if (typeof proj.gutschrift_eur === "number") {
         eurRowEl.classList.remove("hidden");
-        eurLabelEl.textContent = "Gutschrift";
+        eurLabelEl.textContent = `Gutschrift${tolHinweis}`;
         eurEl.textContent = this._fmtNum(proj.gutschrift_eur, 2);
       } else {
         eurRowEl.classList.add("hidden");

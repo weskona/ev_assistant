@@ -108,14 +108,26 @@
       },
       "leasing": {
         "title": "EV Assistant - Leasing-Kilometerbudget",
-        "description": "Schritt 8/9: Optionales Leasing-Kilometerbudget, alle Felder optional. Nutzt denselben Kilometerstand-Sensor aus Schritt 1 — kein zusätzlicher Sensor nötig. Aktiv wird das Feature erst, sobald sowohl das Vertragsende als auch die inkludierten Gesamt-km eingetragen sind; ohne die beiden bleibt der ganze Bereich (Sensoren, Panel-Tab) inaktiv. Minderkilometer werden nur ausgewiesen, wenn ein Erstattungspreis eingetragen ist — viele Verträge erstatten sie gar nicht oder nur gedeckelt.",
+        "description": "Schritt 8/9: Optionales Leasing-Kilometerbudget, alle Felder optional. Nutzt denselben Kilometerstand-Sensor aus Schritt 1 — kein zusätzlicher Sensor nötig. Aktiv wird das Feature erst, sobald sowohl das Vertragsende als auch die inkludierten Gesamt-km eingetragen sind; ohne die beiden bleibt der ganze Bereich (Sensoren, Panel-Tab) inaktiv. Minderkilometer werden nur ausgewiesen, wenn ein Erstattungspreis eingetragen ist — viele Verträge erstatten sie gar nicht oder nur gedeckelt. Optionale Toleranz (Freibetrag): die ersten X km Abweichung sind kostenfrei, berechnet wird nur der Teil darüber.",
         "data": {
           "leasing_start_km": "Kilometerstand bei Vertragsbeginn",
           "leasing_start_datum": "Vertragsbeginn",
           "leasing_end_datum": "Vertragsende",
           "leasing_inkl_km": "Inkludierte Gesamt-km über die Laufzeit",
           "leasing_preis_mehr_km": "Preis pro Mehrkilometer (EUR/km)",
-          "leasing_preis_minder_km": "Erstattung pro Minderkilometer (EUR/km, optional — nur falls der Vertrag das vorsieht)"
+          "leasing_preis_minder_km": "Erstattung pro Minderkilometer (EUR/km, optional — nur falls der Vertrag das vorsieht)",
+          "leasing_toleranz_mehr_km": "Toleranz Mehrkilometer, kostenfrei (km, optional)",
+          "leasing_toleranz_minder_km": "Toleranz Minderkilometer, kostenfrei (km, optional)"
+        },
+        "data_description": {
+          "leasing_start_km": "Kilometerstand bei Vertragsbeginn (km). Daraus werden die im Vertrag gefahrenen km berechnet.",
+          "leasing_start_datum": "Erster Tag des Vertrags.",
+          "leasing_end_datum": "Letzter Tag des Vertrags. Pflicht — zusammen mit den inkludierten Gesamt-km —, damit das Leasing-Feature aktiv wird.",
+          "leasing_inkl_km": "Im Vertrag über die gesamte Laufzeit inkludierte Kilometer. Pflicht — zusammen mit dem Vertragsende —, damit das Leasing-Feature aktiv wird.",
+          "leasing_preis_mehr_km": "Preis pro Mehrkilometer laut Vertrag (EUR/km). Ohne Preis werden keine Mehrkosten hochgerechnet.",
+          "leasing_preis_minder_km": "Erstattung pro Kilometer unter dem Vertragswert (EUR/km). Leer lassen, wenn der Vertrag Minderkilometer nicht erstattet.",
+          "leasing_toleranz_mehr_km": "Optionaler Freibetrag für Mehrkilometer: die ersten X km über dem Vertragswert kosten nichts, berechnet wird nur der Teil darüber (z. B. 2500). Leer lassen = keine Toleranz, jeder Mehrkilometer wird berechnet. Verträge, die ab einer Grenze ALLE Mehrkilometer berechnen, werden nicht abgebildet.",
+          "leasing_toleranz_minder_km": "Optionaler Freibetrag für Minderkilometer: die ersten X km unter dem Vertragswert werden nicht erstattet, nur der Teil darüber. Leer lassen = keine Toleranz."
         }
       },
       "vergleich": {
@@ -290,14 +302,26 @@
       },
       "leasing": {
         "title": "EV Assistant - Leasing-Kilometerbudget",
-        "description": "Schritt 8/9: Optionales Leasing-Kilometerbudget. Aktiv erst mit Vertragsende UND inkludierten Gesamt-km. Minderkilometer nur mit eingetragenem Erstattungspreis.",
+        "description": "Schritt 8/9: Optionales Leasing-Kilometerbudget. Aktiv erst mit Vertragsende UND inkludierten Gesamt-km. Minderkilometer nur mit eingetragenem Erstattungspreis. Optionale Toleranz (Freibetrag): die ersten X km Abweichung sind kostenfrei, berechnet wird nur der Teil darüber.",
         "data": {
           "leasing_start_km": "Kilometerstand bei Vertragsbeginn",
           "leasing_start_datum": "Vertragsbeginn",
           "leasing_end_datum": "Vertragsende",
           "leasing_inkl_km": "Inkludierte Gesamt-km über die Laufzeit",
           "leasing_preis_mehr_km": "Preis pro Mehrkilometer (EUR/km)",
-          "leasing_preis_minder_km": "Erstattung pro Minderkilometer (EUR/km, optional)"
+          "leasing_preis_minder_km": "Erstattung pro Minderkilometer (EUR/km, optional)",
+          "leasing_toleranz_mehr_km": "Toleranz Mehrkilometer, kostenfrei (km, optional)",
+          "leasing_toleranz_minder_km": "Toleranz Minderkilometer, kostenfrei (km, optional)"
+        },
+        "data_description": {
+          "leasing_start_km": "Kilometerstand bei Vertragsbeginn (km). Daraus werden die im Vertrag gefahrenen km berechnet.",
+          "leasing_start_datum": "Erster Tag des Vertrags.",
+          "leasing_end_datum": "Letzter Tag des Vertrags. Pflicht — zusammen mit den inkludierten Gesamt-km —, damit das Leasing-Feature aktiv wird.",
+          "leasing_inkl_km": "Im Vertrag über die gesamte Laufzeit inkludierte Kilometer. Pflicht — zusammen mit dem Vertragsende —, damit das Leasing-Feature aktiv wird.",
+          "leasing_preis_mehr_km": "Preis pro Mehrkilometer laut Vertrag (EUR/km). Ohne Preis werden keine Mehrkosten hochgerechnet.",
+          "leasing_preis_minder_km": "Erstattung pro Kilometer unter dem Vertragswert (EUR/km). Leer lassen, wenn der Vertrag Minderkilometer nicht erstattet.",
+          "leasing_toleranz_mehr_km": "Optionaler Freibetrag für Mehrkilometer: die ersten X km über dem Vertragswert kosten nichts, berechnet wird nur der Teil darüber (z. B. 2500). Leer lassen = keine Toleranz, jeder Mehrkilometer wird berechnet. Verträge, die ab einer Grenze ALLE Mehrkilometer berechnen, werden nicht abgebildet.",
+          "leasing_toleranz_minder_km": "Optionaler Freibetrag für Minderkilometer: die ersten X km unter dem Vertragswert werden nicht erstattet, nur der Teil darüber. Leer lassen = keine Toleranz."
         }
       },
       "vergleich": {

@@ -307,6 +307,14 @@ CONF_LEASING_END_DATUM = "leasing_end_datum"
 CONF_LEASING_INKL_KM = "leasing_inkl_km"
 CONF_LEASING_PREIS_MEHR_KM = "leasing_preis_mehr_km"
 CONF_LEASING_PREIS_MINDER_KM = "leasing_preis_minder_km"
+# Vertragliche Toleranz als FREIBETRAG (Issue #9): die ersten X km Abweichung
+# vom Vertrags-km sind kostenfrei, berechnet wird nur der Teil darueber.
+# Getrennt fuer Mehr- und Minderkilometer (wie das Preis-Paar), leer = 0 =
+# bisheriges Verhalten. NICHT zu verwechseln mit LEASING_TOLERANZ_PCT unten
+# (interner Rundungspuffer, kein Nutzerfeld). Freigrenzen-Vertraege (ab
+# Ueberschreitung ALLE Mehr-km berechnet) werden nicht abgebildet.
+CONF_LEASING_TOLERANZ_MEHR_KM = "leasing_toleranz_mehr_km"
+CONF_LEASING_TOLERANZ_MINDER_KM = "leasing_toleranz_minder_km"
 # Interne Schwellwerte fuer engine.leasing_status() -- keine Config-Flow-
 # Felder, analog TEMP_BUCKET_MIN_SAMPLES/BATTERY_CAPACITY_MIN_SOC_DELTA.
 LEASING_KNAPP_SCHWELLE_PCT = 90.0

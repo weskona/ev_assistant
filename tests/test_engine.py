@@ -3463,6 +3463,135 @@ def test_leasing_status_ueber():
     assert "gutschrift_eur" not in result["linear"]
 
 
+# ----- Leasing: vertragliche Toleranz als Freibetrag (Issue #9) -------------
+
+def _leasing_basis(**kw):
+    """Ueber-Szenario der bestehenden Tests: 17000 km bei 20000 inkl. -> lineare
+    Projektion 25550 km, also +5550 km Mehrkilometer."""
+    args = dict(
+        aktueller_km=17000.0, vertrag_start_km=10000.0,
+        vertrag_start_datum=_L_START, vertrag_end_datum=_L_END,
+        inkl_gesamt_km=20000.0, heute=_L_HEUTE,
+    )
+    args.update(kw)
+    return leasing_status(**args)
+
+
+def test_leasing_toleranz_mehr_innerhalb_kostet_nichts():
+    result = _leasing_basis(preis_mehr_km=0.20, toleranz_mehr_km=6000.0)
+    lin = result["linear"]
+    assert lin["erwartete_mehr_bzw_minder_km"] == 5550.0
+    assert lin["kostenpflichtige_km"] == 0.0
+    assert lin["innerhalb_toleranz"] is True
+    # Explizit 0.0 statt weggelassen (Panel: "0,00 -- innerhalb Toleranz").
+    assert lin["mehrkosten_eur"] == 0.0
+    assert "gutschrift_eur" not in lin
+    assert result["toleranz_mehr_km"] == 6000.0
+
+
+def test_leasing_toleranz_mehr_knapp_darueber_berechnet_nur_den_ueberschuss():
+    result = _leasing_basis(preis_mehr_km=0.20, toleranz_mehr_km=2500.0)
+    lin = result["linear"]
+    assert lin["kostenpflichtige_km"] == 3050.0  # 5550 - 2500
+    assert lin["innerhalb_toleranz"] is False
+    assert lin["mehrkosten_eur"] == 610.0  # 3050 * 0.20
+    # Die Diffs der Projektion selbst bleiben unberuehrt (reine Hochrechnung).
+    assert lin["erwartete_mehr_bzw_minder_km"] == 5550.0
+
+
+def test_leasing_toleranz_asymmetrisch_wirkt_nur_auf_die_eigene_seite():
+    # Nur die Minder-Toleranz gesetzt: die Mehr-Seite verhaelt sich wie heute.
+    result = _leasing_basis(preis_mehr_km=0.20, toleranz_minder_km=1000.0)
+    lin = result["linear"]
+    assert lin["mehrkosten_eur"] == 1110.0  # 5550 * 0.20, volle Berechnung
+    assert "kostenpflichtige_km" not in lin
+    assert "innerhalb_toleranz" not in lin
+    assert result["toleranz_minder_km"] == 1000.0
+    assert "toleranz_mehr_km" not in result
+
+
+def test_leasing_toleranz_minder_seite_analog():
+    # 14000 km bei 20000 inkl. -> lineare Projektion 14600, also -5400 km.
+    basis = dict(
+        aktueller_km=14000.0, preis_minder_km=0.05,
+    )
+    innerhalb = _leasing_basis(toleranz_minder_km=6000.0, **basis)["linear"]
+    assert innerhalb["kostenpflichtige_km"] == 0.0
+    assert innerhalb["innerhalb_toleranz"] is True
+    assert innerhalb["gutschrift_eur"] == 0.0
+    teils = _leasing_basis(toleranz_minder_km=1000.0, **basis)["linear"]
+    assert teils["kostenpflichtige_km"] == 4400.0  # 5400 - 1000
+    assert teils["innerhalb_toleranz"] is False
+    assert teils["gutschrift_eur"] == 220.0  # 4400 * 0.05
+    assert "mehrkosten_eur" not in teils
+
+
+def test_leasing_toleranz_ohne_preis_keine_euro_felder_aber_kennzeichnung():
+    lin = _leasing_basis(toleranz_mehr_km=6000.0)["linear"]
+    assert "mehrkosten_eur" not in lin
+    assert lin["innerhalb_toleranz"] is True
+    assert lin["kostenpflichtige_km"] == 0.0
+
+
+def test_leasing_toleranz_none_null_und_negativ_identisch_zu_vorher():
+    # Regressionsschutz: Bestandsinstallationen ohne Toleranz duerfen sich
+    # nicht veraendern -- None, 0 und (defensiv geklemmte) negative Werte
+    # liefern exakt dasselbe Ergebnis wie ganz ohne Parameter.
+    ohne = _leasing_basis(preis_mehr_km=0.20, preis_minder_km=0.05)
+    for wert in (None, 0.0, -500.0):
+        assert _leasing_basis(
+            preis_mehr_km=0.20, preis_minder_km=0.05,
+            toleranz_mehr_km=wert, toleranz_minder_km=wert,
+        ) == ohne, wert
+    assert "toleranz_mehr_km" not in ohne
+    assert "toleranz_minder_km" not in ohne
+
+
+def test_leasing_toleranz_wirkt_auch_auf_rollierende_projektion():
+    result = _leasing_basis(
+        preis_mehr_km=0.20, toleranz_mehr_km=2500.0, rollierendes_tempo_km_pro_tag=60.0,
+    )
+    roll = result["rollierend"]
+    # 7000 gefahren + 60 * 265 = 22900 -> +2900 km, davon 400 kostenpflichtig.
+    assert roll["erwartete_mehr_bzw_minder_km"] == 2900.0
+    assert roll["kostenpflichtige_km"] == 400.0
+    assert roll["mehrkosten_eur"] == 80.0
+
+
+def test_leasing_status_ueber_erst_jenseits_der_toleranz():
+    # Ohne Toleranz ist 127,75 % "ueber" (siehe test_leasing_status_ueber);
+    # mit 6000 km Toleranz (30 %) liegt die Projektion noch im kostenlosen
+    # Bereich -> nur noch "knapp" (Kontingent aufgebraucht, nichts zu zahlen).
+    assert _leasing_basis()["status"] == "ueber"
+    assert _leasing_basis(toleranz_mehr_km=6000.0)["status"] == "knapp"
+    # Mit kleinerer Toleranz (12,5 % + 2 %-Puffer = 114,5 %) bleibt es "ueber".
+    assert _leasing_basis(toleranz_mehr_km=2500.0)["status"] == "ueber"
+
+
+def test_leasing_status_grenze_inkl_toleranz():
+    # inkl. 36500 km / 365 Tage = 100 km/Tag; an Tag 100 erwartet jede
+    # gefahrene km genau 3,65 km am Vertragsende. Mit toleranz_pct=0 und
+    # 1000 km Toleranz liegt die Grenze bei 37500 km Endstand.
+    basis = dict(
+        vertrag_start_km=10000.0, vertrag_start_datum=_L_START, vertrag_end_datum=_L_END,
+        inkl_gesamt_km=36500.0, heute=_L_HEUTE, toleranz_pct=0.0, toleranz_mehr_km=1000.0,
+    )
+    knapp = leasing_status(aktueller_km=10000.0 + 10273.0, **basis)
+    ueber = leasing_status(aktueller_km=10000.0 + 10274.0, **basis)
+    assert knapp["linear"]["erwartete_end_km"] <= 37500.0
+    assert knapp["status"] == "knapp"
+    assert ueber["linear"]["erwartete_end_km"] > 37500.0
+    assert ueber["status"] == "ueber"
+
+
+def test_leasing_toleranz_aendert_budgetfelder_nicht():
+    # resterlaubte_km/verbleibendes_tagesbudget_km bleiben am Vertragswert.
+    ohne = _leasing_basis()
+    mit = _leasing_basis(toleranz_mehr_km=2500.0, toleranz_minder_km=2500.0)
+    for key in ("resterlaubte_km", "verbleibendes_tagesbudget_km", "soll_km_bis_heute", "km_vor_ruecklauf"):
+        assert mit[key] == ohne[key], key
+
+
 def test_leasing_status_exakt_auf_soll():
     # inkl_gesamt_km so gewaehlt, dass die Soll-Linie an Tag 100 exakt 10000
     # ergibt (36500 / 365 Tage = 100 km/Tag, keine Rundungsreste).

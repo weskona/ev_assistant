@@ -3090,6 +3090,17 @@ def apply_anbieter_delta(totals: dict, rec: dict, sign: int) -> dict:
     return result
 
 
+def _leasing_toleranz(wert: Optional[float]) -> float:
+    """Vertragliche Toleranz (km) defensiv auf >= 0 klemmen: None, nicht
+    numerisch oder negativ gilt als 0 (= keine Toleranz, bisheriges
+    Verhalten)."""
+    try:
+        wert = float(wert)
+    except (TypeError, ValueError):
+        return 0.0
+    return wert if wert > 0 else 0.0
+
+
 def _leasing_projection(
     gefahrene_vertrags_km: float,
     tempo_km_pro_tag: Optional[float],
@@ -3097,12 +3108,24 @@ def _leasing_projection(
     inkl_gesamt_km: float,
     preis_mehr_km: Optional[float],
     preis_minder_km: Optional[float],
+    toleranz_mehr_km: float = 0.0,
+    toleranz_minder_km: float = 0.0,
 ) -> Optional[dict]:
     """Eine einzelne Hochrechnung (linear ODER rollierend, siehe
     leasing_status()) aufs Vertragsende: bei unveraendertem `tempo_km_pro_tag`
     bis zum Vertragsende weitergefahren, ausgehend vom heutigen Stand. None
     ohne Tempo (z.B. linear an Tag 0 des Vertrags, oder kein rollierendes
-    Tempo uebergeben)."""
+    Tempo uebergeben).
+
+    Toleranz als FREIBETRAG (Issue #9): die ersten `toleranz_mehr_km` bzw.
+    `toleranz_minder_km` Abweichung sind kostenfrei, Mehrkosten/Gutschrift
+    entstehen nur auf den Teil darueber. Mit Toleranz 0 (Default) ist das
+    Ergebnis identisch zu vorher -- die neuen Felder `kostenpflichtige_km`
+    und `innerhalb_toleranz` erscheinen nur, wenn die Toleranz der
+    betroffenen Seite > 0 ist. Innerhalb der Toleranz und mit gesetztem Preis
+    liefert die Funktion Mehrkosten/Gutschrift ausdruecklich 0.0 (statt den
+    Schluessel wegzulassen), damit die Anzeige \"0,00 -- innerhalb Toleranz\"
+    von \"kein Preis hinterlegt\" unterscheiden kann."""
     if tempo_km_pro_tag is None:
         return None
     erwartete_end_km = round(gefahrene_vertrags_km + tempo_km_pro_tag * verbleibende_tage, 1)
@@ -3112,10 +3135,20 @@ def _leasing_projection(
         "erwartete_end_km": erwartete_end_km,
         "erwartete_mehr_bzw_minder_km": mehr_bzw_minder_km,
     }
-    if mehr_bzw_minder_km > 0 and preis_mehr_km is not None:
-        projektion["mehrkosten_eur"] = round(mehr_bzw_minder_km * preis_mehr_km, 2)
-    elif mehr_bzw_minder_km < 0 and preis_minder_km is not None:
-        projektion["gutschrift_eur"] = round(-mehr_bzw_minder_km * preis_minder_km, 2)
+    if mehr_bzw_minder_km > 0:
+        kostenpflichtig = round(max(0.0, mehr_bzw_minder_km - toleranz_mehr_km), 1)
+        if toleranz_mehr_km > 0:
+            projektion["kostenpflichtige_km"] = kostenpflichtig
+            projektion["innerhalb_toleranz"] = kostenpflichtig == 0
+        if preis_mehr_km is not None:
+            projektion["mehrkosten_eur"] = round(kostenpflichtig * preis_mehr_km, 2)
+    elif mehr_bzw_minder_km < 0:
+        kostenpflichtig = round(max(0.0, -mehr_bzw_minder_km - toleranz_minder_km), 1)
+        if toleranz_minder_km > 0:
+            projektion["kostenpflichtige_km"] = kostenpflichtig
+            projektion["innerhalb_toleranz"] = kostenpflichtig == 0
+        if preis_minder_km is not None:
+            projektion["gutschrift_eur"] = round(kostenpflichtig * preis_minder_km, 2)
     return projektion
 
 
@@ -3131,6 +3164,8 @@ def leasing_status(
     rollierendes_tempo_km_pro_tag: Optional[float] = None,
     knapp_schwelle_pct: float = 90.0,
     toleranz_pct: float = 2.0,
+    toleranz_mehr_km: Optional[float] = None,
+    toleranz_minder_km: Optional[float] = None,
 ) -> dict:
     """Leasing-Kilometerbudget: wo stehe ich gegenueber der linearen
     Soll-Linie, und wohin laeuft es hoch- bzw. rollierend gerechnet zum
@@ -3167,13 +3202,26 @@ def leasing_status(
     Hochrechnung (Tag 0) gilt "im_budget" -- an Tag 0 ist noch nichts
     gefahren, wovor man warnen koennte.
 
+    `toleranz_mehr_km`/`toleranz_minder_km` sind die VERTRAGLICHE Toleranz
+    als Freibetrag (Issue #9, siehe _leasing_projection()) -- nicht zu
+    verwechseln mit `toleranz_pct` (interner Rundungspuffer). "ueber" gilt
+    nur noch, wenn die Projektion tatsaechlich kostenpflichtig wird, also
+    ueber `inkl_gesamt_km + toleranz_mehr_km` (plus dem 2-%-Puffer) liegt;
+    "knapp" bleibt die Vorwarnzone ab `knapp_schwelle_pct` des
+    inkludierten Budgets (zwischen 100 % und Toleranz-Ende bedeutet das:
+    Kontingent aufgebraucht, aber noch nichts zu zahlen). Die Toleranz
+    wirkt NICHT auf "resterlaubte_km"/"verbleibendes_tagesbudget_km" -- die
+    bleiben am Vertragswert `inkl_gesamt_km`. Ohne Toleranz (None/0)
+    verhaelt sich alles wie vorher.
+
     "verbleibendes_tagesbudget_km": wie viele km/Tag fuer den Rest der
     Laufzeit noch drin sind, um exakt auf inkl_gesamt_km zu landen -- nur
     wenn noch Tage uebrig sind (kann negativ sein, wenn schon jetzt mehr
     verbraucht ist als insgesamt zusteht).
 
     Die Vertrags-Eingaben (vertrag_start_km/-_datum, vertrag_end_datum,
-    inkl_gesamt_km, sowie preis_mehr_km/preis_minder_km falls gesetzt) werden
+    inkl_gesamt_km, sowie preis_mehr_km/preis_minder_km und
+    toleranz_mehr_km/toleranz_minder_km falls gesetzt/> 0) werden
     unveraendert ins Ergebnis gespiegelt -- macht das Ergebnis-Dict fuer die
     Anzeige (Panel) selbsterklaerend, ohne dass der Aufrufer die Rohwerte
     separat mitfuehren muss. "resterlaubte_km"
@@ -3200,6 +3248,9 @@ def leasing_status(
     vergangene_tage = max(0, min((heute_date - start_date).days, vertrag_tage))
     verbleibende_tage = vertrag_tage - vergangene_tage
 
+    toleranz_mehr_km = _leasing_toleranz(toleranz_mehr_km)
+    toleranz_minder_km = _leasing_toleranz(toleranz_minder_km)
+
     gefahrene_vertrags_km = round(aktueller_km - vertrag_start_km, 1)
     soll_km_bis_heute = round(inkl_gesamt_km * (vergangene_tage / vertrag_tage), 1)
     km_vor_ruecklauf = round(gefahrene_vertrags_km - soll_km_bis_heute, 1)
@@ -3208,17 +3259,20 @@ def leasing_status(
     linear = _leasing_projection(
         gefahrene_vertrags_km, linear_tempo, verbleibende_tage,
         inkl_gesamt_km, preis_mehr_km, preis_minder_km,
+        toleranz_mehr_km, toleranz_minder_km,
     )
     rollierend = _leasing_projection(
         gefahrene_vertrags_km, rollierendes_tempo_km_pro_tag, verbleibende_tage,
         inkl_gesamt_km, preis_mehr_km, preis_minder_km,
+        toleranz_mehr_km, toleranz_minder_km,
     )
 
     if linear is None:
         status = "im_budget"
     else:
         ratio_pct = linear["erwartete_end_km"] / inkl_gesamt_km * 100.0
-        if ratio_pct > 100.0 + toleranz_pct:
+        ueber_ab_pct = 100.0 + toleranz_pct + toleranz_mehr_km / inkl_gesamt_km * 100.0
+        if ratio_pct > ueber_ab_pct:
             status = "ueber"
         elif ratio_pct >= knapp_schwelle_pct:
             status = "knapp"
@@ -3234,6 +3288,8 @@ def leasing_status(
         "vertrag_inkl_km": inkl_gesamt_km,
         "preis_mehr_km": preis_mehr_km,
         "preis_minder_km": preis_minder_km,
+        "toleranz_mehr_km": toleranz_mehr_km or None,
+        "toleranz_minder_km": toleranz_minder_km or None,
         "gefahrene_vertrags_km": gefahrene_vertrags_km,
         "resterlaubte_km": resterlaubte_km,
         "vertrag_tage": vertrag_tage,

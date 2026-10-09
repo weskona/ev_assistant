@@ -108,14 +108,26 @@
       },
       "leasing": {
         "title": "EV Assistant - Leasing Mileage Budget",
-        "description": "Step 8/9: optional leasing mileage budget, all fields optional. Uses the same odometer sensor from step 1 — no extra sensor needed. Becomes active once both the contract end date and the total included km are set; without both, the whole feature (sensors, panel tab) stays inactive. Under-mileage credit is only shown if a refund price is entered — many contracts don't refund it at all, or only up to a cap.",
+        "description": "Step 8/9: optional leasing mileage budget, all fields optional. Uses the same odometer sensor from step 1 — no extra sensor needed. Becomes active once both the contract end date and the total included km are set; without both, the whole feature (sensors, panel tab) stays inactive. Under-mileage credit is only shown if a refund price is entered — many contracts don't refund it at all, or only up to a cap. Optional tolerance (free allowance): the first X km of deviation are free, only the part beyond is charged.",
         "data": {
           "leasing_start_km": "Odometer reading at contract start",
           "leasing_start_datum": "Contract start",
           "leasing_end_datum": "Contract end",
           "leasing_inkl_km": "Total included km over the contract term",
           "leasing_preis_mehr_km": "Price per excess km (EUR/km)",
-          "leasing_preis_minder_km": "Refund per under-driven km (EUR/km, optional — only if the contract provides for it)"
+          "leasing_preis_minder_km": "Refund per under-driven km (EUR/km, optional — only if the contract provides for it)",
+          "leasing_toleranz_mehr_km": "Free tolerance for excess km (km, optional)",
+          "leasing_toleranz_minder_km": "Free tolerance for under-driven km (km, optional)"
+        },
+        "data_description": {
+          "leasing_start_km": "Odometer reading when the contract started (km). Used to work out the km driven under the contract.",
+          "leasing_start_datum": "First day of the contract.",
+          "leasing_end_datum": "Last day of the contract. Required — together with the total included km — to activate the leasing feature.",
+          "leasing_inkl_km": "Total km included in the contract over its whole term. Required — together with the contract end — to activate the leasing feature.",
+          "leasing_preis_mehr_km": "Price per excess km from your contract (EUR/km). Without it, no extra cost is projected.",
+          "leasing_preis_minder_km": "Refund per km driven below the contract mileage (EUR/km). Leave empty if your contract doesn't refund under-mileage.",
+          "leasing_toleranz_mehr_km": "Optional free allowance for excess km: the first X km above the contract mileage cost nothing, only the part beyond is charged (e.g. 2500). Leave empty for no tolerance — every excess km is charged. Contracts that charge ALL excess km once a limit is passed are not covered.",
+          "leasing_toleranz_minder_km": "Optional free allowance for under-driven km: the first X km below the contract mileage are not refunded, only the part beyond is. Leave empty for no tolerance."
         }
       },
       "vergleich": {
@@ -290,14 +302,26 @@
       },
       "leasing": {
         "title": "EV Assistant - Leasing Mileage Budget",
-        "description": "Step 8/9: optional leasing mileage budget. Becomes active once contract end AND total included km are set. Under-mileage credit only with a refund price entered.",
+        "description": "Step 8/9: optional leasing mileage budget. Becomes active once contract end AND total included km are set. Under-mileage credit only with a refund price entered. Optional tolerance (free allowance): the first X km of deviation are free, only the part beyond is charged.",
         "data": {
           "leasing_start_km": "Odometer reading at contract start",
           "leasing_start_datum": "Contract start",
           "leasing_end_datum": "Contract end",
           "leasing_inkl_km": "Total included km over the contract term",
           "leasing_preis_mehr_km": "Price per excess km (EUR/km)",
-          "leasing_preis_minder_km": "Refund per under-driven km (EUR/km, optional)"
+          "leasing_preis_minder_km": "Refund per under-driven km (EUR/km, optional)",
+          "leasing_toleranz_mehr_km": "Free tolerance for excess km (km, optional)",
+          "leasing_toleranz_minder_km": "Free tolerance for under-driven km (km, optional)"
+        },
+        "data_description": {
+          "leasing_start_km": "Odometer reading when the contract started (km). Used to work out the km driven under the contract.",
+          "leasing_start_datum": "First day of the contract.",
+          "leasing_end_datum": "Last day of the contract. Required — together with the total included km — to activate the leasing feature.",
+          "leasing_inkl_km": "Total km included in the contract over its whole term. Required — together with the contract end — to activate the leasing feature.",
+          "leasing_preis_mehr_km": "Price per excess km from your contract (EUR/km). Without it, no extra cost is projected.",
+          "leasing_preis_minder_km": "Refund per km driven below the contract mileage (EUR/km). Leave empty if your contract doesn't refund under-mileage.",
+          "leasing_toleranz_mehr_km": "Optional free allowance for excess km: the first X km above the contract mileage cost nothing, only the part beyond is charged (e.g. 2500). Leave empty for no tolerance — every excess km is charged. Contracts that charge ALL excess km once a limit is passed are not covered.",
+          "leasing_toleranz_minder_km": "Optional free allowance for under-driven km: the first X km below the contract mileage are not refunded, only the part beyond is. Leave empty for no tolerance."
         }
       },
       "vergleich": {

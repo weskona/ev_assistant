@@ -2,6 +2,17 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.33] - 2026-10-09
+
+### Added
+
+- **Leasing: contractual tolerance for excess / under-driven kilometres** (issue #9): two new optional fields in the leasing step, "tolerance for excess km" and "tolerance for under-driven km" (`leasing_toleranz_mehr_km` / `leasing_toleranz_minder_km`, in km, set independently like the two prices). It is modelled as a **free allowance (Freibetrag)**: the first X km of deviation from the contract mileage are free, only the part beyond is charged (or credited). Example: with 2,500 km tolerance and a projected +3,000 km, only 500 km are charged.
+  - Projected extra cost / credit are computed on the chargeable part only. Inside the tolerance (and with a price set) they are shown as `0.00` instead of disappearing; the projections carry the new fields `kostenpflichtige_km` and `innerhalb_toleranz`, the sensor attributes mirror the tolerance values. The panel's leasing tab shows the tolerance in the contract block and marks the cost line "(innerhalb Toleranz)" / "(nach Toleranz)".
+  - **Status and notification**: the status "ueber" (and with it the "budget exceeded" push) now only triggers once the linear projection is actually chargeable, i.e. above the included km **plus the excess tolerance** (still with the existing 2 % noise buffer). Between 100 % and the end of the tolerance the status stays "knapp" — allowance used up, nothing to pay. "knapp" itself (from 90 % of the included km) is unchanged. `resterlaubte_km` and `verbleibendes_tagesbudget_km` stay based on the contract's included km.
+  - **Nothing changes without the new fields**: empty = 0 = exactly the previous behaviour for existing installs.
+  - **Limit, stated plainly**: contracts with a *threshold* ("Freigrenze" — nothing up to X km, but once exceeded *all* excess km are charged) are **not** covered; the tolerance here is always a free allowance on the part above it. Already-sent "exceeded" notifications are not repeated when a tolerance is added later (the notification state is tied to the contract's start km and end date).
+  - Config-flow labels now come with descriptions for all leasing fields (de/en).
+
 ## [0.99.32] - 2026-10-07
 
 ### Fixed
