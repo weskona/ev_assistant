@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [Unreleased]
+
+### Added
+
+- **Configured source entities in the panel config**: besides `soc_entity`, the panel configuration now also carries the other configured source entities under their option keys — `home_entity` (wallbox charging power), `power_entity` (vehicle charging power), `wallbox_energy_entity`, `wallbox_connected_entity`, `wallbox_charging_entity`, `plug_entity`, `motor_entity`, `odo_entity`, `gps_entity`, `outside_temp_entity`. The panel config is readable by any frontend via `get_panels`, so custom dashboard cards can show driving status, plug, charging power etc. from the same sources the detection relies on instead of asking users to enter every entity a second time. Only entity IDs are exposed (no templates, notification targets or the evcc host); unset fields are simply absent. The panel itself is unchanged.
+
 ## [0.99.33] - 2026-10-09
 
 ### Added

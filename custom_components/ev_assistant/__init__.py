@@ -12,9 +12,19 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from . import websocket_api as ev_websocket_api
 from .const import (
     CONF_EVCC_VEHICLE_NAME,
+    CONF_GPS_ENTITY,
+    CONF_HOME_ENTITY,
+    CONF_MOTOR_ENTITY,
+    CONF_ODO_ENTITY,
+    CONF_OUTSIDE_TEMP_ENTITY,
+    CONF_PLUG_ENTITY,
+    CONF_POWER_ENTITY,
     CONF_SOC_ENTITY,
     CONF_VEHICLE_HERSTELLER,
     CONF_VEHICLE_MODELL,
+    CONF_WALLBOX_CHARGING_ENTITY,
+    CONF_WALLBOX_CONNECTED_ENTITY,
+    CONF_WALLBOX_ENERGY_ENTITY,
     DOMAIN,
     PLATFORMS,
     SERVICE_ADD_LADEKARTE,
@@ -97,6 +107,28 @@ def _vehicle_display_name(ev_entry: ConfigEntry) -> str:
     return fahrzeug or ev_entry.title
 
 
+# Konfigurierte Quell-Entitaeten, die zusaetzlich zur SoC-Entitaet in die
+# Panel-Konfiguration gehen -- unter ihrem Options-Schluessel, analog
+# "soc_entity". Die Panel-Konfiguration ist per `get_panels` fuer jedes
+# Frontend lesbar; eigene Dashboard-Karten (z. B. glow-dashboard) koennen so
+# Fahrstatus, Stecker, Ladeleistung usw. aus derselben Quelle zeigen, der auch
+# die Erkennung vertraut, statt dass jeder Nutzer alles ein zweites Mal von
+# Hand eintragen muss. Bewusst nur Entity-IDs (keine Templates, keine
+# Benachrichtigungsziele) -- reine Verweise, keine Werte oder Zugangsdaten.
+_PANEL_SOURCE_ENTITY_KEYS = (
+    CONF_HOME_ENTITY,               # Wallbox-Ladeleistung
+    CONF_POWER_ENTITY,              # Fahrzeug-Ladeleistung
+    CONF_WALLBOX_ENERGY_ENTITY,     # Wallbox-Energiezaehler (kWh)
+    CONF_WALLBOX_CONNECTED_ENTITY,
+    CONF_WALLBOX_CHARGING_ENTITY,
+    CONF_PLUG_ENTITY,
+    CONF_MOTOR_ENTITY,
+    CONF_ODO_ENTITY,
+    CONF_GPS_ENTITY,
+    CONF_OUTSIDE_TEMP_ENTITY,
+)
+
+
 def _build_entity_map(ent_reg, ev_entry) -> dict:
     """Entity-Map für einen einzelnen Config-Entry aufbauen."""
     from homeassistant.helpers import entity_registry as er_mod
@@ -112,6 +144,12 @@ def _build_entity_map(ent_reg, ev_entry) -> dict:
     soc_eid = ev_entry.options.get(CONF_SOC_ENTITY) or ev_entry.data.get(CONF_SOC_ENTITY)
     if soc_eid:
         entity_map["soc_entity"] = soc_eid
+    # Weitere Quell-Entitaeten (siehe _PANEL_SOURCE_ENTITY_KEYS) -- nur gesetzte,
+    # leere/nicht konfigurierte Felder fehlen einfach (Leser pruefen auf Vorhandensein).
+    for key in _PANEL_SOURCE_ENTITY_KEYS:
+        eid = ev_entry.options.get(key) or ev_entry.data.get(key)
+        if isinstance(eid, str) and eid:
+            entity_map[key] = eid
     return entity_map
 
 
