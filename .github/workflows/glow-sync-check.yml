@@ -1,0 +1,31 @@
+name: Glow sync check
+
+# Erzwingt "eins zu eins": frontend/mg-car-dashboard.js muss exakt der Datei
+# aus deepblue120/glow-dashboard an der Referenz in frontend/GLOW_VERSION
+# entsprechen (Tag oder Commit). Abweichung = rot. Siehe #12.
+
+on:
+  push:
+    branches: [glow-panel]
+  pull_request:
+    branches: [glow-panel]
+
+jobs:
+  check:
+    name: Glow-Karte entspricht GLOW_VERSION
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Kopie mit gepinnter Version vergleichen
+        run: |
+          set -euo pipefail
+          DIR=custom_components/ev_assistant/frontend
+          REF=$(tr -d '[:space:]' < "$DIR/GLOW_VERSION")
+          curl -fsSL "https://raw.githubusercontent.com/deepblue120/glow-dashboard/$REF/dist/mg-car-dashboard.js" -o /tmp/glow-pinned.js
+          if ! cmp -s /tmp/glow-pinned.js "$DIR/mg-car-dashboard.js"; then
+            echo "::error::mg-car-dashboard.js weicht von glow-dashboard@$REF ab. Datei nicht von Hand aendern: Workflow 'Sync Glow card' nutzen oder GLOW_VERSION anpassen."
+            diff -u /tmp/glow-pinned.js "$DIR/mg-car-dashboard.js" | head -40 || true
+            exit 1
+          fi
+          echo "OK: Kopie entspricht glow-dashboard@$REF"
