@@ -43,5 +43,9 @@ jobs:
           files: ev_assistant.zip
           body_path: release_notes.md
           generate_release_notes: false
+          # Tags mit Suffix (z. B. v0.99.35-glow.1) sind Pre-Releases: HACS
+          # zeigt sie nur Nutzern mit "Show beta versions", und GitHub zaehlt
+          # sie nie als "Latest release".
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
