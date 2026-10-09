@@ -1,12 +1,16 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=7  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=12  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.1.0";
+const VERSION = "3.3.0";
+// Version der Datenschnittstelle zu ev_assistant (Panel-Konfiguration, Websocket-Befehle, evcc_live),
+// die diese Karte erwartet. Meldet ev_assistant in der Panel-Konfiguration eine andere "api_version",
+// warnt die Karte (Konsole + Hinweis). Ohne "api_version" (ältere ev_assistant-Versionen) keine Warnung.
+const EVA_API_VERSION = 1;
 const FONT_URL = "https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap";
 
 const WD = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
@@ -15,58 +19,77 @@ const MON = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Ok
 const MON_LONG = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
 
 /* =====================================================================
- *  EINSTELLUNGEN – hier alle Sensoren, Pfade und Optionen anpassen.
- *  Jeder Wert kann zusätzlich per YAML überschrieben werden, z. B.
+ *  EINSTELLUNGEN
+ *  Die Karte holt sich alles, was möglich ist, aus ev_assistant (und den
+ *  evcc-Live-Werten, die ev_assistant mitliefert). Werte mit "eva:" sind
+ *  solche automatischen Quellen. Wer einen eigenen Sensor verwenden will,
+ *  trägt stattdessen dessen Entity-ID ein – am besten per YAML, denn ein
+ *  Update (z. B. über HACS) ersetzt diese Datei:
  *    type: custom:mg-car-dashboard
  *    car:
- *      soc: sensor.mein_auto_batterie
  *      image: /local/mein_auto.png
+ *      soc: sensor.mein_auto_batterie
+ *  Leer ("") = nicht verwenden, der Bereich wird ausgeblendet.
  * ===================================================================== */
 const CAR_DEFAULTS = {
   fit_screen: true,   // Desktop/Laptop: Dashboard passt sich der Fensterhöhe an (kein Scrollen der Seite)
-  debug: false,       // true = Diagnose-Meldungen in der Browser-Konsole
+  debug: false,       // true = Diagnose-Meldungen in der Browser-Konsole (u. a. welche Quelle für welchen Wert)
+  // Panel-Konfiguration von ev_assistant. Setzt das ev_assistant-Panel selbst, wenn es die Karte einbettet;
+  // als eigenständige Karte leer lassen – dann liest die Karte sie über "get_panels".
+  ev_assistant_panel: null,
+  // Mehrere Autos: die Karte bietet alle Fahrzeuge aus ev_assistant zur Auswahl an (Pfeil neben dem Namen).
+  // Hier lassen sich je Auto eigene Werte setzen – Schlüssel ist der Fahrzeugname oder die config_entry_id, z. B.
+  //   vehicles:
+  //     "Citroën ë-C3": { image: /local/c3.png }
+  //     "Renault Zoe":  { image: /local/zoe.png, evcc_loadpoint: carport }
+  vehicles: {},
 
-  // --- Energie (für Ladeleistung und Aufteilung Netz/PV im Verlauf) ---
+  // --- Energie (Verlauf) ---
+  // Geladene kWh je Stunde kommen aus der Ladeleistung (Standard: „Wallbox Ladeleistung“ aus ev_assistant ab 0.99.34),
+  // ohne Ladeleistung aus dem evcc-Ladelogbuch. Den PV-Anteil liefert evcc je Ladesitzung.
   energy: {
-    car_power: "sensor.shelly_wallbox_power",                       // Ladeleistung, falls car.evcc.power fehlt
-    grid_import: "sensor.alpha_ess_netzbezug_leistung_vom_netz",     // Netzbezug (Leistung)
-    home: "sensor.strom_leistung_haus_gesamt_inkl_bkw_und_marstek",  // Hausverbrauch inkl. Auto (Leistung)
+    car_power: "",      // eigener Ladeleistungs-Sensor mit Langzeitstatistik (leer = aus ev_assistant)
+    grid_import: "",    // nur ohne evcc: Netzbezug (Leistung) für die Aufteilung Netz/PV
+    home: "",           // nur ohne evcc: Hausverbrauch inkl. Auto (Leistung)
   },
 
   car: {
     // --- Fahrzeug ---
-    name: "Citroën ë-C3",
-    image: "/local/auto.png",                       // Bild des Autos (leer = kein Bild)
-    soc: "sensor.e_c3_batterie",                    // Ladestand in %
-    range: "sensor.e_c3_reichweite",                // Reichweite in km
-    status: "binary_sensor.e_c3_motor",             // on = fährt
-    status_on: "Motor an",                          // Text bei status = on
-    status_off: "Geparkt",                          // Text bei status = off
-    cable: "binary_sensor.warp3_2ee3_cable",        // on = eingesteckt, off = abgesteckt
+    name: "",                         // leer = Fahrzeugname aus ev_assistant
+    image: "",                        // Bild des Autos, z. B. "/local/auto.png" (leer = kein Bild)
+    soc: "eva:soc",                   // Ladestand: SoC-Sensor aus ev_assistant, sonst evcc
+    range: "eva:range",               // Reichweite: ev_assistant „Reichweite (real)“
+    status: "eva:motor",              // fährt: Motor-Sensor aus ev_assistant (sofern dort freigegeben)
+    status_on: "Motor an",            // Text, wenn das Auto fährt
+    status_off: "Geparkt",            // Text, wenn das Auto steht
+    cable: "eva:plug",                // eingesteckt: Stecker-Sensor aus ev_assistant, sonst evcc „verbunden“
 
-    // --- Wallbox / Lademodus ---
-    limit: "number.wallbox_ladestrom",              // Ladestrom (A)
-    mode: "select.evcc_warp3_mode",                 // evcc-Lademodus: Aus / Smart / Schnell
-    always: "select.evcc_warp3_always_charge",      // nur bei Smart: Aus / Ein / Einmalig
-    manual_mode: "input_select.evcc_lademodus_manuell",   // eigene Vorgabe (automatisch / manuell), leer lassen wenn nicht vorhanden
+    // --- Lademodus ---
+    // Ohne eigene Auswahl-Entitäten schaltet die Karte den evcc-Modus über ev_assistant
+    // (Auto = ev_assistant steuert, Smart, Smart + Immer laden, Schnell).
+    mode: "",                         // evcc-Lademodus als select-Entität (z. B. aus der evcc-Integration)
+    always: "",                       // „Immer laden“ als select-Entität (nur zusammen mit mode)
+    manual_mode: "",                  // eigene Vorgabe (input_select automatisch / manuell)
+    limit: "",                        // Ladestrom (A) einstellbar anzeigen: "eva:max_current" = Select der evcc-Integration, oder eigene number-/select-Entität (leer = aus)
 
-    // --- evcc (Ladepunkt) ---
+    // --- evcc (Ladepunkt) – Standard: Live-Werte aus ev_assistant ---
     evcc: {
-      charging: "binary_sensor.evcc_warp3_charging",
-      connected: "binary_sensor.evcc_warp3_connected",
-      power: "sensor.evcc_warp3_charge_power",
-      session_energy: "sensor.evcc_warp3_session_energy",
-      session_solar: "sensor.evcc_warp3_session_solar_percentage",
-      session_price: "sensor.evcc_warp3_session_price",
-      remaining: "sensor.evcc_warp3_charge_remaining_duration",
-      duration: "sensor.evcc_warp3_charge_duration",
-      finish: "sensor.e_c3_batterie_ladezeit_ende",
-      limit_soc: "select.evcc_warp3_limit_soc",                 // Ladeziel (Auswahl + Markierung im Balken)
-      min_soc: "input_number.evcc_auto_soc_schwelle_minpv",     // Markierung „bis hier immer laden“
-      solar_total: "sensor.evcc_stat_total_solar_percentage",
-      last_charge: "sensor.e_c3_letzte_ladung",
+      charging: "eva:charging",
+      connected: "eva:connected",
+      power: "eva:charge_power",
+      session_energy: "eva:session_energy",
+      session_solar: "eva:session_solar",
+      session_price: "eva:session_price",
+      duration: "eva:duration",
+      remaining: "",                  // Restladezeit (Sensor)
+      finish: "",                     // voraussichtliches Ladeende (Sensor mit Zeitstempel)
+      limit_soc: "eva:limit_soc",     // Ladeziel: automatisch das Select der evcc-Integration (auswählbar), sonst evcc-Live-Wert (nur Anzeige)
+      min_soc: "eva:min_soc",         // Markierung „bis hier immer laden“
+      solar_total: "eva:solar_total",
+      last_charge: "eva:last_charge",
     },
-    evcc_vehicle: "",                // nur Ladungen dieses evcc-Fahrzeugs in „Alle Ladungen“ (leer = alle)
+    evcc_vehicle: "",                // nur Ladungen dieses evcc-Fahrzeugs in „Alle Ladungen“ (leer = aus ev_assistant)
+    evcc_loadpoint: "",              // bei mehreren Ladepunkten in der evcc-Integration: Teil der Entity-ID, z. B. "warp3"
 
     // --- ev_assistant ---
     // Die Entitäten werden automatisch gefunden. Einzelne lassen sich hier fest vorgeben, z. B.
@@ -77,11 +100,11 @@ const CAR_DEFAULTS = {
     //   kwh_month, kwh_year, home_kwh, total_kwh, savings, co2_savings, pending, trip_pending, wartung_faellig,
     //   evcc_charge_plan, evcc_mode_control, charge_before_pv_recommended
     ev_assistant: {},
-    ev_assistant_entry: "",          // config_entry_id von ev_assistant (leer = automatisch suchen)
+    ev_assistant_entry: "",          // config_entry_id von ev_assistant (leer = automatisch, bei mehreren Fahrzeugen das erste)
     stats: ["vehicle_avg_consumption", "odo", "cost_year", "savings"],   // Kennzahlen in der Auto-Kachel
 
     // --- Fahrtenbuch ---
-    trips: "sensor.e_c3_fahrtenbuch_2",   // Sensor mit Attribut "trips"
+    trips: "eva:trips",                   // Fahrtenbuch aus ev_assistant (oder ein Sensor mit Attribut "trips")
     trips_visible: 5,                     // so viele Fahrten in der Kachel, wenn die Seite nicht an die Fensterhöhe angepasst ist
     trips_max: 100,                       // so viele Fahrten im Fenster „Alle Fahrten“
 
@@ -126,6 +149,14 @@ const CAR_DEFAULTS = {
 
 const OFFLINE_HD = ["unavailable", "unknown", "none", ""];
 
+/* evcc-Lademodus über ev_assistant (Services set_evcc_manual_mode / clear_evcc_manual_mode) */
+const EVA_MODES = [
+  { v: "auto",  label: "Auto",    icon: "mdi:robot-outline",  color: "#38bdf8", title: "ev_assistant steuert den Lademodus" },
+  { v: "pv",    label: "Smart",   icon: "mdi:solar-power",    color: "#34d399", title: "nur mit PV-Überschuss laden" },
+  { v: "minpv", label: "Immer",   icon: "mdi:infinity",       color: "#a78bfa", title: "Smart + immer laden (Mindestleistung aus dem Netz)" },
+  { v: "now",   label: "Schnell", icon: "mdi:lightning-bolt", color: "#fb923c", title: "sofort mit voller Leistung laden" },
+];
+
 /* ---------------- Helfer ---------------- */
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const de = (v, d = 1) => Number(v).toLocaleString("de-DE", { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -142,7 +173,11 @@ class MgCarDashboard extends HTMLElement {
   static getStubConfig() { return {}; }
 
   setConfig(config) {
-    this._config = merge(CAR_DEFAULTS, config || {});
+    const prevPanel = this._config?.ev_assistant_panel;
+    this._rawConfig = config || {};
+    this._config = merge(CAR_DEFAULTS, this._rawConfig);
+    if (this._evaPanel) this._applyVehicle();
+    if (this._config.ev_assistant_panel !== prevPanel) { this._evaPanelReq = false; if (this._hass) this._loadEvaPanel(); }
     if (this._built) { this._built = false; this._build(); if (this._hass) this._update(true); }
   }
 
@@ -151,7 +186,7 @@ class MgCarDashboard extends HTMLElement {
     const first = !this._hass;
     this._hass = h;
     if (!this._built) this._build();
-    if (first) { this._loadCarHist(); this._loadLastSession(); }
+    if (first) { this._loadEvaPanel(); this._loadCarHist(); this._loadLastSession(); this._loadTrips(); }
     this._update();
   }
   connectedCallback() {
@@ -161,7 +196,7 @@ class MgCarDashboard extends HTMLElement {
     }
     window.addEventListener("resize", this._onResize);
     this._ro.observe(this); this._onResize();
-    if (!this._histTimer) this._histTimer = setInterval(() => { this._loadCarHist(); this._loadLastSession(); }, 15 * 60000);
+    if (!this._histTimer) this._histTimer = setInterval(() => { this._loadCarHist(); this._loadLastSession(); this._loadTrips(); }, 15 * 60000);
   }
   disconnectedCallback() {
     if (this._onResize) { window.removeEventListener("resize", this._onResize); this._ro.disconnect(); }
@@ -183,6 +218,7 @@ class MgCarDashboard extends HTMLElement {
     }
     this.shadowRoot.innerHTML = `<style>${STYLE}${CAR_STYLE}</style>
       <div class="wrap carpage">
+        <div class="apiwarn" id="apiwarn" hidden></div>
         <div class="grid">
           <div class="col"><section class="panel car" id="car"></section><section class="panel grow" id="trips"></section></div>
           <div class="col"><section class="panel" id="live"></section><section class="panel" id="mgmt"></section></div>
@@ -198,10 +234,15 @@ class MgCarDashboard extends HTMLElement {
     const c = this._config.car, E = this._eva();
     const ids = [c.soc, c.range, c.status, c.cable, c.limit, c.mode, c.always, c.trips, c.manual_mode, this._config.energy.car_power,
       ...Object.values(c.evcc || {}), ...Object.values(E)].filter(Boolean);
-    const sig = ids.map((id) => { const s = this._st(id); return s ? s.state + s.last_updated : "-"; }).join("|") + (this._carHist?.t || "") + Math.floor(Date.now() / 60000);
+    const tc = this._st(E.trip_count)?.state;
+    if (tc != null && this._tripCount != null && tc !== this._tripCount) this._loadTrips(true);   // neue Fahrt erfasst
+    this._tripCount = tc;
+    const sig = ids.map((id) => { const s = this._st(id); return s ? s.state + s.last_updated : "-"; }).join("|") + (this._carHist?.t || "") + (this._evaTrips?.t || "") + Math.floor(Date.now() / 60000);
     if (!force && sig === this._sigCar) return;
     this._sigCar = sig;
     if (this._menu) return;   // Auswahlmenü offen: nicht neu zeichnen
+    const aw = this.shadowRoot.getElementById("apiwarn");
+    if (aw) { aw.hidden = !this._apiWarn; aw.textContent = this._apiWarn || ""; }
     this._render_car();
     this._render_live();
     this._render_mgmt();
@@ -212,6 +253,7 @@ class MgCarDashboard extends HTMLElement {
   /* evcc setzt die Sitzungswerte nach dem Laden auf 0 → letzte echte Sitzung aus dem Verlauf holen */
   async _loadLastSession() {
     const ev = this._config.car.evcc || {}, eid = ev.session_energy;
+    if (eid && !this._real(eid)) return this._lastSessFromEva();
     if (!eid || !this._st(eid) || !this._hass?.callApi) return;
     const ids = [eid, ev.session_solar, ev.session_price, ev.duration].filter((x) => x && this._st(x));
     const start = new Date(Date.now() - (this._config.car.session_days || 30) * 86400000).toISOString();
@@ -240,6 +282,23 @@ class MgCarDashboard extends HTMLElement {
     this._update(true);
   }
 
+  async _lastSessFromEva() {
+    const ev = this._config.car.evcc || {};
+    if (!this._evaEntryId() || !this._hass?.callWS) return;
+    try {
+      const x = (await this._evccSessions(true)).filter((s) => s.finished).sort((a, b) => b.te - a.te)[0];
+      if (!x) { this._lastSess = { none: true }; return this._update(true); }
+      const vals = {};
+      if (ev.session_energy) vals[ev.session_energy] = x.kwh;
+      if (ev.session_solar) vals[ev.session_solar] = x.pv;
+      if (ev.session_price) vals[ev.session_price] = x.price;
+      if (ev.duration) vals[ev.duration] = x.dur;
+      this._lastSess = { end: x.te, vals, src: "evcc" };
+    } catch (e) { this._lastSess = { err: true }; }
+    this._log("letzte Ladung", this._lastSess);
+    this._update(true);
+  }
+
   async _statsLastSession(ids) {
     if (!this._hass.callWS) return null;
     const days = this._config.car.session_stats_days || 120;
@@ -263,6 +322,7 @@ class MgCarDashboard extends HTMLElement {
 
   /* --- Alle Ladungen (ev_assistant: evcc-Ladelogbuch + Fremdladungen) --- */
   _evaEntryId() {
+    if (this._evaPanel?.config_entry_id) return this._evaPanel.config_entry_id;
     if (this._config.car.ev_assistant_entry) return this._config.car.ev_assistant_entry;
     if (this._evaEntryCache) return this._evaEntryCache;
     const reg = this._hass?.entities || {}, dev = this._hass?.devices || {};
@@ -286,7 +346,7 @@ class MgCarDashboard extends HTMLElement {
       this._hass.callWS({ type: "ev_assistant/evcc_sessions", config_entry_id: id }).catch((e) => ({ error: e })),
       this._hass.callWS({ type: "ev_assistant/charges", config_entry_id: id }).catch((e) => ({ error: e })),
     ]);
-    const veh = (this._config.car.evcc_vehicle || "").toLowerCase();
+    const veh = this._evccVehicle();
     for (const x of home?.sessions || []) {
       if (veh && x.vehicle && String(x.vehicle).toLowerCase() !== veh) continue;
       const ts = x.created ? Date.parse(x.created) : null, te = x.finished ? Date.parse(x.finished) : null;
@@ -363,8 +423,8 @@ class MgCarDashboard extends HTMLElement {
     const el = this.shadowRoot.getElementById("mgmt"); if (!el) return;
     if (this.shadowRoot.activeElement?.classList?.contains("pin")) return;   // während der Eingabe nicht neu zeichnen
     const c = this._config.car, ev = c.evcc || {}, E = this._eva();
-    const step = (lbl, ic, id, unit) => {
-      const st = this._st(id); if (!st) return "";
+    const step = (lbl, ic, cfgId, unit) => {
+      const id = this._real(cfgId), st = this._st(id); if (!st) return "";   // nur eine echte Entität lässt sich einstellen
       const a = st.attributes, pend = this._pendingNum?.[id], v = pend != null ? pend : parseFloat(st.state), u = unit ?? a.unit_of_measurement ?? "";
       return `<div class="mstep"><span class="msl">${icon(ic)}${lbl}</span>
         <div class="tgt"><button class="tb" data-act="mnum" data-entity="${esc(id)}" data-d="-1" aria-label="weniger">−</button>
@@ -379,7 +439,12 @@ class MgCarDashboard extends HTMLElement {
     // evcc-Modus als Kacheln, „Immer laden“ als Auswahl in der Smart-Kachel
     const mst = this._st(c.mode), ast = this._st(c.always);
     // Modus-Zeile: [Vorgabe ▼] [Aus] [Smart ▼] [Schnell]
+    const evaMode = !mst && this._evaEntryId() ? this._evaModeState() : null;
     const modeTiles = (() => {
+      if (evaMode) {   // ohne eigene Auswahl-Entitäten: evcc-Modus über ev_assistant schalten
+        return `<div class="mmodes">${EVA_MODES.map((m) => `<button class="mmode ${evaMode.cur === m.v ? "sel" : ""}" style="--cc:${m.color}" data-act="evamode" data-v="${m.v}" title="${esc(m.title)}">
+          <span class="mmh">${icon(m.icon)}<b>${esc(m.label)}</b></span></button>`).join("")}</div>`;
+      }
       if (!mst) return "";
       const opts = mst.attributes.options || [], curM = mst.state;
       const tiles = [];
@@ -439,9 +504,12 @@ class MgCarDashboard extends HTMLElement {
     ].join("") : "";
 
     const rec = this._st(E.charge_before_pv_recommended);
-    el.innerHTML = this._hd("Lademanagement", manual ? (auto ? `<span class="mauto">${icon("mdi:robot-outline")}Automatik</span>` : `<span class="mman">${icon("mdi:hand-back-right-outline")}Manuell</span>`) : "") + `
-      ${modeTiles ? `<div class="mgrp"><span class="mgl">${manual ? "Lademodus" : "evcc-Modus"}</span>${modeTiles}</div>` : ""}
-      <div class="msteps">${step("Ladestrom", "mdi:speedometer", c.limit)}</div>
+    const isAuto = evaMode ? evaMode.cur === "auto" : auto;
+    const evccNow = evaMode?.evcc ? `<small>evcc: ${esc(EVA_MODES.find((m) => m.v === evaMode.evcc)?.label || (evaMode.evcc === "off" ? "Aus" : evaMode.evcc))}</small>` : "";
+    const ladestrom = step("Ladestrom", "mdi:speedometer", c.limit, this._real(c.limit)?.startsWith("select.") ? "A" : undefined);
+    el.innerHTML = this._hd("Lademanagement", manual || evaMode ? (isAuto ? `<span class="mauto">${icon("mdi:robot-outline")}Automatik</span>` : `<span class="mman">${icon("mdi:hand-back-right-outline")}Manuell</span>`) : "") + `
+      ${modeTiles ? `<div class="mgrp"><span class="mgl">${manual || evaMode ? "Lademodus" : "evcc-Modus"} ${evccNow}</span>${modeTiles}</div>` : ""}
+      ${ladestrom ? `<div class="msteps">${ladestrom}</div>` : ""}
       ${this._renderLimitRow(c, ev, E, ma)}
       ${planHtml || toggles ? `<div class="mgrp"><span class="mgl">ev_assistant</span>${planHtml}${toggles}</div>` : ""}
       ${rec?.state === "on" ? `<div class="lrows"><button class="lrow warn" data-act="more" data-entity="${esc(E.charge_before_pv_recommended)}">${icon("mdi:weather-cloudy-alert")}<span>Empfehlung</span><b>Laden vor PV sinnvoll</b></button></div>` : ""}`;
@@ -454,9 +522,9 @@ class MgCarDashboard extends HTMLElement {
     if (ev.limit_soc) {
       const limSt = this._st(ev.limit_soc);
       if (!limSt) this._log("limit_soc", ev.limit_soc, "nicht in hass.states gefunden");
-      const v = limSt?.state;
-      limBtn = `<button class="mbtn lim" data-act="limmenu" data-entity="${esc(ev.limit_soc)}">
-        ${icon("mdi:battery-check-outline")}<div class="mtx"><b>${v != null && !OFFLINE_HD.includes(v) ? esc(String(v).replace(/ ?%$/, "")) + " %" : "–"}</b><span>Ladeziel</span></div>${icon("mdi:chevron-down", "mchv")}</button>`;
+      const v = limSt?.state, pick = !!this._real(ev.limit_soc);   // nur eine echte select-/number-Entität ist auswählbar
+      if (limSt) limBtn = `<button class="mbtn lim ${pick ? "" : "ro"}" ${pick ? `data-act="limmenu" data-entity="${esc(this._real(ev.limit_soc))}"` : `title="Ladeziel aus evcc"`}>
+        ${icon("mdi:battery-check-outline")}<div class="mtx"><b>${v != null && !OFFLINE_HD.includes(v) ? esc(String(Math.round(parseFloat(v)) || v).replace(/ ?%$/, "")) + " %" : "–"}</b><span>Ladeziel</span></div>${pick ? icon("mdi:chevron-down", "mchv") : ""}</button>`;
     }
     // Vollladung als Knopf
     if (this._balOptimistic != null && !!ma.balancing_enabled === this._balOptimistic) this._balOptimistic = null;   // bestätigt
@@ -482,14 +550,13 @@ class MgCarDashboard extends HTMLElement {
     const opts = a.options || [];
     const menu = document.createElement("div"); menu.className = "menu limm";
     if (opts.length) {
-      menu.innerHTML = opts.map((v) => `<button class="mg-menu-item mi ${String(v) === String(cur) ? "cur" : ""}" data-act="limset" data-entity="${esc(id)}" data-v="${esc(v)}"><span>${esc(v)}</span>${String(v) === String(cur) ? icon("mdi:check", "ck") : ""}</button>`).join("");
+      menu.innerHTML = opts.map((v) => `<button class="mg-menu-item mi ${String(v) === String(cur) ? "cur" : ""}" data-act="limset" data-entity="${esc(id)}" data-v="${esc(v)}"><span>${isNaN(Number(v)) ? esc(v) : Number(v) === 0 ? "–" : `${esc(v)} %`}</span>${String(v) === String(cur) ? icon("mdi:check", "ck") : ""}</button>`).join("");
     } else {
       const stp = Number(a.step) || 5, mn = Number(a.min) || 20, mx = Number(a.max) || 100;
       let numOpts = []; for (let v = mn; v <= mx; v += stp) numOpts.push(v);
       menu.innerHTML = numOpts.map((v) => `<button class="mg-menu-item mi ${v === parseFloat(cur) ? "cur" : ""}" data-act="limset" data-entity="${esc(id)}" data-v="${v}"><span>${v} %</span>${v === parseFloat(cur) ? icon("mdi:check", "ck") : ""}</button>`).join("");
     }
     this._openMenuAt(anchor, menu);
-    const sel = menu.querySelector(".cur"); if (sel) sel.scrollIntoView({ block: "center" });
   }
 
   _evaCall(service, data) {
@@ -501,15 +568,26 @@ class MgCarDashboard extends HTMLElement {
 
   _mnum(el) {
     const id = el.dataset.entity, st = this._st(id); if (!st) return;
-    const a = st.attributes, stp = Number(a.step) || 1;
+    const a = st.attributes, stp = Number(a.step) || 1, dom = id.split(".")[0], d = Number(el.dataset.d);
     this._pendingNum = this._pendingNum || {}; this._numT = this._numT || {};
     const cur = this._pendingNum[id] ?? parseFloat(st.state);
-    let v = Math.round((cur + Number(el.dataset.d) * stp) / stp) * stp;
-    if (a.min != null) v = Math.max(Number(a.min), v); if (a.max != null) v = Math.min(Number(a.max), v);
+    let v;
+    if (dom === "select" || dom === "input_select") {   // Auswahlliste (z. B. Ladestrom der evcc-Integration): nächster Wert
+      const opts = (a.options || []).map(Number).filter((x) => !isNaN(x)).sort((x, y) => x - y);
+      if (!opts.length) return;
+      const i = opts.findIndex((x) => x >= cur);
+      v = opts[Math.max(0, Math.min(opts.length - 1, (i < 0 ? opts.length - 1 : i) + (opts[i] === cur || i < 0 ? d : d > 0 ? 0 : -1)))];
+    } else {
+      v = Math.round((cur + d * stp) / stp) * stp;
+      if (a.min != null) v = Math.max(Number(a.min), v); if (a.max != null) v = Math.min(Number(a.max), v);
+    }
     this._pendingNum[id] = v;
     clearTimeout(this._numT[id]);
     this._numT[id] = setTimeout(() => {
-      this._hass.callService(id.split(".")[0], "set_value", { entity_id: id, value: v });
+      if (dom === "select" || dom === "input_select") {
+        const opt = (a.options || []).find((o) => Number(o) === v);
+        if (opt != null) this._hass.callService(dom, "select_option", { entity_id: id, option: opt });
+      } else this._hass.callService(dom, "set_value", { entity_id: id, value: v });
       setTimeout(() => { delete this._pendingNum[id]; this._render_mgmt(); }, 1500);
     }, 700);
     this._render_mgmt();
@@ -596,9 +674,29 @@ class MgCarDashboard extends HTMLElement {
   }
 
   /* --- Fahrtenbuch --- */
+  /* Fahrtenbuch über ev_assistant (Websocket „ev_assistant/trips“) */
+  async _loadTrips(force) {
+    if (!String(this._config.car.trips || "").startsWith("eva:")) return;
+    if (!force && this._evaTrips && Date.now() - this._evaTrips.t < 5 * 60000) return;
+    const id = this._evaEntryId();
+    if (!id || !this._hass?.callWS) { setTimeout(() => !this._evaTrips && this._evaEntryId() && this._loadTrips(), 3000); return; }
+    try {
+      const res = await this._hass.callWS({ type: "ev_assistant/trips", config_entry_id: id });
+      const ts = (v) => (v ? v * (v < 1e12 ? 1000 : 1) : null);
+      const list = (res?.trips || []).map((r) => {
+        const t0 = ts(r.start_ts || r.erfasst_ts), t1 = ts(r.end_ts), km = parseFloat(r.km), kwh = parseFloat(r.verbrauch_kwh);
+        return { start: t0 ? new Date(t0).toISOString() : r.datum, start_ort: r.start_ort, ziel_ort: r.end_ort, strecke: isNaN(km) ? null : km,
+          verbrauch_kwh: isNaN(kwh) ? null : kwh, avg_verbrauch: km > 0.5 && !isNaN(kwh) ? kwh / km * 100 : null,
+          dauer: t0 && t1 > t0 ? Math.round((t1 - t0) / 60000) : null, avg_speed: t0 && t1 > t0 && km > 0 ? km / ((t1 - t0) / 3600000) : null };
+      });
+      this._evaTrips = { t: Date.now(), list };
+    } catch (e) { this._evaTrips = { t: Date.now(), list: [], err: true }; this._log("Fahrtenbuch nicht abrufbar", e); }
+    this._update(true);
+  }
+
   _tripList() {
     const c = this._config.car;
-    let trips = this._st(c.trips)?.attributes?.trips || [];
+    let trips = String(c.trips || "").startsWith("eva:") ? this._evaTrips?.list || [] : this._st(c.trips)?.attributes?.trips || [];
     if (!Array.isArray(trips)) trips = [];
     const t0 = (x) => new Date(x.start).getTime() || 0;
     return trips.slice().sort((a, b) => t0(b) - t0(a)).slice(0, c.trips_max || 100);
@@ -632,7 +730,7 @@ class MgCarDashboard extends HTMLElement {
     el.innerHTML = `<div class="hd"><span class="ttl">Fahrtenbuch</span><span class="lbl"></span>
         <button class="arrow" data-act="trips" aria-label="Alle Fahrten" title="Alle Fahrten">${icon("mdi:chevron-right")}</button></div>` +
       (list.length ? `<div class="tlist" data-act="trips" title="Alle Fahrten anzeigen">${this._tripRows(list)}</div>`
-        : `<div class="empty">Keine Fahrten gefunden${c.trips ? ` (${esc(c.trips)})` : ""}</div>`);
+        : `<div class="empty">${String(c.trips || "").startsWith("eva:") && !this._evaTrips ? "Lädt …" : `Keine Fahrten gefunden${c.trips && !c.trips.startsWith("eva:") ? ` (${esc(c.trips)})` : ""}`}</div>`);
     this._clipTrips();
     if (this._dlg === "trips") this._renderTripsDlg();
   }
@@ -669,7 +767,7 @@ class MgCarDashboard extends HTMLElement {
     const sc = d.querySelector(".dbody")?.scrollTop || 0;
     d.innerHTML = `<div class="dpan chpan">
       <div class="dhd"><span class="dico">${icon("mdi:map-marker-path")}</span>
-        <span class="rtx"><span class="rname">Alle Fahrten</span><span class="rsub">${esc(this._st(this._config.car.trips)?.attributes?.friendly_name || "Fahrtenbuch")}</span></span>
+        <span class="rtx"><span class="rname">Alle Fahrten</span><span class="rsub">${String(this._config.car.trips || "").startsWith("eva:") ? "Fahrtenbuch aus ev_assistant" : esc(this._st(this._config.car.trips)?.attributes?.friendly_name || "Fahrtenbuch")}</span></span>
         <button class="dx" data-act="cardclose" aria-label="Schließen">${icon("mdi:close")}</button></div>
       <div class="chsum">
         <div><span>Fahrten</span><b>${list.length}</b></div>
@@ -712,8 +810,8 @@ class MgCarDashboard extends HTMLElement {
   _rangeLbl(h) { return h < 48 ? `${h} h` : h % 24 === 0 ? `${h / 24} T` : `${h} h`; }
 
   async _loadCarHist() {
-    const c = this._config.car, ev = c.evcc || {}, ids = [c.soc, ev.power || this._config.energy.car_power].filter((x) => x && this._st(x));
-    if (!ids.length || !this._hass) return;
+    const c = this._config.car, hi = this._histIds(), ids = [hi.soc, hi.pw].filter(Boolean);
+    if (!this._hass) return;
     const hrs = this._histHours(), req = (this._histReq = (this._histReq || 0) + 1);
     const t1 = Date.now(), t0 = t1 - hrs * 3600000, data = {}, src = {};
     const ts = (v) => (typeof v === "number" ? v : new Date(v).getTime());
@@ -746,28 +844,82 @@ class MgCarDashboard extends HTMLElement {
     this._update(true);
   }
 
-  /* Stündlich geladene kWh, aufgeteilt nach Netz und PV/Speicher (aus Langzeitstatistik) */
-  async _loadBars(t0, t1, hrs) {
-    const c = this._config.car, ev = c.evcc || {}, e = this._config.energy;
-    const pid = ev.power || e.car_power, gid = c.split_grid || e.grid_import, hid = c.split_home || e.home;
-    if (!this._hass.callWS || !this._st(pid)) return null;
-    const ids = [pid, gid, hid, c.soc].filter((x) => x && this._st(x));
+  /* Entitäten für den Verlauf: Ladestand und Ladeleistung (nur echte Sensoren haben Verlauf/Statistik) */
+  _histIds() {
+    const c = this._config.car, ev = c.evcc || {};
+    return { soc: this._real(c.soc), pw: this._real(ev.power) || this._real(this._config.energy.car_power) };
+  }
+
+  /* evcc-Ladelogbuch über ev_assistant (für „Letzte Ladung“ und den PV-Anteil im Verlauf), 5 min zwischengespeichert */
+  async _evccSessions(force) {
+    if (!force && this._sess && Date.now() - this._sess.t < 5 * 60000) return this._sess.list;
+    const id = this._evaEntryId();
+    if (!id || !this._hass?.callWS) return [];
     try {
-      const st = await this._hass.callWS({ type: "recorder/statistics_during_period", start_time: new Date(t0).toISOString(),
-        end_time: new Date(t1).toISOString(), statistic_ids: ids, period: "hour", types: ["mean"] });
-      const ts = (v) => (typeof v === "number" ? v : new Date(v).getTime());
-      const toKW = (id) => { const u = (this._st(id)?.attributes?.unit_of_measurement || "").toLowerCase(); return u === "kw" ? 1 : u === "mw" ? 1000 : 0.001; };
-      const map = (id) => { const m = new Map(); for (const x of st?.[id] || []) if (x.mean != null) m.set(ts(x.start), x.mean); return m; };
-      const P = map(pid), G = map(gid), Hm = map(hid), S = map(c.soc);
-      const fp = toKW(pid), fg = toKW(gid), fh = toKW(hid);
-      let rows = [];
-      for (const [t, v] of P) {
-        const kwh = Math.max(0, v * fp);
-        const home = (Hm.get(t) ?? 0) * fh, grid = Math.max(0, (G.get(t) ?? 0) * fg);
-        // Anteil Netz = Netzbezug / Gesamtverbrauch der Stunde (Auto im Hausverbrauch enthalten)
-        const share = home > 0.01 ? Math.min(1, grid / Math.max(home, kwh)) : (G.has(t) ? 1 : 0);
-        rows.push({ t, kwh, grid: kwh * share, pv: kwh * (1 - share), soc: S.get(t) });
-      }
+      const res = await this._hass.callWS({ type: "ev_assistant/evcc_sessions", config_entry_id: id });
+      const veh = this._evccVehicle();
+      const list = (res?.sessions || []).filter((x) => !veh || !x.vehicle || String(x.vehicle).toLowerCase() === veh).map((x) => {
+        const ts = x.created ? Date.parse(x.created) : NaN, te = x.finished ? Date.parse(x.finished) : Date.now();
+        return { ts, te, kwh: x.chargedEnergy ?? null, pv: x.solarPercentage ?? null, price: x.price ?? null,
+          dur: typeof x.chargeDuration === "number" ? x.chargeDuration / 1e9 / 60 : null, finished: !!x.finished };
+      }).filter((x) => !isNaN(x.ts) && x.te > x.ts);
+      this._sess = { t: Date.now(), list };
+    } catch (e) { this._sess = { t: Date.now(), list: [] }; }
+    return this._sess.list;
+  }
+
+  /* Geladene kWh je Stunde, aufgeteilt nach PV und Netz.
+     - kWh: aus der Langzeitstatistik der Ladeleistung; ohne Ladeleistungs-Sensor aus dem evcc-Ladelogbuch
+       (Energie jeder Sitzung gleichmäßig über ihre Dauer verteilt)
+     - PV-Anteil: aus dem evcc-Ladelogbuch (PV-Anteil der Sitzung, in die die Stunde fällt); ohne evcc aus
+       Netzbezug und Hausverbrauch (energy.grid_import / energy.home), sonst keine Aufteilung */
+  async _loadBars(t0, t1, hrs) {
+    const c = this._config.car, e = this._config.energy, H = 3600000;
+    const hi = this._histIds(), pid = hi.pw, gid = this._real(c.split_grid || e.grid_import), hid = this._real(c.split_home || e.home), sid = hi.soc;
+    if (!this._hass.callWS) return null;
+    const sessions = (await this._evccSessions()).filter((x) => x.te > t0 - H && x.ts < t1);
+    // Stunde → überwiegende Sitzung
+    const sessAt = (t) => { let best = null, ov = 0; for (const x of sessions) { const o = Math.min(x.te, t + H) - Math.max(x.ts, t); if (o > ov) { ov = o; best = x; } } return best; };
+    let rows = [], split = false, src = "";
+    try {
+      if (pid) {
+        const ids = [pid, gid, hid, sid].filter(Boolean);
+        const st = await this._hass.callWS({ type: "recorder/statistics_during_period", start_time: new Date(t0).toISOString(),
+          end_time: new Date(t1).toISOString(), statistic_ids: ids, period: "hour", types: ["mean"] });
+        const ts = (v) => (typeof v === "number" ? v : new Date(v).getTime());
+        const toKW = (id) => { const u = (this._st(id)?.attributes?.unit_of_measurement || "").toLowerCase(); return u === "kw" ? 1 : u === "mw" ? 1000 : 0.001; };
+        const map = (id) => { const m = new Map(); for (const x of st?.[id] || []) if (x.mean != null) m.set(ts(x.start), x.mean); return m; };
+        const P = map(pid), G = map(gid), Hm = map(hid), S = map(sid), fp = toKW(pid), fg = toKW(gid), fh = toKW(hid);
+        const useEvcc = sessions.length > 0, useSens = !useEvcc && !!(gid && hid);
+        for (const [t, v] of P) {
+          const kwh = Math.max(0, v * fp);
+          let share = null;   // Netzanteil 0…1
+          if (useEvcc) { const x = sessAt(t); if (x?.pv != null) share = 1 - Math.max(0, Math.min(100, x.pv)) / 100; }
+          else if (useSens) {
+            const home = (Hm.get(t) ?? 0) * fh, grid = Math.max(0, (G.get(t) ?? 0) * fg);
+            // Anteil Netz = Netzbezug / Gesamtverbrauch der Stunde (Auto im Hausverbrauch enthalten)
+            share = home > 0.01 ? Math.min(1, grid / Math.max(home, kwh)) : (G.has(t) ? 1 : 0);
+          }
+          // Stunde ohne zuordenbare Sitzung (z. B. Laden ohne evcc): ohne Aufteilung als Netz gezählt
+          rows.push({ t, kwh, grid: kwh * (share ?? 1), pv: kwh * (1 - (share ?? 1)), soc: S.get(t) });
+        }
+        split = useEvcc || useSens; src = useEvcc ? "evcc" : useSens ? "sensor" : "";
+      } else if (sessions.length) {
+        // ohne Ladeleistungs-Sensor: Energie der Sitzungen gleichmäßig auf ihre Stunden verteilen
+        const acc = new Map();
+        for (const x of sessions) {
+          if (!(x.kwh > 0)) continue;
+          for (let t = Math.floor(x.ts / H) * H; t < x.te; t += H) {
+            const f = (Math.min(x.te, t + H) - Math.max(x.ts, t)) / (x.te - x.ts);
+            if (f <= 0 || t + H <= t0) continue;
+            const r = acc.get(t) || { t, kwh: 0, grid: 0, pv: 0, soc: null }, k = x.kwh * f, pv = x.pv != null ? Math.max(0, Math.min(100, x.pv)) / 100 : 0;
+            r.kwh += k; r.pv += k * pv; r.grid += k * (1 - pv);
+            acc.set(t, r);
+          }
+        }
+        rows = [...acc.values()]; split = true; src = "evcc-log";
+      } else return null;
+      if (!split) rows = rows.map((r) => ({ ...r, grid: 0, pv: 0 }));
       rows.sort((a, b) => a.t - b.t);
       const unit = this._barUnit(hrs);
       if (unit !== "h") {   // Stundenwerte zu Tages- bzw. Wochensummen zusammenfassen
@@ -781,7 +933,8 @@ class MgCarDashboard extends HTMLElement {
         }
         rows = [...groups.values()];
       }
-      return { rows, unit, split: !!(gid && this._st(gid) && hid && this._st(hid)) };
+      this._log("Verlauf-Balken", { unit, split, src, kwh: pid || "aus Ladelogbuch", sessions: sessions.length });
+      return { rows, unit, split, src };
     } catch (e) { return null; }
   }
 
@@ -804,6 +957,7 @@ class MgCarDashboard extends HTMLElement {
       const xa = X(Math.max(r.t, t0)), xb = X(Math.min(r.t + step, t1)), full = (step / (t1 - t0)) * W;
       const gap = full > 6 ? (B.unit === "h" ? 1 : 2) : 0.2;
       const x = xa + gap / 2, bw = Math.max(1, xb - xa - gap), yp = Y(r.pv), yg = Y(r.pv + r.grid);
+      if (!B.split) return r.kwh < 0.005 ? "" : `<g class="bar" data-i="${i}"><rect x="${x.toFixed(1)}" y="${Y(r.kwh).toFixed(1)}" width="${bw.toFixed(1)}" height="${(Ht - Y(r.kwh)).toFixed(1)}" class="bkw"/></g>`;
       return r.kwh < 0.005 ? "" : `<g class="bar" data-i="${i}">
         <rect x="${x.toFixed(1)}" y="${yp.toFixed(1)}" width="${bw.toFixed(1)}" height="${(Ht - yp).toFixed(1)}" class="bpv"/>
         <rect x="${x.toFixed(1)}" y="${yg.toFixed(1)}" width="${bw.toFixed(1)}" height="${(yp - yg).toFixed(1)}" class="bgr"/></g>`;
@@ -837,8 +991,8 @@ class MgCarDashboard extends HTMLElement {
         <div class="gax">${ticks.filter(([x]) => x < 90).map(([x, l]) => `<span class="${x < 4 ? "st" : ""}" style="left:${x}%">${l}</span>`).join("")}<span class="now" style="left:100%">jetzt</span></div>
         <div class="gtip" hidden></div>
         <span class="gmax">${de(maxK, 1)} kWh${{ h: "/h", d: "/Tag", w: "/Woche" }[B.unit]}</span></div>
-      <div class="glg"><span class="pvl">PV/Speicher ${de(sum.p, 1)} kWh</span>${B.split ? `<span class="grl">Netz ${de(sum.g, 1)} kWh</span>` : ""}<span class="s">Ladestand ${Math.round(nowS)} %</span>
-<span class="src">${{ h: "Stundenwerte", d: "Tageswerte", w: "Wochenwerte" }[B.unit]}</span></div>`;
+      <div class="glg">${B.split ? `<span class="pvl">PV/Speicher ${de(sum.p, 1)} kWh</span><span class="grl">Netz ${de(sum.g, 1)} kWh</span>` : `<span class="kwl">Geladen ${de(sum.k, 1)} kWh</span>`}<span class="s">Ladestand ${Math.round(nowS)} %</span>
+<span class="src">${{ h: "Stundenwerte", d: "Tageswerte", w: "Wochenwerte" }[B.unit]}${B.src === "evcc-log" ? " aus dem evcc-Ladelogbuch" : B.src === "evcc" ? " · PV-Anteil aus evcc" : ""}</span></div>`;
   }
 
   /* Maus/Finger über den Balken: Werte anzeigen */
@@ -856,10 +1010,11 @@ class MgCarDashboard extends HTMLElement {
     const when = step >= 7 * 86400000 ? `KW ${this._kw(d)} · ${d.getDate()}. ${d.getMonth() !== de2.getMonth() ? MON[d.getMonth()] + " " : ""}– ${de2.getDate()}. ${MON[de2.getMonth()]}`
       : step >= 86400000 ? `${WD_LONG[d.getDay()]}, ${d.getDate()}. ${MON[d.getMonth()]}` : `${WD[d.getDay()]} ${d.getDate()}. ${MON[d.getMonth()]} · ${pad(d.getHours())}–${pad(d2.getHours())} Uhr`;
     const pvp = row.kwh > 0 ? Math.round((row.pv / row.kwh) * 100) : 0;
+    const split = this._carHist?.bars?.split;
     tip.innerHTML = `<b>${when}</b>
-      <div><i class="pvd"></i>PV/Speicher<span>${de(row.pv, 2)} kWh</span></div>
-      <div><i class="grd"></i>Netz<span>${de(row.grid, 2)} kWh</span></div>
-      <div class="tot">Geladen<span>${de(row.kwh, 2)} kWh${row.kwh > 0.005 ? ` · ${pvp} % PV` : ""}</span></div>
+      ${split ? `<div><i class="pvd"></i>PV/Speicher<span>${de(row.pv, 2)} kWh</span></div>
+      <div><i class="grd"></i>Netz<span>${de(row.grid, 2)} kWh</span></div>` : ""}
+      <div class="tot">Geladen<span>${de(row.kwh, 2)} kWh${split && row.kwh > 0.005 ? ` · ${pvp} % PV` : ""}</span></div>
       ${row.soc != null ? `<div class="tsoc">Ladestand<span>${Math.round(row.soc)} %</span></div>` : ""}`;
     tip.hidden = false;
     const W = 700, x0 = ((Math.max(row.t, t0) - t0) / (t1 - t0)) * W, x1 = ((Math.min(row.t + step, t1) - t0) / (t1 - t0)) * W;
@@ -873,19 +1028,21 @@ class MgCarDashboard extends HTMLElement {
     const hrs = this._histHours(), H = this._carHist?.hrs === hrs ? this._carHist : null;
     const W = 700, Ht = 150, t1 = Date.now(), t0 = t1 - hrs * 3600000;
     const X = (t) => ((Math.max(t, t0) - t0) / (t1 - t0)) * W;
-    const pid = ev.power || this._config.energy.car_power;
+    const hi = this._histIds(), pid = hi.pw, sid = hi.soc, pnow = this._real(ev.power) ? ev.power : pid || ev.power;
     // nur den Zeitraum zeigen: letzter Wert vor Beginn wird zum Startwert
     const clip = (arr) => { const pre = arr.filter((p) => p[0] <= t0).pop(); return (pre ? [[t0, pre[1]]] : []).concat(arr.filter((p) => p[0] > t0)); };
-    const soc = clip(H?.data?.[c.soc] || []), pw = clip(H?.data?.[pid] || []);
+    const soc = clip(H?.data?.[sid] || []), pw = clip(H?.data?.[pid] || []);
     const kw = this._st(pid)?.attributes?.unit_of_measurement?.toLowerCase() === "kw" ? 1 : 0.001;
     // aktuellen Wert bis "jetzt" fortschreiben
-    const nowP = this._w(pid) / 1000, nowS = this._num(c.soc);
+    const nowP = this._w(pnow) / 1000, nowS = this._num(c.soc);
     const seg = this._ranges().map((r) =>
       `<button class="hseg ${r.h === hrs ? "sel" : ""}" data-act="hrange" data-h="${r.h}">${esc(r.label)}</button>`).join("");
     let body;
     if (!H) body = `<div class="empty">Lädt …</div>`;
     else if (H.bars?.rows?.length && hrs >= (c.bars_from_hours ?? 0)) body = this._barsSvg(H, t0, t1, W, Ht, X, soc, nowS);
-    else if (!(H.data?.[c.soc]?.length) && !(H.data?.[pid]?.length)) body = `<div class="empty hdiag">Keine Verlaufsdaten für ${(H.ids || []).map((x) => `<code>${esc(x)}</code>`).join(" und ")} im Zeitraum.<br>
+    else if (!pid && !sid) body = `<div class="empty hdiag">Für den Verlauf fehlt ein Sensor für Ladeleistung oder Ladestand mit Verlauf.<br>
+      Ladeleistung per YAML angeben, z. B. <code>energy: { car_power: sensor.wallbox_leistung }</code>.</div>`;
+    else if (!(H.data?.[sid]?.length) && !(H.data?.[pid]?.length)) body = `<div class="empty hdiag">Keine Verlaufsdaten für ${(H.ids || []).map((x) => `<code>${esc(x)}</code>`).join(" und ")} im Zeitraum.<br>
       Für lange Zeiträume braucht der Sensor <code>state_class: measurement</code> (Langzeitstatistik), sonst speichert der Recorder standardmäßig nur 10 Tage.</div>`;
     else {
       const pts = pw.map((x) => [x[0], x[1] * kw]).concat([[t1, nowP]]);
@@ -939,11 +1096,163 @@ class MgCarDashboard extends HTMLElement {
      damit die Kacheln nicht kurz leer werden und springen. */
   _st(id) {
     if (!id) return undefined;
-    const s = this._hass?.states[id], now = Date.now(), lg = (this._good = this._good || {});
+    let s;
+    if (id.startsWith("eva:")) { const r = this._resolve(id); if (r) return this._st(r); s = this._virtState(id.slice(4)); }
+    else s = this._hass?.states[id];
+    const now = Date.now(), lg = (this._good = this._good || {});
     if (s && !OFFLINE_HD.includes(s.state)) { lg[id] = { s, t: now }; return s; }
     const g = lg[id];
     return g && now - g.t < 60000 ? g.s : s;
   }
+  /* ---------- ev_assistant als Quelle ("eva:…") ---------- */
+  // Panel-Konfiguration von ev_assistant: Fahrzeugname, config_entry_id, evcc-Fahrzeug und die dort
+  // konfigurierten Sensoren (bisher gibt ev_assistant davon nur den SoC-Sensor weiter)
+  async _loadEvaPanel() {
+    if (this._evaPanelReq || !this._hass) return;
+    this._evaPanelReq = true;
+    let cfg = this._config.ev_assistant_panel;   // vom ev_assistant-Panel übergeben
+    if (!cfg && this._hass.callWS) {
+      try {
+        const panels = await this._hass.callWS({ type: "get_panels" });
+        const names = ["ev-assistant-panel", "ev-assistant-glow-panel"];
+        const l = Object.values(panels || {}).filter((x) => x?.config?.entities || x?.config?.vehicles);
+        const p = l.find((x) => x.url_path === "ev-assistant") || l.find((x) => names.includes(x.config?._panel_custom?.name));
+        cfg = p?.config || null;
+      } catch (e) { cfg = null; }
+    }
+    cfg = cfg || {};
+    this._evaPanelCfg = cfg;
+    let vs = Array.isArray(cfg.vehicles) && cfg.vehicles.length ? cfg.vehicles : cfg.entities ? [cfg] : [];
+    if (!vs.length) vs = this._evaDevices();   // ältere ev_assistant-Versionen: Fahrzeuge aus den Geräten
+    this._evaVehicles = vs;
+    let want = null; try { want = localStorage.getItem(this._vehKey()); } catch (e) {}
+    if (!vs.some((v) => v.config_entry_id === want)) want = this._config.car.ev_assistant_entry;
+    this._evaPanel = vs.find((v) => want && v.config_entry_id === want) || vs[0] || null;
+    this._applyVehicle();
+    // Schnittstellen-Version prüfen
+    const api = cfg.api_version;
+    this._apiWarn = api != null && Number(api) !== EVA_API_VERSION
+      ? `ev_assistant meldet Schnittstellen-Version ${api}, diese Karte erwartet ${EVA_API_VERSION}. Einzelne Werte können fehlen – bitte Karte bzw. ev_assistant aktualisieren.` : "";
+    if (this._apiWarn) console.warn("mg-car-dashboard:", this._apiWarn);
+    this._log("ev_assistant-Fahrzeug", this._evaPanel);
+    if (this._config.debug) {   // welche Quelle wird für welchen Wert verwendet
+      const c = this._config.car, ev = c.evcc || {}, src = (id) => (!id ? "–" : id.startsWith("eva:") ? this._resolve(id) || `evcc-Live (${id})` : id);
+      console.table(Object.fromEntries([["soc", c.soc], ["range", c.range], ["status", c.status], ["cable", c.cable], ...Object.entries(ev).map(([k, v]) => ["evcc." + k, v]),
+        ["trips", c.trips]].map(([k, v]) => [k, { Quelle: src(v) }])));
+    }
+    this._loadCarHist(); this._loadLastSession(); this._loadTrips();
+    this._update(true);
+  }
+
+  _vehKey() { return "mg-car-vehicle-" + (this._config?.quick_layout_key || "default"); }
+
+  // Fahrzeuge ohne Panel-Konfiguration: je ev_assistant-Gerät (ein Gerät pro Fahrzeug bzw. config entry)
+  _evaDevices() {
+    const reg = this._hass?.entities || {}, dev = this._hass?.devices || {}, out = new Map();
+    for (const e of Object.values(reg)) {
+      if (e.platform !== "ev_assistant" || !e.device_id) continue;
+      const d = dev[e.device_id], id = d?.config_entries?.[0];
+      if (id && !out.has(id)) out.set(id, { config_entry_id: id, name: d.name_by_user || d.name || "Auto", entities: {} });
+    }
+    return [...out.values()];
+  }
+
+  // Konfiguration für das gewählte Fahrzeug: Grundkonfiguration + vehicles[Name oder config_entry_id]
+  _applyVehicle() {
+    const v = this._evaPanel, raw = JSON.parse(JSON.stringify(this._rawConfig || {})), vmap = raw.vehicles || {};   // Kopie: Kartenkonfiguration nicht verändern
+    // Bettet das ev_assistant-Panel die Karte ein und übersetzt dabei die Werte des ersten Fahrzeugs in car-Optionen,
+    // gelten diese bei mehreren Fahrzeugen nicht für die anderen – dann ignorieren (die Karte findet sie selbst).
+    const P = this._evaPanelCfg || {}, E0 = P.entities || {};
+    if (raw.ev_assistant_panel && (this._evaVehicles || []).length > 1 && raw.car) {
+      const same = { name: P.name, ev_assistant_entry: P.config_entry_id, evcc_vehicle: P.evcc_vehicle_name, soc: E0.soc_entity, status: E0.motor_entity, cable: E0.plug_entity };
+      for (const [k, val] of Object.entries(same)) if (val != null && raw.car[k] === val) delete raw.car[k];
+      if (raw.energy && raw.energy.car_power === (E0.power_entity || E0.home_entity)) delete raw.energy.car_power;
+    }
+    const key = Object.keys(vmap).find((k) => v && (k === v.config_entry_id || k.toLowerCase() === String(v.name || "").toLowerCase()));
+    const over = key ? vmap[key] : {};
+    const { energy: oe, ...oc } = over || {};
+    this._config = merge(CAR_DEFAULTS, merge(raw, { car: oc, ...(oe ? { energy: oe } : {}) }));
+  }
+
+  // anderes Fahrzeug gewählt: alles Fahrzeugbezogene verwerfen und neu laden
+  _selectVehicle(entryId) {
+    const v = (this._evaVehicles || []).find((x) => x.config_entry_id === entryId);
+    if (!v || v === this._evaPanel) return;
+    try { localStorage.setItem(this._vehKey(), entryId); } catch (e) {}
+    this._evaPanel = v;
+    this._applyVehicle();
+    for (const k of ["_evaCache", "_evaEntryCache", "_sess", "_evaTrips", "_lastSess", "_carHist", "_charges", "_tripCount", "_wasCharging", "_balOptimistic", "_evaModeOpt", "_pendingNum"]) this[k] = null;
+    this._good = {};
+    const car = this.shadowRoot?.getElementById("car"); if (car) car._html = null;
+    this._log("Fahrzeug gewechselt", v);
+    this._loadCarHist(); this._loadLastSession(); this._loadTrips(true);
+    this._update(true);
+  }
+
+  // evcc-Live-Werte, die ev_assistant als Attribut "evcc_live" am Sensor home_kwh mitliefert
+  _live() { return this._hass?.states[this._eva().home_kwh]?.attributes?.evcc_live || {}; }
+
+  // "eva:…" → echte Entität, sofern ev_assistant eine liefert
+  _resolve(id) {
+    const k = id.slice(4), P = this._evaPanel?.entities || {}, E = this._eva();
+    const real = { soc: P.soc_entity, range: E.range_estimate, motor: P.motor_entity, plug: P.plug_entity || P.wallbox_connected_entity,
+      charging: P.wallbox_charging_entity, charge_power: P.home_entity || P.power_entity,
+      limit_soc: this._evccEnt("limitsoc"), max_current: this._evccEnt("maxcurrent") }[k];
+    return real && this._hass?.states[real] ? real : null;
+  }
+
+  // Entität der evcc-Integration (marq24/ha-evcc, Plattform "evcc_intg") anhand ihres translation_key,
+  // z. B. "limitsoc" (Ladeziel) oder "maxcurrent" (Ladestrom). Select vor number, bei mehreren
+  // Ladepunkten entscheidet car.evcc_loadpoint (Teil der Entity-ID).
+  _evccEnt(key) {
+    const reg = this._hass?.entities;
+    if (!reg) return null;
+    if (this._evccCache?.ref !== reg) {
+      const m = {};
+      for (const e of Object.values(reg)) if (e.platform === "evcc_intg" && e.translation_key && /^(select|number)\./.test(e.entity_id)) (m[e.translation_key] ||= []).push(e.entity_id);
+      this._evccCache = { ref: reg, m };
+    }
+    const lp = String(this._config.car.evcc_loadpoint || "").toLowerCase();
+    const l = (this._evccCache.m[key] || []).filter((id) => this._hass.states[id] && (!lp || id.includes(lp)))
+      .sort((a, b) => (a.startsWith("select.") ? 0 : 1) - (b.startsWith("select.") ? 0 : 1) || a.localeCompare(b));
+    return l[0] || null;
+  }
+
+  // echte Entität (für Verlauf/Statistik und Detailansicht) oder null
+  _real(id) { return !id ? null : id.startsWith("eva:") ? this._resolve(id) : this._hass?.states[id] ? id : null; }
+
+  // Wert aus den evcc-Live-Werten als Zustand im Format von hass.states
+  _virtState(k) {
+    const L = this._live(), t = this._hass?.states[this._eva().home_kwh]?.last_updated || "";
+    const mk = (v, unit) => (v == null || v === "" ? undefined : { state: String(v), attributes: { unit_of_measurement: unit }, last_updated: t, virtual: true });
+    const onoff = (v) => (v == null ? undefined : mk(v ? "on" : "off", ""));
+    switch (k) {
+      case "soc": return mk(L.vehicle_soc, "%");
+      case "plug": case "connected": return onoff(L.connected);
+      case "charging": return onoff(L.charging);
+      case "charge_power": return mk(L.charge_power, "kW");
+      case "session_energy": return mk(L.session_energy, "kWh");
+      case "session_solar": return mk(L.session_solar_pct, "%");
+      case "session_price": return mk(L.session_price, "€");
+      case "duration": return L.charge_duration == null ? undefined : mk(L.charge_duration / 60, "min");   // s → min
+      case "limit_soc": return mk(L.limit_soc, "%");
+      case "min_soc": return mk(L.min_soc, "%");
+      case "solar_total": return mk(L.stat_solar_pct, "%");
+      case "last_charge": return this._lastSess?.end ? mk(new Date(this._lastSess.end).toISOString(), "") : undefined;
+    }
+    return undefined;
+  }
+
+  _evccVehicle() { return String(this._config.car.evcc_vehicle || this._evaPanel?.evcc_vehicle_name || "").toLowerCase(); }
+
+  // aktueller Lademodus bei Steuerung über ev_assistant: "auto" oder der manuell gesetzte Modus
+  _evaModeState() {
+    const ma = this._st(this._eva().evcc_mode_control)?.attributes || {};
+    let cur = ma.manueller_modus_aktiv && ma.manueller_modus ? ma.manueller_modus : "auto";
+    if (this._evaModeOpt && Date.now() - this._evaModeOpt.t < 20000) { if (this._evaModeOpt.v === cur) this._evaModeOpt = null; else cur = this._evaModeOpt.v; }
+    return { cur, evcc: this._live().mode };
+  }
+
   _num(id) { const s = this._st(id); const v = s ? parseFloat(s.state) : NaN; return isNaN(v) ? 0 : v; }
   _w(id) { const s = this._st(id); if (!s) return 0; const u = (s.attributes.unit_of_measurement || "").toLowerCase(); return this._num(id) * (u === "kw" ? 1000 : 1); }
   _power(w) { w = Math.abs(w); return w >= 1000 ? { v: de(w / 1000, 1), u: "kW" } : { v: String(Math.round(w)), u: "W" }; }
@@ -972,12 +1281,15 @@ class MgCarDashboard extends HTMLElement {
     const cfg = this._config.car.ev_assistant, fixed = cfg && typeof cfg === "object" ? cfg : {};
     const reg = this._hass?.entities;
     if (!reg) return { ...fixed };
-    if (this._evaCache?.ref === reg) return this._evaCache.map;
-    // bisher gefundene Entitäten behalten: beim Neuladen der Integration fehlen sie sonst kurz
-    const map = { ...(this._evaCache?.map || {}) };
-    for (const e of Object.values(reg)) if (e.platform === "ev_assistant" && e.translation_key) map[e.translation_key] = e.entity_id;
+    const entry = this._evaPanel?.config_entry_id || this._config.car.ev_assistant_entry || null;
+    if (this._evaCache?.ref === reg && this._evaCache.entry === entry) return this._evaCache.map;
+    // bisher gefundene Entitäten behalten (beim Neuladen der Integration fehlen sie sonst kurz) – aber nur vom selben Fahrzeug
+    const map = { ...(this._evaCache?.entry === entry ? this._evaCache.map : {}) }, dev = this._hass?.devices || {};
+    // bei mehreren Fahrzeugen nur die Entitäten des gewählten (über das Gerät bzw. den config entry)
+    const mine = (e) => !entry || e.config_entry_id === entry || (dev[e.device_id]?.config_entries || []).includes(entry);
+    for (const e of Object.values(reg)) if (e.platform === "ev_assistant" && e.translation_key && mine(e)) map[e.translation_key] = e.entity_id;
     Object.assign(map, fixed);
-    this._evaCache = { ref: reg, map };
+    this._evaCache = { ref: reg, entry, map };
     return map;
   }
 
@@ -1006,9 +1318,9 @@ class MgCarDashboard extends HTMLElement {
 
   _render_car() {
     const c = this._config.car, ev = c.evcc || {}, E = this._eva();
-    const soc = Math.max(0, Math.min(100, this._num(c.soc)));
+    const hasSoc = !!this._st(c.soc), soc = Math.max(0, Math.min(100, this._num(c.soc)));
     const { charging, plugged, driving, pw } = this._carState();
-    const range = this._st(c.range), rEst = this._fmt(E.range_estimate, 0);
+    const range = this._st(c.range), rEst = this._real(c.range) === E.range_estimate ? null : this._fmt(E.range_estimate, 0), name = c.name || this._evaPanel?.name || "Auto";
     const status = charging ? "Lädt" : driving ? (c.status_on || "Unterwegs") : plugged ? "Angesteckt" : (c.status_off || "Geparkt");
 
     // Markierungen im Balken: Ladeziel (evcc) und Mindest-SoC (immer laden bis …)
@@ -1056,10 +1368,12 @@ class MgCarDashboard extends HTMLElement {
     if (wf && ["on", "true", "ja", "fällig"].includes(String(wf.state).toLowerCase())) flags.push(["mdi:wrench", "Wartung fällig", E.wartung_faellig]);
 
     const html = `
-      <div class="hd"><span class="ttl">${esc(c.name)}</span><span class="lbl ${charging ? "chg" : ""}">${charging ? `${icon("mdi:lightning-bolt")} ` : ""}${esc(status)}</span>
+      <div class="hd">${(this._evaVehicles || []).length > 1
+        ? `<button class="ttl vsel" data-act="vehmenu" title="Fahrzeug wählen">${esc(name)}${icon("mdi:chevron-down", "vchv")}</button>`
+        : `<span class="ttl">${esc(name)}</span>`}<span class="lbl ${charging ? "chg" : ""}">${charging ? `${icon("mdi:lightning-bolt")} ` : ""}${esc(status)}</span>
         <button class="arrow" data-act="cardetail" aria-label="Details">${icon("mdi:chevron-right")}</button></div>
       <div class="carbody" data-act="cardetail">
-        <div><div class="soc">${Math.round(soc)}<sup>%</sup></div>
+        <div><div class="soc">${hasSoc ? Math.round(soc) : "–"}<sup>%</sup></div>
           <div class="range">${range ? `${Math.round(this._num(c.range))} km` : rEst ? `${rEst.v} km` : ""}${range && rEst ? `<small> · real ≈ ${rEst.v} km</small>` : ""}</div></div>
         ${c.image ? `<img class="carimg" src="${esc(c.image)}" alt="" onerror="this.style.display='none'">` : ""}
       </div>
@@ -1094,6 +1408,7 @@ class MgCarDashboard extends HTMLElement {
     // An body anhängen damit kein overflow:hidden abschneidet
     // Styles inline setzen da das Element außerhalb des Shadow-DOM ist
     document.body.appendChild(menu);
+    menu.addEventListener("click", (e) => this._click(e));   // liegt außerhalb der Karte: Klicks selbst weiterreichen
     if (!document.getElementById("mg-menu-styles")) {
       const st = document.createElement("style");
       st.id = "mg-menu-styles";
@@ -1101,7 +1416,7 @@ class MgCarDashboard extends HTMLElement {
       document.head.appendChild(st);
     }
     Object.assign(menu.style, {
-      position: "fixed", zIndex: "99999",
+      position: "fixed", zIndex: "99999", boxSizing: "border-box",
       background: "#1c2029", border: "1px solid rgba(255,255,255,.1)",
       borderRadius: "16px", padding: "6px",
       boxShadow: "0 16px 40px rgba(0,0,0,.55)",
@@ -1115,18 +1430,19 @@ class MgCarDashboard extends HTMLElement {
     let left = ar.left;
     if (left + mw > window.innerWidth - 8) left = window.innerWidth - mw - 8;
     menu.style.left = Math.max(8, left) + "px";
-    // Vertikal: unterhalb wenn Platz, sonst oberhalb
-    const spaceBelow = window.innerHeight - ar.bottom - 6;
-    const spaceAbove = ar.top - 6;
-    const mh = Math.min(menu.scrollHeight, Math.max(spaceBelow, spaceAbove, 120));
+    // Vertikal: nach unten, wenn das Menü dort ganz hinpasst (oder unten mehr Platz ist), sonst nach oben –
+    // die Höhe richtet sich nach dem Platz auf der gewählten Seite, der Rest ist im Menü scrollbar
+    const pad = 8, full = menu.scrollHeight;
+    const spaceBelow = window.innerHeight - ar.bottom - 4 - pad, spaceAbove = ar.top - 4 - pad;
+    const below = spaceBelow >= full || spaceBelow >= spaceAbove;
+    const mh = Math.max(80, Math.min(full, below ? spaceBelow : spaceAbove));
     menu.style.maxHeight = mh + "px";
     menu.style.overflowY = "auto";
-    // Immer nach unten öffnen, außer unten zu wenig Platz
-    const below = spaceBelow >= Math.min(mh, 120) || spaceBelow >= spaceAbove;
-    menu.style.top = (below ? ar.bottom + 4 : ar.top - mh - 4) + "px";
-    // Aktuellen Wert in Sicht scrollen
+    menu.style.overscrollBehavior = "contain";
+    menu.style.top = Math.max(pad, below ? ar.bottom + 4 : ar.top - 4 - mh) + "px";
+    // aktuellen Wert mittig ins Menü scrollen (nur das Menü, nicht die Seite)
     const cur = menu.querySelector(".cur");
-    if (cur) setTimeout(() => cur.scrollIntoView({ block: "nearest" }), 0);
+    if (cur) menu.scrollTop = Math.max(0, cur.offsetTop - (mh - cur.offsetHeight) / 2);
     menu.anchorEl = anchor; this._menu = menu;
     this._menuClose = (e) => { if (!e.composedPath().includes(menu) && !e.composedPath().includes(anchor)) this._closeMenu(); };
     setTimeout(() => window.addEventListener("click", this._menuClose), 0);
@@ -1228,6 +1544,23 @@ class MgCarDashboard extends HTMLElement {
       this._balTimer = setTimeout(() => { this._balOptimistic = null; this._render_mgmt(); }, 30000);
       return;
     }
+    if (act === "vehmenu") {
+      this._closeMenu();
+      const cur = this._evaPanel?.config_entry_id, menu = document.createElement("div"); menu.className = "menu";
+      menu.innerHTML = (this._evaVehicles || []).map((v) => `<button class="mg-menu-item mi ${v.config_entry_id === cur ? "cur" : ""}" data-act="vehset" data-v="${esc(v.config_entry_id)}">
+        ${icon("mdi:car-electric")}<span>${esc(v.name || v.title || "Auto")}</span>${v.config_entry_id === cur ? icon("mdi:check", "ck") : ""}</button>`).join("");
+      this._openMenuAt(el, menu);
+      return;
+    }
+    if (act === "vehset") { this._closeMenu(); this._selectVehicle(el.dataset.v); return; }
+    if (act === "evamode") {
+      const v = el.dataset.v;
+      this._evaModeOpt = { v, t: Date.now() };
+      if (v === "auto") this._evaCall("clear_evcc_manual_mode", {}); else this._evaCall("set_evcc_manual_mode", { mode: v });
+      this._render_mgmt();
+      setTimeout(() => this._render_mgmt(), 20500);
+      return;
+    }
     if (act === "mpause") { this._evaCall("set_evcc_mode_control_pause", { paused: el.dataset.v === "1" }); return; }
     if (act === "mplanclear") { if (window.confirm("Ladeplan löschen?")) this._evaCall("clear_evcc_charge_plan", {}); return; }
     if (act === "mplansoc") { this._planSoc = Math.max(10, Math.min(100, (this._planSoc ?? 80) + Number(el.dataset.d))); this._planTime = this.shadowRoot.querySelector("#mgmt .pin")?.value; this._render_mgmt(); return; }
@@ -1245,13 +1578,16 @@ class MgCarDashboard extends HTMLElement {
       this._carHist = null; this._update(true); this._loadCarHist(); return;
     }
     if (act === "cardetail") {
-      const ev = new Event("hass-more-info", { bubbles: true, composed: true }); ev.detail = { entityId: this._config.car.soc }; this.dispatchEvent(ev); return;
+      const id = this._real(this._config.car.soc) || this._eva().home_kwh; if (!id) return;
+      const ev = new Event("hass-more-info", { bubbles: true, composed: true }); ev.detail = { entityId: id }; this.dispatchEvent(ev); return;
     }
     if (act === "cardclose") { this.shadowRoot.getElementById("cardlg")?.close(); return; }
     if (!entity) return;
     if (act === "more") {
+      const id = entity.startsWith("eva:") ? this._resolve(entity) || this._eva().home_kwh : entity;   // Live-Werte: Detailansicht von ev_assistant
+      if (!id) return;
       const ev = new Event("hass-more-info", { bubbles: true, composed: true });
-      ev.detail = { entityId: entity }; this.dispatchEvent(ev);
+      ev.detail = { entityId: id }; this.dispatchEvent(ev);
     }
   }
 }
@@ -1579,6 +1915,15 @@ const CAR_STYLE = `
 .chwrap.bars{cursor:crosshair;touch-action:pan-y}
 .gmax{position:absolute;top:-2px;left:4px;font-size:11px;color:var(--dim);pointer-events:none}
 .glg .pvl::before{background:rgba(255,152,0,.85)!important}
+.glg .kwl::before{content:"";display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px;background:rgba(52,211,153,.75)}
+.chist .bkw{fill:rgba(52,211,153,.75)}
+.mbtn.ro{cursor:default}
+.ttl.vsel{display:inline-flex;align-items:center;gap:6px;cursor:pointer;border-radius:10px;padding:2px 4px 2px 0}
+.ttl.vsel:hover{color:var(--text)}
+.ttl.vsel .vchv{--mdc-icon-size:20px;opacity:.75}
+.apiwarn{margin:0 0 14px;padding:10px 14px;border-radius:14px;background:rgba(251,146,60,.1);border:1px solid rgba(251,146,60,.35);color:var(--orange);font-size:13.5px;font-weight:600}
+.wrap.fit .apiwarn{flex:none}
+.mbtn.ro:hover{border-color:var(--tileb)}
 .glg .grl::before{background:rgba(72,143,194,.9)!important}
 .glg .pvl,.glg .grl{}
 .glg .pvl::before,.glg .grl::before{content:"";display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
@@ -1611,6 +1956,6 @@ const CAR_STYLE = `
 
 if (!customElements.get("mg-car-dashboard")) customElements.define("mg-car-dashboard", MgCarDashboard);
 if (!window.customCards.some((c) => c.type === "mg-car-dashboard"))
-  window.customCards.push({ type: "mg-car-dashboard", name: "MG Auto", description: "Auto-Seite mit evcc, ev_assistant und Fahrtenbuch im Glow-Stil" });
+  window.customCards.push({ type: "mg-car-dashboard", name: "Glow Auto", description: "Auto-Seite mit evcc, ev_assistant und Fahrtenbuch im Glow-Stil" });
 
-console.info(`%c MG-CAR-DASHBOARD %c ${VERSION} `, "background:#f7b733;color:#111;font-weight:700", "background:#14171e;color:#f7b733");
+console.info(`%c GLOW AUTO (mg-car-dashboard) %c ${VERSION} `, "background:#f7b733;color:#111;font-weight:700", "background:#14171e;color:#f7b733");
