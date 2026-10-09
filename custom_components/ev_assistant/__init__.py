@@ -73,6 +73,11 @@ _PANEL_URL_PATH = "ev-assistant"
 _PANEL_STATIC_PATH = "/ev_assistant_static"
 _PANEL_TITLE = "EV Assistant"
 _PANEL_ICON = "mdi:ev-station"
+# Zweites Sidebar-Panel mit der Glow-Karte (Pre-Release-Branch glow-panel,
+# siehe weskona/ev_assistant#12). Das klassische Panel bleibt daneben bestehen.
+_GLOW_PANEL_URL_PATH = "ev-assistant-glow"
+_GLOW_PANEL_TITLE = "EV Assistant Glow"
+_GLOW_PANEL_ICON = "mdi:flare"
 _STATIC_REGISTERED = "_ev_panel_static"
 _PANEL_REGISTERED = "_ev_panel"
 _WEBSOCKET_REGISTERED = "_ev_websocket"
@@ -205,10 +210,11 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
         if evcc_vehicle_name:
             panel_config["evcc_vehicle_name"] = evcc_vehicle_name
 
-        try:
-            frontend.async_remove_panel(hass, _PANEL_URL_PATH, warn_if_unknown=False)
-        except Exception:
-            pass
+        for url_path in (_PANEL_URL_PATH, _GLOW_PANEL_URL_PATH):
+            try:
+                frontend.async_remove_panel(hass, url_path, warn_if_unknown=False)
+            except Exception:
+                pass
 
         register_kwargs = {
             "frontend_url_path": _PANEL_URL_PATH,
@@ -230,6 +236,22 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
 
         await panel_custom.async_register_panel(hass, **register_kwargs)
         domain_data[_PANEL_REGISTERED] = True
+
+        # Glow-Panel: gleicher Konfigurations-Kontext, eigener Wrapper. Ein
+        # Fehler hier darf das klassische Panel nicht mit abraeumen.
+        try:
+            glow_js = frontend_dir / "ev-assistant-glow-panel.js"
+            glow_bust = str(int(glow_js.stat().st_mtime))
+            await panel_custom.async_register_panel(hass, **{
+                **register_kwargs,
+                "frontend_url_path": _GLOW_PANEL_URL_PATH,
+                "webcomponent_name": "ev-assistant-glow-panel",
+                "module_url": f"{_PANEL_STATIC_PATH}/ev-assistant-glow-panel.js?v={glow_bust}",
+                "sidebar_title": _GLOW_PANEL_TITLE,
+                "sidebar_icon": _GLOW_PANEL_ICON,
+            })
+        except Exception as glow_exc:  # noqa: BLE001
+            _LOGGER.warning("EV Assistant Glow-Panel konnte nicht registriert werden: %s", glow_exc)
         _LOGGER.info("EV Assistant Panel registriert (v=%s, %d Fahrzeuge)", cache_bust, len(vehicles))
     except Exception as exc:  # noqa: BLE001
         _LOGGER.warning("EV Assistant Panel konnte nicht registriert werden: %s", exc)
@@ -242,6 +264,7 @@ def _async_unregister_panel(hass: HomeAssistant) -> None:
     try:
         from homeassistant.components import frontend
         frontend.async_remove_panel(hass, _PANEL_URL_PATH, warn_if_unknown=False)
+        frontend.async_remove_panel(hass, _GLOW_PANEL_URL_PATH, warn_if_unknown=False)
         hass.data[DOMAIN].pop(_PANEL_REGISTERED, None)
     except Exception as exc:  # noqa: BLE001
         _LOGGER.debug("Fehler beim Entfernen des Panels: %s", exc)
