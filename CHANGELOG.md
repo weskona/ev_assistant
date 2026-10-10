@@ -13,6 +13,12 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.36] - 2026-10-10
+
+### Fixed
+
+- **With several vehicles the panels could open on a random one after a restart** (seen live: after a restart the Glow panel showed a TEST entry without data instead of the main vehicle — "no data"): the top-level context of the panel configuration (the vehicle a panel starts with; the Glow panel builds its card from it) was the entry that registered the panel *last*, and after a restart the setup order of the entries is random. It is now always the **first loaded entry in the order of the config entries**, independent of who registers last (and, after unloading an entry, the next loaded one). The list of all vehicles (`vehicles`) is unchanged. With a single vehicle nothing changes.
+
 ## [0.99.35] - 2026-10-10
 
 ### Fixed

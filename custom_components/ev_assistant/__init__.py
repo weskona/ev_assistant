@@ -162,6 +162,23 @@ def _build_entity_map(ent_reg, ev_entry) -> dict:
     return entity_map
 
 
+def _primary_entry(hass: HomeAssistant, fallback: ConfigEntry) -> ConfigEntry:
+    """Der Eintrag, der als Top-Level-Kontext der Panel-Konfiguration dient
+    (Startansicht beider Panels): der ERSTE geladene Eintrag in der Reihenfolge
+    der Config-Entries -- unabhaengig davon, welcher Eintrag das Panel zuletzt
+    (neu) registriert. Frueher war es der jeweils aufrufende Eintrag, damit
+    entschied beim Neustart die zufaellige Setup-Reihenfolge, welches Fahrzeug
+    das Panel zeigt (Vorfall 2026-10-10: nach einem Neustart zeigte das
+    Glow-Panel einen TEST-Eintrag ohne Daten statt des Hauptfahrzeugs).
+    `fallback` (der aufrufende Eintrag) gilt nur, wenn noch keiner geladen ist.
+    Gleiches Kriterium wie beim Neuregistrieren nach einem Unload."""
+    geladen = hass.data.get(DOMAIN, {})
+    for candidate in hass.config_entries.async_entries(DOMAIN):
+        if candidate.entry_id in geladen:
+            return candidate
+    return fallback
+
+
 async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Sidebar-Panel registrieren. Fehler blockieren nie den Setup."""
     try:
@@ -201,7 +218,10 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
                 vehicle["evcc_vehicle_name"] = evcc_vname
             vehicles.append(vehicle)
 
-        # Aufrufenden Entry als Top-Level-Kontext setzen (Rückwärtskompatibilität)
+        # Top-Level-Kontext (Rückwärtskompatibilität, Startansicht): bewusst
+        # NICHT der aufrufende Entry, sondern der erste geladene -- ab hier
+        # steht `entry` dafuer (siehe _primary_entry()).
+        entry = _primary_entry(hass, entry)
         entity_map = _build_entity_map(ent_reg, entry)
         panel_config: dict = {
             "title": entry.title,

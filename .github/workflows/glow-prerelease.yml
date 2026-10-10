@@ -1,0 +1,100 @@
+name: Glow pre-release
+
+# Veroeffentlicht automatisch ein Pre-Release, sobald auf glow-panel eine neue
+# Glow-Version im Manifest steht (z. B. 0.99.36-glow.1 nach dem Merge des PRs
+# aus merge-main-into-glow.yml) und es dazu noch kein Release gibt.
+#   - Quelle der Version ist custom_components/ev_assistant/manifest.json auf
+#     glow-panel; nur Versionen der Form X.Y.Z-glow.N werden veroeffentlicht.
+#   - Idempotent: gibt es den Tag/das Release schon, passiert nichts. Darum
+#     darf der Workflow oefter laufen als noetig (Zeitplan UND Push).
+#   - Das Release (Titel = nackter Tag, Pre-Release, ev_assistant.zip) wird
+#     hier direkt angelegt statt ueber release.yml: Tags, die mit dem
+#     Standard-Token angelegt werden, loesen keine weiteren Workflows aus.
+#   - Zeitplan + workflow_dispatch laufen immer vom Standard-Branch (main),
+#     auch wenn diese Datei auf glow-panel noch fehlt; der Push-Trigger greift
+#     erst, sobald die Datei auch auf glow-panel liegt (kommt mit dem naechsten
+#     Merge von main). Bis dahin vergehen hoechstens ~20 Minuten.
+#   - Manuell: "Run workflow" (z. B. nach einem Fehlschlag).
+
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  push:
+    branches:
+      - glow-panel
+    paths:
+      - custom_components/ev_assistant/manifest.json
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: glow-prerelease
+  cancel-in-progress: false
+
+jobs:
+  prerelease:
+    name: Pre-Release anlegen
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Checkout glow-panel
+        uses: actions/checkout@v4
+        with:
+          ref: glow-panel
+          fetch-depth: 0
+
+      - name: Version pruefen, Notes und Zip bauen
+        id: prep
+        run: |
+          set -euo pipefail
+          MANIFEST=custom_components/ev_assistant/manifest.json
+          VERSION=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$MANIFEST" | head -n1)
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+-glow\.[0-9]+$'; then
+            echo "Version '$VERSION' ist keine Glow-Version (X.Y.Z-glow.N), nichts zu tun."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          TAG="v$VERSION"
+          if gh release view "$TAG" > /dev/null 2>&1 || git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null 2>&1; then
+            echo "$TAG existiert bereits, nichts zu tun."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Release-Notes: Abschnitt aus dem CHANGELOG, falls vorhanden, sonst
+          # eine kurze Standard-Beschreibung (Basis-Stable und Karten-Version).
+          awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            # Hoechster Stable-Tag (nicht per git describe: wurde der Merge-PR
+            # gesquasht, liegt der Stable-Tag nicht in der Historie von glow-panel).
+            BASE=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | grep -v -- '-' | head -n1 || true)
+            BASE=${BASE:-unbekannt}
+            CARD=$(tr -d '[:space:]' < custom_components/ev_assistant/frontend/GLOW_VERSION 2>/dev/null || echo "unbekannt")
+            {
+              echo "Glow-Pre-Release auf Basis der Stable \`$BASE\` (Glow-Karte \`$CARD\`)."
+              echo
+              echo "Nur für Tester mit \"Show beta versions\" in HACS. Änderungen siehe die Stable-Release-Notes von \`$BASE\` und den Branch \`glow-panel\`."
+            } > notes.md
+          fi
+          (cd custom_components/ev_assistant && zip -qr ../../ev_assistant.zip .)
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Pre-Release veroeffentlichen
+        if: steps.prep.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.prep.outputs.tag }}'
+          gh release create "$TAG" ev_assistant.zip \
+            --target glow-panel \
+            --title "$TAG" \
+            --notes-file notes.md \
+            --prerelease
+          echo "Pre-Release $TAG veröffentlicht."
