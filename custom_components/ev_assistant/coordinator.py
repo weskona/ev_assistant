@@ -7499,27 +7499,55 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.async_set_updated_data(self.data)
         self._save_soon()
 
-    def _evcc_charge_plan_status(self) -> Optional[dict]:
+    def _evcc_charge_plan_status(self, *, auch_fahrzeugplan: bool = True) -> Optional[dict]:
         """Live-Status von evccs eigenem Ladeplan (Zielzeit-Laden, siehe
         evcc_client.py::async_set_vehicle_plan_soc()) fuer EvccChargePlanSensor
-        -- direkt aus dem ohnehin gepollten evcc-Loadpoint-State, kein
-        zusaetzlicher evcc-Aufruf. None ohne evcc-State/Loadpoint oder ohne
-        gesetzten Plan (evcc liefert "effectivePlanTime"/"planTime" dann als
-        null). "aktiv" heisst: evcc laedt GERADE aufgrund dieses Plans, nicht
-        nur "ein Plan ist fuer die Zukunft gesetzt" (dafuer reicht schon,
-        dass diese Funktion ueberhaupt nicht None zurueckgibt)."""
+        -- direkt aus dem ohnehin gepollten evcc-State, kein zusaetzlicher
+        evcc-Aufruf. None ohne evcc-State oder ohne gesetzten Plan. "aktiv"
+        heisst: evcc laedt GERADE aufgrund dieses Plans, nicht nur "ein Plan
+        ist fuer die Zukunft gesetzt" (dafuer reicht schon, dass diese
+        Funktion ueberhaupt nicht None zurueckgibt).
+
+        Quelle 1: der Loadpoint ("effectivePlanTime"/"planTime", mit
+        voraussichtlichem Start/Ende) -- evcc zeigt den Plan dort aber nur,
+        solange das Fahrzeug AM LADEPUNKT ANGESTECKT ist. Quelle 2 (Rueckfall,
+        `auch_fahrzeugplan`): der Plan am Fahrzeug selbst
+        (`vehicles{<key>}.plan` = {"soc", "time"}) -- evcc speichert den Plan
+        je Fahrzeug, er bleibt also auch bei abgestecktem Auto gesetzt.
+        Ohne diesen Rueckfall zeigte der Sensor "kein Plan", obwohl
+        set_evcc_charge_plan() ihn erfolgreich gesetzt hatte -- die Karte
+        meldete dann nach ihrem Timeout faelschlich, das Fahrzeug sei nicht
+        zuordenbar (Vorfall 2026-10-10, Auto abgesteckt). Abgelaufene
+        Fahrzeugplaene zaehlen nicht. Der Rueckfall ist rein informativ
+        ("aktiv" immer False, kein voraussichtlicher Start/Ende); die
+        Steuerungslogik (_evcc_charge_plan_active()) fragt ihn bewusst NICHT ab."""
         loadpoint = self._current_loadpoint()
-        if loadpoint is None:
+        if loadpoint is not None:
+            plan_time = loadpoint.get("effectivePlanTime") or loadpoint.get("planTime")
+            if plan_time:
+                return {
+                    "target_time": plan_time,
+                    "target_soc": loadpoint.get("effectivePlanSoc"),
+                    "projected_start": loadpoint.get("planProjectedStart"),
+                    "projected_end": loadpoint.get("planProjectedEnd"),
+                    "aktiv": bool(loadpoint.get("planActive")),
+                }
+        if not auch_fahrzeugplan or self._evcc_state is None:
             return None
-        plan_time = loadpoint.get("effectivePlanTime") or loadpoint.get("planTime")
-        if not plan_time:
+        key = self._evcc_vehicle_api_key()
+        vehicle = (self._evcc_state.get("vehicles") or {}).get(key) if key else None
+        plan = vehicle.get("plan") if isinstance(vehicle, dict) else None
+        if not isinstance(plan, dict) or not plan.get("time"):
+            return None
+        target = dt_util.parse_datetime(str(plan["time"]))
+        if target is None or target < dt_util.utcnow():
             return None
         return {
-            "target_time": plan_time,
-            "target_soc": loadpoint.get("effectivePlanSoc"),
-            "projected_start": loadpoint.get("planProjectedStart"),
-            "projected_end": loadpoint.get("planProjectedEnd"),
-            "aktiv": bool(loadpoint.get("planActive")),
+            "target_time": plan["time"],
+            "target_soc": plan.get("soc"),
+            "projected_start": None,
+            "projected_end": None,
+            "aktiv": False,
         }
 
     def _evcc_charge_plan_active(self) -> bool:
@@ -7531,7 +7559,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Plan gesetzt hat -- ev_assistant selbst (async_set_evcc_charge_
         plan()) oder der Nutzer direkt in evccs eigener Oberflaeche, beides
         soll die Modus-Steuerung gleichermassen pausieren."""
-        return self._evcc_charge_plan_status() is not None
+        return self._evcc_charge_plan_status(auch_fahrzeugplan=False) is not None
 
     async def _clamp_evcc_charge_plan_target_soc(self, requested_soc: int, target_time: float) -> int:
         """Plausibilitaetspruefung fuer async_set_evcc_charge_plan() (siehe
