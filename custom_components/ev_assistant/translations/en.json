@@ -1,4 +1,33 @@
 {
+  "exceptions": {
+    "evcc_not_configured": {
+      "message": "evcc is not set up for this vehicle. Please enter the evcc address in EV Assistant's options."
+    },
+    "evcc_not_reachable": {
+      "message": "evcc is currently not reachable. Please check the connection to evcc and try again later."
+    },
+    "evcc_state_pending": {
+      "message": "EV Assistant has not queried evcc yet (e.g. right after startup). Please try again in a few seconds."
+    },
+    "evcc_vehicle_no_match": {
+      "message": "No evcc vehicle matches “{expected}”. evcc knows: {titles}. Please set “Vehicle name in evcc” in EV Assistant's options to one of these titles."
+    },
+    "evcc_vehicle_ambiguous": {
+      "message": "Several evcc vehicles match “{expected}”: {titles}. Please set “Vehicle name in evcc” in EV Assistant's options to exactly one title."
+    },
+    "evcc_no_vehicles": {
+      "message": "evcc has no vehicle that could match “{expected}”. Please create a vehicle in evcc first, then set “Vehicle name in evcc” in EV Assistant's options."
+    },
+    "evcc_loadpoint_not_found": {
+      "message": "The charge point selected in the options was not found in evcc. Please check the “Charge point” setting in EV Assistant's options."
+    },
+    "range_no_consumption": {
+      "message": "The target range cannot be converted to a target SoC yet because no consumption value is known. Please enter the target SoC directly instead."
+    },
+    "evcc_write_rejected": {
+      "message": "evcc rejected the change or did not respond. Details are in the Home Assistant log (search for “evcc”)."
+    }
+  },
   "config": {
     "step": {
       "fahrzeug": {

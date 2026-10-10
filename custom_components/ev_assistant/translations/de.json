@@ -1,4 +1,33 @@
 {
+  "exceptions": {
+    "evcc_not_configured": {
+      "message": "evcc ist für dieses Fahrzeug nicht eingerichtet. Bitte in den Optionen von EV Assistant die evcc-Adresse eintragen."
+    },
+    "evcc_not_reachable": {
+      "message": "evcc ist gerade nicht erreichbar. Bitte die Verbindung zu evcc prüfen und es später erneut versuchen."
+    },
+    "evcc_state_pending": {
+      "message": "EV Assistant hat evcc noch nicht abgefragt (z. B. kurz nach dem Start). Bitte in ein paar Sekunden erneut versuchen."
+    },
+    "evcc_vehicle_no_match": {
+      "message": "Kein evcc-Fahrzeug passt zu „{expected}“. evcc kennt: {titles}. Bitte in den Optionen von EV Assistant „Fahrzeugname in evcc“ auf einen dieser Titel setzen."
+    },
+    "evcc_vehicle_ambiguous": {
+      "message": "Mehrere evcc-Fahrzeuge passen zu „{expected}“: {titles}. Bitte in den Optionen von EV Assistant „Fahrzeugname in evcc“ auf genau einen Titel setzen."
+    },
+    "evcc_no_vehicles": {
+      "message": "In evcc ist kein Fahrzeug angelegt, das zu „{expected}“ passen könnte. Bitte zuerst in evcc ein Fahrzeug anlegen und dann „Fahrzeugname in evcc“ in den Optionen von EV Assistant setzen."
+    },
+    "evcc_loadpoint_not_found": {
+      "message": "Der in den Optionen gewählte evcc-Ladepunkt wurde in evcc nicht gefunden. Bitte die Einstellung „Ladepunkt“ in den Optionen von EV Assistant prüfen."
+    },
+    "range_no_consumption": {
+      "message": "Die Ziel-Reichweite lässt sich noch nicht in einen Ziel-SoC umrechnen, weil kein Verbrauchswert bekannt ist. Bitte stattdessen den Ziel-SoC direkt angeben."
+    },
+    "evcc_write_rejected": {
+      "message": "evcc hat die Änderung abgelehnt oder nicht beantwortet. Details stehen im Home-Assistant-Log (Suche nach „evcc“)."
+    }
+  },
   "config": {
     "step": {
       "fahrzeug": {

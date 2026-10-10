@@ -1416,7 +1416,12 @@ set_evcc_charge_plan:
     automatisch die profilbasierte evcc-Modus-/SoC-Steuerung, solange der
     Plan aktiv ist, damit sich beide nicht in die Quere kommen. Braucht
     keine aktivierte evcc-Modus-/SoC-Steuerung, nur einen konfigurierten
-    evcc_host.
+    evcc_host. Das Fahrzeug wird über „Fahrzeugname in evcc“ (bzw.
+    Hersteller + Modell) einem evcc-Fahrzeug zugeordnet.
+    Schlägt der Aufruf fehl, meldet der Service einen Fehler mit konkretem
+    Grund (z. B. kein passendes Fahrzeug in evcc, evcc nicht erreichbar oder
+    Änderung abgelehnt) statt still zu enden — Karten und Automationen
+    sehen ihn.
   fields:
     config_entry_id:
       name: Fahrzeug
@@ -1452,6 +1457,10 @@ clear_evcc_charge_plan:
     Entfernt einen gesetzten evcc-Ladeplan (siehe set_evcc_charge_plan)
     wieder — danach greift die profilbasierte evcc-Modus-/SoC-Steuerung
     wieder normal (sofern aktiviert und nicht manuell pausiert).
+    Schlägt der Aufruf fehl, meldet der Service einen Fehler mit konkretem
+    Grund (z. B. kein passendes Fahrzeug in evcc, evcc nicht erreichbar oder
+    Änderung abgelehnt) statt still zu enden — Karten und Automationen
+    sehen ihn.
   fields:
     config_entry_id:
       name: Fahrzeug
@@ -1467,7 +1476,13 @@ set_evcc_charge_plan_range_km:
     Wie set_evcc_charge_plan, nimmt aber eine Ziel-Restreichweite in km
     entgegen statt Ziel-SoC in % — rechnet intern mit dem aktuellen
     Verbrauchsschnitt (derselbe wie bei der Restreichweite-Anzeige) in SoC%
-    um und setzt dann evccs Ladeplan wie gewohnt.
+    um und setzt dann evccs Ladeplan wie gewohnt. Solange noch kein
+    Verbrauchswert bekannt ist, meldet der Service das als Fehler (dann
+    stattdessen den Ziel-SoC direkt angeben).
+    Schlägt der Aufruf fehl, meldet der Service einen Fehler mit konkretem
+    Grund (z. B. kein passendes Fahrzeug in evcc, evcc nicht erreichbar oder
+    Änderung abgelehnt) statt still zu enden — Karten und Automationen
+    sehen ihn.
   fields:
     config_entry_id:
       name: Fahrzeug
@@ -1503,6 +1518,9 @@ set_evcc_manual_mode:
     profilbasierte Modus-/SoC-Steuerung, bis das Fahrzeug den Ladepunkt
     verlässt (danach automatisch zurückgesetzt, gilt also nur für die
     aktuelle Ladesession). Min-/Ziel-SoC bleiben dabei unverändert stehen.
+    Schlägt der Aufruf fehl (z. B. evcc nicht erreichbar, Ladepunkt nicht
+    gefunden oder Änderung abgelehnt), meldet der Service einen Fehler statt
+    still zu enden.
   fields:
     config_entry_id:
       name: Fahrzeug
