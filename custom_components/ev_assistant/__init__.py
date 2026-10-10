@@ -8,6 +8,7 @@ from pathlib import Path
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from . import websocket_api as ev_websocket_api
 from .const import (
@@ -845,27 +846,54 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_set_evcc_mode_control_pause(call.data["paused"])
 
+    def _raise_if_evcc_blocked(coordinator, **needs) -> None:
+        """Wirft VOR einem evcc-Schreib-Service mit konkretem Grund, statt
+        still "erfolgreich" zu enden (Karte/Automation erfuhr bisher nichts,
+        siehe glow-dashboard#19): ServiceValidationError, wenn der Nutzer es
+        beheben kann (evcc nicht konfiguriert, Fahrzeug nicht zuordenbar,
+        Loadpoint fehlt, kein Verbrauchswert), sonst HomeAssistantError (evcc
+        nicht erreichbar). Die Texte stehen im "exceptions"-Block der
+        Uebersetzungen. Die Coordinator-Methoden selbst werfen bewusst nicht
+        (zyklische Hintergrundautomatik)."""
+        blocker = coordinator.evcc_write_blocker(**needs)
+        if blocker is None:
+            return
+        art, key, placeholders = blocker
+        exc = ServiceValidationError if art == "validation" else HomeAssistantError
+        raise exc(translation_domain=DOMAIN, translation_key=key, translation_placeholders=placeholders)
+
+    def _evcc_write_rejected() -> HomeAssistantError:
+        return HomeAssistantError(translation_domain=DOMAIN, translation_key="evcc_write_rejected")
+
     async def _handle_set_evcc_charge_plan(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
-            await coordinator.async_set_evcc_charge_plan(call.data["target_soc"], call.data["target_time"])
+            _raise_if_evcc_blocked(coordinator, need_vehicle=True)
+            if not await coordinator.async_set_evcc_charge_plan(call.data["target_soc"], call.data["target_time"]):
+                raise _evcc_write_rejected()
 
     async def _handle_clear_evcc_charge_plan(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
-            await coordinator.async_clear_evcc_charge_plan()
+            _raise_if_evcc_blocked(coordinator, need_vehicle=True)
+            if not await coordinator.async_clear_evcc_charge_plan():
+                raise _evcc_write_rejected()
 
     async def _handle_set_evcc_charge_plan_range_km(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
-            await coordinator.async_set_evcc_charge_plan_range_km(
+            _raise_if_evcc_blocked(coordinator, need_vehicle=True, need_consumption=True)
+            if not await coordinator.async_set_evcc_charge_plan_range_km(
                 call.data["target_range_km"], call.data["target_time"]
-            )
+            ):
+                raise _evcc_write_rejected()
 
     async def _handle_set_evcc_manual_mode(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
-            await coordinator.async_set_evcc_manual_mode(call.data["mode"])
+            _raise_if_evcc_blocked(coordinator, need_loadpoint=True)
+            if not await coordinator.async_set_evcc_manual_mode(call.data["mode"]):
+                raise _evcc_write_rejected()
 
     async def _handle_clear_evcc_manual_mode(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])

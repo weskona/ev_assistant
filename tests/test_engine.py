@@ -57,6 +57,7 @@ from engine import (
     ladekarten_summary,
     latest_charge,
     leasing_status,
+    match_evcc_vehicle,
     max_achievable_target_soc,
     merge_pending,
     min_solar_share_price_ceiling,
@@ -1291,6 +1292,90 @@ def test_weekly_balancing_time_ok_ohne_pv_prognose_ab_fallback_stunde_ok():
     assert weekly_balancing_time_ok(
         pv_rest_heute_kwh=None, now_local_hour=23, pv_rest_threshold_kwh=0.3, fallback_hour=23,
     ) is True
+
+
+# ----- match_evcc_vehicle: Zuordnung eigener Name <-> evcc-Fahrzeug -------------
+# (glow-dashboard#19: evcc "Peugeot e-Rifter" gegen eigenes "e-Rifter" traf
+# frueher nicht, weil nur "evcc-Titel in unserem Namen" geprueft wurde)
+
+def _evcc_vehicles(**titel):
+    return {key.replace("_", ":"): {"title": t} for key, t in titel.items()}
+
+
+def test_match_evcc_vehicle_exakter_treffer():
+    m = match_evcc_vehicle(_evcc_vehicles(db_8="eRifter"), "eRifter")
+    assert (m.status, m.key, m.title) == ("treffer", "db:8", "eRifter")
+
+
+def test_match_evcc_vehicle_evcc_titel_laenger_als_unser_name():
+    # Der Fehlerfall aus dem Bug: unser Name steckt IM evcc-Titel.
+    m = match_evcc_vehicle(_evcc_vehicles(db_8="Peugeot e-Rifter"), "e-Rifter")
+    assert (m.status, m.key) == ("treffer", "db:8")
+
+
+def test_match_evcc_vehicle_evcc_titel_kuerzer_als_unser_name():
+    # Bisheriges Verhalten (Richtung "evcc-Titel in unserem Namen") bleibt.
+    m = match_evcc_vehicle(_evcc_vehicles(db_8="iD3"), "VW ID.3")
+    assert (m.status, m.key) == ("treffer", "db:8")
+
+
+def test_match_evcc_vehicle_sonderzeichen_und_diakritika():
+    m = match_evcc_vehicle(_evcc_vehicles(db_1="Škoda Enyaq iV"), "skoda-enyaq")
+    assert m.status == "treffer" and m.key == "db:1"
+
+
+def test_match_evcc_vehicle_mindestlaenge_verhindert_zufallstreffer():
+    # "id" (2 Zeichen) steckt in fast jedem Titel -- darf nicht matchen.
+    m = match_evcc_vehicle(_evcc_vehicles(db_1="Hyundai Ioniq", db_2="VW ID4"), "ID")
+    assert m.status == "kein_treffer"
+    assert m.key is None
+    # Echte Kurztitel mit 3 Zeichen sind dagegen zulaessig.
+    assert match_evcc_vehicle(_evcc_vehicles(db_1="EV6", db_2="Zoe"), "Zoe").key == "db:2"
+
+
+def test_match_evcc_vehicle_mehrere_teilstring_treffer_sind_mehrdeutig():
+    # Nicht den ersten nehmen, sondern melden (mit den passenden Kandidaten).
+    m = match_evcc_vehicle(_evcc_vehicles(db_1="Peugeot e-Rifter", db_2="Opel Combo e-Rifter"), "e-Rifter")
+    assert m.status == "mehrdeutig"
+    assert m.key is None
+    assert set(m.kandidaten) == {"Peugeot e-Rifter", "Opel Combo e-Rifter"}
+
+
+def test_match_evcc_vehicle_exakter_treffer_gewinnt_vor_teilstring():
+    m = match_evcc_vehicle(_evcc_vehicles(db_1="e-Rifter", db_2="Peugeot e-Rifter"), "e-Rifter")
+    assert (m.status, m.key) == ("treffer", "db:1")
+
+
+def test_match_evcc_vehicle_mehrere_exakte_treffer_sind_mehrdeutig():
+    m = match_evcc_vehicle(_evcc_vehicles(db_1="eRifter", db_2="e-Rifter"), "eRifter")
+    assert m.status == "mehrdeutig"
+
+
+def test_match_evcc_vehicle_kein_treffer_nennt_alle_evcc_titel():
+    m = match_evcc_vehicle(_evcc_vehicles(db_1="Tesla Model 3", db_2="Zoe"), "Peugeot eRifter")
+    assert m.status == "kein_treffer"
+    assert set(m.kandidaten) == {"Tesla Model 3", "Zoe"}
+    assert m.erwartet_roh == "Peugeot eRifter"
+    assert m.erwartet_norm == "peugeoterifter"
+
+
+def test_match_evcc_vehicle_ein_einziges_fahrzeug_ist_kein_freifahrtschein():
+    # Bewusst KEIN Rueckfall "evcc kennt genau eins -> das nehmen".
+    m = match_evcc_vehicle(_evcc_vehicles(db_8="Tesla Model 3"), "eRifter")
+    assert m.status == "kein_treffer"
+    assert m.key is None
+
+
+def test_match_evcc_vehicle_ohne_fahrzeuge_oder_ohne_titel():
+    assert match_evcc_vehicle({}, "eRifter").status == "keine_fahrzeuge"
+    assert match_evcc_vehicle(None, "eRifter").status == "keine_fahrzeuge"
+    assert match_evcc_vehicle({"db:1": {"title": ""}, "db:2": {}}, "eRifter").status == "keine_fahrzeuge"
+
+
+def test_match_evcc_vehicle_leerer_erwarteter_name():
+    m = match_evcc_vehicle(_evcc_vehicles(db_1="eRifter"), "")
+    assert m.status == "kein_treffer"
+    assert m.erwartet_norm == ""
 
 
 # ----- normalize_vehicle_label: robustes Fahrzeug-Matching (Issue #2) ------
