@@ -191,6 +191,7 @@ from .engine import (
     ChargeDetector,
     ChargeSample,
     EfficiencyCalibrator,
+    EvccVehicleMatch,
     SignalDebouncer,
     TripDetector,
     TripSample,
@@ -232,6 +233,7 @@ from .engine import (
     ladekarten_summary,
     latest_charge,
     leasing_status,
+    match_evcc_vehicle,
     max_achievable_target_soc,
     merge_pending,
     min_solar_share_price_ceiling,
@@ -774,6 +776,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Neustart faengt konservativ bei "noch kein Vorzustand bekannt" an
         # (kein falscher Trenn-Trigger direkt nach dem Start).
         self._evcc_connected_prev: Optional[bool] = None
+        # Merker fuer die Fahrzeug-Zuordnung zu evcc (siehe _note_evcc_vehicle_
+        # resolution()): Signatur des zuletzt gemeldeten Problems, None solange
+        # (wieder) alles zugeordnet ist. Nur im Arbeitsspeicher -- nach einem
+        # Neustart darf ein fortbestehendes Problem ruhig einmal neu geloggt
+        # werden.
+        self._evcc_vehicle_problem_sig: Optional[tuple] = None
         # Ob gerade ein Repair-Issue fuer eine fehlgeschlagene SoC-Scope-
         # Probe aktiv ist (siehe _update_soc_scope_issue()) -- rein im
         # Arbeitsspeicher, analog _entity_issue_active: ein Neustart faengt
@@ -5806,17 +5814,116 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return configured
         if self._evcc_state is None:
             return None
-        vehicles = self._evcc_state.get("vehicles") or {}
         hersteller = self._opt(CONF_VEHICLE_HERSTELLER) or ""
         modell = self._opt(CONF_VEHICLE_MODELL) or ""
-        label = normalize_vehicle_label(f"{hersteller} {modell}")
-        for veh in vehicles.values():
-            title = veh.get("title")
-            if not title:
-                continue
-            k = normalize_vehicle_label(title)
-            if k and k in label:
-                return title
+        # Gemeinsame Zuordnung mit _evcc_vehicle_api_key() (match_evcc_vehicle(),
+        # beide Richtungen, exakter Treffer gewinnt, mehrdeutig = kein Treffer)
+        # -- Schreibpfad und Sessions-Pfad duerfen nie unterschiedlich entscheiden.
+        match = match_evcc_vehicle(self._evcc_state.get("vehicles") or {}, f"{hersteller} {modell}")
+        return match.title if match.status == "treffer" else None
+
+    def _evcc_vehicle_expected(self) -> str:
+        """Der Name, gegen den evccs Fahrzeuge abgeglichen werden: der
+        konfigurierte evcc-Fahrzeugname, sonst "Hersteller Modell"."""
+        configured = self._opt(CONF_EVCC_VEHICLE_NAME)
+        if configured:
+            return configured
+        hersteller = self._opt(CONF_VEHICLE_HERSTELLER) or ""
+        modell = self._opt(CONF_VEHICLE_MODELL) or ""
+        return f"{hersteller} {modell}".strip()
+
+    def _evcc_vehicle_resolution(self) -> tuple:
+        """Fahrzeug-Zuordnung zu evcc samt GRUND -- (reason, EvccVehicleMatch).
+        reason: "ok", "evcc_nicht_erreichbar" (letzter Poll fehlgeschlagen),
+        "evcc_state_ausstehend" (noch kein Poll), sonst der Status von
+        match_evcc_vehicle() ("kein_treffer"/"mehrdeutig"/"keine_fahrzeuge").
+        Wirft NIE und prueft bewusst nicht den evcc-Client (siehe
+        evcc_write_blocker()) -- auch die zyklische Hintergrundautomatik
+        benutzt sie."""
+        erwartet = self._evcc_vehicle_expected()
+        if self._evcc_state is None:
+            reason = "evcc_nicht_erreichbar" if self.data.get("evcc_reachable_last") is False else "evcc_state_ausstehend"
+            return reason, EvccVehicleMatch(
+                "kein_treffer", erwartet_roh=erwartet, erwartet_norm=normalize_vehicle_label(erwartet)
+            )
+        match = match_evcc_vehicle(self._evcc_state.get("vehicles") or {}, erwartet)
+        return ("ok" if match.status == "treffer" else match.status), match
+
+    def _note_evcc_vehicle_resolution(self, reason: str, match: EvccVehicleMatch, *, user_triggered: bool) -> None:
+        """Meldet eine fehlgeschlagene Fahrzeug-Zuordnung (WARNING mit
+        erwartetem Namen roh/normalisiert und den in evcc gefundenen
+        Fahrzeugen Schluessel -> Titel, KEINE Host-/URL-Angaben) bzw. deren
+        Wiederherstellung. Service-Aufrufe (user_triggered, selten) loggen
+        jedes Mal; die zyklische Hintergrundautomatik nur einmal je Kombination
+        (Grund + erwarteter Name + Menge der evcc-Titel), sonst wuerde jeder
+        Durchlauf das Log fluten. Je Zustandsaenderung (Problem tritt auf /
+        ist wieder behoben) zusaetzlich ein Eintrag im Ereignisprotokoll, das
+        Nutzer in Bug-Reports mitschicken. Bei "ok" wird der Merker
+        zurueckgesetzt. Nur fuer die Zuordnungs-Gruende: Erreichbarkeit/
+        Konfiguration loggen die aufrufenden Stellen selbst."""
+        if reason == "ok":
+            if self._evcc_vehicle_problem_sig is not None:
+                self._evcc_vehicle_problem_sig = None
+                self._log_event(
+                    "evcc_fahrzeug_zugeordnet",
+                    f"evcc-Fahrzeug wieder zugeordnet: {match.title} (erwartet: {match.erwartet_roh})",
+                )
+            return
+        if reason not in ("kein_treffer", "mehrdeutig", "keine_fahrzeuge"):
+            return
+        vehicles = (self._evcc_state or {}).get("vehicles") or {}
+        in_evcc = {k: (v or {}).get("title") for k, v in vehicles.items() if isinstance(v, dict)}
+        sig = (reason, match.erwartet_norm, tuple(sorted(str(t) for t in in_evcc.values())))
+        neu = sig != self._evcc_vehicle_problem_sig
+        if user_triggered or neu:
+            _LOGGER.warning(
+                "evcc_fahrzeug: Zuordnung fehlgeschlagen (%s): erwartet '%s' (normalisiert '%s'), in evcc gefunden: %s"
+                " -- Option 'evcc-Fahrzeugname' an einen dieser Titel angleichen",
+                reason, match.erwartet_roh, match.erwartet_norm, in_evcc or "keine Fahrzeuge",
+            )
+        if neu:
+            self._evcc_vehicle_problem_sig = sig
+            self._log_event(
+                "evcc_fahrzeug_nicht_zugeordnet",
+                f"{reason}: erwartet '{match.erwartet_roh}', in evcc gefunden: {in_evcc or 'keine Fahrzeuge'}",
+            )
+
+    def evcc_write_blocker(
+        self, *, need_vehicle: bool = False, need_loadpoint: bool = False, need_consumption: bool = False,
+    ) -> Optional[tuple]:
+        """Prueft VOR einem evcc-Schreib-Service, ob er ueberhaupt moeglich
+        ist, und liefert sonst den GRUND als (art, translation_key,
+        platzhalter) -- art "validation" (vom Nutzer behebbar) oder "error";
+        None heisst: durchfuehren. Die Service-Handler (siehe __init__.py)
+        werfen daraus einen ServiceValidationError bzw. HomeAssistantError, die
+        Karte/Automation zeigt dann die konkrete Meldung statt eines stillen
+        Erfolgs. Bewusst eine reine Diagnose ohne Ausnahmen: die internen
+        Aufrufer (zyklische Modus-Steuerung) behalten das bool-/None-Verhalten
+        und duerfen nie anfangen zu werfen."""
+        if self._evcc_client is None:
+            return "validation", "evcc_not_configured", {}
+        if self._evcc_state is None:
+            if self.data.get("evcc_reachable_last") is False:
+                return "error", "evcc_not_reachable", {}
+            return "error", "evcc_state_pending", {}
+        if need_loadpoint and self._current_loadpoint_index() is None:
+            return "validation", "evcc_loadpoint_not_found", {}
+        if need_consumption and not self._current_consumption_estimate_kwh_per_100km():
+            return "validation", "range_no_consumption", {}
+        if need_vehicle:
+            reason, match = self._evcc_vehicle_resolution()
+            self._note_evcc_vehicle_resolution(reason, match, user_triggered=True)
+            if reason != "ok":
+                placeholders = {
+                    "expected": match.erwartet_roh or "-",
+                    "titles": ", ".join(match.kandidaten) or "-",
+                }
+                key = {
+                    "kein_treffer": "evcc_vehicle_no_match",
+                    "mehrdeutig": "evcc_vehicle_ambiguous",
+                    "keine_fahrzeuge": "evcc_no_vehicles",
+                }[reason]
+                return "validation", key, placeholders
         return None
 
     def _evcc_vehicle_api_key(self) -> Optional[str]:
@@ -5833,23 +5940,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         sichtbar) bzw. Hersteller/Modell -- anders als dort aber IMMER gegen
         die Fahrzeug-Titel aufgeloest statt eine explizite Konfiguration
         direkt zurueckzugeben, da hier in jedem Fall der Schluessel und
-        nicht der eingegebene Titel gebraucht wird. None ohne evcc-Zustand
-        oder ohne Treffer. Normalisierung siehe _evcc_vehicle_key()."""
+        nicht der eingegebene Titel gebraucht wird. None ohne evcc-Zustand,
+        ohne Treffer oder bei MEHRDEUTIGEM Treffer (nie raten). Zuordnung
+        ueber match_evcc_vehicle() (beide Richtungen, exakter Treffer gewinnt,
+        siehe dort) -- den GRUND eines Nicht-Treffers liefert
+        _evcc_vehicle_resolution()."""
         if self._evcc_state is None:
             return None
-        vehicles = self._evcc_state.get("vehicles") or {}
-        configured = self._opt(CONF_EVCC_VEHICLE_NAME)
-        hersteller = self._opt(CONF_VEHICLE_HERSTELLER) or ""
-        modell = self._opt(CONF_VEHICLE_MODELL) or ""
-        label = normalize_vehicle_label(configured or f"{hersteller} {modell}")
-        for key, veh in vehicles.items():
-            title = veh.get("title")
-            if not title:
-                continue
-            k = normalize_vehicle_label(title)
-            if k and k in label:
-                return key
-        return None
+        reason, match = self._evcc_vehicle_resolution()
+        return match.key if reason == "ok" else None
 
     def _since_setup(self, value: float, start_key: str) -> float:
         """Zieht vom absoluten/kumulativen Zaehlerwert `value` den beim
@@ -7287,7 +7386,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # _evcc_vehicle_key(): die evcc-Schreib-API braucht den internen
         # evcc-Fahrzeugschluessel (z.B. "db:8"), nicht den Anzeige-Titel --
         # siehe dortigen Docstring.
-        vehicle_name = self._evcc_vehicle_api_key()
+        reason, match = self._evcc_vehicle_resolution()
+        # Hintergrundautomatik: loggt ein Zuordnungsproblem nur einmal je
+        # Kombination und wirft nie (siehe _note_evcc_vehicle_resolution()).
+        self._note_evcc_vehicle_resolution(reason, match, user_triggered=False)
+        vehicle_name = match.key if reason == "ok" else None
         min_scope = await self._evcc_scope("evcc_min_soc_scope", loadpoint_id, vehicle_name, "minsoc", "minSoc")
         limit_scope = await self._evcc_scope("evcc_limit_soc_scope", loadpoint_id, vehicle_name, "limitsoc", "limitSoc")
         self._update_soc_scope_issue(min_scope, limit_scope)
@@ -7529,9 +7632,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         diese Methode intern aufruft."""
         if self._evcc_client is None:
             return False
-        vehicle_name = self._evcc_vehicle_api_key()
+        reason, match = self._evcc_vehicle_resolution()
+        vehicle_name = match.key if reason == "ok" else None
         if not vehicle_name:
-            _LOGGER.warning("evcc_charge_plan: kein evcc-Fahrzeugschluessel ermittelbar, ueberspringe")
+            _LOGGER.warning("evcc_charge_plan: kein evcc-Fahrzeugschluessel ermittelbar (%s), ueberspringe", reason)
+            self._note_evcc_vehicle_resolution(reason, match, user_triggered=True)
             return False
         target_soc = await self._clamp_evcc_charge_plan_target_soc(target_soc, target_time)
         target_time_iso = dt_util.utc_from_timestamp(target_time).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -7583,8 +7688,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         _async_apply_evcc_mode_control())."""
         if self._evcc_client is None:
             return False
-        vehicle_name = self._evcc_vehicle_api_key()
+        reason, match = self._evcc_vehicle_resolution()
+        vehicle_name = match.key if reason == "ok" else None
         if not vehicle_name:
+            _LOGGER.warning("evcc_charge_plan: kein evcc-Fahrzeugschluessel ermittelbar (%s), Loeschen uebersprungen", reason)
+            self._note_evcc_vehicle_resolution(reason, match, user_triggered=True)
             return False
         ok = await self._evcc_client.async_clear_vehicle_plan_soc(vehicle_name)
         if not ok:

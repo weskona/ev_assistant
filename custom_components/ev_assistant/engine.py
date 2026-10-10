@@ -1208,6 +1208,78 @@ def normalize_vehicle_label(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", ascii_s.lower())
 
 
+# Mindestlaenge (normalisierte Zeichen) des KUERZEREN Vergleichsstrings beim
+# Teilstring-Abgleich evcc-Titel <-> eigener Fahrzeugname (siehe
+# match_evcc_vehicle()): kurze Strings wie "id" oder "e" wuerden sonst fast
+# jeden Titel treffen. 3 laesst echte Kurztitel wie "ID3", "EV6" oder "Zoe"
+# noch zu.
+EVCC_VEHICLE_MATCH_MIN_LEN = 3
+
+
+@dataclass(frozen=True)
+class EvccVehicleMatch:
+    """Ergebnis von match_evcc_vehicle(). `status`: "treffer" (genau ein
+    Fahrzeug, `key`/`title` gesetzt), "kein_treffer", "mehrdeutig" (mehrere
+    gleichrangige Treffer, `kandidaten` = deren Titel) oder "keine_fahrzeuge"
+    (evcc kennt ueberhaupt keins). `kandidaten` ist bei "kein_treffer"/
+    "keine_fahrzeuge" die Liste ALLER evcc-Titel (fuer die Fehlermeldung:
+    "evcc kennt: ..."), bei "mehrdeutig" nur die passenden."""
+    status: str
+    key: Optional[str] = None
+    title: Optional[str] = None
+    kandidaten: tuple = ()
+    erwartet_roh: str = ""
+    erwartet_norm: str = ""
+
+
+def match_evcc_vehicle(vehicles: dict, erwartet: Optional[str]) -> EvccVehicleMatch:
+    """Ordnet den erwarteten Fahrzeugnamen (konfigurierter evcc-Fahrzeugname
+    bzw. "Hersteller Modell") einem Fahrzeug aus evccs `vehicles{}`
+    (Schluessel -> Dict mit "title", siehe /api/state) zu. Reine Funktion,
+    gemeinsame Grundlage fuer coordinator.py::_evcc_vehicle_api_key() (Schluessel
+    fuer die Schreib-API) und _evcc_vehicle_key() (Titel fuer die Sessions) --
+    beide Pfade duerfen nie unterschiedlich entscheiden.
+
+    Reihenfolge: (1) EXAKTER Treffer nach normalize_vehicle_label() gewinnt
+    -- auch wenn daneben Teilstring-Treffer existieren; mehrere exakte Treffer
+    gelten als mehrdeutig. (2) Sonst Teilstring in BEIDE Richtungen (evcc-Titel
+    im eigenen Namen ODER eigener Name im evcc-Titel: evcc "Peugeot e-Rifter"
+    gegen eigenes "e-Rifter" traf frueher nicht, weil nur die erste Richtung
+    geprueft wurde), wobei der kuerzere normalisierte String mindestens
+    EVCC_VEHICLE_MATCH_MIN_LEN Zeichen haben muss. Mehrere Teilstring-Treffer
+    werden NICHT geraten (kein "erster gewinnt"), sondern als "mehrdeutig"
+    gemeldet. Bewusst KEIN Rueckfall "evcc kennt genau ein Fahrzeug -> das":
+    zwei EV-Assistant-Eintraege an einem evcc mit einem Fahrzeug wuerden sonst
+    in dasselbe Fahrzeug schreiben."""
+    erwartet_roh = (erwartet or "").strip()
+    erwartet_norm = normalize_vehicle_label(erwartet_roh)
+    eintraege = []
+    for key, veh in (vehicles or {}).items():
+        title = (veh or {}).get("title") if isinstance(veh, dict) else None
+        if not title:
+            continue
+        eintraege.append((key, title, normalize_vehicle_label(title)))
+    alle_titel = tuple(title for _, title, _ in eintraege)
+    if not eintraege:
+        return EvccVehicleMatch("keine_fahrzeuge", erwartet_roh=erwartet_roh, erwartet_norm=erwartet_norm)
+    if erwartet_norm:
+        exakt = [(k, t) for k, t, n in eintraege if n and n == erwartet_norm]
+        if len(exakt) == 1:
+            return EvccVehicleMatch("treffer", exakt[0][0], exakt[0][1], (exakt[0][1],), erwartet_roh, erwartet_norm)
+        if len(exakt) > 1:
+            return EvccVehicleMatch("mehrdeutig", None, None, tuple(t for _, t in exakt), erwartet_roh, erwartet_norm)
+        teil = [
+            (k, t) for k, t, n in eintraege
+            if n and min(len(n), len(erwartet_norm)) >= EVCC_VEHICLE_MATCH_MIN_LEN
+            and (n in erwartet_norm or erwartet_norm in n)
+        ]
+        if len(teil) == 1:
+            return EvccVehicleMatch("treffer", teil[0][0], teil[0][1], (teil[0][1],), erwartet_roh, erwartet_norm)
+        if len(teil) > 1:
+            return EvccVehicleMatch("mehrdeutig", None, None, tuple(t for _, t in teil), erwartet_roh, erwartet_norm)
+    return EvccVehicleMatch("kein_treffer", None, None, alle_titel, erwartet_roh, erwartet_norm)
+
+
 def blended_charge_price(
     surplus_w: float, wallbox_min_power_w: float, feedin_price: float, grid_price: float,
 ) -> float:

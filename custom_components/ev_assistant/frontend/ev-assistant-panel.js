@@ -320,7 +320,14 @@ class EVAssistantPanel extends HTMLElement {
   _call(service, data) {
     const config_entry_id = this._configEntryId();
     if (!config_entry_id) return;
-    this._hass.callService("ev_assistant", service, { config_entry_id, ...data });
+    // Seit 0.99.35 werfen die evcc-Schreib-Services bei Fehlkonfiguration/
+    // abgelehntem Schreiben mit konkretem Grund (siehe __init__.py::
+    // _raise_if_evcc_blocked()) -- als Toast zeigen statt als unbehandelte
+    // Promise-Rejection, die der Nutzer nie sieht.
+    Promise.resolve(this._hass.callService("ev_assistant", service, { config_entry_id, ...data })).catch((err) => {
+      const message = (err && err.message) || String(err);
+      this.dispatchEvent(new CustomEvent("hass-notification", { detail: { message }, bubbles: true, composed: true }));
+    });
   }
 
   // --- Shell ------------------------------------------------------------------
