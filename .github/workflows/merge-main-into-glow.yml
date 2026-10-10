@@ -10,9 +10,10 @@ name: Merge main into glow-panel
 #     (v0.99.35 -> 0.99.36-glow.1): Glow-Pre-Release immer ueber der Stable.
 #     Steht glow-panel schon auf einer hoeheren Patch-Nummer, bleibt die Version.
 #   - Wie bei sync-glow.yml landet nichts ungeprueft bei Testern: der Merge
-#     kommt als PR (Branch merge/<tag>), gemergt und getaggt wird von Hand.
-#     Danach "v<Version>" auf glow-panel taggen -- release.yml macht daraus
-#     ein Pre-Release.
+#     kommt als PR (Branch merge/<tag>), gemergt wird von Hand -- MIT "Create a
+#     merge commit", nicht gesquasht (sonst fehlt der Stable-Tag in der
+#     Historie von glow-panel, siehe PR-Text). Das Pre-Release dazu legt
+#     glow-prerelease.yml an, sobald die neue Version auf glow-panel steht.
 #   - Merge-Konflikt: kein PR, sondern ein Issue mit der Anleitung.
 # Der Workflow liegt auf main, weil GitHub manuell gestartete Workflows nur vom
 # Standard-Branch ausfuehrt. Er aendert nur glow-panel (ueber den PR-Branch).
@@ -150,7 +151,9 @@ jobs:
           - \`manifest.json\` und die CHANGELOGs wurden automatisch aufgelöst: Manifest = Fassung von \`glow-panel\` mit neuer Version, CHANGELOGs = beide Abschnitte vereinigt (**Reihenfolge/Dopplungen im Diff prüfen**).
           $MANIFEST_NOTE
 
-          Nach dem Merge: \`v$NEW\` auf \`glow-panel\` taggen, \`release.yml\` veröffentlicht daraus das Pre-Release.
+          **Wichtig: mit „Create a merge commit" mergen, nicht squashen und nicht rebasen.** Nur der Merge-Commit behält \`$TAG\` in der Historie von \`glow-panel\`. Bei einem Squash fehlt er dort: der nächste Stable-Merge erkennt „bereits enthalten" nicht mehr und bringt doppelte CHANGELOG-Zeilen bzw. unnötige Konflikte.
+
+          Danach veröffentlicht \`glow-prerelease.yml\` automatisch das Pre-Release \`v$NEW\` (spätestens nach ca. 20 Minuten, oder per „Run workflow").
           Hinweis: PRs, die mit dem Standard-Token angelegt werden, starten andere Workflows (z. B. validate) nicht automatisch.
           EOT
           )
@@ -176,7 +179,7 @@ jobs:
           # manifest.json: Version auf die nächste Patch-Nummer + -glow.1 setzen
           git push
           \`\`\`
-          Danach \`v<Version>\` taggen (release.yml macht ein Pre-Release daraus).
+          Wichtig: als Merge-Commit (nicht squashen). Danach veröffentlicht \`glow-prerelease.yml\` automatisch das Pre-Release.
           EOT
           )
           gh issue create --title "glow-panel: Merge von $TAG hat einen Konflikt" --body "$BODY"
