@@ -13,6 +13,14 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.37] - 2026-10-10
+
+### Fixed
+
+- **Charge plan was set in evcc, but the plan sensor and the cards showed "no plan"** (glow-dashboard#19, second part): evcc stores a charge plan *per vehicle* (`vehicles{...}.plan`) and shows it on the charge point only while the car is **plugged in**. `sensor.<vehicle>_evcc_ladeplan` (and with it the plan display of the cards/panels) only read the charge point, so with the car unplugged it stayed `unknown` right after `set_evcc_charge_plan` had succeeded. The Glow card waits for exactly that sensor and, after its 12 s timeout, then reported a vehicle assignment problem ("ev_assistant finds no vehicle titled …") although the plan was already stored in evcc. The sensor now falls back to the plan stored at the vehicle (target time and SoC; expired plans are ignored; no projected start/end, as evcc does not provide them for an unplugged car). When the car is plugged in, the charge-point values are used as before.
+  - **Control logic unchanged:** the fallback is display-only. The profile-based mode control is still paused only while the charge point reports a plan, i.e. not for a plan on an unplugged vehicle.
+  - Note for card authors: a missing plan sensor value after a successful service call is not proof of a failed call; errors are reported by the service itself since 0.99.35.
+
 ## [0.99.36] - 2026-10-10
 
 ### Fixed
