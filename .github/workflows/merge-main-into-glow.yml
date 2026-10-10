@@ -1,0 +1,186 @@
+name: Merge main into glow-panel
+
+# Zieht glow-panel nach, sobald auf main ein neues STABLE-Release (Tag ohne
+# Suffix, z. B. v0.99.35) erscheint -- sonst bleibt der Glow-Kanal hinter der
+# Stable zurueck, und Glow-Nutzer bekaemen die Stable als "Update", weil
+# 0.99.35 (Stable) groesser ist als 0.99.35-glow.2 (SemVer-Suffix sortiert
+# darunter).
+#   - Der Workflow merged den Stable-Tag in glow-panel und setzt die Version in
+#     manifest.json auf die NAECHSTE Patch-Nummer mit "-glow.1"
+#     (v0.99.35 -> 0.99.36-glow.1): Glow-Pre-Release immer ueber der Stable.
+#     Steht glow-panel schon auf einer hoeheren Patch-Nummer, bleibt die Version.
+#   - Wie bei sync-glow.yml landet nichts ungeprueft bei Testern: der Merge
+#     kommt als PR (Branch merge/<tag>), gemergt wird von Hand -- MIT "Create a
+#     merge commit", nicht gesquasht (sonst fehlt der Stable-Tag in der
+#     Historie von glow-panel, siehe PR-Text). Das Pre-Release dazu legt
+#     glow-prerelease.yml an, sobald die neue Version auf glow-panel steht.
+#   - Merge-Konflikt: kein PR, sondern ein Issue mit der Anleitung.
+# Der Workflow liegt auf main, weil GitHub manuell gestartete Workflows nur vom
+# Standard-Branch ausfuehrt. Er aendert nur glow-panel (ueber den PR-Branch).
+
+on:
+  push:
+    tags:
+      - "v*"
+      - "!v*-*"   # Tags mit Suffix (Pre-Releases) loesen nichts aus
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Stable-Tag, der in glow-panel gemergt wird (z. B. v0.99.35)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: merge-main-into-glow
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    name: Stable in glow-panel mergen
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      INPUT_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Checkout glow-panel
+        uses: actions/checkout@v4
+        with:
+          ref: glow-panel
+          fetch-depth: 0
+
+      - name: Stable-Tag mergen und Version anheben
+        id: merge
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-${GITHUB_REF#refs/tags/}}"
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::'$TAG' ist kein Stable-Tag (vX.Y.Z)."; exit 1 ;;
+          esac
+          case "$TAG" in
+            *-*) echo "::error::'$TAG' hat ein Suffix, nur Stable-Tags werden nachgezogen."; exit 1 ;;
+          esac
+          git fetch --tags --force origin
+          git rev-parse -q --verify "refs/tags/$TAG^{commit}" > /dev/null \
+            || { echo "::error::Tag $TAG existiert nicht."; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git merge-base --is-ancestor "$TAG" HEAD; then
+            echo "$TAG ist bereits in glow-panel enthalten, nichts zu tun."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Erwartbare Konflikte automatisch aufloesen: manifest.json (beide
+          # Seiten aendern die Versionszeile -- die Version setzt dieser Workflow
+          # gleich selbst) behaelt die glow-panel-Fassung, die beiden CHANGELOGs
+          # (beide Seiten haengen oben einen Abschnitt an) werden vereinigt.
+          MANIFEST=custom_components/ev_assistant/manifest.json
+          git config merge.keep-glow.driver true
+          {
+            echo "$MANIFEST merge=keep-glow"
+            echo "CHANGELOG.md merge=union"
+            echo "custom_components/ev_assistant/CHANGELOG.md merge=union"
+          } >> .git/info/attributes
+          # Hat main AUSSER der Versionszeile etwas im Manifest geaendert (z. B.
+          # neue Abhaengigkeit), geht das mit "keep-glow" verloren -> im PR melden.
+          if [ "$(git show "$TAG:$MANIFEST" | grep -v '"version"' | md5sum)" != "$(git show "HEAD:$MANIFEST" | grep -v '"version"' | md5sum)" ]; then
+            echo "manifest_differs=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "manifest_differs=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Merge ohne Commit: bei echten Konflikten sauber abbrechen und melden.
+          if ! git merge --no-ff --no-commit "$TAG"; then
+            git merge --abort || true
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Version bestimmen: naechste Patch-Nummer der Stable + "-glow.1".
+          CURRENT=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$MANIFEST" | head -n1)
+          STABLE="${TAG#v}"
+          IFS=. read -r MA MI PA <<< "$STABLE"
+          TARGET_BASE="$MA.$MI.$((PA + 1))"
+          CUR_BASE="${CURRENT%%-*}"
+          IFS=. read -r CMA CMI CPA <<< "$CUR_BASE"
+          # Hoehere/gleiche Patch-Nummer auf glow-panel bleibt unveraendert.
+          if [ "$(printf '%s\n%s\n' "$TARGET_BASE" "$CUR_BASE" | sort -V | tail -n1)" = "$CUR_BASE" ]; then
+            NEW="$CURRENT"
+          else
+            NEW="$TARGET_BASE-glow.1"
+          fi
+          sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"$NEW\"/" "$MANIFEST"
+          echo "Version: $CURRENT -> $NEW (Stable $STABLE)"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "conflict=false" >> "$GITHUB_OUTPUT"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+          git add "$MANIFEST"
+          git commit -m "Merge $TAG in glow-panel, Version $NEW"
+
+      - name: PR gegen glow-panel oeffnen
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.merge.outputs.tag }}'
+          NEW='${{ steps.merge.outputs.new }}'
+          CURRENT='${{ steps.merge.outputs.current }}'
+          MANIFEST_NOTE=""
+          if [ '${{ steps.merge.outputs.manifest_differs }}' = 'true' ]; then
+            MANIFEST_NOTE='- **Achtung:** Das Manifest auf main unterscheidet sich außer der Version von glow-panel (z. B. neue Abhängigkeit) – diese Änderung wurde NICHT übernommen, bitte von Hand prüfen.'
+          fi
+          BRANCH="merge/$TAG"
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+          BODY=$(cat <<EOT
+          Automatisch angelegt, weil das Stable-Release \`$TAG\` erschienen ist (siehe \`.github/workflows/merge-main-into-glow.yml\`).
+
+          - Merge von \`$TAG\` in \`glow-panel\`
+          - \`manifest.json\`: \`$CURRENT\` -> \`$NEW\` (Glow-Pre-Release bleibt über der Stable)
+
+          - \`manifest.json\` und die CHANGELOGs wurden automatisch aufgelöst: Manifest = Fassung von \`glow-panel\` mit neuer Version, CHANGELOGs = beide Abschnitte vereinigt (**Reihenfolge/Dopplungen im Diff prüfen**).
+          $MANIFEST_NOTE
+
+          **Wichtig: mit „Create a merge commit" mergen, nicht squashen und nicht rebasen.** Nur der Merge-Commit behält \`$TAG\` in der Historie von \`glow-panel\`. Bei einem Squash fehlt er dort: der nächste Stable-Merge erkennt „bereits enthalten" nicht mehr und bringt doppelte CHANGELOG-Zeilen bzw. unnötige Konflikte.
+
+          Danach veröffentlicht \`glow-prerelease.yml\` automatisch das Pre-Release \`v$NEW\` (spätestens nach ca. 20 Minuten, oder per „Run workflow").
+          Hinweis: PRs, die mit dem Standard-Token angelegt werden, starten andere Workflows (z. B. validate) nicht automatisch.
+          EOT
+          )
+          if gh pr view "$BRANCH" --json state --jq .state 2>/dev/null | grep -q OPEN; then
+            echo "PR für $BRANCH existiert bereits."
+          else
+            gh pr create --base glow-panel --head "$BRANCH" \
+              --title "Stable $TAG in glow-panel mergen ($NEW)" --body "$BODY"
+          fi
+
+      - name: Issue bei Merge-Konflikt
+        if: steps.merge.outputs.conflict == 'true'
+        run: |
+          set -euo pipefail
+          TAG='${{ steps.merge.outputs.tag }}'
+          BODY=$(cat <<EOT
+          Das Stable-Release \`$TAG\` konnte nicht automatisch in \`glow-panel\` gemergt werden (Merge-Konflikt).
+
+          Von Hand:
+          \`\`\`
+          git checkout glow-panel && git pull
+          git merge $TAG        # Konflikte lösen
+          # manifest.json: Version auf die nächste Patch-Nummer + -glow.1 setzen
+          git push
+          \`\`\`
+          Wichtig: als Merge-Commit (nicht squashen). Danach veröffentlicht \`glow-prerelease.yml\` automatisch das Pre-Release.
+          EOT
+          )
+          gh issue create --title "glow-panel: Merge von $TAG hat einen Konflikt" --body "$BODY"
+          echo "::warning::Merge-Konflikt, Issue angelegt."
