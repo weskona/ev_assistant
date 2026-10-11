@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=18  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=19  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.3.7";
+const VERSION = "3.3.8";
 // Version der Datenschnittstelle zu ev_assistant (Panel-Konfiguration, Websocket-Befehle, evcc_live),
 // die diese Karte erwartet. Meldet ev_assistant in der Panel-Konfiguration eine andere "api_version",
 // warnt die Karte (Konsole + Hinweis). Ohne "api_version" (ältere ev_assistant-Versionen) keine Warnung.
@@ -508,7 +508,7 @@ class MgCarDashboard extends HTMLElement {
             <label>bis<input class="pin" type="datetime-local" value="${esc(val)}" data-act="none"></label>
             <button class="qbtn" data-act="mplanset"${entry && !pr?.busy ? "" : " disabled"}>${icon(pr?.busy ? "mdi:timer-sand" : "mdi:check")}${pr?.busy ? "Wird gesetzt …" : "Plan setzen"}</button>
           </div>
-          ${pr?.err ? `<div class="mpe err">${icon("mdi:alert-circle-outline")}${esc(pr.err)}</div>` : ""}</div>`;
+          ${pr?.err ? `<div class="mpe err">${icon("mdi:alert-circle-outline")}${esc(pr.err)}</div>` : pr?.info ? `<div class="mpe">${icon("mdi:information-outline")}${esc(pr.info)}</div>` : ""}</div>`;
       }
     }
     const toggles = entry ? [
@@ -527,13 +527,11 @@ class MgCarDashboard extends HTMLElement {
       ${rec?.state === "on" ? `<div class="lrows"><button class="lrow warn" data-act="more" data-entity="${esc(E.charge_before_pv_recommended)}">${icon("mdi:weather-cloudy-alert")}<span>Empfehlung</span><b>Laden vor PV sinnvoll</b></button></div>` : ""}`;
   }
 
-  /* Hinweis, wenn ev_assistant den Plan nicht an evcc weitergibt – meist findet es das Fahrzeug in evcc nicht
-     (der Fahrzeugtitel in evcc muss zum in ev_assistant eingetragenen evcc-Fahrzeugnamen passen) */
-  _planFailText() {
+  /* Hinweis, wenn der Aufruf erfolgreich war, der Plan-Sensor den Plan aber (noch) nicht zeigt. Ältere ev_assistant-
+     Versionen (vor 0.99.35) melden ein nicht gefundenes evcc-Fahrzeug nicht als Fehler – darauf nur als Möglichkeit hinweisen */
+  _planSentText() {
     const name = this._config.car.evcc_vehicle || this._evaPanel?.evcc_vehicle_name;
-    return name
-      ? `Ladeplan nicht übernommen: ev_assistant findet in evcc kein Fahrzeug mit dem Titel „${name}“. Den Fahrzeugtitel in evcc und den evcc-Fahrzeugnamen in den ev_assistant-Optionen angleichen (Schreibweise wie im evcc-UI).`
-      : "Ladeplan nicht übernommen: ev_assistant konnte das Fahrzeug in evcc nicht zuordnen. In den ev_assistant-Optionen den evcc-Fahrzeugnamen genau so eintragen, wie er im evcc-UI heißt.";
+    return `Plan an evcc gesendet, ev_assistant zeigt ihn noch nicht an. Bei ev_assistant vor 0.99.35 kann das auch heißen, dass das evcc-Fahrzeug${name ? ` „${name}“` : ""} nicht gefunden wurde.`;
   }
 
   /* Ladeplan aus der ev_assistant-Entität lesen: Zeitstempel als Zustand (ISO), in Attributen oder als
@@ -873,10 +871,12 @@ class MgCarDashboard extends HTMLElement {
     // passt sich die Seite der Fensterhöhe an, kürzt _clipTrips() die Liste auf das, was in die Kachel passt
     const list = fit ? all : all.slice(0, c.trips_visible || 5);
     this._tripsAll = all.length;
-    el.innerHTML = `<div class="hd"><span class="ttl">Fahrtenbuch</span><span class="lbl"></span>
+    const html = `<div class="hd"><span class="ttl">Fahrtenbuch</span><span class="lbl"></span>
         <button class="arrow" data-act="trips" aria-label="Alle Fahrten" title="Alle Fahrten">${icon("mdi:chevron-right")}</button></div>` +
       (list.length ? `<div class="tlist" data-act="trips" title="Alle Fahrten anzeigen">${this._tripRows(list)}</div>`
         : `<div class="empty">${String(c.trips || "").startsWith("eva:") && !this._evaTrips ? "Lädt …" : `Keine Fahrten gefunden${c.trips && !c.trips.startsWith("eva:") ? ` (${esc(c.trips)})` : ""}`}</div>`);
+    // nur bei Änderungen neu aufbauen – sonst verliert z. B. iOS beim Scrollen ans Seitenende (Größenänderung durch die Leisten) die Position
+    if (el._html !== html) { el.innerHTML = html; el._html = html; }
     this._clipTrips();
     if (this._dlg === "trips") this._renderTripsDlg();
   }
@@ -1408,7 +1408,7 @@ class MgCarDashboard extends HTMLElement {
   _fit() {
     const wrap = this.shadowRoot?.querySelector(".wrap");
     if (!wrap) return;
-    const top = this.getBoundingClientRect().top + window.scrollY;
+    const top = this._docTop();
     wrap.classList.toggle("sat", top < 30);   // ganz oben (ohne HA-Kopfzeile): Abstand zur iPhone-Statusleiste
     const on = this._config?.fit_screen !== false && this.clientWidth > 1180;
     if (!on) { wrap.classList.remove("fit"); return; }
@@ -1416,6 +1416,15 @@ class MgCarDashboard extends HTMLElement {
     wrap.style.setProperty("--fit-h", h + "px");
     wrap.classList.add("fit");
     wrap.classList.toggle("compact", h < 860);   // niedrige Fenster: alles etwas kompakter
+  }
+
+  /* Abstand der Karte zum Seitenanfang, unabhängig von der Scrollposition. HA (auch die Companion-App) scrollt in einem
+     eigenen Container statt im Fenster – dessen scrollTop muss mitgezählt werden, sonst wirkt die Karte beim Scrollen
+     „ganz oben“ (Safe-Area-Abstand springt an, die Seite verschiebt sich) */
+  _docTop() {
+    let y = this.getBoundingClientRect().top + window.scrollY;
+    for (let n = this.parentNode || this.getRootNode()?.host; n && n !== document; n = n.parentNode || n.host) if (n.scrollTop) y += n.scrollTop;
+    return y;
   }
 
   _hd(title, label = "", entity = null, labelCls = "") {
@@ -1715,13 +1724,15 @@ class MgCarDashboard extends HTMLElement {
     if (act === "mplanset") {
       const v = this.shadowRoot.querySelector("#mgmt .pin")?.value, t = v ? new Date(v).getTime() : NaN;
       if (isNaN(t) || t < Date.now() + 10 * 60000) { window.alert("Bitte eine Zielzeit in der Zukunft wählen."); return; }
-      // Rückmeldung: „Wird gesetzt …“, Fehler des Service anzeigen; meldet ev_assistant nach 12 s keinen Plan, Hinweis zeigen
+      // Rückmeldung: „Wird gesetzt …“; einen Fehler des Service (ev_assistant ab 0.99.35 nennt den Grund) sofort anzeigen.
+      // Meldet der Plan-Sensor nach 12 s noch keinen Plan: war der Aufruf erfolgreich, nur ein neutraler Hinweis
       clearTimeout(this._planReq?.timer);
-      const req = (this._planReq = { busy: true, err: "" });
-      const fail = (msg) => { if (this._planReq !== req) return; clearTimeout(req.timer); req.busy = false; req.err = msg; this._planTime = v; this._render_mgmt(); };
-      req.timer = setTimeout(() => fail(this._planFailText()), 12000);
+      const req = (this._planReq = { busy: true, err: "", info: "", sent: false });
+      const done = (key, msg) => { if (this._planReq !== req) return; clearTimeout(req.timer); req.busy = false; req[key] = msg; this._planTime = v; this._render_mgmt(); };
+      req.timer = setTimeout(() => (req.sent ? done("info", this._planSentText()) : done("err", "Keine Antwort von ev_assistant – Ladeplan vermutlich nicht gesetzt.")), 12000);
       this._evaCall("set_evcc_charge_plan", { target_soc: this._planSoc ?? 80, target_time: Math.round(t / 1000) })
-        .catch((x) => fail(`Ladeplan konnte nicht gesetzt werden: ${x?.message || x?.error?.message || x}`));
+        .then(() => { req.sent = true; })
+        .catch((x) => done("err", `Ladeplan konnte nicht gesetzt werden: ${x?.message || x?.error?.message || x}`));
       this._planTime = v; this._render_mgmt(); return;
     }
     if (act === "none") return;
