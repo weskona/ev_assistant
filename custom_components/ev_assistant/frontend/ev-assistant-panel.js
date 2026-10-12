@@ -5691,8 +5691,14 @@ class EVAssistantPanel extends HTMLElement {
       // waehrend der Nutzer den Schalter gerade selbst antippt.
       if (this.shadowRoot.activeElement !== r.betaWbBalancingToggle) {
         r.betaWbBalancingToggle.checked = !!attrs.balancing_enabled;
-        if (attrs.balancing_aktiv) {
+        // "aktiv" gilt ab Faelligkeit (auch waehrend des Solartags), "lädt gerade"
+        // aber nur, wenn das Auto wirklich laedt.
+        const balLive = this._evccLive() || {};
+        const balCharging = balLive.charging === true && parseFloat(balLive.charge_power ?? NaN) > 0.05;
+        if (attrs.balancing_aktiv && balCharging) {
           r.betaWbBalancingStatus.textContent = "Aktiv — lädt gerade auf 100% (Zellbalancing)";
+        } else if (attrs.balancing_aktiv) {
+          r.betaWbBalancingStatus.textContent = "Fällig — lädt auf 100%, sobald das Auto lädt (Zellbalancing)";
         } else if (attrs.balancing_enabled && attrs.naechste_vollladung_faellig_ts != null) {
           r.betaWbBalancingStatus.textContent = `Nächste fällig: ${this._fmtDate(attrs.naechste_vollladung_faellig_ts)}`;
         } else {

@@ -13,6 +13,19 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.40] - 2026-10-12
+
+### Fixed
+
+- **0.99.39 shipped with an empty `manifest.json`** (release packaging error), so Home Assistant could not load the integration from that release. 0.99.40 contains the identical code with a valid manifest. **Do not install 0.99.39.**
+
+## [0.99.39] - 2026-10-12
+
+### Fixed
+
+- **Glow card: the full-charge button no longer pulsed / showed "charging to 100 %" although the full charge was running** (follow-up to 0.99.38): `balancing_aktiv` now means "override in effect" (target 100 %), i.e. as soon as the full charge is due, not only once `minpv` is forced at the end of the solar day. New attribute `balancing_erzwungen` is true only for the forced end-of-day stage.
+- Panel: the balancing status says "Active — charging to 100 %" only while the car is actually charging; otherwise "Due — charges to 100 % as soon as the car charges".
+
 ## [0.99.38] - 2026-10-12
 
 ### Fixed
