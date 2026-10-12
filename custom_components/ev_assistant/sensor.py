@@ -1586,12 +1586,11 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
     "naechste_vollladung_faellig_ts" (siehe CONF_WEEKLY_FULL_CHARGE_ENABLED/
     engine.weekly_balancing_due()) nur bei aktivierter evcc-Steuerung
     sichtbar, da eine faellige Balancing-Ladung ohnehin nur wirkt, wenn
-    ueberhaupt etwas an evcc geschrieben wird. "balancing_faellig" (reines
-    Intervall, siehe weekly_balancing_due()) und "balancing_aktiv"
-    (zusaetzlich durchs Tageszeit-Gate, siehe engine.weekly_balancing_
-    time_ok()) koennen auseinanderfallen: "faellig" ohne "aktiv" heisst,
-    die Vollladung ist ueberfaellig, wartet aber noch auf den Rest des
-    heutigen Solartags. native_value ist "modus_effektiv" aus _evcc_mode_targets() --
+    ueberhaupt etwas an evcc geschrieben wird. "balancing_faellig" und
+    "balancing_aktiv" (Override wirksam, Ziel 100 %) sind gleich; "balancing_
+    erzwungen" ist zusaetzlich durchs Tageszeit-Gate (siehe engine.
+    weekly_balancing_time_ok()): vorher laedt die Vollladung nur mit dem
+    vorhandenen Ueberschuss, danach wird minpv erzwungen. native_value ist "modus_effektiv" aus _evcc_mode_targets() --
     bereits inkl. der Echtzeit-PV-Uebersteuerung (siehe engine.
     apply_realtime_pv_override()); die Attribute "pv_override_aktiv"/
     "pv_ueberschuss_w" zeigen, ob/warum gerade hochgestuft wurde. Attribut
@@ -1692,6 +1691,7 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             "balancing_enabled": targets["balancing_enabled"],
             "balancing_faellig": targets["balancing_faellig"],
             "balancing_aktiv": targets["balancing_aktiv"],
+            "balancing_erzwungen": targets["balancing_erzwungen"],
             "naechste_vollladung_faellig_ts": targets["naechste_vollladung_faellig_ts"],
             "pausiert": bool(self.coordinator.data.get("evcc_mode_control_paused")),
             # Manueller Modus (siehe coordinator.py::async_set_evcc_manual_

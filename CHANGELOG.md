@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.39] - 2026-10-12
+
+### Fixed
+
+- **Glow card: the full-charge button no longer pulsed / showed "charging to 100 %" although the full charge was running** (follow-up to 0.99.38): `balancing_aktiv` now means "override in effect" (target 100 %), i.e. as soon as the full charge is due, not only once `minpv` is forced at the end of the solar day. New attribute `balancing_erzwungen` is true only for the forced end-of-day stage.
+- Panel: the balancing status says "Active — charging to 100 %" only while the car is actually charging; otherwise "Due — charges to 100 % as soon as the car charges".
+
 ## [0.99.38] - 2026-10-12
 
 ### Fixed
