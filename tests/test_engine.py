@@ -4542,3 +4542,23 @@ def test_wartung_uebersicht_vergleicht_tage_nicht_mit_km():
     r = wartung_uebersicht([a, b], aktueller_km=15990, km_pro_tag=None, heute="2026-10-04")
     assert r["naechste"] is not None
     assert r["naechste"]["name"] == "B"  # 10 km Rest ist dringender als 25 Tage
+
+
+def test_weekly_balancing_override_faellig_nicht_erzwungen_hebt_nur_ziel_an():
+    assert apply_weekly_balancing_override("pv", 0, True, forced=False) == ("pv", 100)
+
+
+def test_weekly_balancing_override_faellig_erzwungen_minpv_100():
+    assert apply_weekly_balancing_override("pv", 0, True, forced=True) == ("minpv", 100)
+
+
+def test_weekly_balancing_override_nicht_faellig_unveraendert():
+    assert apply_weekly_balancing_override("pv", 40, False, forced=True) == ("pv", 40)
+
+
+def test_surplus_target_senkt_hoeheres_ziel_nicht_unter_ceiling():
+    target, active, _ = apply_opportunistic_surplus_target(
+        "pv", 100, 500.0, 2000.0, True, None, 1000.0, 300.0, ceiling_soc=80
+    )
+    assert active is True
+    assert target == 100

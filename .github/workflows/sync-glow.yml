@@ -6,6 +6,10 @@ name: Sync Glow card
 #   - frontend/GLOW_VERSION enthaelt genau eine Referenz (Tag oder Commit).
 #   - Gibt es einen neueren v*-Tag, oeffnet dieser Workflow einen PR gegen
 #     glow-panel. Gemergt wird von Hand, nichts landet ungeprueft bei Testern.
+#   - Der PR erhoeht zugleich die Glow-Nummer im Manifest (X.Y.Z-glow.N ->
+#     X.Y.Z-glow.N+1), damit glow-prerelease.yml nach dem Merge ein neues
+#     Pre-Release anlegt. Gibt es zu X.Y.Z schon eine Stable, wird stattdessen
+#     X.Y.(Z+1)-glow.1 gesetzt, damit die Glow-Version ueber der Stable liegt.
 # Der Workflow liegt auf main, weil GitHub zeitgesteuerte und manuell gestartete
 # Workflows nur vom Standard-Branch ausfuehrt. Er aendert nur glow-panel.
 
@@ -62,6 +66,36 @@ jobs:
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
 
+      - name: Glow-Version im Manifest erhoehen
+        if: steps.glow.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          MANIFEST=custom_components/ev_assistant/manifest.json
+          python3 - "$MANIFEST" <<'PY'
+          import re, subprocess, sys
+          path = sys.argv[1]
+          text = open(path, encoding="utf-8").read()
+          m = re.search(r'"version"\s*:\s*"(\d+)\.(\d+)\.(\d+)(?:-glow\.(\d+))?"', text)
+          if not m:
+              sys.exit("Manifest-Version nicht erkannt")
+          x, y, z = int(m[1]), int(m[2]), int(m[3])
+          n = int(m[4]) if m[4] else 0
+          tags = subprocess.run(
+              ["git", "ls-remote", "--tags", "--refs", "origin", "v*"],
+              check=True, capture_output=True, text=True,
+          ).stdout
+          stable_exists = any(
+              line.endswith(f"refs/tags/v{x}.{y}.{z}") for line in tags.splitlines()
+          )
+          if m[4] is None or stable_exists:
+              new = f"{x}.{y}.{z + 1}-glow.1"
+          else:
+              new = f"{x}.{y}.{z}-glow.{n + 1}"
+          text = text[: m.start()] + f'"version": "{new}"' + text[m.end():]
+          open(path, "w", encoding="utf-8").write(text)
+          print("Manifest-Version:", m[0], "->", new)
+          PY
+
       - name: PR gegen glow-panel oeffnen
         if: steps.glow.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
@@ -71,6 +105,7 @@ jobs:
           add-paths: |
             custom_components/ev_assistant/frontend/mg-car-dashboard.js
             custom_components/ev_assistant/frontend/GLOW_VERSION
+            custom_components/ev_assistant/manifest.json
           commit-message: "Glow-Karte auf ${{ steps.glow.outputs.ref }} aktualisiert"
           title: "Glow-Karte auf ${{ steps.glow.outputs.ref }} aktualisieren"
           body: |
@@ -79,4 +114,4 @@ jobs:
             - Vorher: `${{ steps.glow.outputs.current }}`
             - Nachher: `${{ steps.glow.outputs.ref }}`
 
-            Ersetzt `frontend/mg-car-dashboard.js` durch die Datei dieser Version und setzt `frontend/GLOW_VERSION`. Nach dem Merge kann ein neues Pre-Release getaggt werden (siehe #12).
+            Ersetzt `frontend/mg-car-dashboard.js` durch die Datei dieser Version und setzt `frontend/GLOW_VERSION`. Erhoeht ausserdem die Glow-Version im Manifest; nach dem Merge legt `glow-prerelease.yml` das Pre-Release an (siehe #12).
