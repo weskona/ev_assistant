@@ -219,10 +219,13 @@ def test_exceptions_uebersetzungen_vollstaendig_und_platzhalter_aufloesbar():
         "evcc_not_configured", "evcc_not_reachable", "evcc_state_pending", "evcc_vehicle_no_match",
         "evcc_vehicle_ambiguous", "evcc_no_vehicles", "evcc_loadpoint_not_found", "range_no_consumption",
         "evcc_write_rejected",
+        # Fahrzeugbild (siehe test_vehicle_image.py)
+        "unknown_config_entry", "unknown_file_id", "image_too_large", "image_format",
+        "image_too_many_pixels", "image_unreadable", "pillow_missing", "image_io_error",
     }
     for datei in ("strings.json", "translations/de.json", "translations/en.json"):
         block = json.loads((basis / datei).read_text(encoding="utf-8"))["exceptions"]
         assert set(block) == erwartet, datei
         for key, eintrag in block.items():
             platzhalter = set(re.findall(r"{(\w+)}", eintrag["message"]))
-            assert platzhalter <= {"expected", "titles"}, (datei, key, platzhalter)
+            assert platzhalter <= {"expected", "titles", "max_mb", "max_mp", "formats"}, (datei, key, platzhalter)

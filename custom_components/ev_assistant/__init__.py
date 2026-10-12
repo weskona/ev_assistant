@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
+from . import images
 from . import websocket_api as ev_websocket_api
 from .const import (
     CONF_EVCC_VEHICLE_NAME,
@@ -33,6 +34,7 @@ from .const import (
     SERVICE_ADD_MAINTENANCE,
     SERVICE_CLEAR_EVCC_CHARGE_PLAN,
     SERVICE_CLEAR_EVCC_MANUAL_MODE,
+    SERVICE_CLEAR_VEHICLE_IMAGE,
     SERVICE_DELETE,
     SERVICE_DELETE_LADEKARTE,
     SERVICE_DELETE_LADEKARTE_PREISSTUFE,
@@ -61,6 +63,7 @@ from .const import (
     SERVICE_SET_HIDDEN_TABS,
     SERVICE_SET_PANEL_LAYOUT,
     SERVICE_SET_USAGE_PROFILE_BUFFER_PCT,
+    SERVICE_SET_VEHICLE_IMAGE,
     SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED,
     SERVICE_SIMULATE,
     SERVICE_SIMULATE_TRIP,
@@ -546,6 +549,15 @@ SET_PANEL_LAYOUT_SCHEMA = vol.Schema({
     ],
 })
 
+SET_VEHICLE_IMAGE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("file_id"): str,
+})
+
+CLEAR_VEHICLE_IMAGE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+})
+
 SET_HIDDEN_TABS_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
     vol.Required("hidden_tabs"): [str],
@@ -584,6 +596,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await coordinator.async_setup()
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Verwaiste Fahrzeugbilder (Entry geloescht, waehrend HA nicht lief o. Ae.)
+    # aufraeumen; Unload loescht nie, nur async_remove_entry.
+    valid_ids = {e.entry_id for e in hass.config_entries.async_entries(DOMAIN)}
+    await hass.async_add_executor_job(images.cleanup_orphans, images.image_dir(hass.config.config_dir), valid_ids)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     _register_services(hass)
     domain_data = hass.data.setdefault(DOMAIN, {})
@@ -898,6 +914,68 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_set_panel_layout(call.data["layout"])
 
+    def _vehicle_image_coordinator(call: ServiceCall) -> EvAssistantCoordinator:
+        """Wie _coordinator_for(), wirft bei unbekannter config_entry_id aber
+        (ServiceValidationError) statt still nichts zu tun -- Lehre aus
+        glow-dashboard#19: kein stilles Scheitern."""
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator is None:
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="unknown_config_entry")
+        return coordinator
+
+    async def _refresh_vehicle_image_entity(entry_id: str) -> None:
+        from .image import IMAGE_ENTITIES_KEY
+
+        entity = hass.data.get(IMAGE_ENTITIES_KEY, {}).get(entry_id)
+        if entity is not None:
+            await entity.async_refresh_from_disk()
+
+    async def _handle_set_vehicle_image(call: ServiceCall) -> None:
+        from homeassistant.components.file_upload import process_uploaded_file
+
+        coordinator = _vehicle_image_coordinator(call)
+        entry_id = call.data["config_entry_id"]
+        file_id = call.data["file_id"]
+        directory = images.image_dir(hass.config.config_dir)
+
+        def _process() -> tuple[bytes, str]:
+            # process_uploaded_file() loescht die Upload-Datei am Ende des
+            # Blocks und gehoert zusammen mit der Verarbeitung in EINEN
+            # Executor-Aufruf (siehe dessen Docstring).
+            with process_uploaded_file(hass, file_id) as path:
+                return images.process_image(path)
+
+        try:
+            data, ext = await hass.async_add_executor_job(_process)
+        except ValueError as err:  # unbekannte/abgelaufene file_id
+            raise ServiceValidationError(translation_domain=DOMAIN, translation_key="unknown_file_id") from err
+        except images.ImageProcessingError as err:
+            raise ServiceValidationError(
+                translation_domain=DOMAIN, translation_key=err.key, translation_placeholders=err.placeholders
+            ) from err
+        except OSError as err:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="image_io_error") from err
+        try:
+            await hass.async_add_executor_job(images.store_image, directory, entry_id, data, ext)
+        except OSError as err:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="image_io_error") from err
+        coordinator._log_event("fahrzeugbild", "gesetzt")
+        coordinator._save_soon()
+        await _refresh_vehicle_image_entity(entry_id)
+
+    async def _handle_clear_vehicle_image(call: ServiceCall) -> None:
+        coordinator = _vehicle_image_coordinator(call)
+        entry_id = call.data["config_entry_id"]
+        directory = images.image_dir(hass.config.config_dir)
+        try:
+            removed = await hass.async_add_executor_job(images.remove_images, directory, entry_id)
+        except OSError as err:
+            raise HomeAssistantError(translation_domain=DOMAIN, translation_key="image_io_error") from err
+        if removed:
+            coordinator._log_event("fahrzeugbild", "entfernt")
+            coordinator._save_soon()
+        await _refresh_vehicle_image_entity(entry_id)
+
     async def _handle_set_hidden_tabs(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
@@ -991,6 +1069,14 @@ def _register_services(hass: HomeAssistant) -> None:
         schema=SET_PANEL_LAYOUT_SCHEMA,
     )
     hass.services.async_register(
+        DOMAIN, SERVICE_SET_VEHICLE_IMAGE, _handle_set_vehicle_image,
+        schema=SET_VEHICLE_IMAGE_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_CLEAR_VEHICLE_IMAGE, _handle_clear_vehicle_image,
+        schema=CLEAR_VEHICLE_IMAGE_SCHEMA,
+    )
+    hass.services.async_register(
         DOMAIN, SERVICE_SET_HIDDEN_TABS, _handle_set_hidden_tabs,
         schema=SET_HIDDEN_TABS_SCHEMA,
     )
@@ -1025,7 +1111,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM, SERVICE_SET_EVCC_MANUAL_MODE,
                 SERVICE_CLEAR_EVCC_MANUAL_MODE, SERVICE_SET_PANEL_LAYOUT,
                 SERVICE_RESET_LIFETIME_KPIS, SERVICE_EXPORT_BACKUP, SERVICE_RESTORE_BACKUP,
-                SERVICE_SET_HIDDEN_TABS,
+                SERVICE_SET_HIDDEN_TABS, SERVICE_SET_VEHICLE_IMAGE, SERVICE_CLEAR_VEHICLE_IMAGE,
             ):
                 hass.services.async_remove(DOMAIN, service)
         else:
@@ -1037,3 +1123,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             if remaining:
                 await _async_register_panel(hass, remaining)
     return unload_ok
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Entry wird endgueltig geloescht (nicht bei Unload/Reload): die zugehoerige
+    Fahrzeugbild-Datei mit entfernen (siehe images.py)."""
+    await hass.async_add_executor_job(images.remove_images, images.image_dir(hass.config.config_dir), entry.entry_id)

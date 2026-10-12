@@ -1,7 +1,7 @@
 """Konstanten fuer die ev_assistant Integration."""
 
 DOMAIN = "ev_assistant"
-PLATFORMS = ["sensor", "binary_sensor"]
+PLATFORMS = ["sensor", "binary_sensor", "image"]
 
 # Config / Options Keys
 # Pro Signal: eine HA-Entitaet, optional per Template umgerechnet (z.B. andere
@@ -740,6 +740,8 @@ SERVICE_DELETE_MAINTENANCE = "delete_maintenance"
 SERVICE_MARK_MAINTENANCE_DONE = "mark_maintenance_done"
 SERVICE_SET_USAGE_PROFILE_BUFFER_PCT = "set_usage_profile_buffer_pct"
 SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED = "set_weekly_full_charge_enabled"
+SERVICE_SET_VEHICLE_IMAGE = "set_vehicle_image"
+SERVICE_CLEAR_VEHICLE_IMAGE = "clear_vehicle_image"
 SERVICE_SET_EVCC_MODE_CONTROL_TARGET_SOC_MAX = "set_evcc_mode_control_target_soc_max"
 SERVICE_SET_EVCC_MODE_CONTROL_PAUSE = "set_evcc_mode_control_pause"
 SERVICE_SET_EVCC_CHARGE_PLAN = "set_evcc_charge_plan"
