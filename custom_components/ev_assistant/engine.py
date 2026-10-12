@@ -1130,6 +1130,31 @@ def soc_reached_full_charge(soc: float, threshold: float) -> bool:
     return soc >= threshold
 
 
+def vollladung_confirm(
+    soc: float,
+    threshold: float,
+    pending_since_ts: Optional[float],
+    now_ts: float,
+    confirm_s: float,
+) -> tuple[bool, Optional[float]]:
+    """Bestaetigt eine erreichte Vollladung gegen kurzzeitige SoC-Ausreisser
+    (Produktionsvorfall 2026-10-12: ein 2-Sekunden-Wert von 98 % bei
+    tatsaechlich 87 % markierte die Vollladung als erledigt). Der SoC muss
+    durchgehend `confirm_s` Sekunden >= `threshold` bleiben.
+
+    Rueckgabe (erreicht, neuer pending_since_ts): faellt der SoC unter den
+    Schwellwert, verfaellt das Warten (None); der erste Wert darueber startet
+    es; ist es lang genug her, ist die Vollladung erreicht (das Warten bleibt
+    stehen, solange der SoC oben bleibt). Muss auch ohne neuen Messwert
+    regelmaessig aufgerufen werden, weil ein auf 98-100 % stehender SoC keine
+    weiteren Meldungen liefert."""
+    if not soc_reached_full_charge(soc, threshold):
+        return False, None
+    if pending_since_ts is None or pending_since_ts > now_ts:
+        return False, now_ts
+    return (now_ts - pending_since_ts) >= confirm_s, pending_since_ts
+
+
 def weekly_balancing_due(
     last_full_ts: Optional[float], now_ts: float, interval_days: float
 ) -> bool:

@@ -3175,3 +3175,27 @@ async def test_balancing_abends_heute_leer_morgen_reicht_nicht_erzwungen(hass, c
     # Ohne Hausprofil nicht auf morgen verlassen -> erzwungen
     coordinator.house_usage_profile = lambda: None
     assert coordinator._evcc_mode_targets()["balancing_erzwungen"] is True
+
+
+# ----- Vollladung wird erst nach Bestaetigung als erreicht verbucht (2026-10-12) -----
+
+
+async def test_vollladung_ausreisser_wird_nicht_verbucht_dauerhaft_schon(hass, coordinators):
+    """Produktionsvorfall 2026-10-12: SoC 87 -> 98 -> 85 -> 87 binnen Sekunden
+    markierte die faellige Vollladung als erledigt."""
+    coordinator, _ = await _make_coordinator(hass, coordinators, "vl_confirm")
+    coordinator.data["vollladung_letzter_ts"] = None
+    t0 = 1_000_000.0
+    # Ausreisser: kurz 98, dann zurueck auf 85
+    coordinator._maybe_mark_vollladung_erreicht(98.0, t0)
+    coordinator._maybe_mark_vollladung_erreicht(85.0, t0 + 2)
+    coordinator._maybe_mark_vollladung_erreicht(87.0, t0 + 4)
+    assert coordinator.data["vollladung_letzter_ts"] is None
+    # Echte Vollladung: bleibt durchgehend oben, auch ohne neue Messwerte
+    # (Aufruf aus _periodic_check)
+    coordinator._maybe_mark_vollladung_erreicht(99.0, t0 + 100)
+    assert coordinator.data["vollladung_letzter_ts"] is None
+    coordinator._maybe_mark_vollladung_erreicht(99.0, t0 + 100 + 119)
+    assert coordinator.data["vollladung_letzter_ts"] is None
+    coordinator._maybe_mark_vollladung_erreicht(99.0, t0 + 100 + 121)
+    assert coordinator.data["vollladung_letzter_ts"] == t0 + 100 + 121

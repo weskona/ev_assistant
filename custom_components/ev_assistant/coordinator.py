@@ -179,6 +179,7 @@ from .const import (
     TRIP_END_SOC_CORRECTION_WINDOW_S,
     USAGE_PROFILE_WINDOW_DAYS,
     VEHICLE_DISCHARGE_CONFIRM_SECONDS,
+    VOLLLADUNG_CONFIRM_SECONDS,
     VOLLLADUNG_SOC_THRESHOLD,
     WARTUNG_BALD_FAELLIG_KM,
     WARTUNG_BALD_FAELLIG_TAGE,
@@ -256,7 +257,6 @@ from .engine import (
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
     session_totals_since,
-    soc_reached_full_charge,
     split_by_age,
     split_period_baseline_entry,
     tankerkoenig_should_notify,
@@ -269,6 +269,7 @@ from .engine import (
     trip_weekday_kwh_parts,
     update_period_baseline,
     vehicle_discharge_update,
+    vollladung_confirm,
     wartung_festes_datum_fortschreiben,
     wartung_uebersicht,
     watt_to_kw,
@@ -774,6 +775,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # wiederhergestellt (Issue #27); der Wechsel-Timer bleibt fluechtig.
         self._ueberschuss_ziel_aktiv: bool = False
         self._ueberschuss_ziel_pending_seit_ts: Optional[float] = None
+        # Beginn des durchgehenden SoC >= Vollladungs-Schwelle (siehe
+        # engine.vollladung_confirm()); fluechtig, nach Neustart beginnt das
+        # Warten neu.
+        self._vollladung_pending_seit_ts: Optional[float] = None
         # Zeitpunkt der letzten Speicherung des Zustands (Heartbeat-Drosselung).
         self._ueberschuss_ziel_gespeichert_ts: float = 0.0
         # Letzter bekannter evcc-"connected"-Zustand des Loadpoints, fuer
@@ -2121,7 +2126,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         _save_soon() statt _save(): reiner Mirror-Zeitstempel wie andere
         Live-SoC-Nebenwerte (analog _update_vehicle_discharge()), kein
         kritisches Ereignis."""
-        if not soc_reached_full_charge(soc, VOLLLADUNG_SOC_THRESHOLD):
+        reached, self._vollladung_pending_seit_ts = vollladung_confirm(
+            soc, VOLLLADUNG_SOC_THRESHOLD, self._vollladung_pending_seit_ts, ts, VOLLLADUNG_CONFIRM_SECONDS
+        )
+        if not reached:
             return
         self.data["vollladung_letzter_ts"] = ts
         self._save_soon()
@@ -3369,6 +3377,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._check_evcc_vehicle_match_issue()
         if self._soc is not None:
             self._update_vehicle_discharge(self._soc)
+            # Vollladung auch ohne neuen Messwert bestaetigen (siehe
+            # _maybe_mark_vollladung_erreicht()).
+            self._maybe_mark_vollladung_erreicht(self._soc, dt_util.utcnow().timestamp())
         await self._async_apply_evcc_mode_control()
 
     def _check_urlaub_transition(self) -> None:
