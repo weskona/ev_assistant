@@ -2997,3 +2997,93 @@ async def test_heim_uebergang_ohne_soc_wird_nachgeholt(hass, coordinators):
     coordinator._soc = 50.0
     coordinator._set_home("7.4")  # naechste Messung: Uebergang wird nachgeholt
     assert coordinator._home_session_start_ts is not None
+
+
+# ----- Issue #27: Ueberschuss-Zielanhebung ueberlebt Reload/Neustart ----------
+
+
+async def _make_coordinator_mit_store(hass, coordinators, entry_id, stored, options):
+    """Wie _make_coordinator(), aber mit vorbelegtem Store-Inhalt (simuliert den
+    Zustand vor einem Reload/Neustart)."""
+    from unittest.mock import AsyncMock
+
+    from custom_components.ev_assistant.const import DOMAIN
+    from custom_components.ev_assistant.coordinator import EvAssistantCoordinator
+
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options=options, entry_id=entry_id)
+    entry.add_to_hass(hass)
+    coordinator = EvAssistantCoordinator(hass, entry)
+    coordinators.append(coordinator)
+    coordinator._store.async_load = AsyncMock(return_value=stored)
+    await coordinator.async_setup()
+    return coordinator
+
+
+def _bereite_pv_tag_vor(coordinator):
+    _seed_usage_profile(coordinator, weekday_kwh=5.0)
+    coordinator._soc = 90.0
+    coordinator._day_fraction_elapsed = lambda: 0.5
+    coordinator._local_hour = lambda: 13
+
+
+async def test_ueberschuss_ziel_nach_reload_frisch_bleibt_aktiv_und_nutzt_neues_max(hass, coordinators):
+    """Issue #27: eine laufende PV-Ladung darf durch Reload (z.B. Aenderung von
+    target_soc_max) nicht auf das rohe Profilziel zurueckfallen. Auch beim
+    ERHOEHEN des Maximums (85 -> 100) muss das neue Maximum gelten."""
+    from custom_components.ev_assistant.const import CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX, CONF_USABLE_KWH
+
+    jetzt = dt_util.utcnow().timestamp()
+    coordinator = await _make_coordinator_mit_store(
+        hass, coordinators, "ue_frisch",
+        {"ueberschuss_ziel": {"aktiv": True, "ts": jetzt - 30}},
+        {CONF_USABLE_KWH: 50.0, CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX: 100},
+    )
+    _bereite_pv_tag_vor(coordinator)
+    assert coordinator._ueberschuss_ziel_aktiv is True
+    targets = coordinator._evcc_mode_targets()
+    assert targets["target_soc"] == 100
+    assert any(e.get("kategorie") == "ueberschuss_ziel_wiederhergestellt" for e in coordinator.data["event_log"])
+
+
+async def test_ueberschuss_ziel_nach_reload_veraltet_startet_konservativ(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX, CONF_USABLE_KWH
+
+    jetzt = dt_util.utcnow().timestamp()
+    coordinator = await _make_coordinator_mit_store(
+        hass, coordinators, "ue_alt",
+        {"ueberschuss_ziel": {"aktiv": True, "ts": jetzt - 3600}},
+        {CONF_USABLE_KWH: 50.0, CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX: 100},
+    )
+    _bereite_pv_tag_vor(coordinator)
+    assert coordinator._ueberschuss_ziel_aktiv is False
+    targets = coordinator._evcc_mode_targets()
+    assert targets["target_soc"] < 100
+    assert not any(
+        e.get("kategorie") == "ueberschuss_ziel_wiederhergestellt" for e in coordinator.data.get("event_log", [])
+    )
+
+
+async def test_ueberschuss_ziel_heartbeat_speichert_gedrosselt(hass, coordinators):
+    """Solange aktiv, wird der Zeitstempel im Speicher aufgefrischt, aber nur
+    bei Wechsel bzw. nach dem Heartbeat-Abstand tatsaechlich gespeichert."""
+    from unittest.mock import MagicMock
+
+    from custom_components.ev_assistant.const import CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX, CONF_USABLE_KWH
+
+    jetzt = dt_util.utcnow().timestamp()
+    coordinator = await _make_coordinator_mit_store(
+        hass, coordinators, "ue_hb",
+        {"ueberschuss_ziel": {"aktiv": True, "ts": jetzt - 10}},
+        {CONF_USABLE_KWH: 50.0, CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX: 100},
+    )
+    _bereite_pv_tag_vor(coordinator)
+    coordinator._ueberschuss_ziel_gespeichert_ts = jetzt  # gerade gespeichert
+    coordinator._save_soon = MagicMock()
+    coordinator._evcc_mode_targets()
+    coordinator._evcc_mode_targets()
+    assert coordinator.data["ueberschuss_ziel"]["aktiv"] is True
+    assert coordinator.data["ueberschuss_ziel"]["ts"] >= jetzt
+    coordinator._save_soon.assert_not_called()
+    coordinator._ueberschuss_ziel_gespeichert_ts = jetzt - 301
+    coordinator._evcc_mode_targets()
+    coordinator._save_soon.assert_called_once()

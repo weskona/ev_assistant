@@ -18,6 +18,7 @@ Energie (aussagekraeftig = AC am Ladepunkt, inkl. Ladeverluste):
   energy_batt_kwh = Batterie-netto
 """
 
+import math
 import re
 import unicodedata
 from calendar import monthrange
@@ -1479,9 +1480,14 @@ def apply_opportunistic_surplus_target(
     Rueckgabe (effektives target_soc, ist_aktiv, neuer pending_since_ts) --
     die letzten beiden vom Aufrufer als was_active/pending_since_ts in den
     naechsten Aufruf zurueckzureichen (siehe coordinator.py::
-    _evcc_mode_targets(), dort als Instanzattribut gehalten -- bewusst NICHT
-    persistiert: ein Neustart faengt konservativ bei "nicht aktiv" an, das
-    ist der sichere Default, kein Datenverlust-Risiko).
+    _evcc_mode_targets(), dort als Instanzattribut gehalten). `was_active`
+    wird zeitlich begrenzt persistiert (siehe restore_surplus_target_active()):
+    ein Start bei "nicht aktiv" ist NICHT neutral, wenn gerade geladen wird --
+    der erste Zyklus nach einem Reload/Neustart schriebe das rohe Profilziel
+    als evcc-Ladegrenze, liegt der Fahrzeug-SoC darueber, stoppt evcc sofort
+    (Wiederanhebung fruehestens nach min_hold_s plus evccs eigener
+    Enable-Verzoegerung; Issue #27). `pending_since_ts` bleibt bewusst
+    fluechtig: der Wechsel-Timer startet nach einem Reload neu.
 
     `pv_power_w` (echte PV-Erzeugung, NICHT die aus gridPower abgeleitete
     pv_surplus_w) ist ein zusaetzliches, notwendiges Gate: pv_surplus_w ist
@@ -1518,6 +1524,33 @@ def apply_opportunistic_surplus_target(
         else ceiling_soc if was_active else target_soc
     )
     return effective_target_soc, was_active, pending_since_ts
+
+
+def restore_surplus_target_active(
+    persisted_active: object,
+    persisted_ts: object,
+    now_ts: float,
+    max_age_s: float,
+) -> bool:
+    """Ob der persistierte Zustand der Ueberschuss-Zielanhebung (siehe
+    apply_opportunistic_surplus_target()) nach einem Reload/Neustart
+    wiederhergestellt wird (Issue #27: sonst bricht eine laufende PV-Ladung
+    ab, weil der erste Zyklus das rohe Profilziel als evcc-Limit schreibt).
+
+    Nur wenn das Flag selbst als aktiv gespeichert wurde UND der Zeitstempel
+    seiner letzten Auffrischung eine endliche Zahl ist und hoechstens
+    `max_age_s` zurueckliegt. Alles andere -- nicht aktiv, fehlender/
+    ungueltiger Zeitstempel (bool zaehlt nicht als Zahl), Zeitstempel in der
+    Zukunft (Uhrsprung) oder zu alt -- ergibt konservativ False, also das
+    bisherige Verhalten (Start bei "nicht aktiv")."""
+    if persisted_active is not True:
+        return False
+    if isinstance(persisted_ts, bool) or not isinstance(persisted_ts, (int, float)):
+        return False
+    if not math.isfinite(persisted_ts):
+        return False
+    age = now_ts - float(persisted_ts)
+    return 0.0 <= age <= max_age_s
 
 
 def vehicle_discharge_update(

@@ -13,6 +13,15 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.41] - 2026-10-12
+
+### Fixed
+
+- **A running PV charge was interrupted by a reload of the integration or a Home Assistant restart** (#27): the state of the surplus target raise (`ueberschuss_ziel_erweitert_aktiv`) lived only in memory. After every reload (e.g. changing the maximum target SoC, which reloads the entry) or restart it started as "inactive", so the first cycle wrote the raw profile target as evcc's charge limit; if the vehicle SoC was above it, evcc stopped charging immediately, and the raise only came back after the 300 s hold time plus evcc's own enable delay.
+  - The flag is now persisted together with a timestamp that is refreshed every cycle while the raise is active (saved at most every 5 min, plus on change and on shutdown/reload). After a reload or restart it is **restored if the state is at most 15 minutes old** (`EVCC_UEBERSCHUSS_ZIEL_RESTORE_MAX_AGE_S`); after a longer outage, a missing or implausible timestamp (e.g. clock jump) it starts "inactive" conservatively, as before. The change timer (`pending_since_ts`) stays volatile. A restore is logged in the event log (`ueberschuss_ziel_wiederhergestellt`).
+  - The flag itself is persisted rather than derived from "last written target ≥ maximum target SoC": that fails exactly when the maximum is *raised* (85 → 100, last written 85).
+  - **Not changed (deliberately):** the suggestion to always set the limit to the maximum target SoC in daily mode `pv` and drop the surplus raise with its debounce. `apply_realtime_pv_override()` has no night-noise gate (only `pv_surplus_w > 0`; the price cap is optional and off by default), so without the limit at the daily need a 3–13 W balance noise could again charge from the grid (incident 2026-09-21).
+
 ## [0.99.40] - 2026-10-12
 
 ### Fixed

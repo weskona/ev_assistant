@@ -130,7 +130,9 @@ from .const import (
     EFF_MIN_SOC_DELTA,
     EVCC_BATTERY_PRIORITY_VEHICLE_SOC,
     EVCC_MODE_TARGET_DAYS,
+    EVCC_UEBERSCHUSS_ZIEL_HEARTBEAT_SAVE_S,
     EVCC_UEBERSCHUSS_ZIEL_HOLD_S,
+    EVCC_UEBERSCHUSS_ZIEL_RESTORE_MAX_AGE_S,
     EVENT_DELETED,
     EVENT_EDITED,
     EVENT_LOG_MAX_AGE_DAYS,
@@ -248,6 +250,7 @@ from .engine import (
     range_km_to_soc_percent,
     remaining_today_kwh,
     remove_weekday_day,
+    restore_surplus_target_active,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
     session_totals_since,
@@ -764,11 +767,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._evcc_scope_failed: dict[str, float] = {}
         self._evcc_sessions_loaded: bool = False
         # Debounce-Zustand fuer engine.apply_opportunistic_surplus_target()
-        # (siehe dortigen Docstring) -- rein im Arbeitsspeicher, analog
-        # _soc_scope_issue_active: ein Neustart faengt konservativ bei
-        # "nicht aktiv" an, das ist bereits der sichere Default.
+        # (siehe dortigen Docstring). Das Flag wird zeitlich begrenzt in
+        # self.data["ueberschuss_ziel"] mitgefuehrt und in async_setup()
+        # wiederhergestellt (Issue #27); der Wechsel-Timer bleibt fluechtig.
         self._ueberschuss_ziel_aktiv: bool = False
         self._ueberschuss_ziel_pending_seit_ts: Optional[float] = None
+        # Zeitpunkt der letzten Speicherung des Zustands (Heartbeat-Drosselung).
+        self._ueberschuss_ziel_gespeichert_ts: float = 0.0
         # Letzter bekannter evcc-"connected"-Zustand des Loadpoints, fuer
         # _check_evcc_manual_mode_session_end() (Erkennung des Trenn-
         # Uebergangs True->False, um den manuellen Modus session-scoped
@@ -876,6 +881,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self.data["pending"] = [pending]
         elif pending is None:
             self.data["pending"] = []
+        # Ueberschuss-Zielanhebung nach Reload/Neustart wiederherstellen, solange
+        # der Zustand frisch ist (siehe engine.restore_surplus_target_active()).
+        zustand = self.data.get("ueberschuss_ziel")
+        zustand = zustand if isinstance(zustand, dict) else {}
+        jetzt_ts = dt_util.utcnow().timestamp()
+        if restore_surplus_target_active(
+            zustand.get("aktiv"), zustand.get("ts"), jetzt_ts, EVCC_UEBERSCHUSS_ZIEL_RESTORE_MAX_AGE_S
+        ):
+            self._ueberschuss_ziel_aktiv = True
+            self._ueberschuss_ziel_gespeichert_ts = float(zustand["ts"])
+            self._log_event(
+                "ueberschuss_ziel_wiederhergestellt",
+                "Ueberschuss-Zielanhebung nach Neustart/Reload fortgesetzt "
+                f"(Zustand {jetzt_ts - float(zustand['ts']):.0f} s alt)",
+            )
         # Migration: Lebenszeit-Baselines (Vollzyklen/Verbrauchs-/
         # Temperaturband-/Wochentags-Schnitt, AC/DC-/Anbieter-
         # Aufschluesselung) aus einer bereits vorhandenen fahrten/history-
@@ -7141,6 +7161,20 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 ceiling_soc=target_soc_max,
             )
         )
+        # Zustand fuer die Wiederherstellung nach Reload/Neustart (Issue #27)
+        # im Speicher mitfuehren; "ts" = letzte Auswertung, solange aktiv.
+        # Gespeichert wird bei Wechsel sofort gebuendelt, sonst hoechstens
+        # alle EVCC_UEBERSCHUSS_ZIEL_HEARTBEAT_SAVE_S (Absturzschutz).
+        jetzt_ts = dt_util.utcnow().timestamp()
+        alt = self.data.get("ueberschuss_ziel") or {}
+        if self._ueberschuss_ziel_aktiv or alt.get("aktiv"):
+            self.data["ueberschuss_ziel"] = {"aktiv": bool(self._ueberschuss_ziel_aktiv), "ts": jetzt_ts}
+            if (
+                bool(alt.get("aktiv")) != bool(self._ueberschuss_ziel_aktiv)
+                or jetzt_ts - self._ueberschuss_ziel_gespeichert_ts >= EVCC_UEBERSCHUSS_ZIEL_HEARTBEAT_SAVE_S
+            ):
+                self._ueberschuss_ziel_gespeichert_ts = jetzt_ts
+                self._save_soon()
         return {
             "modus": mode,
             "modus_effektiv": effective_mode,
