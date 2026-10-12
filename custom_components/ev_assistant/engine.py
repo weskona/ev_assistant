@@ -1195,7 +1195,8 @@ def weekly_balancing_time_ok(
     _pv_forecast_today_remaining_kwh()) wird erzwungen, wenn
       - der PV-Tag praktisch vorbei ist (`pv_rest_heute_kwh` <=
         `pv_rest_threshold_kwh`, klein statt exakt 0 gegen Prognose-
-        Rundungsrauschen) UND die Prognose fuer morgen (`pv_morgen_kwh`) den
+        Rundungsrauschen) UND die PV, die dem Auto morgen bleibt
+        (`pv_morgen_kwh`: Prognose minus erwarteter Hausverbrauch), den
         Bedarf nicht deckt (`need_kwh` x `margin`) bzw. nicht bekannt ist --
         sonst wuerde zwischen Sonnenuntergang und Mitternacht (die Heute-
         Prognose steht dann auf 0 und springt erst um 0 Uhr auf morgen) Netz-

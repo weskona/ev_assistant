@@ -5,10 +5,17 @@ on:
   push:
     branches: [main, glow-panel]
   pull_request:
+  # Vom Release-Workflow vorgeschaltet (siehe release.yml). Die HACS-Pruefung
+  # laeuft dort bewusst nicht mit: sie laeuft ohnehin bei jedem Push auf main
+  # fuer denselben Commit, und ihr Verhalten im Tag-Kontext ist nicht
+  # abgesichert. Im aufgerufenen Workflow zeigt github.event_name/github.ref
+  # weiter auf den Tag-Push des Aufrufers.
+  workflow_call:
 
 jobs:
   validate:
     name: Validate HACS
+    if: ${{ !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout

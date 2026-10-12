@@ -6,8 +6,15 @@ on:
       - "v*"
 
 jobs:
+  # hassfest, Ruff und pytest muessen vor jedem Release gruen sein. Die HACS-
+  # Pruefung ist im Tag-Kontext ausgenommen, siehe Kommentar in validate.yml.
+  checks:
+    name: Checks
+    uses: ./.github/workflows/validate.yml
+
   release:
     name: Create Release
+    needs: checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -17,10 +24,19 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      # Release 0.99.39 ging mit leerer manifest.json raus: Quelle, Version
+      # und CHANGELOG vor dem Zippen pruefen ...
+      - name: Check release sources
+        run: python3 .github/scripts/check_release.py "${{ steps.version.outputs.VERSION }}"
+
       - name: Create release zip
         run: |
           cd custom_components/ev_assistant
           zip -r ../../ev_assistant.zip .
+
+      # ... und danach noch einmal die fertige Zip, so wie HACS sie installiert.
+      - name: Check release zip
+        run: python3 .github/scripts/check_release.py "${{ steps.version.outputs.VERSION }}" --zip ev_assistant.zip
 
       - name: Extract changelog section for this version
         run: |
