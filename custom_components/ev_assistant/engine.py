@@ -1144,19 +1144,31 @@ def weekly_balancing_due(
 
 
 def apply_weekly_balancing_override(
-    mode: str, target_soc: Optional[int], due: bool
+    mode: str, target_soc: Optional[int], due: bool, forced: bool = True
 ) -> tuple[str, Optional[int]]:
-    """Ueberstimmt das profilbasierte evcc-Ziel mit Ziel-SoC=100/Modus=
-    "minpv", wenn eine Balancing-Vollladung faellig ist (siehe
-    weekly_balancing_due()) -- sonst (mode, target_soc) unveraendert.
-    Steuert bewusst NUR Ziel-SoC + Modus, nicht WOHER der Ladestrom kommt
-    (PV/Netz/Speicher entscheidet weiterhin evcc selbst, siehe const.py::
-    CONF_WEEKLY_FULL_CHARGE_ENABLED). min_soc/min_kwh/target_kwh bleiben in
-    _evcc_mode_targets() bewusst die profilbasierten Werte -- nur zur
-    Anzeige/Transparenz, nicht das, was tatsaechlich an evcc geschrieben
-    wird."""
+    """Ueberstimmt das profilbasierte evcc-Ziel, wenn eine Balancing-
+    Vollladung faellig ist (siehe weekly_balancing_due()) -- sonst (mode,
+    target_soc) unveraendert. Steuert bewusst NUR Ziel-SoC + Modus, nicht
+    WOHER der Ladestrom kommt (PV/Netz/Speicher entscheidet weiterhin evcc
+    selbst, siehe const.py::CONF_WEEKLY_FULL_CHARGE_ENABLED). min_soc/min_kwh/
+    target_kwh bleiben in _evcc_mode_targets() bewusst die profilbasierten
+    Werte -- nur zur Anzeige/Transparenz, nicht das, was tatsaechlich an evcc
+    geschrieben wird.
+
+    Zwei Stufen (siehe weekly_balancing_time_ok()):
+      - faellig, `forced=False` (Tag noch nicht vorbei): nur das Ziel auf 100
+        anheben, den Modus unveraendert lassen. Ueberschuss (PV, voller
+        Speicher) wird so schon jetzt ins Auto geladen, ohne dass Netzstrom
+        erzwungen wird (der Modus bleibt pv bzw. wird von
+        apply_realtime_pv_override() nur bei wirtschaftlich passendem
+        Zuschuss auf minpv angehoben). Nutzerfeedback 2026-10-12: bei vollem
+        Speicher und Sonne passierte bis zum Abend nichts.
+      - faellig, `forced=True` (PV-Tag praktisch vorbei): Ziel 100 + minpv,
+        damit die Vollladung sicher fertig wird."""
     if not due:
         return mode, target_soc
+    if not forced:
+        return mode, 100
     return "minpv", 100
 
 
@@ -1499,7 +1511,12 @@ def apply_opportunistic_surplus_target(
     elif now_ts - pending_since_ts >= min_hold_s:
         was_active = raw_ok  # Wechsel lang genug angefragt -- uebernehmen
         pending_since_ts = None
-    effective_target_soc = ceiling_soc if was_active else target_soc
+    # max() statt nur ceiling_soc: ein hoeheres Ziel (z. B. 100 % der
+    # faelligen Balancing-Vollladung) darf durch die Anhebung nie gesenkt werden.
+    effective_target_soc = (
+        max(ceiling_soc, target_soc) if was_active and target_soc is not None
+        else ceiling_soc if was_active else target_soc
+    )
     return effective_target_soc, was_active, pending_since_ts
 
 

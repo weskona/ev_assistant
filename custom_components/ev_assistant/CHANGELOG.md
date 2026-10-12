@@ -13,6 +13,15 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.38] - 2026-10-12
+
+### Fixed
+
+- **Due weekly balancing full charge did nothing until the end of the day, even with a full home battery and sunshine:** the time gate (PV remainder forecast ≤ 0.3 kWh, or 23:00 without a forecast) held back the *whole* override, so the car stayed at the daily maximum target SoC (default 80 %) while surplus went to the grid. Now there are two stages: as soon as the full charge is due, the **target SoC is raised to 100 %** while the mode stays unchanged (pv; the real-time PV override may still add `minpv` where the grid top-up is economical), so surplus charges the car right away without forcing grid power. At the end of the solar day the gate still **forces `minpv` + 100 %** as before to finish the charge. The maximum target SoC still does not apply to a due balancing charge.
+  - The opportunistic surplus target raise no longer lowers a higher target (e.g. 100 % of a due balancing charge) back to the maximum target SoC.
+  - `balancing_aktiv` keeps its meaning (forced `minpv` + 100 %); `balancing_faellig` is true as soon as the charge is due.
+  - How surplus is split between home battery and car is still decided by evcc (battery priority settings there).
+
 ## [0.99.37] - 2026-10-10
 
 ### Fixed
