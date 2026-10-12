@@ -1178,27 +1178,52 @@ def weekly_balancing_time_ok(
     now_local_hour: int,
     pv_rest_threshold_kwh: float,
     fallback_hour: int,
+    pv_fuer_auto_kwh: Optional[float] = None,
+    need_kwh: Optional[float] = None,
+    night_end_hour: int = 6,
+    margin: float = 1.0,
+    pv_morgen_kwh: Optional[float] = None,
 ) -> bool:
     """Ob eine faellige woechentliche Balancing-Vollladung (siehe
-    weekly_balancing_due()) jetzt tatsaechlich erzwungen werden soll,
-    statt noch den Rest des heutigen Solartags per normaler pv/minpv-
-    Logik abzuwarten. Produktionsfeedback 2026-09-27: eine z.B. um 13:29
-    faellig gewordene Vollladung schnitt bislang sofort den kompletten
-    restlichen Solartag ab, obwohl noch reichlich PV zu erwarten war.
+    weekly_balancing_due()) jetzt tatsaechlich erzwungen werden soll (minpv,
+    auch aus dem Netz), statt auf PV-Ueberschuss zu warten. Produktions-
+    feedback 2026-09-27: eine z.B. um 13:29 faellig gewordene Vollladung
+    schnitt bislang sofort den kompletten restlichen Solartag ab, obwohl noch
+    reichlich PV zu erwarten war.
 
-    Bevorzugt die konfigurierte PV-Restprognose fuer heute (siehe
-    CONF_PV_FORECAST_TODAY_REMAINING_ENTITY/coordinator.py::
-    _pv_forecast_today_remaining_kwh()): faellt sie auf/unter
-    `pv_rest_threshold_kwh` (klein statt exakt 0, gegen Prognose-
-    Rundungsrauschen), gilt der PV-Tag als praktisch vorbei -- OK zum
-    Erzwingen. Ohne konfigurierte Entitaet (`pv_rest_heute_kwh=None`)
-    gibt es keine Prognose, an der sich das beurteilen liesse; Fallback
-    ist dann eine feste lokale Uhrzeit (`fallback_hour`, Nutzer-
-    entscheidung 2026-09-27: 23 Uhr), da eine faellige Vollladung sonst
-    ganz ohne diese Entitaet nie ausgeloest wuerde."""
+    Mit konfigurierter PV-Restprognose fuer heute (siehe coordinator.py::
+    _pv_forecast_today_remaining_kwh()) wird erzwungen, wenn
+      - der PV-Tag praktisch vorbei ist (`pv_rest_heute_kwh` <=
+        `pv_rest_threshold_kwh`, klein statt exakt 0 gegen Prognose-
+        Rundungsrauschen) UND die Prognose fuer morgen (`pv_morgen_kwh`) den
+        Bedarf nicht deckt (`need_kwh` x `margin`) bzw. nicht bekannt ist --
+        sonst wuerde zwischen Sonnenuntergang und Mitternacht (die Heute-
+        Prognose steht dann auf 0 und springt erst um 0 Uhr auf morgen) Netz-
+        strom erzwungen, obwohl morgen genug Sonne kaeme, ODER
+      - die PV, die dem Auto noch bleibt (`pv_fuer_auto_kwh`, Prognose minus
+        Resthausverbrauch), den Bedarf bis 100 % (`need_kwh` x `margin`) nicht
+        mehr deckt -- dann bringt Warten nichts (Winter mit kaum PV, oder
+        Abend mit zu wenig Restsonne).
+    Reicht die PV dagegen aus, wird NICHT erzwungen: auch nachts nicht. Um
+    Mitternacht springt die "verbleibend heute"-Prognose auf den neuen Tag;
+    deckt dessen PV den Bedarf, darf die Vollladung nachts pausieren und
+    morgens per Ueberschuss fertig werden (Nutzerentscheidung 2026-10-12).
+    Fehlen `pv_fuer_auto_kwh`/`need_kwh`, gilt nur die erste Bedingung.
+
+    Ohne konfigurierte Entitaet (`pv_rest_heute_kwh=None`) gibt es keine
+    Prognose, an der sich das beurteilen liesse; Fallback ist dann die Nacht:
+    ab `fallback_hour` (Nutzerentscheidung 2026-09-27: 23 Uhr) bis
+    `night_end_hour`, damit eine faellige Vollladung sonst ganz ohne diese
+    Entitaet nicht um Mitternacht wieder abbricht."""
     if pv_rest_heute_kwh is not None:
-        return pv_rest_heute_kwh <= pv_rest_threshold_kwh
-    return now_local_hour >= fallback_hour
+        if pv_rest_heute_kwh <= pv_rest_threshold_kwh:
+            if pv_morgen_kwh is not None and need_kwh is not None:
+                return pv_morgen_kwh < need_kwh * margin
+            return True
+        if pv_fuer_auto_kwh is not None and need_kwh is not None:
+            return pv_fuer_auto_kwh < need_kwh * margin
+        return False
+    return now_local_hour >= fallback_hour or now_local_hour < night_end_hour
 
 
 def normalize_vehicle_label(s: str) -> str:

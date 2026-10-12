@@ -656,6 +656,14 @@ WEEKLY_BALANCING_PV_REST_THRESHOLD_KWH = 0.3
 # (CONF_PV_FORECAST_TODAY_REMAINING_ENTITY) -- Nutzerentscheidung
 # 2026-09-27: "ansonsten ab 23 uhr".
 WEEKLY_BALANCING_FALLBACK_HOUR = 23
+# Ende der Nacht (lokale Stunde) fuer den Fallback ohne PV-Prognose: von
+# WEEKLY_BALANCING_FALLBACK_HOUR bis hierhin bleibt die Vollladung erzwungen,
+# damit sie um Mitternacht nicht abbricht.
+WEEKLY_BALANCING_NIGHT_END_HOUR = 6
+# Sicherheitsfaktor auf den kWh-Bedarf bis 100 % beim Vergleich mit der PV, die
+# dem Auto noch bleibt (siehe engine.weekly_balancing_time_ok()): Prognosen
+# sind optimistisch, Speicher und Haus konkurrieren um dieselbe PV.
+WEEKLY_BALANCING_PV_MARGIN = 1.2
 # Automatische Ausreisser-Daempfung (siehe engine.py::
 # clamp_weekday_contribution()) fuer alle drei Wochentags-Profil-
 # Buchungsstellen (Fahrtenbuch, Haus, Live-SoC-Fahrzeug) -- ein Beitrag,
