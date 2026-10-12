@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.43] - 2026-10-12
+
+### Changed
+
+- **Release guard in CI** (after 0.99.39 shipped with an empty `manifest.json`): `.github/scripts/check_release.py` checks, before a release is published, that `manifest.json` exists, is not empty, is valid JSON, has `domain`/`name`/`version`, that `version` equals the tag without the `v` (also for suffix tags such as `v0.99.42-glow.2`, compared in full), that `hacs.json` is valid JSON and that `CHANGELOG.md` has a section for the version (error for stable tags, warning for pre-releases). `release.yml` runs it against the checkout and again against the finished `ev_assistant.zip`; `glow-prerelease.yml` runs it before it publishes a Glow pre-release. In addition, `release.yml` now runs hassfest, Ruff and pytest (reusing `validate.yml`) before it creates the release; the HACS validation is left out in the tag context because it already runs on every push to `main`. Tested by `tests/test_check_release.py`. No change to the integration code.
+
 ## [0.99.42] - 2026-10-12
 
 ### Fixed
