@@ -7037,16 +7037,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # balancing_due bleibt die reine Intervall-Faelligkeit (Anzeige im
         # "balancing_faellig"-Attribut) -- ob JETZT tatsaechlich erzwungen
         # wird, haengt zusaetzlich vom Tageszeit-Gate ab (siehe
-        # engine.weekly_balancing_time_ok()-Docstring): sonst wuerde eine
-        # z.B. mittags faellige Vollladung sofort den Rest des Solartags
-        # abschneiden statt ihn noch normal per pv/minpv zu nutzen.
+        # engine.weekly_balancing_time_ok()-Docstring): Netzstrom-Erzwingen
+        # (minpv) erst am Tagesende. Davor wird nur das Ziel auf 100 %
+        # angehoben (Modus bleibt), damit vorhandener Ueberschuss schon
+        # jetzt ins Auto geht (Nutzerfeedback 2026-10-12).
         balancing_trigger = balancing_due and weekly_balancing_time_ok(
             pv_rest_heute_roh_optional,
             self._local_hour(),
             WEEKLY_BALANCING_PV_REST_THRESHOLD_KWH,
             WEEKLY_BALANCING_FALLBACK_HOUR,
         )
-        mode, target_soc = apply_weekly_balancing_override(mode, target_soc, balancing_trigger)
+        mode, target_soc = apply_weekly_balancing_override(mode, target_soc, balancing_due, forced=balancing_trigger)
         # Zweite, schnellere Entscheidungsebene (siehe engine.apply_realtime_
         # pv_override()-Docstring): hebt "mode" (die obige Tages-Logik) in
         # Echtzeit von "pv" auf "minpv" an, wenn der aktuelle PV-Ueberschuss

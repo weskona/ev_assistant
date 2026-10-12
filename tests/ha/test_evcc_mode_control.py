@@ -2537,7 +2537,10 @@ async def test_evcc_mode_targets_balancing_faellig_mittags_noch_pv_uebrig_nicht_
     targets = coordinator._evcc_mode_targets()
     assert targets["balancing_faellig"] is True
     assert targets["balancing_aktiv"] is False
-    assert targets["modus"] != "minpv" or targets["target_soc"] != 100
+    # Kein Erzwingen (kein minpv), aber das Ziel ist schon 100 %, damit
+    # vorhandener PV-Ueberschuss ins Auto geht (Nutzerfeedback 2026-10-12).
+    assert targets["modus"] != "minpv"
+    assert targets["target_soc"] == 100
 
 
 async def test_evcc_mode_targets_balancing_faellig_pv_aufgebraucht_wird_aktiv(hass, coordinators):
