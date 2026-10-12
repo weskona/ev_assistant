@@ -2532,7 +2532,7 @@ async def test_evcc_mode_targets_balancing_faellig_mittags_noch_pv_uebrig_nicht_
     coordinator._day_fraction_elapsed = lambda: 0.5
     coordinator._local_hour = lambda: 13
     coordinator.data["vollladung_letzter_ts"] = None  # noch nie -> sofort faellig
-    hass.states.async_set("sensor.pv_rest", "5.0", {"unit_of_measurement": "kWh"})
+    hass.states.async_set("sensor.pv_rest", "60.0", {"unit_of_measurement": "kWh"})
 
     targets = coordinator._evcc_mode_targets()
     assert targets["balancing_faellig"] is True
@@ -3087,3 +3087,80 @@ async def test_ueberschuss_ziel_heartbeat_speichert_gedrosselt(hass, coordinator
     coordinator._ueberschuss_ziel_gespeichert_ts = jetzt - 301
     coordinator._evcc_mode_targets()
     coordinator._save_soon.assert_called_once()
+
+
+async def _balancing_szenario(hass, coordinators, entry_id, hour, pv_rest, with_forecast=True):
+    from custom_components.ev_assistant.const import (
+        CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
+        CONF_USABLE_KWH,
+        CONF_WEEKLY_FULL_CHARGE_ENABLED,
+    )
+
+    options = {CONF_USABLE_KWH: 50.0, CONF_WEEKLY_FULL_CHARGE_ENABLED: True}
+    if with_forecast:
+        options[CONF_PV_FORECAST_TODAY_REMAINING_ENTITY] = "sensor.pv_rest"
+    coordinator, _ = await _make_coordinator(hass, coordinators, entry_id, options=options)
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0  # Bedarf bis 100 %: 25 kWh (x 1,2 Sicherheitsfaktor = 30 kWh)
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    coordinator._local_hour = lambda: hour
+    coordinator.data["vollladung_letzter_ts"] = None
+    if with_forecast:
+        hass.states.async_set("sensor.pv_rest", str(pv_rest), {"unit_of_measurement": "kWh"})
+    return coordinator._evcc_mode_targets()
+
+
+async def test_balancing_mitternacht_morgiger_tag_reicht_pausiert(hass, coordinators):
+    """Um 0 Uhr springt die Rest-Prognose auf den neuen Tag. Deckt dessen PV
+    den Bedarf, wird nachts NICHT erzwungen (Nutzerentscheidung 2026-10-12),
+    das Ziel bleibt aber 100 %."""
+    targets = await _balancing_szenario(hass, coordinators, "wb_mitternacht_reicht", hour=0, pv_rest=60.0)
+    assert targets["balancing_erzwungen"] is False
+    assert targets["target_soc"] == 100
+    assert targets["modus"] != "minpv"
+
+
+async def test_balancing_mitternacht_morgiger_tag_reicht_nicht_bleibt_erzwungen(hass, coordinators):
+    """Winter: kaum PV morgen -> sonst wuerde die Vollladung nie erreicht."""
+    targets = await _balancing_szenario(hass, coordinators, "wb_mitternacht_winter", hour=0, pv_rest=5.0)
+    assert targets["balancing_erzwungen"] is True
+    assert targets["modus"] == "minpv"
+    assert targets["target_soc"] == 100
+
+
+async def test_balancing_ohne_prognose_nacht_bleibt_erzwungen_morgens_nicht(hass, coordinators):
+    nacht = await _balancing_szenario(hass, coordinators, "wb_fb_nacht", hour=0, pv_rest=0, with_forecast=False)
+    assert nacht["balancing_erzwungen"] is True
+    morgens = await _balancing_szenario(hass, coordinators, "wb_fb_morgen", hour=7, pv_rest=0, with_forecast=False)
+    assert morgens["balancing_erzwungen"] is False
+
+
+async def test_balancing_abends_heute_leer_morgen_reicht_nicht_erzwungen(hass, coordinators):
+    """Nach Sonnenuntergang (Heute-Rest 0) mit ausreichender Morgen-Prognose
+    wird nicht erzwungen; ohne ausreichende Morgen-Prognose schon."""
+    from custom_components.ev_assistant.const import (
+        CONF_PV_FORECAST_ENTITY,
+        CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
+        CONF_USABLE_KWH,
+        CONF_WEEKLY_FULL_CHARGE_ENABLED,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "wb_abend_morgen",
+        options={
+            CONF_USABLE_KWH: 50.0,
+            CONF_WEEKLY_FULL_CHARGE_ENABLED: True,
+            CONF_PV_FORECAST_TODAY_REMAINING_ENTITY: "sensor.pv_rest",
+            CONF_PV_FORECAST_ENTITY: "sensor.pv_morgen",
+        },
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator._day_fraction_elapsed = lambda: 0.9
+    coordinator._local_hour = lambda: 21
+    coordinator.data["vollladung_letzter_ts"] = None
+    hass.states.async_set("sensor.pv_rest", "0", {"unit_of_measurement": "kWh"})
+    hass.states.async_set("sensor.pv_morgen", "40", {"unit_of_measurement": "kWh"})
+    assert coordinator._evcc_mode_targets()["balancing_erzwungen"] is False
+    hass.states.async_set("sensor.pv_morgen", "5", {"unit_of_measurement": "kWh"})
+    assert coordinator._evcc_mode_targets()["balancing_erzwungen"] is True

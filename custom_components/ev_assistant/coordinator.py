@@ -186,6 +186,8 @@ from .const import (
     WARTUNG_ROLLING_WINDOW_DAYS,
     WARTUNG_TAGE_PRO_MONAT,
     WEEKLY_BALANCING_FALLBACK_HOUR,
+    WEEKLY_BALANCING_NIGHT_END_HOUR,
+    WEEKLY_BALANCING_PV_MARGIN,
     WEEKLY_BALANCING_PV_REST_THRESHOLD_KWH,
     resolve_lade_modus,
 )
@@ -7061,11 +7063,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # (minpv) erst am Tagesende. Davor wird nur das Ziel auf 100 %
         # angehoben (Modus bleibt), damit vorhandener Ueberschuss schon
         # jetzt ins Auto geht (Nutzerfeedback 2026-10-12).
+        # Bedarf bis 100 % (kWh); None ohne bekannten SoC -> nur die reine
+        # "PV-Tag vorbei"-Bedingung.
+        balancing_need_kwh = (
+            max(0.0, 100.0 - float(self._soc)) / 100.0 * usable_kwh if isinstance(self._soc, (int, float)) else None
+        )
         balancing_trigger = balancing_due and weekly_balancing_time_ok(
             pv_rest_heute_roh_optional,
             self._local_hour(),
             WEEKLY_BALANCING_PV_REST_THRESHOLD_KWH,
             WEEKLY_BALANCING_FALLBACK_HOUR,
+            pv_fuer_auto_kwh=pv_fuer_auto,
+            need_kwh=balancing_need_kwh,
+            night_end_hour=WEEKLY_BALANCING_NIGHT_END_HOUR,
+            margin=WEEKLY_BALANCING_PV_MARGIN,
+            pv_morgen_kwh=self._pv_forecast_tomorrow_kwh(),
         )
         mode, target_soc = apply_weekly_balancing_override(mode, target_soc, balancing_due, forced=balancing_trigger)
         # Zweite, schnellere Entscheidungsebene (siehe engine.apply_realtime_

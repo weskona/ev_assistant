@@ -2,6 +2,15 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.42] - 2026-10-12
+
+### Fixed
+
+- **A due weekly balancing full charge stopped at midnight:** the "force" stage (`minpv` + 100 %) was tied to "PV remainder forecast for today ≤ 0.3 kWh". At 00:00 that forecast jumps to the new day's full forecast, so the stage dropped out and the charge paused until the next morning. The decision is now based on whether the PV that is still to come can finish the charge:
+  - **Forced** (`balancing_erzwungen`) when the PV left for the car (forecast minus remaining house consumption) is less than the energy needed up to 100 % × 1.2 (`WEEKLY_BALANCING_PV_MARGIN`) – so in winter with hardly any PV a full charge still gets completed – or when the solar day is over **and** tomorrow's forecast (`pv_forecast_entity`) does not cover the need either.
+  - **Not forced** when the PV is sufficient, also during the night: the target stays at 100 % and the charge may pause overnight and finish with surplus the next morning. After sunset (today's remainder 0) with a sunny tomorrow, grid power is no longer forced either.
+  - Without a configured today-remainder forecast the fallback is the night (23:00 until 06:00, `WEEKLY_BALANCING_NIGHT_END_HOUR`) instead of only from 23:00, so the charge does not stop at midnight.
+
 ## [0.99.41] - 2026-10-12
 
 ### Fixed

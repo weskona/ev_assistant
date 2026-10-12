@@ -4597,3 +4597,47 @@ def test_restore_surplus_target_zeitstempel_in_der_zukunft_ist_false():
 
 def test_restore_surplus_target_flag_muss_exakt_true_sein():
     assert restore_surplus_target_active(1, 1000.0, 1100.0, 900.0) is False
+
+
+# ----- weekly_balancing_time_ok: PV reicht fuer den Bedarf? (Nutzerentscheidung 2026-10-12) -----
+
+def test_weekly_balancing_time_ok_pv_reicht_nicht_erzwingt_trotz_rest():
+    assert weekly_balancing_time_ok(
+        5.0, 0, 0.3, 23, pv_fuer_auto_kwh=5.0, need_kwh=20.0, margin=1.2
+    ) is True
+
+
+def test_weekly_balancing_time_ok_pv_reicht_erzwingt_nicht():
+    assert weekly_balancing_time_ok(
+        30.0, 0, 0.3, 23, pv_fuer_auto_kwh=30.0, need_kwh=20.0, margin=1.2
+    ) is False
+
+
+def test_weekly_balancing_time_ok_pv_reicht_knapp_nicht_mit_sicherheitsfaktor():
+    assert weekly_balancing_time_ok(
+        22.0, 12, 0.3, 23, pv_fuer_auto_kwh=22.0, need_kwh=20.0, margin=1.2
+    ) is True
+
+
+def test_weekly_balancing_time_ok_ohne_prognose_nacht_bis_morgens():
+    assert weekly_balancing_time_ok(None, 0, 0.3, 23) is True
+    assert weekly_balancing_time_ok(None, 5, 0.3, 23) is True
+    assert weekly_balancing_time_ok(None, 6, 0.3, 23) is False
+    assert weekly_balancing_time_ok(None, 23, 0.3, 23) is True
+
+
+def test_weekly_balancing_time_ok_abends_morgen_reicht_nicht_erzwungen():
+    """Heute-Prognose 0 (Sonnenuntergang), morgen genug PV: nicht erzwingen."""
+    assert weekly_balancing_time_ok(
+        0.0, 20, 0.3, 23, pv_fuer_auto_kwh=0.0, need_kwh=20.0, margin=1.2, pv_morgen_kwh=40.0
+    ) is False
+
+
+def test_weekly_balancing_time_ok_abends_morgen_zu_wenig_erzwungen():
+    assert weekly_balancing_time_ok(
+        0.0, 20, 0.3, 23, pv_fuer_auto_kwh=0.0, need_kwh=20.0, margin=1.2, pv_morgen_kwh=5.0
+    ) is True
+
+
+def test_weekly_balancing_time_ok_abends_ohne_morgen_prognose_wie_bisher():
+    assert weekly_balancing_time_ok(0.0, 20, 0.3, 23, need_kwh=20.0, margin=1.2) is True
