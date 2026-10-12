@@ -74,6 +74,7 @@ from engine import (
     range_km_to_soc_percent,
     remaining_today_kwh,
     remove_weekday_day,
+    restore_surplus_target_active,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
     session_totals_since,
@@ -4562,3 +4563,37 @@ def test_surplus_target_senkt_hoeheres_ziel_nicht_unter_ceiling():
     )
     assert active is True
     assert target == 100
+
+
+# ----- restore_surplus_target_active: Wiederherstellung nach Reload (Issue #27) ---
+
+def test_restore_surplus_target_frisch_aktiv_ist_true():
+    assert restore_surplus_target_active(True, 1000.0, 1100.0, 900.0) is True
+
+
+def test_restore_surplus_target_genau_an_max_age_ist_true():
+    assert restore_surplus_target_active(True, 1000.0, 1900.0, 900.0) is True
+
+
+def test_restore_surplus_target_veraltet_ist_false():
+    assert restore_surplus_target_active(True, 1000.0, 1900.1, 900.0) is False
+
+
+def test_restore_surplus_target_nicht_aktiv_ist_false():
+    assert restore_surplus_target_active(False, 1000.0, 1100.0, 900.0) is False
+    assert restore_surplus_target_active(None, 1000.0, 1100.0, 900.0) is False
+
+
+def test_restore_surplus_target_zeitstempel_fehlt_oder_ungueltig_ist_false():
+    assert restore_surplus_target_active(True, None, 1100.0, 900.0) is False
+    assert restore_surplus_target_active(True, "1000", 1100.0, 900.0) is False
+    assert restore_surplus_target_active(True, True, 1100.0, 900.0) is False
+    assert restore_surplus_target_active(True, float("nan"), 1100.0, 900.0) is False
+
+
+def test_restore_surplus_target_zeitstempel_in_der_zukunft_ist_false():
+    assert restore_surplus_target_active(True, 2000.0, 1100.0, 900.0) is False
+
+
+def test_restore_surplus_target_flag_muss_exakt_true_sein():
+    assert restore_surplus_target_active(1, 1000.0, 1100.0, 900.0) is False

@@ -625,6 +625,16 @@ EVCC_MODE_TARGET_DAYS = 1
 # zu lassen, kurz genug, um laengere echte Ueberschussphasen noch sinnvoll
 # zu nutzen.
 EVCC_UEBERSCHUSS_ZIEL_HOLD_S = 300.0
+# Wie alt der persistierte Zustand der Ueberschuss-Zielanhebung (siehe
+# engine.restore_surplus_target_active()) beim Start hoechstens sein darf, um
+# wiederhergestellt zu werden (Issue #27). Der Zeitstempel wird im Betrieb
+# jeden Zyklus (~1 Min.) aufgefrischt; ein Reload dauert Sekunden, ein HA-
+# Neustart/Core-Update typisch 2-10 Minuten. 900 s = 3 x Hold-Zeit deckt das
+# ab; bei laengerem Ausfall ist die Lage unklar -> konservativ "nicht aktiv".
+EVCC_UEBERSCHUSS_ZIEL_RESTORE_MAX_AGE_S = 900.0
+# Mindestabstand (s) zwischen zwei Heartbeat-Speicherungen des Zeitstempels
+# oben, solange die Anhebung aktiv ist (Absturzschutz ohne Schreibflut).
+EVCC_UEBERSCHUSS_ZIEL_HEARTBEAT_SAVE_S = 300.0
 # Feature komplett deaktiviert, bis aktiv per CONF_WEEKLY_FULL_CHARGE_ENABLED
 # (oder dem Panel-Laufzeit-Override) freigeschaltet.
 DEFAULT_WEEKLY_FULL_CHARGE_ENABLED = False
