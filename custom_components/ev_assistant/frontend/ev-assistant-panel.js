@@ -1351,6 +1351,27 @@ class EVAssistantPanel extends HTMLElement {
     wrap.innerHTML = `
       <div class="card">
         <div class="card-head">
+          <span class="ic"><ha-icon icon="mdi:car-side"></ha-icon></span><h2>Fahrzeugbild</h2>
+        </div>
+        <div class="profil-empty">
+          Optionales Bild dieses Fahrzeugs (JPEG, PNG oder WebP, bis 10 MB) für Karten, die es anzeigen, z. B. Glow.
+          Es wird verkleinert und von allen Metadaten (z. B. GPS) befreit; freigestellte Bilder mit Transparenz
+          bleiben transparent.
+        </div>
+        <img id="einst-img-preview" class="hidden" alt="Fahrzeugbild"
+             style="max-width:100%;max-height:200px;object-fit:contain;border-radius:12px;margin-top:10px">
+        <div class="profil-empty" id="einst-img-empty" style="margin-top:10px">Kein Bild gesetzt.</div>
+        <input type="file" accept="image/jpeg,image/png,image/webp" id="einst-img-file" class="hidden">
+        <button type="button" class="btn btn-ghost" id="einst-img-pick" style="margin-top:10px">
+          <ha-icon icon="mdi:image-plus-outline"></ha-icon> Bild auswählen…
+        </button>
+        <button type="button" class="btn btn-ghost hidden" id="einst-img-clear" style="margin-top:10px">
+          <ha-icon icon="mdi:delete-outline"></ha-icon> Entfernen
+        </button>
+        <div class="profil-empty" id="einst-img-status" style="margin-top:8px"></div>
+      </div>
+      <div class="card">
+        <div class="card-head">
           <span class="ic"><ha-icon icon="mdi:eye-off-outline"></ha-icon></span><h2>Sichtbare Tabs</h2>
         </div>
         <div class="profil-empty">
@@ -1450,7 +1471,78 @@ class EVAssistantPanel extends HTMLElement {
       einstEventLogView: q("#einst-event-log-view"),
       einstLogFilterKat: q("#einst-log-filter-kat"),
       einstLogFilterText: q("#einst-log-filter-text"),
+      einstImgPreview: q("#einst-img-preview"),
+      einstImgEmpty: q("#einst-img-empty"),
+      einstImgClear: q("#einst-img-clear"),
+      einstImgStatus: q("#einst-img-status"),
     };
+
+    // Fahrzeugbild: Upload ueber den HA-Standardweg (POST /api/file_upload ->
+    // file_id -> Service set_vehicle_image), siehe __init__.py. Fehler des
+    // Services (Format, Groesse, nicht lesbar ...) erscheinen im Status-Text
+    // UND als Toast.
+    const imgFile = q("#einst-img-file");
+    const imgPick = q("#einst-img-pick");
+    const imgClear = this._r.einstImgClear;
+    const imgStatus = this._r.einstImgStatus;
+    const IMG_MAX_BYTES = 10 * 1024 * 1024;
+    const imgToast = (message) => this.dispatchEvent(
+      new CustomEvent("hass-notification", { detail: { message }, bubbles: true, composed: true }));
+    const imgBusy = (busy) => { imgPick.disabled = busy; imgClear.disabled = busy; };
+    imgPick.addEventListener("click", () => imgFile.click());
+    imgFile.addEventListener("change", async () => {
+      const file = imgFile.files[0];
+      imgFile.value = "";
+      if (!file) return;
+      const config_entry_id = this._configEntryId();
+      if (!config_entry_id) return;
+      if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+        imgStatus.textContent = "Dieses Dateiformat wird nicht unterstützt. Erlaubt sind JPEG, PNG und WebP.";
+        return;
+      }
+      if (file.size > IMG_MAX_BYTES) {
+        imgStatus.textContent = "Die Bilddatei ist zu groß (maximal 10 MB).";
+        return;
+      }
+      imgBusy(true);
+      imgStatus.textContent = "Wird hochgeladen…";
+      try {
+        const form = new FormData();
+        form.append("file", file);
+        const resp = this._hass.fetchWithAuth
+          ? await this._hass.fetchWithAuth("/api/file_upload", { method: "POST", body: form })
+          : await fetch("/api/file_upload", {
+              method: "POST",
+              body: form,
+              headers: { Authorization: `Bearer ${this._hass.auth.data.access_token}` },
+            });
+        if (!resp.ok) throw new Error(`Upload fehlgeschlagen (HTTP ${resp.status}).`);
+        const { file_id } = await resp.json();
+        await this._hass.callService("ev_assistant", "set_vehicle_image", { config_entry_id, file_id });
+        imgStatus.textContent = "Bild gesetzt.";
+      } catch (err) {
+        const message = (err && err.message) || String(err);
+        imgStatus.textContent = message;
+        imgToast(message);
+      } finally {
+        imgBusy(false);
+      }
+    });
+    imgClear.addEventListener("click", async () => {
+      const config_entry_id = this._configEntryId();
+      if (!config_entry_id) return;
+      imgBusy(true);
+      try {
+        await this._hass.callService("ev_assistant", "clear_vehicle_image", { config_entry_id });
+        imgStatus.textContent = "Bild entfernt.";
+      } catch (err) {
+        const message = (err && err.message) || String(err);
+        imgStatus.textContent = message;
+        imgToast(message);
+      } finally {
+        imgBusy(false);
+      }
+    });
 
     q("#einst-tabvis-save").addEventListener("click", () => {
       const hidden = Array.from(q("#einst-tabvis-form").querySelectorAll(".tabvis-check"))
@@ -1619,7 +1711,29 @@ class EVAssistantPanel extends HTMLElement {
     return wrap;
   }
 
+  // Vorschau/Entfernen-Knopf des Fahrzeugbilds aus der Image-Entitaet
+  // (`vehicle_image`): State `unknown` = kein Bild (die Entitaet existiert
+  // immer); entity_picture zeigt auf /api/image_proxy/... mit Token.
+  _updateFahrzeugbild() {
+    const r = this._r;
+    if (!r.einstImgPreview) return;
+    const eid = this._eid("vehicle_image");
+    const st = eid && this._hass ? this._hass.states[eid] : null;
+    const hasImage = !!st && st.state !== "unknown" && st.state !== "unavailable"
+      && !!(st.attributes && st.attributes.entity_picture);
+    r.einstImgPreview.classList.toggle("hidden", !hasImage);
+    r.einstImgEmpty.classList.toggle("hidden", hasImage);
+    r.einstImgClear.classList.toggle("hidden", !hasImage);
+    if (hasImage) {
+      const src = st.attributes.entity_picture;
+      if (r.einstImgPreview.getAttribute("src") !== src) r.einstImgPreview.setAttribute("src", src);
+    } else {
+      r.einstImgPreview.removeAttribute("src");
+    }
+  }
+
   _updateEinstellungen() {
+    this._updateFahrzeugbild();
     if (!this._r.einstEventLogView) return;
     if (this._eventLog === undefined || Date.now() - (this._eventLogFetchedAt || 0) > 30000) {
       this._fetchEventLog();
