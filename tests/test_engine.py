@@ -91,6 +91,7 @@ from engine import (
     trip_weekday_kwh_parts,
     update_period_baseline,
     vehicle_discharge_update,
+    vollladung_confirm,
     wartung_festes_datum_fortschreiben,
     wartung_status,
     wartung_uebersicht,
@@ -4641,3 +4642,32 @@ def test_weekly_balancing_time_ok_abends_morgen_zu_wenig_erzwungen():
 
 def test_weekly_balancing_time_ok_abends_ohne_morgen_prognose_wie_bisher():
     assert weekly_balancing_time_ok(0.0, 20, 0.3, 23, need_kwh=20.0, margin=1.2) is True
+
+
+# ----- vollladung_confirm: Ausreisser duerfen keine Vollladung buchen (2026-10-12) -----
+
+def test_vollladung_confirm_einzelner_ausreisser_ist_nicht_erreicht():
+    reached, pending = vollladung_confirm(98.0, 98.0, None, 1000.0, 120.0)
+    assert reached is False
+    assert pending == 1000.0
+    # SoC faellt zurueck -> Warten verfaellt
+    reached, pending = vollladung_confirm(85.0, 98.0, pending, 1004.0, 120.0)
+    assert reached is False
+    assert pending is None
+
+
+def test_vollladung_confirm_durchgehend_ueber_schwelle_ist_erreicht():
+    _, pending = vollladung_confirm(98.0, 98.0, None, 1000.0, 120.0)
+    reached, pending = vollladung_confirm(99.0, 98.0, pending, 1119.0, 120.0)
+    assert reached is False
+    reached, pending = vollladung_confirm(100.0, 98.0, pending, 1120.0, 120.0)
+    assert reached is True
+    assert pending == 1000.0
+
+
+def test_vollladung_confirm_unter_schwelle_bleibt_none():
+    assert vollladung_confirm(87.0, 98.0, None, 1000.0, 120.0) == (False, None)
+
+
+def test_vollladung_confirm_zukuenftiger_beginn_startet_neu():
+    assert vollladung_confirm(99.0, 98.0, 5000.0, 1000.0, 120.0) == (False, 1000.0)

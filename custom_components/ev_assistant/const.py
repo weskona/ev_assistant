@@ -644,6 +644,13 @@ DEFAULT_WEEKLY_FULL_CHARGE_INTERVAL_DAYS = 7
 # darunter statt exakter Gleichheit verhindert, dass eine Vollladung nie als
 # "erreicht" erkannt wird (siehe engine.py::soc_reached_full_charge()).
 VOLLLADUNG_SOC_THRESHOLD = 98.0
+# Wie lange der SoC durchgehend >= VOLLLADUNG_SOC_THRESHOLD bleiben muss, bevor
+# die Vollladung als erreicht gilt (siehe engine.vollladung_confirm()). Ohne
+# diese Bestaetigung genuegte ein einzelner Ausreisser (Produktionsvorfall
+# 2026-10-12: SoC 87 -> 98 -> 85 -> 87 innerhalb von 4 s) und die faellige
+# Vollladung wurde faelschlich als erledigt verbucht. Ein echter Abschluss
+# bleibt deutlich laenger auf 98-100 %.
+VOLLLADUNG_CONFIRM_SECONDS = 120.0
 # Nutzer-unsichtbar, keine Config-Option (siehe engine.py::
 # weekly_balancing_time_ok()) -- ab wann eine faellige woechentliche
 # Balancing-Vollladung tatsaechlich erzwungen wird, statt noch den Rest des
