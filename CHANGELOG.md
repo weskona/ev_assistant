@@ -13,6 +13,12 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.46] - 2026-10-13
+
+### Added
+
+- **Vehicle image upload in the panel (Settings tab):** a new card "Fahrzeugbild" at the top of the Einstellungen tab lets you pick a JPEG/PNG/WebP file, shows the current image as a preview and has a button to remove it. The file goes through Home Assistant's standard path (`POST /api/file_upload` → `file_id` → `set_vehicle_image`, see 0.99.45), so the same processing and limits apply (≤ 10 MB, metadata removed, resized). Obvious problems (wrong format, too large) are reported immediately in the card; errors of the service appear in the card and as a toast. The preview follows the image entity (`entities.vehicle_image`) and is updated when the image is set or removed from elsewhere (e.g. by the Glow card).
+
 ## [0.99.45] - 2026-10-13
 
 ### Added

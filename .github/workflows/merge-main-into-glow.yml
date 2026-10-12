@@ -80,9 +80,13 @@ jobs:
           fi
 
           # Erwartbare Konflikte automatisch aufloesen: manifest.json (beide
-          # Seiten aendern die Versionszeile -- die Version setzt dieser Workflow
-          # gleich selbst) behaelt die glow-panel-Fassung, die beiden CHANGELOGs
-          # (beide Seiten haengen oben einen Abschnitt an) werden vereinigt.
+          # Seiten aendern die Versionszeile) behaelt zunaechst die glow-panel-
+          # Fassung, damit der Merge durchlaeuft -- danach wird das Manifest
+          # unten komplett durch die des Stable-Tags ersetzt und nur die
+          # Version gesetzt (sonst gehen Aenderungen von main am Manifest
+          # verloren, z. B. die Abhaengigkeit file_upload in 0.99.45: hassfest
+          # schlug auf dem Merge-PR fehl). Die beiden CHANGELOGs (beide Seiten
+          # haengen oben einen Abschnitt an) werden vereinigt.
           MANIFEST=custom_components/ev_assistant/manifest.json
           git config merge.keep-glow.driver true
           {
@@ -91,7 +95,7 @@ jobs:
             echo "custom_components/ev_assistant/CHANGELOG.md merge=union"
           } >> .git/info/attributes
           # Hat main AUSSER der Versionszeile etwas im Manifest geaendert (z. B.
-          # neue Abhaengigkeit), geht das mit "keep-glow" verloren -> im PR melden.
+          # neue Abhaengigkeit), wird das unten uebernommen -- hier nur melden.
           if [ "$(git show "$TAG:$MANIFEST" | grep -v '"version"' | md5sum)" != "$(git show "HEAD:$MANIFEST" | grep -v '"version"' | md5sum)" ]; then
             echo "manifest_differs=true" >> "$GITHUB_OUTPUT"
           else
@@ -119,6 +123,9 @@ jobs:
           else
             NEW="$TARGET_BASE-glow.1"
           fi
+          # Manifest = Fassung des Stable-Tags (alle Aenderungen von main), nur
+          # die Version ist die des Glow-Kanals.
+          git show "$TAG:$MANIFEST" > "$MANIFEST"
           sed -i "s/\"version\": *\"[^\"]*\"/\"version\": \"$NEW\"/" "$MANIFEST"
           echo "Version: $CURRENT -> $NEW (Stable $STABLE)"
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
@@ -138,7 +145,7 @@ jobs:
           CURRENT='${{ steps.merge.outputs.current }}'
           MANIFEST_NOTE=""
           if [ '${{ steps.merge.outputs.manifest_differs }}' = 'true' ]; then
-            MANIFEST_NOTE='- **Achtung:** Das Manifest auf main unterscheidet sich außer der Version von glow-panel (z. B. neue Abhängigkeit) – diese Änderung wurde NICHT übernommen, bitte von Hand prüfen.'
+            MANIFEST_NOTE='- Das Manifest auf main hatte außer der Version weitere Änderungen (z. B. neue Abhängigkeit) – sie sind übernommen, nur die Version ist die des Glow-Kanals.'
           fi
           BRANCH="merge/$TAG"
           git push --force origin "HEAD:refs/heads/$BRANCH"
@@ -148,7 +155,7 @@ jobs:
           - Merge von \`$TAG\` in \`glow-panel\`
           - \`manifest.json\`: \`$CURRENT\` -> \`$NEW\` (Glow-Pre-Release bleibt über der Stable)
 
-          - \`manifest.json\` und die CHANGELOGs wurden automatisch aufgelöst: Manifest = Fassung von \`glow-panel\` mit neuer Version, CHANGELOGs = beide Abschnitte vereinigt (**Reihenfolge/Dopplungen im Diff prüfen**).
+          - \`manifest.json\` und die CHANGELOGs wurden automatisch aufgelöst: Manifest = Fassung des Stable-Tags mit der Glow-Version, CHANGELOGs = beide Abschnitte vereinigt (**Reihenfolge/Dopplungen im Diff prüfen**).
           $MANIFEST_NOTE
 
           **Wichtig: mit „Create a merge commit" mergen, nicht squashen und nicht rebasen.** Nur der Merge-Commit behält \`$TAG\` in der Historie von \`glow-panel\`. Bei einem Squash fehlt er dort: der nächste Stable-Merge erkennt „bereits enthalten" nicht mehr und bringt doppelte CHANGELOG-Zeilen bzw. unnötige Konflikte.
