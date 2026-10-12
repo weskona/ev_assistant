@@ -46,6 +46,15 @@ jobs:
           ref: glow-panel
           fetch-depth: 0
 
+      # Das Pruefskript liegt auf main (auf glow-panel erst nach dem naechsten
+      # Merge von main); der Workflow laeuft ohnehin immer von main.
+      - name: Pruefskript von main holen
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: _tools
+          sparse-checkout: .github/scripts
+
       - name: Version pruefen, Notes und Zip bauen
         id: prep
         run: |
@@ -84,6 +93,11 @@ jobs:
             } > notes.md
           fi
           (cd custom_components/ev_assistant && zip -qr ../../ev_assistant.zip .)
+          # Guard (siehe release.yml): Quelle und fertige Zip pruefen, bevor
+          # etwas veroeffentlicht wird. Bei Pre-Releases ist ein fehlender
+          # CHANGELOG-Abschnitt nur eine Warnung.
+          python3 _tools/.github/scripts/check_release.py "$TAG"
+          python3 _tools/.github/scripts/check_release.py "$TAG" --zip ev_assistant.zip
           echo "publish=true" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 

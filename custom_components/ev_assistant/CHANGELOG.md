@@ -13,6 +13,16 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.43] - 2026-10-12
+
+### Fixed
+
+- **Weekly full charge was no longer forced in the evening although tomorrow's PV would not reach the car** (follow-up to 0.99.42): the check "does tomorrow's PV cover the need?" used the raw forecast (`pv_forecast_entity`), which is for the whole house. In the evening a 7.8 kWh forecast looked sufficient for the missing 6.5 kWh (× 1.2), so the mode dropped from `minpv` to `pv` and the car stopped at 87 %, although the house consumes most of that PV. It now uses the forecast **minus the expected house consumption** (house usage profile of tomorrow's weekday, including battery charging). Without a house profile (or no value for that weekday) it no longer relies on tomorrow and forces at the end of the solar day as before 0.99.42.
+
+### Changed
+
+- **Release guard in CI** (after 0.99.39 shipped with an empty `manifest.json`): `.github/scripts/check_release.py` checks, before a release is published, that `manifest.json` exists, is not empty, is valid JSON, has `domain`/`name`/`version`, that `version` equals the tag without the `v` (also for suffix tags such as `v0.99.42-glow.2`, compared in full), that `hacs.json` is valid JSON and that `CHANGELOG.md` has a section for the version (error for stable tags, warning for pre-releases). `release.yml` runs it against the checkout and again against the finished `ev_assistant.zip`; `glow-prerelease.yml` runs it before it publishes a Glow pre-release. In addition, `release.yml` now runs hassfest, Ruff and pytest (reusing `validate.yml`) before it creates the release; the HACS validation is left out in the tag context because it already runs on every push to `main`. Tested by `tests/test_check_release.py`. No change to the integration code.
+
 ## [0.99.42] - 2026-10-12
 
 ### Fixed
