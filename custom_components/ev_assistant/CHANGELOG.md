@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.40] - 2026-10-12
+
+### Fixed
+
+- **0.99.39 shipped with an empty `manifest.json`** (release packaging error), so Home Assistant could not load the integration from that release. 0.99.40 contains the identical code with a valid manifest. **Do not install 0.99.39.**
+
 ## [0.99.39] - 2026-10-12
 
 ### Fixed
