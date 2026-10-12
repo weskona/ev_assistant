@@ -3159,8 +3159,19 @@ async def test_balancing_abends_heute_leer_morgen_reicht_nicht_erzwungen(hass, c
     coordinator._day_fraction_elapsed = lambda: 0.9
     coordinator._local_hour = lambda: 21
     coordinator.data["vollladung_letzter_ts"] = None
+    morgen_wd = (dt_util.now().date() + timedelta(days=1)).weekday()
+    coordinator.house_usage_profile = lambda: {morgen_wd: 8.0}
     hass.states.async_set("sensor.pv_rest", "0", {"unit_of_measurement": "kWh"})
+    # Morgen-PV 40 kWh - Haus 8 kWh = 32 kWh >= Bedarf 25 x 1,2 -> nicht erzwungen
     hass.states.async_set("sensor.pv_morgen", "40", {"unit_of_measurement": "kWh"})
     assert coordinator._evcc_mode_targets()["balancing_erzwungen"] is False
     hass.states.async_set("sensor.pv_morgen", "5", {"unit_of_measurement": "kWh"})
+    assert coordinator._evcc_mode_targets()["balancing_erzwungen"] is True
+    # Genug Prognose, aber das Haus braucht fast alles davon (Nutzerfall
+    # 2026-10-12: 7,8 kWh Prognose, Haus ~8 kWh) -> erzwungen
+    hass.states.async_set("sensor.pv_morgen", "40", {"unit_of_measurement": "kWh"})
+    coordinator.house_usage_profile = lambda: {morgen_wd: 38.0}
+    assert coordinator._evcc_mode_targets()["balancing_erzwungen"] is True
+    # Ohne Hausprofil nicht auf morgen verlassen -> erzwungen
+    coordinator.house_usage_profile = lambda: None
     assert coordinator._evcc_mode_targets()["balancing_erzwungen"] is True

@@ -7068,6 +7068,20 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         balancing_need_kwh = (
             max(0.0, 100.0 - float(self._soc)) / 100.0 * usable_kwh if isinstance(self._soc, (int, float)) else None
         )
+        # PV von morgen, die dem Auto bleibt: Prognose (gilt fuers ganze Haus)
+        # minus erwarteten Hausverbrauch (inkl. Speicherladung) des morgigen
+        # Wochentags. Ohne Hausprofil/Wochentagswert None -> der Aufrufer
+        # verlaesst sich dann NICHT auf morgen und erzwingt wie bisher am
+        # Tagesende (Nutzerfeedback 2026-10-12: 7,8 kWh Prognose gaukelten
+        # genug PV vor, das Haus braucht davon das meiste).
+        pv_morgen_roh = self._pv_forecast_tomorrow_kwh()
+        haus_profil = self.house_usage_profile()
+        haus_morgen = haus_profil.get(tomorrow_wd) if haus_profil else None
+        pv_morgen_fuer_auto = (
+            max(0.0, pv_morgen_roh - float(haus_morgen))
+            if pv_morgen_roh is not None and haus_morgen is not None
+            else None
+        )
         balancing_trigger = balancing_due and weekly_balancing_time_ok(
             pv_rest_heute_roh_optional,
             self._local_hour(),
@@ -7077,7 +7091,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             need_kwh=balancing_need_kwh,
             night_end_hour=WEEKLY_BALANCING_NIGHT_END_HOUR,
             margin=WEEKLY_BALANCING_PV_MARGIN,
-            pv_morgen_kwh=self._pv_forecast_tomorrow_kwh(),
+            pv_morgen_kwh=pv_morgen_fuer_auto,
         )
         mode, target_soc = apply_weekly_balancing_override(mode, target_soc, balancing_due, forced=balancing_trigger)
         # Zweite, schnellere Entscheidungsebene (siehe engine.apply_realtime_
