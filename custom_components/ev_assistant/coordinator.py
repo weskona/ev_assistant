@@ -7163,13 +7163,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "pv_override_max_mischpreis_kwh": max_blended_price,
             "wallbox_min_power_w": wallbox_min_power_w,
             "balancing_enabled": balancing_enabled,
-            # "faellig" (Intervall abgelaufen) und "aktiv" (Override
-            # tatsaechlich gerade wirksam) koennen jetzt auseinanderfallen
-            # -- siehe weekly_balancing_time_ok()-Docstring: eine mittags
-            # faellige Vollladung ist "faellig", aber erst abends "aktiv".
-            # Vorher (vor dem Tageszeit-Gate) waren beide immer identisch.
+            # "aktiv" = Override wirksam (Ziel 100 %, auch schon waehrend
+            # des Solartags, Stufe 1); "erzwungen" = zusaetzlich Tageszeit-
+            # Gate durch, also minpv erzwungen (Stufe 2, siehe
+            # engine.apply_weekly_balancing_override()). Die Karten zeigen
+            # "laedt auf 100 %" anhand von "aktiv" (Nutzerfeedback 2026-10-12:
+            # Knopf pulsierte nicht mehr, obwohl die Vollladung lief).
             "balancing_faellig": balancing_due,
-            "balancing_aktiv": balancing_trigger,
+            "balancing_aktiv": balancing_due,
+            "balancing_erzwungen": balancing_trigger,
             "naechste_vollladung_faellig_ts": naechste_vollladung_faellig_ts,
         }
 
@@ -7439,7 +7441,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             f"min={targets.get('min_kwh')}kWh, target={targets.get('target_kwh')}kWh, "
             f"pv_override_aktiv={targets.get('pv_override_aktiv')}, "
             f"balancing_faellig={targets.get('balancing_faellig')}, "
-            f"balancing_aktiv={targets.get('balancing_aktiv')}",
+            f"balancing_aktiv={targets.get('balancing_aktiv')}, "
+            f"balancing_erzwungen={targets.get('balancing_erzwungen')}",
         )
         await self._store.async_save(self.data)
 

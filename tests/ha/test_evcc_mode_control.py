@@ -2536,7 +2536,8 @@ async def test_evcc_mode_targets_balancing_faellig_mittags_noch_pv_uebrig_nicht_
 
     targets = coordinator._evcc_mode_targets()
     assert targets["balancing_faellig"] is True
-    assert targets["balancing_aktiv"] is False
+    assert targets["balancing_aktiv"] is True  # Karten: "laedt auf 100 %"
+    assert targets["balancing_erzwungen"] is False
     # Kein Erzwingen (kein minpv), aber das Ziel ist schon 100 %, damit
     # vorhandener PV-Ueberschuss ins Auto geht (Nutzerfeedback 2026-10-12).
     assert targets["modus"] != "minpv"
@@ -2570,6 +2571,7 @@ async def test_evcc_mode_targets_balancing_faellig_pv_aufgebraucht_wird_aktiv(ha
     targets = coordinator._evcc_mode_targets()
     assert targets["balancing_faellig"] is True
     assert targets["balancing_aktiv"] is True
+    assert targets["balancing_erzwungen"] is True
     assert targets["modus"] == "minpv"
     assert targets["target_soc"] == 100
 
@@ -2593,11 +2595,11 @@ async def test_evcc_mode_targets_balancing_faellig_ohne_pv_prognose_fallback_stu
     coordinator._day_fraction_elapsed = lambda: 0.9
     coordinator._local_hour = lambda: 22
     targets = coordinator._evcc_mode_targets()
-    assert targets["balancing_aktiv"] is False
+    assert targets["balancing_erzwungen"] is False
 
     coordinator._local_hour = lambda: 23
     targets = coordinator._evcc_mode_targets()
-    assert targets["balancing_aktiv"] is True
+    assert targets["balancing_erzwungen"] is True
 
 
 # ----- Issue #1 (fugazzy): Reset einfrierte "seit Einrichtung" (Stufe 3) -------
