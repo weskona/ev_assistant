@@ -13,6 +13,16 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.45] - 2026-10-13
+
+### Added
+
+- **Optional vehicle image per vehicle (config entry)** – backend only, for external cards (the Glow card draws it; the classic panel is unchanged). Upload goes through Home Assistant's standard path: `POST /api/file_upload` returns a `file_id`, then the new service **`ev_assistant.set_vehicle_image`** (`config_entry_id`, `file_id`) stores it; **`ev_assistant.clear_vehicle_image`** (`config_entry_id`) removes it. The image is served by a new **image entity** "Vehicle image" (unique_id `<entry_id>_vehicle_image`; read its entity id from `entities.vehicle_image`, it depends on language and vehicle name), which always exists per entry, is hidden but enabled, and is `unknown` while there is no image. It is also part of the panel configuration as `entities.vehicle_image` (top level and in every `vehicles[i].entities`), and its entity id is stable from the start, so the panel is not re-registered on set/clear. EV Assistant delivers **no placeholder**: without an image the card shows its own, and must not request `image_proxy` while the state is `unknown` (it would answer HTTP 500).
+  - **Processing:** only JPEG, PNG and WebP; raw size ≤ 10 MB, ≤ 50 megapixels (checked from the header *before* decoding, against decompression bombs); EXIF orientation is applied, then **all metadata is dropped** (phone photos contain GPS); aspect ratio kept, longest side ≤ 1200 px; re-encoded as JPEG (cut-out images with transparency as WebP with alpha), quality lowered step by step towards roughly 300 KB.
+  - **Storage:** a file `<config>/ev_assistant_images/<entry_id>.jpg|webp`, written atomically. Never in `self.data`, the store or entity attributes. It is deleted when the vehicle is **removed** (`async_remove_entry`), not on unload/reload; orphaned files are cleaned up at setup. Home Assistant's own backups include the folder; the EV Assistant data backup (`export_backup`/`restore_backup`) stays data-only and does **not** contain images; diagnostics do not include them. The event log records only "set"/"cleared" without content.
+  - **Errors are never silent:** unknown `config_entry_id`/`file_id`, wrong format, too large, too many pixels, unreadable file → `ServiceValidationError` with a translated message; I/O problems → `HomeAssistantError`.
+- **Requirements:** the integration now depends on Home Assistant's `file_upload`, and `hacs.json` raises the minimum Home Assistant version to **2024.4.0** (Pillow, used for the processing, is part of Home Assistant core since then; it is not added to `requirements`).
+
 ## [0.99.44] - 2026-10-12
 
 ### Fixed
