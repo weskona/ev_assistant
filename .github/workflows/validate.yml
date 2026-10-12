@@ -1,7 +1,9 @@
 name: Validate
 
 on:
+  # push nur auf den Dauer-Branches, sonst laeuft alles doppelt (push + pull_request)
   push:
+    branches: [main, glow-panel]
   pull_request:
 
 jobs:
