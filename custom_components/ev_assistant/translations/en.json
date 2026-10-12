@@ -26,6 +26,30 @@
     },
     "evcc_write_rejected": {
       "message": "evcc rejected the change or did not respond. Details are in the Home Assistant log (search for “evcc”)."
+    },
+    "unknown_config_entry": {
+      "message": "Unknown vehicle (config_entry_id). Please pick an existing EV Assistant vehicle."
+    },
+    "unknown_file_id": {
+      "message": "The uploaded file was not found or has expired. Please upload the image again."
+    },
+    "image_too_large": {
+      "message": "The image file is too large (maximum {max_mb} MB). Please choose a smaller image."
+    },
+    "image_format": {
+      "message": "This file format is not supported. Allowed: {formats}."
+    },
+    "image_too_many_pixels": {
+      "message": "The image has too many pixels (maximum {max_mp} megapixels). Please choose a smaller image."
+    },
+    "image_unreadable": {
+      "message": "The file cannot be read as an image. Please choose a different image."
+    },
+    "pillow_missing": {
+      "message": "The Pillow image library is missing in this Home Assistant (included since version 2024.4). Please update Home Assistant."
+    },
+    "image_io_error": {
+      "message": "The vehicle image could not be saved or deleted. See the Home Assistant log for details."
     }
   },
   "config": {
@@ -611,6 +635,11 @@
       },
       "charge_before_pv_recommended": {
         "name": "Charge Before Solar Recommended"
+      }
+    },
+    "image": {
+      "vehicle_image": {
+        "name": "Vehicle image"
       }
     }
   },

@@ -26,6 +26,30 @@
     },
     "evcc_write_rejected": {
       "message": "evcc hat die Änderung abgelehnt oder nicht beantwortet. Details stehen im Home-Assistant-Log (Suche nach „evcc“)."
+    },
+    "unknown_config_entry": {
+      "message": "Unbekanntes Fahrzeug (config_entry_id). Bitte ein vorhandenes EV-Assistant-Fahrzeug auswählen."
+    },
+    "unknown_file_id": {
+      "message": "Die hochgeladene Datei wurde nicht gefunden oder ist abgelaufen. Bitte das Bild erneut hochladen."
+    },
+    "image_too_large": {
+      "message": "Die Bilddatei ist zu groß (maximal {max_mb} MB). Bitte ein kleineres Bild wählen."
+    },
+    "image_format": {
+      "message": "Dieses Dateiformat wird nicht unterstützt. Erlaubt sind: {formats}."
+    },
+    "image_too_many_pixels": {
+      "message": "Das Bild hat zu viele Pixel (maximal {max_mp} Megapixel). Bitte ein kleineres Bild wählen."
+    },
+    "image_unreadable": {
+      "message": "Die Datei lässt sich nicht als Bild lesen. Bitte ein anderes Bild wählen."
+    },
+    "pillow_missing": {
+      "message": "Die Bildbibliothek Pillow fehlt in diesem Home Assistant (ab Version 2024.4 enthalten). Bitte Home Assistant aktualisieren."
+    },
+    "image_io_error": {
+      "message": "Das Fahrzeugbild konnte nicht gespeichert oder gelöscht werden. Details stehen im Home-Assistant-Log."
     }
   },
   "config": {
@@ -189,8 +213,8 @@
           "home_consumption_entity": "Optional, kumulativer Energiezähler in kWh (aufsummierter Zählerstand, kein Leistungssensor) — nur für die Solaranteil-/Kosten-Schätzung unten gebraucht.",
           "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch (gleiche Einheit: kumulativer Energiezähler in kWh, kein Leistungssensor) — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
           "wallbox_energy_entity": "Kalibriert daraus den echten Ladewirkungsgrad (ersetzt den Startwert aus Schritt 1) und liefert die geladene kWh-Menge für die Kostenberechnung.",
-    "wallbox_connected_entity": "Optional, ein binary_sensor der Wallbox selbst (z.B. aus deren eigener Integration) für \"angesteckt/verbunden\" — ersetzt, falls gesetzt, die sonst aus Ladeleistung/Stecker-Entität abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
-    "wallbox_charging_entity": "Optional, ein binary_sensor der Wallbox selbst für \"lädt gerade\" — ersetzt, falls gesetzt, die sonst aus der Ladeleistung abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
+          "wallbox_connected_entity": "Optional, ein binary_sensor der Wallbox selbst (z.B. aus deren eigener Integration) für \"angesteckt/verbunden\" — ersetzt, falls gesetzt, die sonst aus Ladeleistung/Stecker-Entität abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
+          "wallbox_charging_entity": "Optional, ein binary_sensor der Wallbox selbst für \"lädt gerade\" — ersetzt, falls gesetzt, die sonst aus der Ladeleistung abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
           "pv_generation_entity": "Optional, kumulativer Energiezähler in kWh der PV-ERZEUGUNG (aufsummierter Zählerstand, keine Momentanleistung) — zusammen mit Hausverbrauch und Einspeisevergütung unten nötig für die Solaranteil-/Kosten-Schätzung von Heim-Ladesessions. Fehlt eines der drei, bleibt die Schätzung für eine Session einfach aus (kein Fallback auf eine gröbere Näherung).",
           "home_feedin_price_kwh": "Optional, fester Wert ODER die Entität darunter (Entität hat Vorrang) — nur für die Solaranteil-/Kosten-Schätzung gebraucht, siehe pv_generation_entity oben.",
           "home_feedin_price_entity": "Optional, überschreibt den festen Einspeisevergütungswert, falls beide gesetzt sind."
@@ -383,8 +407,8 @@
           "home_consumption_entity": "Optional, kumulativer Energiezähler in kWh (aufsummierter Zählerstand, kein Leistungssensor) — nur für die Solaranteil-/Kosten-Schätzung unten gebraucht.",
           "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch (gleiche Einheit: kumulativer Energiezähler in kWh, kein Leistungssensor) — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
           "wallbox_energy_entity": "Kalibriert daraus den echten Ladewirkungsgrad (ersetzt den Startwert aus Schritt 1) und liefert die geladene kWh-Menge für die Kostenberechnung.",
-    "wallbox_connected_entity": "Optional, ein binary_sensor der Wallbox selbst (z.B. aus deren eigener Integration) für \"angesteckt/verbunden\" — ersetzt, falls gesetzt, die sonst aus Ladeleistung/Stecker-Entität abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
-    "wallbox_charging_entity": "Optional, ein binary_sensor der Wallbox selbst für \"lädt gerade\" — ersetzt, falls gesetzt, die sonst aus der Ladeleistung abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
+          "wallbox_connected_entity": "Optional, ein binary_sensor der Wallbox selbst (z.B. aus deren eigener Integration) für \"angesteckt/verbunden\" — ersetzt, falls gesetzt, die sonst aus Ladeleistung/Stecker-Entität abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
+          "wallbox_charging_entity": "Optional, ein binary_sensor der Wallbox selbst für \"lädt gerade\" — ersetzt, falls gesetzt, die sonst aus der Ladeleistung abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
           "pv_generation_entity": "Optional, kumulativer Energiezähler in kWh der PV-ERZEUGUNG (aufsummierter Zählerstand, keine Momentanleistung) — zusammen mit Hausverbrauch und Einspeisevergütung unten nötig für die Solaranteil-/Kosten-Schätzung von Heim-Ladesessions. Fehlt eines der drei, bleibt die Schätzung für eine Session einfach aus (kein Fallback auf eine gröbere Näherung).",
           "home_feedin_price_kwh": "Optional, fester Wert ODER die Entität darunter (Entität hat Vorrang) — nur für die Solaranteil-/Kosten-Schätzung gebraucht, siehe pv_generation_entity oben.",
           "home_feedin_price_entity": "Optional, überschreibt den festen Einspeisevergütungswert, falls beide gesetzt sind."
@@ -611,6 +635,11 @@
       },
       "charge_before_pv_recommended": {
         "name": "Laden vor PV empfehlenswert"
+      }
+    },
+    "image": {
+      "vehicle_image": {
+        "name": "Fahrzeugbild"
       }
     }
   },

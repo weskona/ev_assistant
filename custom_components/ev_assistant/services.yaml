@@ -1605,3 +1605,46 @@ set_hidden_tabs:
       required: true
       selector:
         object:
+
+set_vehicle_image:
+  name: Fahrzeugbild setzen
+  description: >
+    Setzt das Fahrzeugbild dieses Fahrzeugs aus einer zuvor über den
+    Home-Assistant-Standardweg hochgeladenen Datei (POST /api/file_upload,
+    liefert die file_id). Erlaubt sind JPEG, PNG und WebP (maximal 10 MB,
+    maximal 50 Megapixel). Das Bild wird gedreht (EXIF-Orientierung), von
+    allen Metadaten befreit (z. B. GPS), auf höchstens 1200 px Kantenlänge
+    verkleinert und neu kodiert (JPEG, bei freigestellten Bildern mit
+    Transparenz WebP). Es wird als Datei unter /config/ev_assistant_images/
+    abgelegt und über die versteckte Bild-Entität „Fahrzeugbild“ ausgeliefert.
+    Bei einem Fehler (Format, Größe, nicht lesbar, abgelaufene file_id,
+    unbekanntes Fahrzeug) bricht der Service mit einer verständlichen
+    Fehlermeldung ab.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    file_id:
+      name: Datei-ID
+      description: ID der hochgeladenen Datei (Antwort von POST /api/file_upload).
+      required: true
+      selector:
+        text:
+
+clear_vehicle_image:
+  name: Fahrzeugbild entfernen
+  description: >
+    Löscht das Fahrzeugbild dieses Fahrzeugs. Die Bild-Entität steht danach
+    wieder auf „unbekannt“; EV Assistant liefert keinen Platzhalter.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
