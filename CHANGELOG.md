@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.44] - 2026-10-12
+
+### Fixed
+
+- **A weekly full charge was marked as completed because of a single SoC outlier:** the vehicle's SoC sensor briefly reported 98 % for two seconds (87 → 98 → 85 → 87 %), and `vollladung_letzter_ts` was set immediately, so `balancing_faellig` turned `false`, the forced `minpv` stage ended and the car stopped at 87 %. A full charge now counts as reached only after the SoC has stayed **at or above 98 % for 2 minutes in a row** (`VOLLLADUNG_CONFIRM_SECONDS`, `engine.vollladung_confirm()`); if it drops below, the wait starts over. The check also runs in the regular one-minute update, because a SoC that stays at 98–100 % reports no further values.
+
 ## [0.99.43] - 2026-10-12
 
 ### Fixed
