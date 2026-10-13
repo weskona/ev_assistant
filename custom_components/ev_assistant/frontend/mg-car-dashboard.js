@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=24  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=26  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.4.3";
+const VERSION = "3.5.1";
 // Version der Datenschnittstelle zu ev_assistant (Panel-Konfiguration, Websocket-Befehle, evcc_live),
 // die diese Karte erwartet. Meldet ev_assistant in der Panel-Konfiguration eine andere "api_version",
 // warnt die Karte (Konsole + Hinweis). Ohne "api_version" (ältere ev_assistant-Versionen) keine Warnung.
@@ -56,7 +56,7 @@ const CAR_DEFAULTS = {
   car: {
     // --- Fahrzeug ---
     name: "",                         // leer = Fahrzeugname aus ev_assistant
-    image: "",                        // Bild des Autos, z. B. "/local/auto.png" (leer = kein Bild)
+    image: "",                        // Bild des Autos, z. B. "/local/auto.png" (leer = Fahrzeugbild aus ev_assistant ab 0.99.45, sonst kein Bild)
     soc: "eva:soc",                   // Ladestand: SoC-Sensor aus ev_assistant, sonst evcc
     range: "eva:range",               // Reichweite: ev_assistant „Reichweite (real)“
     status: "eva:motor",              // fährt: Motor-Sensor aus ev_assistant (sofern dort freigegeben)
@@ -221,6 +221,7 @@ class MgCarDashboard extends HTMLElement {
     if (!this.shadowRoot) {
       this.attachShadow({ mode: "open" });
       this.shadowRoot.addEventListener("click", (e) => this._click(e));
+      this.shadowRoot.addEventListener("error", (e) => { if (e.target?.classList?.contains("carimg")) this._carImageError(e.target); }, true);
     }
     if (!this._pinBound) { this._pinBound = true; this.shadowRoot.addEventListener("change", (e) => { const t = e.composedPath()[0]; if (t?.classList?.contains("pin")) { this._planTime = t.value; t.blur(); } }); }
     if (!this._hoverBound) {
@@ -454,6 +455,7 @@ class MgCarDashboard extends HTMLElement {
     const mst = this._st(c.mode), ast = this._st(c.always);
     // Modus-Zeile: [Vorgabe ▼] [Aus] [Smart ▼] [Schnell]
     const evaMode = !mst && this._evaEntryId() ? this._evaModeState() : null;
+    if (evaMode && this._st(E.evcc_mode_control)) return this._render_mgmt_eva(el);
     const modeTiles = (() => {
       if (evaMode) {   // ohne eigene Auswahl-Entitäten: evcc-Modus über ev_assistant schalten
         // Auto blau, wenn ev_assistant steuert; zusätzlich leuchtet die Kachel des gerade wirksamen evcc-Modus
@@ -539,6 +541,67 @@ class MgCarDashboard extends HTMLElement {
       ${rec?.state === "on" ? `<div class="lrows"><button class="lrow warn" data-act="more" data-entity="${esc(E.charge_before_pv_recommended)}">${icon("mdi:weather-cloudy-alert")}<span>Empfehlung</span><b>Laden vor PV sinnvoll</b></button></div>` : ""}`;
   }
 
+  /* Lademanagement mit ev_assistant, zwei Bereiche:
+     evcc         – was evcc gerade tut (nur Anzeige): Lademodus, Ladeziel, Ladeplan
+     ev_assistant – Steuerung: Auto / manueller Modus, Ladeziel, Vollladung, Automatik pausieren, Ladeplan setzen */
+  _render_mgmt_eva(el) {
+    const E = this._eva(), L = this._live(), mc = this._st(E.evcc_mode_control), ma = mc?.attributes || {};
+    const ms = this._evaModeState(), entry = this._evaEntryId();
+    const modeSel = this._evccEnt("mode"), acSel = this._evccEnt("alwayscharge");
+    const acState = this._st(acSel)?.state;
+
+    // --- evcc: Ist-Zustand ---
+    const evM = L.mode, evAc = evM === "minpv" ? (acState === "once" ? "once" : "on") : evM === "pv" ? "off" : null;
+    const so = EVA_SMART_OPTS.find((o) => o.ac === evAc);
+    const ico = (o) => (o?.glyph ? `<span class="glyph">${o.glyph}</span>` : icon(o?.icon || "mdi:help"));
+    const mInfo = evM === "now" ? { t: "Schnell", i: icon(EVA_NOW.icon), c: EVA_NOW.color }
+      : evM === "off" ? { t: "Aus", i: icon("mdi:power-off"), c: "#8b91a1" }
+      : so ? { t: `Smart · ${so.label === "aus" ? "PV" : so.label}`, i: so.glyph ? "" : ico(so), c: EVA_SMART.color } : { t: "–", i: icon("mdi:help"), c: "var(--muted)" };
+    const limV = Number(L.limit_soc) > 0 ? `${de(Number(L.limit_soc), 0)} %` : "–";
+    const plan = this._st(E.evcc_charge_plan), pi = this._planInfo(plan), pa = plan?.attributes || {};
+    const planV = pi ? `${pi.soc != null ? `${Math.round(pi.soc)} % · ` : ""}${pi.date ? `${WD[pi.date.getDay()]} ${pad(pi.date.getHours())}:${pad(pi.date.getMinutes())}` : ""}` : "kein Plan";
+    // Kopf: aktueller evcc-Lademodus oben rechts, darunter als kleiner Hinweis Ladeziel und Ladeplan in evcc
+    const head = `<div class="hd"><span class="ttl">Lademanagement</span>
+      <span class="lbl mnow" style="--cc:${mInfo.c}" title="Lademodus in evcc">${mInfo.i}${esc(mInfo.t)}</span></div>
+      <div class="mhint" title="Aktueller Stand in evcc"><span class="msrc">evcc</span><span>Ladeziel <b>${limV}</b></span><span>Ladeplan <b>${pi ? esc(planV) : "–"}</b>${pi && pa.aktiv ? " · läuft" : ""}</span></div>`;
+
+    // --- ev_assistant: Lademodus (Auto oder manuell) ---
+    const o = this._evaSel && Date.now() - this._evaSel.t < 20000 ? this._evaSel.v : null;
+    const sel = o || (ms.cur === "auto" ? "auto" : evM === "off" && modeSel ? "off" : ms.cur === "minpv" && evAc === "once" ? "once" : ms.cur);
+    const smartSel = ["pv", "minpv", "once"].includes(sel), selOpt = EVA_SMART_OPTS.find((x) => (sel === "pv" ? x.ac === "off" : sel === "minpv" ? x.ac === "on" : x.ac === "once"));
+    const tile = (m, on, act, inner, extra = "") => `<button class="mmode ${on ? "sel" : ""}" style="--cc:${m.color}" data-act="${act}" ${extra} title="${esc(m.title || "")}"><span class="mmh">${inner}</span></button>`;
+    const modes = `<div class="mmodes">
+      ${tile(EVA_AUTO, sel === "auto", "evamode2", `${icon(EVA_AUTO.icon)}<b>Auto</b>`, `data-v="auto"`)}
+      ${modeSel ? tile({ color: "#8b91a1", title: "nicht laden" }, sel === "off", "evamode2", `${icon("mdi:power-off")}<b>Aus</b>`, `data-v="off"`) : ""}
+      ${tile({ ...EVA_SMART, title: smartSel ? `Smart · ${selOpt.long}` : "Smart: aus (nur PV), immer oder 1x" }, smartSel, "evasmartmenu", `${smartSel ? ico(selOpt) : icon("mdi:solar-power")}<b>Smart</b>${icon("mdi:chevron-down", "mchv")}`)}
+      ${tile(EVA_NOW, sel === "now", "evamode2", `${icon(EVA_NOW.icon)}<b>Schnell</b>`, `data-v="now"`)}</div>`;
+
+    // --- ev_assistant: Ladeziel, Vollladung, Automatik pausieren ---
+    const r = this._renderLimitRow(this._config.car, this._config.car.evcc || {}, E, ma, mc);
+    const ctl = `<div class="mbottom m3">${r.lim}${r.bal}${r.pause}</div>`;
+
+    // --- ev_assistant: Ladeplan setzen (der aktuelle Plan steht oben bei evcc) ---
+    const pr = this._planReq;
+    if (pi?.date && pr?.target && Math.abs(pi.date.getTime() - pr.target) < 90000) { clearTimeout(pr.timer); this._planReq = null; }
+    const def = new Date(); def.setDate(def.getDate() + 1); def.setHours(7, 0, 0, 0);
+    const dv = pi?.date && !isNaN(pi.date) ? pi.date : def;
+    const val = this._planTime || `${dv.getFullYear()}-${pad(dv.getMonth() + 1)}-${pad(dv.getDate())}T${pad(dv.getHours())}:${pad(dv.getMinutes())}`;
+    const soc = this._planSoc ?? (pi?.soc != null ? Math.round(pi.soc) : 80);
+    const planForm = `<div class="mplan">
+      <div class="mpf">
+        <label>Ladeplan · Ziel<div class="tgt"><button class="tb" data-act="mplansoc" data-d="-5">−</button><span class="tv">${soc}<small> %</small></span><button class="tb" data-act="mplansoc" data-d="5">+</button></div></label>
+        <label>bis<input class="pin" type="datetime-local" value="${esc(val)}" data-act="none"></label>
+        <span class="mpb"><button class="qbtn" data-act="mplanset"${entry && !this._planReq?.busy ? "" : " disabled"}>${icon(this._planReq?.busy ? "mdi:timer-sand" : "mdi:check")}${this._planReq?.busy ? "Wird gesetzt …" : pi ? "Ändern" : "Plan setzen"}</button>
+        ${pi ? `<button class="qbtn ghost" data-act="mplanclear" title="Ladeplan löschen" aria-label="Ladeplan löschen">${icon("mdi:delete-outline")}</button>` : ""}</span>
+      </div>
+      ${this._planReq?.err ? `<div class="mpe err">${icon("mdi:alert-circle-outline")}${esc(this._planReq.err)}</div>` : this._planReq?.info ? `<div class="mpe">${icon("mdi:information-outline")}${esc(this._planReq.info)}</div>` : ""}</div>`;
+
+    const rec = this._st(E.charge_before_pv_recommended);
+    el.innerHTML = head + `
+      <div class="mgrp"><span class="mgl">ev_assistant</span>${modes}${ctl}${planForm}</div>
+      ${rec?.state === "on" ? `<div class="lrows"><button class="lrow warn" data-act="more" data-entity="${esc(E.charge_before_pv_recommended)}">${icon("mdi:weather-cloudy-alert")}<span>Empfehlung</span><b>Laden vor PV sinnvoll</b></button></div>` : ""}`;
+  }
+
   /* Hinweis, wenn der Aufruf erfolgreich war, der Plan-Sensor den Plan aber (noch) nicht zeigt. Ältere ev_assistant-
      Versionen (vor 0.99.35) melden ein nicht gefundenes evcc-Fahrzeug nicht als Fehler – darauf nur als Möglichkeit hinweisen */
   _planSentText() {
@@ -577,13 +640,13 @@ class MgCarDashboard extends HTMLElement {
       if (!o || Date.now() - o.t > 30000 || o.v === real) { if (this._opt) delete this._opt[k]; return real; }
       return o.v;
     };
-    let top = "";
+    let top = "", limBtn = "";
     if (eva) {
       const max = opt("socmax", ma.target_soc_max != null ? Number(ma.target_soc_max) : 80), cur = ma.target_soc != null ? Number(ma.target_soc) : null;
       const why = ma.balancing_aktiv ? "Vollladung" : ma.ueberschuss_ziel_erweitert_aktiv ? "PV-Überschuss" : "";
-      top = `<div class="mbottom">
-        <button class="mbtn lim" data-act="evalimmenu" title="Ladeziel in ev_assistant (höchstens so weit lädt die Automatik)">
-          ${icon("mdi:battery-check-outline")}<div class="mtx"><b>${de(max, 0)} %</b><span>Ladeziel</span></div>${icon("mdi:chevron-down", "mchv")}</button>
+      limBtn = `<button class="mbtn lim" data-act="evalimmenu" title="Ladeziel in ev_assistant (höchstens so weit lädt die Automatik)">
+          ${icon("mdi:battery-check-outline")}<div class="mtx"><b>${de(max, 0)} %</b><span>Ladeziel</span></div>${icon("mdi:chevron-down", "mchv")}</button>`;
+      top = `<div class="mbottom">${limBtn}
         <div class="mbtn ro tnow" title="Ziel, das ev_assistant gerade an evcc gibt (aus Bedarf, PV-Überschuss und Vollladung)">
           ${icon("mdi:target")}<div class="mtx"><b>${cur != null && !isNaN(cur) ? `${de(cur, 0)} %` : "–"}</b><span>Ziel jetzt${why ? ` · ${why}` : ""}</span></div></div></div>`;
     } else if (ev.limit_soc) {
@@ -612,9 +675,9 @@ class MgCarDashboard extends HTMLElement {
     if (eva) {
       const paused = opt("pause", !!ma.pausiert);
       btns.push(`<button class="mbtn pause ${paused ? "on" : ""}" data-act="mpause" data-v="${paused ? "0" : "1"}" title="${paused ? "ev_assistant schreibt nichts nach evcc – tippen zum Fortsetzen" : "ev_assistant steuert evcc – tippen zum Pausieren"}">
-        ${icon(paused ? "mdi:pause-circle" : "mdi:pause-circle-outline")}<div class="mtx"><b>Automatik</b><span>${paused ? "pausiert" : `läuft${mc?.state && !OFFLINE_HD.includes(mc.state) ? ` · ${esc(mc.state)}` : ""}`}</span></div></button>`);
+        ${icon(paused ? "mdi:pause-circle" : "mdi:pause-circle-outline")}<div class="mtx"><b>Automatik</b><span>${paused ? "pausiert" : this._evaModeState().cur !== "auto" ? "manuell" : "läuft"}</span></div></button>`);
     }
-    return { top, bottom: btns.length ? `<div class="mbottom mact">${btns.join("")}</div>` : "" };
+    return { top, bottom: btns.length ? `<div class="mbottom mact">${btns.join("")}</div>` : "", bal: btns[0] || "", pause: btns[1] || "", lim: limBtn };
   }
 
   /* Ladeziel von ev_assistant (target_soc_max) auswählen */
@@ -1570,7 +1633,30 @@ class MgCarDashboard extends HTMLElement {
     return { charging, plugged, driving, pw };
   }
 
+  /* Fahrzeugbild: eigenes car.image, sonst das Bild aus ev_assistant (Entität „Fahrzeugbild“, ab 0.99.45).
+     Ohne Bild steht deren Zustand auf „unknown“ – dann kein Bild (image_proxy würde mit 500 antworten).
+     Die URL enthält einen Token, der alle paar Minuten wechselt: sie wird nur bei geändertem Zustand
+     (= neues Bild) übernommen, damit das Bild nicht ständig neu lädt; schlägt das Laden fehl, einmal mit
+     frischer URL wiederholen. */
+  _carImage() {
+    const c = this._config.car;
+    if (c.image) return c.image;
+    const id = this._evaPanel?.entities?.vehicle_image || this._eva().vehicle_image, st = id && this._hass?.states[id];
+    if (!st || OFFLINE_HD.includes(st.state) || !st.attributes?.entity_picture) { this._imgC = null; return ""; }
+    if (this._imgC?.id !== id || this._imgC.v !== st.state) this._imgC = { id, v: st.state, url: st.attributes.entity_picture };
+    return this._imgC.failed ? "" : this._imgC.url;
+  }
+  _carImageError(img) {
+    const C = this._imgC, st = C && this._hass?.states[C.id];
+    if (C && !C.retried && st?.attributes?.entity_picture) { C.retried = true; C.url = st.attributes.entity_picture; }   // frischer Token
+    else if (C) C.failed = true;
+    else { img.style.display = "none"; return; }
+    const el = this.shadowRoot.getElementById("car"); if (el) el._html = null;
+    this._render_car();
+  }
+
   _render_car() {
+    const img = this._carImage();
     const c = this._config.car, ev = c.evcc || {}, E = this._eva();
     const hasSoc = !!this._st(c.soc), soc = Math.max(0, Math.min(100, this._num(c.soc)));
     const { charging, plugged, driving, pw } = this._carState();
@@ -1629,7 +1715,7 @@ class MgCarDashboard extends HTMLElement {
       <div class="carbody" data-act="cardetail">
         <div><div class="soc">${hasSoc ? Math.round(soc) : "–"}<sup>%</sup></div>
           <div class="range">${range ? `${Math.round(this._num(c.range))} km` : rEst ? `${rEst.v} km` : ""}${range && rEst ? `<small> · real ≈ ${rEst.v} km</small>` : ""}</div></div>
-        ${c.image ? `<img class="carimg" src="${esc(c.image)}" alt="" onerror="this.style.display='none'">` : ""}
+        ${img ? `<img class="carimg" src="${esc(img)}" alt="">` : ""}
       </div>
       <div class="bar">${marks}<span style="width:${soc}%" class="${charging ? "charging" : ""}"></span></div>
       ${line}
@@ -1828,9 +1914,20 @@ class MgCarDashboard extends HTMLElement {
       this._openMenuAt(el, menu);
       return;
     }
+    if (act === "evamode2") {
+      const v = el.dataset.v;
+      this._evaSel = { v, t: Date.now() }; this._evaModeOpt = { v: v === "off" ? "pv" : v, t: Date.now() }; this._evaSmartOpt = null;
+      (v === "auto" ? this._evaCall("clear_evcc_manual_mode", {}) : this._evaCall("set_evcc_manual_mode", { mode: v === "off" ? "pv" : v })).catch((x) => console.warn("mg-car:", x));
+      // „Aus“ kennt ev_assistant nicht: manuell (ev_assistant schreibt dann nicht mehr) und evcc über die evcc-Integration ausschalten
+      const ms = this._evccEnt("mode");
+      if (v === "off" && ms) setTimeout(() => this._hass.callService("select", "select_option", { entity_id: ms, option: "off" }), 3000);
+      this._render_mgmt(); setTimeout(() => this._render_mgmt(), 20500);
+      return;
+    }
     if (act === "evasmart") {
       this._closeMenu();
       const o = EVA_SMART_OPTS.find((x) => x.ac === el.dataset.v); if (!o) return;
+      this._evaSel = { v: o.ac === "off" ? "pv" : o.ac === "on" ? "minpv" : "once", t: Date.now() };
       this._evaModeOpt = { v: o.mode, t: Date.now() }; this._evaSmartOpt = { ac: o.ac, t: Date.now() };
       this._evaCall("set_evcc_manual_mode", { mode: o.mode }).catch((x) => console.warn("mg-car:", x));
       // 1x gibt es nur über die evcc-Integration: nach dem Moduswechsel (ev_assistant schreibt „immer“) auf „einmalig“ stellen
@@ -1863,7 +1960,7 @@ class MgCarDashboard extends HTMLElement {
       // Rückmeldung: „Wird gesetzt …“; einen Fehler des Service (ev_assistant ab 0.99.35 nennt den Grund) sofort anzeigen.
       // Meldet der Plan-Sensor nach 12 s noch keinen Plan: war der Aufruf erfolgreich, nur ein neutraler Hinweis
       clearTimeout(this._planReq?.timer);
-      const req = (this._planReq = { busy: true, err: "", info: "", sent: false });
+      const req = (this._planReq = { busy: true, err: "", info: "", sent: false, target: t });
       const done = (key, msg) => { if (this._planReq !== req) return; clearTimeout(req.timer); req.busy = false; req[key] = msg; this._planTime = v; this._render_mgmt(); };
       req.timer = setTimeout(() => (req.sent ? done("info", this._planSentText()) : done("err", "Keine Antwort von ev_assistant – Ladeplan vermutlich nicht gesetzt.")), 12000);
       this._evaCall("set_evcc_charge_plan", { target_soc: this._planSoc ?? 80, target_time: Math.round(t / 1000) })
@@ -2154,6 +2251,25 @@ const CAR_STYLE = `
 .mbtn.tnow b{color:var(--text)}
 .mbtn.tnow ha-icon:first-child{color:var(--muted)}
 .mbottom.mact{margin:8px 0 0}
+#mgmt .hd{margin-bottom:4px}
+.lbl.mnow{display:inline-flex;align-items:center;gap:6px;color:var(--cc);font-weight:600}
+.lbl.mnow ha-icon{--mdc-icon-size:18px}
+.lbl.mnow .glyph{font-size:13px;font-weight:800;color:var(--cc)}
+.mhint{display:flex;justify-content:flex-end;flex-wrap:wrap;gap:4px 14px;margin:0 0 12px;font-size:12.5px;color:var(--dim);font-variant-numeric:tabular-nums}
+.mhint b{color:var(--muted);font-weight:600}
+.mhint .msrc{font-size:10.5px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:0 5px}
+.mstats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}
+.mst{display:flex;flex-direction:column;gap:3px;padding:8px 12px;border-radius:14px;background:rgba(255,255,255,.02);border:1px dashed var(--tileb);min-width:0}
+.mst span{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);white-space:nowrap}
+.mst b{display:flex;align-items:center;gap:6px;font-size:14.5px;font-weight:700;color:var(--cc);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.mst b ha-icon{--mdc-icon-size:17px;flex:none}
+.mst b .glyph{font-size:13px;font-weight:800}
+.mgl small{letter-spacing:0;text-transform:none;font-weight:500;color:var(--dim);margin-left:4px}
+.mbottom.m3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:8px 0}
+.mbottom.m3 .mbtn{padding:8px 10px;min-width:0}
+.mbottom.m3 .mbtn span{overflow:hidden;text-overflow:ellipsis}
+.mpb{display:flex;gap:6px;align-items:center}
+@container (max-width:420px){.mstats,.mbottom.m3,#mgmt .mmodes{display:grid;grid-template-columns:1fr 1fr}.mbottom.m3 .mbtn:first-child,.mst:last-child{grid-column:1 / -1}}
 .limm{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}
 /* Laden */
 .lclick{cursor:pointer;border-radius:22px}
