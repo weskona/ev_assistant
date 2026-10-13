@@ -1769,6 +1769,21 @@ def append_recent_weekday_day(
     return result
 
 
+def drop_negative_weekday_days(weekday_days: dict) -> tuple[dict, int]:
+    """Entfernt Tageseintraege mit negativem kWh-Wert aus allen Wochentags-
+    Listen (ein Verbrauch kann nicht negativ sein -- Spuren eines Zaehler-
+    Rueckgangs/einer Formelaenderung). Rueckgabe (neues Dict, Anzahl
+    entfernter Eintraege); Wochentage ohne Rest-Eintraege bleiben als leere
+    Liste stehen, damit weekday_profile_from_recent_days() sie auslaesst."""
+    removed = 0
+    result: dict = {}
+    for key, days in (weekday_days or {}).items():
+        kept = [d for d in (days or []) if not (isinstance(d.get("kwh"), (int, float)) and d["kwh"] < 0)]
+        removed += len(days or []) - len(kept)
+        result[key] = kept
+    return result, removed
+
+
 def remove_weekday_day(weekday_days: dict, date_iso: str) -> dict:
     """Entfernt (falls vorhanden) den Eintrag zu `date_iso` aus ALLEN
     Wochentags-Listen -- fuer die rueckwirkende Urlaubskorrektur (siehe
@@ -1891,7 +1906,13 @@ def clamp_weekday_contribution(
     unveraendert, der Aufrufer schreibt ihn unveraendert in sein
     Total-Dict weiter. Ohne kwh_per_100km im "est_km"-Fall (noch keine
     Fahrt mit beiden Werten fuer eine Umrechnung) KEIN Daempfen moeglich."""
-    if not avg_kwh_for_weekday:
+    # Nicht-positiver Schnitt (0 oder negativ): nichts, woran "extrem"
+    # beurteilbar waere. Ein NEGATIVER Schnitt ergaebe sogar eine negative
+    # Schwelle und damit fuer jeden neuen Tag genau diese Schwelle als Wert
+    # (Vorfall 2026-10: ein einmalig negativer Montag aus einer Zaehler-
+    # Formelaenderung vergiftete das Hausprofil -- jeder weitere Montag wurde
+    # auf 3 x den negativen Schnitt gesetzt, -69 -> -70 -> -117 kWh).
+    if not avg_kwh_for_weekday or avg_kwh_for_weekday < 0:
         return value
     if kind == "exact":
         equiv_kwh = value
