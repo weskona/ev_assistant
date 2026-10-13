@@ -13,6 +13,15 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.47] - 2026-10-13
+
+### Fixed
+
+- **House usage profile: Monday was broken (negative kWh):** on Monday 2026-09-28 the formula of the house consumption sensor was changed (wallbox energy subtracted), so its counter dropped by about 70 kWh once, and the profile booked **−69.75 kWh** for that day – a consumption cannot be negative. Worse, the automatic outlier damping (`clamp_weekday_contribution`) limits a new daily value to 3 × the weekday average; with a *negative* average the threshold is negative too, so every further Monday was set to exactly that threshold (−69.75 → −70.47 → −117.45 kWh) instead of its real value (about 28 kWh).
+  - The damping is skipped when the weekday average is zero or negative (nothing to judge "extreme" against).
+  - A negative daily value of the house counter (counter went backwards) is no longer booked into the profile; it is logged in the event log (`hausprofil_tag_verworfen`) and the baseline is reset as before.
+  - **Repair of existing data at startup:** negative daily values are removed from the house profile (idempotent, event log `hausprofil_repariert`), so no manual editing is needed; Monday falls back to the remaining values until new Mondays are recorded.
+
 ## [0.99.46] - 2026-10-13
 
 ### Added

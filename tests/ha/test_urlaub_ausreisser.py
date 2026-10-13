@@ -410,3 +410,34 @@ async def test_apply_evcc_mode_control_urlaub_aktiv_ist_no_op(hass, coordinators
     coordinator._evcc_client.async_set_mode.assert_not_called()
     coordinator._evcc_client.async_probe_scope.assert_not_called()
     assert coordinator.data.get("evcc_mode_control") is None
+
+
+# ----- Hausprofil: negativer Tageswert (Zaehler-Rueckgang) -------------------
+
+async def test_hausprofil_negativer_tageswert_wird_nicht_gebucht(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "hp_negativ")
+    gestern = dt_util.now().date() - timedelta(days=1)
+    coordinator.data["house_periods"] = {"day": {"key": gestern.isoformat(), "kwh": 1000.0}}
+    coordinator._house_combined_reading_kwh = lambda: 930.0  # Zaehler zurueckgegangen
+    coordinator._update_house_usage_profile()
+    assert coordinator.data.get("house_weekday_days", {}) == {}
+    assert any(e.get("kategorie") == "hausprofil_tag_verworfen" for e in coordinator.data["event_log"])
+
+
+async def test_hausprofil_negative_altlasten_werden_beim_setup_repariert(hass, coordinators):
+    from custom_components.ev_assistant.const import DOMAIN
+    from custom_components.ev_assistant.coordinator import EvAssistantCoordinator
+
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options={}, entry_id="hp_repair")
+    entry.add_to_hass(hass)
+    coordinator = EvAssistantCoordinator(hass, entry)
+    coordinators.append(coordinator)
+    coordinator._store.async_load = AsyncMock(return_value={
+        "house_weekday_days": {
+            "0": [{"date": "2026-09-22", "kwh": 22.77}, {"date": "2026-09-28", "kwh": -69.75}],
+            "1": [{"date": "2026-09-29", "kwh": 17.97}],
+        }
+    })
+    await coordinator.async_setup()
+    assert coordinator.data["house_weekday_days"]["0"] == [{"date": "2026-09-22", "kwh": 22.77}]
+    assert coordinator.house_usage_profile()[0] == 22.77
