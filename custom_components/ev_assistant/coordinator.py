@@ -226,6 +226,7 @@ from .engine import (
     clamp_weekday_contribution,
     consumption_by_temp_bucket_from_totals,
     determine_evcc_mode,
+    drop_negative_weekday_days,
     equivalent_full_cycles_from_totals,
     estimate_battery_capacity_kwh,
     home_capacity_sample,
@@ -957,6 +958,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # (siehe _migrate_weekday_usage_windows()). Ebenfalls sofort
         # persistiert, aus demselben Grund wie oben.
         if self._migrate_weekday_usage_windows():
+            await self._save()
+        # Reparatur: negative Tageswerte im Hausprofil (siehe
+        # _repair_negative_house_days()), idempotent.
+        if self._repair_negative_house_days():
             await self._save()
         # Letzter bekannter Kraftstoff-/Heimstrompreis der jeweiligen
         # Live-Entitaet als Fallback, bevor sich die Entitaet nach dem Start
@@ -4150,6 +4155,24 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["verbrenner_price_interval_start_km"] = self._km_driven()
         return True
 
+    def _repair_negative_house_days(self) -> bool:
+        """Entfernt negative Tageswerte aus "house_weekday_days": ein
+        Hausverbrauch kann nicht negativ sein, solche Eintraege stammen aus
+        einem Zaehler-Rueckgang (z. B. der Formelaenderung am Hausverbrauchs-
+        Sensor) und haben zusammen mit der frueheren Ausreisser-Daempfung
+        den Wochentag vergiftet (siehe engine.clamp_weekday_contribution()).
+        Idempotent: ohne negative Eintraege passiert nichts. True, wenn etwas
+        entfernt wurde (Aufrufer speichert dann)."""
+        days = self.data.get("house_weekday_days")
+        if not days:
+            return False
+        repaired, removed = drop_negative_weekday_days(days)
+        if not removed:
+            return False
+        self.data["house_weekday_days"] = repaired
+        self._log_event("hausprofil_repariert", f"{removed} negative Tageswerte aus dem Hausnutzungsprofil entfernt")
+        return True
+
     def _migrate_weekday_usage_windows(self) -> bool:
         """Einmalige Migration von den alten Lebenszeit-Skalar-Akkumulatoren
         (Summe + Tageszaehler je Wochentag, "*_weekday_kwh_totals"/
@@ -6741,6 +6764,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             except (ValueError, TypeError):
                 missed = 1
             if missed != 1:
+                return
+            # Ein Zaehler-Rueckgang (negativer Tageswert, z. B. nach einer
+            # Formelaenderung am Hausverbrauchs-Sensor) ist kein Verbrauch:
+            # nicht buchen (Baseline ist oben bereits neu gesetzt).
+            if new_entry["prev"] < 0:
+                self._log_event("hausprofil_tag_verworfen", f"{yesterday.isoformat()}: negativer Tageswert {new_entry['prev']}")
                 return
             yesterday_wd = yesterday.weekday()
             house_days = dict(self.data.get("house_weekday_days") or {})

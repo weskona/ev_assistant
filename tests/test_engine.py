@@ -4671,3 +4671,29 @@ def test_vollladung_confirm_unter_schwelle_bleibt_none():
 
 def test_vollladung_confirm_zukuenftiger_beginn_startet_neu():
     assert vollladung_confirm(99.0, 98.0, 5000.0, 1000.0, 120.0) == (False, 1000.0)
+
+
+# ----- Hausprofil: negative Tageswerte duerfen den Wochentag nicht vergiften (2026-10) -----
+
+def test_clamp_weekday_contribution_negativer_schnitt_laesst_wert_unveraendert():
+    assert clamp_weekday_contribution("exact", 27.97, -39.15, 3.0, None) == 27.97
+    assert clamp_weekday_contribution("exact", 27.97, 0.0, 3.0, None) == 27.97
+
+
+def test_clamp_weekday_contribution_positiver_schnitt_daempft_weiter():
+    assert clamp_weekday_contribution("exact", 100.0, 20.0, 3.0, None) == 60.0
+
+
+def test_drop_negative_weekday_days_entfernt_nur_negative():
+    from custom_components.ev_assistant.engine import drop_negative_weekday_days
+
+    days = {
+        "0": [{"date": "2026-09-22", "kwh": 22.77}, {"date": "2026-09-28", "kwh": -69.75},
+              {"date": "2026-10-12", "kwh": -117.45}],
+        "1": [{"date": "2026-09-29", "kwh": 17.97}],
+    }
+    repaired, removed = drop_negative_weekday_days(days)
+    assert removed == 2
+    assert repaired["0"] == [{"date": "2026-09-22", "kwh": 22.77}]
+    assert repaired["1"] == days["1"]
+    assert drop_negative_weekday_days(repaired) == (repaired, 0)
