@@ -484,6 +484,35 @@ VEHICLE_DISCHARGE_CONFIRM_SECONDS = 60.0
 # spuerbar wackelig -- 8 glaettet das deutlich, reagiert aber immer noch
 # innerhalb weniger Wochen auf eine echte Verhaltensaenderung.
 USAGE_PROFILE_WINDOW_DAYS = 8
+
+# Steckerprofil / typische Morgen-Abfahrt (siehe coordinator.py::_update_plug_
+# window(), engine.py::plug_departure_profile()). Reine Beobachtung, KEINE
+# Anbindung an die Steuerung.
+# Eintraege je Wochentag im Steckerprofil (eigenes Fenster, unabhaengig von
+# USAGE_PROFILE_WINDOW_DAYS): ~3 Monate je Wochentag, damit die Statistik
+# der Abfahrtszeit genug Messungen sieht.
+PLUG_WINDOW_ENTRIES = 12
+# So lange (Sekunden) muss das Fahrzeug durchgehend abgesteckt bleiben, bevor
+# die Abfahrt bestaetigt wird (Wiederanstecken davor verwirft sie).
+PLUG_DEPARTURE_CONFIRM_S = 600
+# Nur Abfahrten in diesem Lokalzeit-Fenster zaehlen als "Morgenabfahrt".
+PLUG_DEPARTURE_WINDOW_START_H = 4
+PLUG_DEPARTURE_WINDOW_END_H = 12
+# Ist die Luecke zwischen zwei erfolgreichen Ticks groesser als dieser Faktor
+# mal das Poll-Intervall (evcc nicht erreichbar, HA-Neustart), gilt die dabei
+# erkannte Flanke als unsicher.
+PLUG_TICK_GAP_FACTOR = 3
+# Ausreisser: |t - Median| > max(K * MAD, MIN_DEV_MIN Minuten).
+PLUG_DEPARTURE_OUTLIER_K = 3.0
+PLUG_DEPARTURE_MIN_DEV_MIN = 45
+# Unter so vielen gueltigen Messungen je Wochentag: keine Zeit ("noch nicht
+# belastbar"); Konfidenz (Anteil innerhalb MIN_DEV_MIN um den Median) darunter:
+# "uneinheitlich".
+PLUG_DEPARTURE_MIN_SAMPLES = 4
+PLUG_DEPARTURE_CONSISTENCY_MIN = 0.6
+# Ab so vielen Nicht-Ausreissern gilt als "frueh" das 10. Perzentil statt des
+# fruehesten Einzelwerts.
+PLUG_DEPARTURE_P10_MIN_N = 10
 DEFAULT_IDLE_TIMEOUT = 600.0
 DEFAULT_DROP_ENDS = 1.0
 
