@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "minor_version": 1,
+  "key": "ev_assistant_data_01KXGXSNXV4MAXYS59C25HG7TV",
+  "data": {
+    "history": [
+      {
+        "config_entry_id": "01KXGXSNXV4MAXYS59C25HG7TV",
+        "kwh": 15.0,
+        "preis_kwh": 0.6,
+        "kosten": 9.0,
+        "erfasst_ts": 1784062585
+      },
+      {
+        "config_entry_id": "01KXGXSNXV4MAXYS59C25HG7TV",
+        "kwh": 30.0,
+        "preis_kwh": 0.7,
+        "kosten": 21.0,
+        "erfasst_ts": 1784062557
+      }
+    ],
+    "totals": {
+      "kwh": 45.0,
+      "kosten": 30.0,
+      "count": 2
+    },
+    "last_price": 0.6,
+    "pending": [],
+    "efficiency_samples": [],
+    "measured_efficiency": null
+  }
+}

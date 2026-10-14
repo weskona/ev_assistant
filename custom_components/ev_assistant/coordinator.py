@@ -167,6 +167,16 @@ from .const import (
     OUTLIER_DAMPING_FACTOR,
     PANEL_LAYOUT_KEYS,
     PANEL_LAYOUT_SIZES,
+    PLUG_DEPARTURE_CONFIRM_S,
+    PLUG_DEPARTURE_CONSISTENCY_MIN,
+    PLUG_DEPARTURE_MIN_DEV_MIN,
+    PLUG_DEPARTURE_MIN_SAMPLES,
+    PLUG_DEPARTURE_OUTLIER_K,
+    PLUG_DEPARTURE_P10_MIN_N,
+    PLUG_DEPARTURE_WINDOW_END_H,
+    PLUG_DEPARTURE_WINDOW_START_H,
+    PLUG_TICK_GAP_FACTOR,
+    PLUG_WINDOW_ENTRIES,
     STORAGE_KEY,
     STORAGE_VERSION,
     TANKERKOENIG_GRACE_S,
@@ -247,8 +257,10 @@ from .engine import (
     normalize_evcc_mode,
     normalize_vehicle_label,
     open_session_sums,
+    parse_hhmm_minutes,
     period_key_for_date,
     period_start_date,
+    plug_departure_profile,
     pop_pending,
     previous_period_date,
     range_km_to_soc_percent,
@@ -556,6 +568,14 @@ def _empty_data() -> dict:
         "plug_window_today": {},
         "plug_window_weekday_days": {},
         "plug_window_prev_connected": False,
+        # Morgen-Abfahrt (siehe _track_plug_departure()): offener, noch nicht
+        # bestaetigter Abstecken-Kandidat {ts, hhmm, date, unsicher}, Zeitpunkt
+        # des letzten erfolgreichen Ticks (Luecken-Erkennung) und der zuletzt
+        # gesehene Stecker-Zustand DIESES Fahrzeugs -- muessen Neustarts
+        # ueberleben, sonst ginge eine Abfahrt rund um einen Neustart verloren.
+        "plug_departure_candidate": None,
+        "plug_last_tick_ts": None,
+        "plug_departure_prev": None,
         # Laufzeit-Override fuer CONF_USAGE_PROFILE_BUFFER_PCT (siehe
         # _usage_profile_buffer_pct()/async_set_usage_profile_buffer_pct())
         # -- Schieberegler in der Wallbox-Karte (Uebersicht-Beta), damit
@@ -1178,7 +1198,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self.data["evcc_manual_mode"] = None
             self._save_soon()
 
-    def _update_plug_window(self) -> None:
+    def _update_plug_window(self, now=None) -> None:
         """Reines Beobachtungs-Feature (Nutzerwunsch 2026-09-23: 'wäre für
         das nutzungsprofil nicht auch die zeiten wann und wie lange am tag
         das auto angeschlossen ist ... sinnvoll ... um zu erkennen wie das
@@ -1200,24 +1220,102 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Sekunden je Flanke ist fuer ein reines Beobachtungsfeature
         unerheblich)."""
         loadpoint = self._current_loadpoint()
-        connected = bool(loadpoint.get("connected")) if loadpoint else False
-        now = dt_util.now()
+        own_plugged = self._own_vehicle_plugged(loadpoint)
+        prev_connected = self.data.get("plug_window_prev_connected", False)
+        # None = Fahrzeug am Ladepunkt (noch) nicht eindeutig zuordenbar: Zustand
+        # des vorigen Ticks beibehalten, keine Flanke ableiten.
+        connected = prev_connected if own_plugged is None else own_plugged
+        now = now or dt_util.now()
         today_key = now.date().isoformat()
         today = dict(self.data.get("plug_window_today") or {})
         if today.get("date") != today_key:
             if today.get("date"):
                 self._finalize_plug_window_day(today)
-            today = {"date": today_key, "connected_seconds": 0.0, "erster_connect": None, "letzter_disconnect": None}
+            today = {
+                "date": today_key, "connected_seconds": 0.0, "erster_connect": None, "letzter_disconnect": None,
+                "erste_abfahrt": None, "abfahrt_unsicher": False, "abfahrten_bestaetigt": 0, "urlaub": False,
+            }
         now_hhmm = now.strftime("%H:%M")
-        prev_connected = self.data.get("plug_window_prev_connected", False)
         if connected:
             today["connected_seconds"] = round(today.get("connected_seconds", 0.0) + _EVCC_POLL_INTERVAL_S, 1)
             if today.get("erster_connect") is None:
                 today["erster_connect"] = now_hhmm
         elif prev_connected:
             today["letzter_disconnect"] = now_hhmm
+        # Urlaub per ODER ueber alle Ticks des Tages einfrieren (der Schalter
+        # kann nicht rueckwirkend gelesen werden, siehe _urlaub_aktiv()).
+        if self._urlaub_aktiv():
+            today["urlaub"] = True
+        if loadpoint is not None and own_plugged is not None:
+            self._track_plug_departure(now, own_plugged, today)
         self.data["plug_window_today"] = today
         self.data["plug_window_prev_connected"] = connected
+
+    def _own_vehicle_plugged(self, loadpoint: Optional[dict]) -> Optional[bool]:
+        """Ob DIESES Fahrzeug (nicht irgendeines) am evcc-Ladepunkt angesteckt
+        ist -- Haushalte mit mehreren Fahrzeugen teilen sich einen Ladepunkt,
+        sein "connected" sagt allein nichts ueber dieses Fahrzeug. False ohne
+        Ladepunkt/ohne Verbindung sowie wenn laut "vehicleName" ein ANDERES
+        Fahrzeug angesteckt ist. None, wenn verbunden, aber noch kein Fahrzeug
+        erkannt ist und evcc mehrere kennt (Erkennung laeuft evtl. noch). Kann
+        dieses Fahrzeug evcc nicht zugeordnet werden, gilt wie bisher der
+        Ladepunkt (Zuordnungsproblem meldet _evcc_vehicle_resolution())."""
+        if not loadpoint or not loadpoint.get("connected"):
+            return False
+        plugged_vehicle = loadpoint.get("vehicleName")
+        own_key = self._evcc_vehicle_api_key()
+        if plugged_vehicle:
+            return plugged_vehicle == own_key if own_key else True
+        vehicles = (self._evcc_state or {}).get("vehicles") or {}
+        return True if len(vehicles) <= 1 else None
+
+    def _track_plug_departure(self, now, plugged: bool, today: dict) -> None:
+        """Erfasst die typische MORGEN-ABFAHRT (Abstecken) -- reine Beobachtung,
+        keine Anbindung an die Steuerung. Flanke angesteckt->abgesteckt legt
+        einen Kandidaten an (Uhrzeit = Beginn des Abgesteckt-Zustands); er wird
+        erst bestaetigt, wenn das Fahrzeug PLUG_DEPARTURE_CONFIRM_S durchgehend
+        abgesteckt bleibt, Wiederanstecken verwirft ihn. Bestaetigt zaehlt nur
+        die ERSTE Abfahrt des Kalendertags und nur im Morgenfenster. Ist die
+        Luecke zum vorigen erfolgreichen Tick groesser als
+        PLUG_TICK_GAP_FACTOR Poll-Intervalle (evcc nicht erreichbar, HA-
+        Neustart), ist die Zeit unsicher: sie bleibt in den Rohdaten, geht aber
+        nicht in die Statistik."""
+        ts = now.timestamp()
+        last_ts = self.data.get("plug_last_tick_ts")
+        gap = last_ts is not None and ts - last_ts > PLUG_TICK_GAP_FACTOR * _EVCC_POLL_INTERVAL_S
+        prev = self.data.get("plug_departure_prev")
+        if prev is None:
+            prev = self.data.get("plug_window_prev_connected", False)
+        candidate = self.data.get("plug_departure_candidate")
+        if plugged:
+            candidate = None
+        elif prev and candidate is None:
+            candidate = {
+                "ts": ts, "hhmm": now.strftime("%H:%M"), "date": now.date().isoformat(), "unsicher": bool(gap),
+            }
+        elif candidate is not None:
+            if gap:
+                candidate = {**candidate, "unsicher": True}
+            if ts - candidate["ts"] >= PLUG_DEPARTURE_CONFIRM_S:
+                self._confirm_plug_departure(candidate, today)
+                candidate = None
+        self.data["plug_departure_candidate"] = candidate
+        self.data["plug_departure_prev"] = plugged
+        self.data["plug_last_tick_ts"] = ts
+
+    def _confirm_plug_departure(self, candidate: dict, today: dict) -> None:
+        if candidate.get("date") != today.get("date"):
+            return  # Tageswechsel zwischen Flanke und Bestaetigung: nie im Morgenfenster
+        first = not today.get("abfahrten_bestaetigt")
+        today["abfahrten_bestaetigt"] = int(today.get("abfahrten_bestaetigt") or 0) + 1
+        if not first:
+            return
+        minutes = parse_hhmm_minutes(candidate.get("hhmm"))
+        if minutes is None or not PLUG_DEPARTURE_WINDOW_START_H * 60 <= minutes < PLUG_DEPARTURE_WINDOW_END_H * 60:
+            return
+        today["erste_abfahrt"] = candidate["hhmm"]
+        today["abfahrt_unsicher"] = bool(candidate.get("unsicher"))
+        self._log_event("steck_abfahrt", f"zeit={candidate['hhmm']} unsicher={bool(candidate.get('unsicher'))}")
 
     def _finalize_plug_window_day(self, day_entry: dict) -> None:
         """Schreibt einen abgeschlossenen Kalendertag aus "plug_window_
@@ -1235,7 +1333,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             round(day_entry.get("connected_seconds", 0.0) / 3600.0, 2),
             day_entry.get("erster_connect"),
             day_entry.get("letzter_disconnect"),
-            USAGE_PROFILE_WINDOW_DAYS,
+            PLUG_WINDOW_ENTRIES,
+            erste_abfahrt=day_entry.get("erste_abfahrt"),
+            abfahrt_unsicher=bool(day_entry.get("abfahrt_unsicher")),
+            urlaub=bool(day_entry.get("urlaub")),
         )
 
     def plug_window_profile(self) -> Optional[dict]:
@@ -1244,6 +1345,41 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         feature: durchschnittliche Steckdauer (Stunden) je Wochentag.
         None ohne einen einzigen abgeschlossenen Beobachtungstag."""
         return weekday_plug_window_profile_from_recent_days(self.data.get("plug_window_weekday_days") or {})
+
+    def plug_departure_profile(self) -> dict:
+        """Typische Morgen-Abfahrt (Abstecken) je Wochentag, siehe engine.
+        plug_departure_profile() -- {"wochentage": {0..6: Statistik},
+        "urlaub_nicht_gewertet": n}. Reine Anzeige, KEINE Steuerung."""
+        return plug_departure_profile(
+            self.data.get("plug_window_weekday_days") or {},
+            PLUG_DEPARTURE_WINDOW_START_H * 60,
+            PLUG_DEPARTURE_WINDOW_END_H * 60,
+            PLUG_DEPARTURE_OUTLIER_K,
+            PLUG_DEPARTURE_MIN_DEV_MIN,
+            PLUG_DEPARTURE_MIN_SAMPLES,
+            PLUG_DEPARTURE_CONSISTENCY_MIN,
+            PLUG_DEPARTURE_P10_MIN_N,
+        )
+
+    def _mark_plug_urlaub_since(self, since_date: date) -> int:
+        """Markiert alle Steckeintraege (und den noch offenen Tag) ab
+        `since_date` als Urlaub -- idempotent; geloescht wird nichts (die
+        Rohdaten bleiben, die Statistik wertet markierte Tage nicht). Gibt
+        die Zahl der NEU markierten Eintraege zurueck."""
+        marked = 0
+        since_iso = since_date.isoformat()
+        weekday_days = self.data.get("plug_window_weekday_days") or {}
+        for entries in weekday_days.values():
+            for entry in entries:
+                if entry.get("date", "") >= since_iso and not entry.get("urlaub"):
+                    entry["urlaub"] = True
+                    marked += 1
+        today = self.data.get("plug_window_today") or {}
+        if today.get("date", "") >= since_iso and not today.get("urlaub"):
+            today["urlaub"] = True
+            self.data["plug_window_today"] = today
+            marked += 1
+        return marked
 
     async def _apply_battery_priority_for_vehicle_presence(self) -> None:
         """Nutzerentscheidung 2026-09-23 (siehe CONF_EVCC_BATTERY_PRIORITY_
@@ -2282,11 +2418,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 resolved.add(date_iso)
             current += timedelta(days=1)
 
-        if not reclassified_by_weekday:
+        # Steckerprofil (Morgen-Abfahrt): markieren statt loeschen -- unabhaengig
+        # davon, ob das Entlade-Fenster etwas zu entfernen hatte.
+        plug_marked = self._mark_plug_urlaub_since(since_date)
+
+        if not reclassified_by_weekday and not plug_marked:
             return {"reclassified_kwh": 0.0, "wochentage": {}}
 
-        self.data["vehicle_discharge_weekday_days"] = weekday_days
-        self.data["vehicle_discharge_counted_dates"] = list(resolved)
+        if reclassified_by_weekday:
+            self.data["vehicle_discharge_weekday_days"] = weekday_days
+            self.data["vehicle_discharge_counted_dates"] = list(resolved)
 
         await self._save()
         payload = {
@@ -2294,6 +2435,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "reclassified_kwh": round(sum(reclassified_by_weekday.values()), 2),
             "wochentage": reclassified_by_weekday,
         }
+        if plug_marked:
+            payload["plug_markiert"] = plug_marked
         self.hass.bus.async_fire(EVENT_VEHICLE_DISCHARGE_URLAUB_APPLIED, payload)
         self.async_set_updated_data(self.data)
         return payload

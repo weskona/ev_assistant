@@ -1,0 +1,179 @@
+{
+  "version": 1,
+  "minor_version": 1,
+  "key": "ev_assistant_data_01M05XY3H32Y90BRYY7P96YHF1",
+  "data": {
+    "history": [],
+    "totals": {
+      "kwh": 0.0,
+      "kosten": 0.0,
+      "count": 0
+    },
+    "last_price": 0.0,
+    "pending": [],
+    "efficiency_samples": [],
+    "measured_efficiency": null,
+    "home_capacity_samples": [],
+    "home_charge_pct_total": 0.0,
+    "home_sessions": [],
+    "odo": 771.0,
+    "odo_unit": "km",
+    "odo_start": 763.0,
+    "odo_start_source": "sensor.erifter_odometer",
+    "wallbox_energy_start": null,
+    "wallbox_energy_start_source": null,
+    "evcc_vehicle_kwh_start": null,
+    "evcc_stat_total_kwh_start": null,
+    "evcc_vehicle_cost_start": null,
+    "savings_home_kwh_start": null,
+    "savings_home_cost_start": null,
+    "detector_state": null,
+    "soc_thresholds_notified": [],
+    "soc_thresholds_was_charging": false,
+    "leasing_notified_identity": null,
+    "leasing_notified_rank": 0,
+    "plug_debounce_state": {
+      "debounced": false,
+      "pending": null,
+      "pending_since": null
+    },
+    "motor_debounce_state": {
+      "debounced": false,
+      "pending": null,
+      "pending_since": null
+    },
+    "verbrenner_price_last": 2.139,
+    "home_price_last": 0.0811,
+    "verbrenner_price_weighted_sum": 1034209.0856461979,
+    "verbrenner_price_weighted_seconds": 470872.53916311264,
+    "verbrenner_price_interval_start_ts": 1787376435.2140458,
+    "home_price_weighted_energy_sum": 0.0,
+    "home_price_weighted_kwh": 0.0,
+    "home_price_interval_start_wallbox_energy": null,
+    "fahrten": [
+      {
+        "config_entry_id": "01M05XY3H32Y90BRYY7P96YHF1",
+        "datum": "2026-08-20",
+        "start_ts": 1787239041.4666622,
+        "end_ts": 1787239198.7321584,
+        "odo_start": 764.0,
+        "odo_end": 771.0,
+        "km": 7.0,
+        "start_ort": "Schumakersweg, De Koog",
+        "end_ort": "Bosrandweg, De Koog",
+        "erfasst_ts": 1787387250,
+        "temp_start": 24.2
+      },
+      {
+        "config_entry_id": "01M05XY3H32Y90BRYY7P96YHF1",
+        "datum": "2026-08-20",
+        "start_ts": 1787222301.6989555,
+        "end_ts": 1787222601.704799,
+        "odo_start": 763.0,
+        "odo_end": 764.0,
+        "km": 1.0,
+        "start_ort": "Bosrandweg, De Koog",
+        "end_ort": "Nikadel, De Koog",
+        "erfasst_ts": 1787387250,
+        "temp_start": 23.4
+      }
+    ],
+    "pending_trips": [],
+    "trip_totals": {
+      "km": 8.0,
+      "count": 2
+    },
+    "trip_detector_state": {
+      "anchor_odo": 771.0,
+      "anchor_ts": 1787387398.8848908,
+      "active": false,
+      "start_ts": 1787239041.4666622,
+      "start_odo": 764.0,
+      "last_odo": 771.0,
+      "last_move_ts": 1787239198.7321584
+    },
+    "trip_start_zone": "Schumakersweg, De Koog",
+    "trip_start_soc": null,
+    "trip_start_temp": 24.25,
+    "odo_periods": {
+      "day": {
+        "key": "2026-08-22",
+        "odo_km": 771.0
+      },
+      "week": {
+        "key": "2026-W34",
+        "odo_km": 763.0
+      },
+      "month": {
+        "key": "2026-08",
+        "odo_km": 763.0
+      },
+      "year": {
+        "key": "2026",
+        "odo_km": 763.0
+      }
+    },
+    "cost_periods": {
+      "day": {
+        "key": "2026-08-22",
+        "cost": 0.0,
+        "prev": 0.0
+      },
+      "week": {
+        "key": "2026-W34",
+        "cost": 0.0
+      },
+      "month": {
+        "key": "2026-08",
+        "cost": 0.0
+      },
+      "year": {
+        "key": "2026",
+        "cost": 0.0
+      }
+    },
+    "kwh_periods": {
+      "day": {
+        "key": "2026-08-22",
+        "kwh": 0.0,
+        "prev": 0.0
+      },
+      "week": {
+        "key": "2026-W34",
+        "kwh": 0.0
+      },
+      "month": {
+        "key": "2026-08",
+        "kwh": 0.0
+      },
+      "year": {
+        "key": "2026",
+        "kwh": 0.0
+      }
+    },
+    "odo_lts": {
+      "sum_now": 702.0,
+      "sum_30d_ago": 67.0
+    },
+    "ladekarten": [],
+    "fahrten_discharge_pct_total": 0.0,
+    "history_charge_pct_total": 0.0,
+    "ac_dc_totals": {},
+    "anbieter_totals": {},
+    "trip_consumption_exact_totals": {
+      "sum_kwh": 0.0,
+      "count": 0
+    },
+    "trip_consumption_deltasoc_totals": {
+      "sum_frac": 0.0,
+      "count": 0
+    },
+    "temp_bucket_totals": {},
+    "fahrtenbuch_first_ts": 1787222301.6989555,
+    "weekday_kwh_exact_totals": {},
+    "weekday_km_est_totals": {
+      "3": 8.0
+    },
+    "lifetime_baselines_migrated": true
+  }
+}

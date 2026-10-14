@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "minor_version": 1,
+  "key": "ev_assistant_data_01M05XY3H32Y90BRYY7P96YHF1",
+  "data": {
+    "history": [],
+    "totals": {
+      "kwh": 0.0,
+      "kosten": 0.0,
+      "count": 0
+    },
+    "last_price": 0.0,
+    "pending": [],
+    "efficiency_samples": [],
+    "measured_efficiency": null,
+    "home_capacity_samples": [],
+    "home_charge_pct_total": 0.0,
+    "home_sessions": [],
+    "odo": 764.0,
+    "odo_unit": "km",
+    "odo_start": 763.0,
+    "odo_start_source": "sensor.erifter_odometer",
+    "wallbox_energy_start": null,
+    "wallbox_energy_start_source": null,
+    "evcc_vehicle_kwh_start": null,
+    "evcc_stat_total_kwh_start": null,
+    "evcc_vehicle_cost_start": null,
+    "savings_home_kwh_start": null,
+    "savings_home_cost_start": null,
+    "detector_state": null,
+    "soc_thresholds_notified": [],
+    "soc_thresholds_was_charging": false,
+    "leasing_notified_identity": null,
+    "leasing_notified_rank": 0,
+    "plug_debounce_state": {
+      "debounced": false,
+      "pending": null,
+      "pending_since": null
+    },
+    "motor_debounce_state": {
+      "debounced": false,
+      "pending": null,
+      "pending_since": null
+    },
+    "verbrenner_price_last": 2.369,
+    "home_price_last": 0.0811,
+    "verbrenner_price_weighted_sum": 710841.0347497601,
+    "verbrenner_price_weighted_seconds": 324004.7447068691,
+    "verbrenner_price_interval_start_ts": 1787229567.4195895,
+    "home_price_weighted_energy_sum": 0.0,
+    "home_price_weighted_kwh": 0.0,
+    "home_price_interval_start_wallbox_energy": null,
+    "fahrten": [],
+    "pending_trips": [
+      {
+        "start_ts": 1787222301.6989555,
+        "end_ts": 1787222601.704799,
+        "odo_start": 763.0,
+        "odo_end": 764.0,
+        "km": 1.0,
+        "duration_min": 5.0,
+        "start_ort_vorschlag": "Bosrandweg, De Koog",
+        "end_ort_vorschlag": "Nikadel, De Koog",
+        "temp_start": 23.4,
+        "config_entry_id": "01M05XY3H32Y90BRYY7P96YHF1"
+      }
+    ],
+    "trip_totals": {
+      "km": 0.0,
+      "count": 0
+    },
+    "trip_detector_state": {
+      "anchor_odo": 764.0,
+      "anchor_ts": 1787229922.079858,
+      "active": false,
+      "start_ts": 1787222301.6989555,
+      "start_odo": 763.0,
+      "last_odo": 764.0,
+      "last_move_ts": 1787222601.704799
+    },
+    "trip_start_zone": "Bosrandweg, De Koog",
+    "trip_start_soc": null,
+    "trip_start_temp": 23.38,
+    "odo_periods": {
+      "day": {
+        "key": "2026-08-20",
+        "odo_km": 763.0
+      },
+      "week": {
+        "key": "2026-W34",
+        "odo_km": 763.0
+      },
+      "month": {
+        "key": "2026-08",
+        "odo_km": 763.0
+      },
+      "year": {
+        "key": "2026",
+        "odo_km": 763.0
+      }
+    },
+    "cost_periods": {
+      "day": {
+        "key": "2026-08-20",
+        "cost": 0.0,
+        "prev": 0.0
+      },
+      "week": {
+        "key": "2026-W34",
+        "cost": 0.0
+      },
+      "month": {
+        "key": "2026-08",
+        "cost": 0.0
+      },
+      "year": {
+        "key": "2026",
+        "cost": 0.0
+      }
+    },
+    "kwh_periods": {
+      "day": {
+        "key": "2026-08-20",
+        "kwh": 0.0,
+        "prev": 0.0
+      },
+      "week": {
+        "key": "2026-W34",
+        "kwh": 0.0
+      },
+      "month": {
+        "key": "2026-08",
+        "kwh": 0.0
+      },
+      "year": {
+        "key": "2026",
+        "kwh": 0.0
+      }
+    },
+    "odo_lts": {
+      "sum_now": 694.0,
+      "sum_30d_ago": 54.0
+    },
+    "ladekarten": [],
+    "fahrten_discharge_pct_total": 0.0,
+    "history_charge_pct_total": 0.0,
+    "ac_dc_totals": {},
+    "anbieter_totals": {},
+    "trip_consumption_exact_totals": {
+      "sum_kwh": 0.0,
+      "count": 0
+    },
+    "trip_consumption_deltasoc_totals": {
+      "sum_frac": 0.0,
+      "count": 0
+    },
+    "temp_bucket_totals": {},
+    "fahrtenbuch_first_ts": null,
+    "weekday_kwh_exact_totals": {},
+    "weekday_km_est_totals": {},
+    "lifetime_baselines_migrated": true
+  }
+}
