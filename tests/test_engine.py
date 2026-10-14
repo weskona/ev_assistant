@@ -67,8 +67,11 @@ from engine import (
     normalize_vehicle_label,
     open_session_sums,
     parse_evcc_timestamp,
+    parse_hhmm_minutes,
     period_key_for_date,
     period_start_date,
+    plug_departure_profile,
+    plug_departure_stats,
     pop_pending,
     previous_period_date,
     range_km_to_soc_percent,
@@ -1885,6 +1888,7 @@ def test_append_recent_weekday_plug_window_neuer_tag_wird_angehaengt():
     )
     assert result["0"] == [{
         "date": "2026-09-01", "stunden": 8.5, "erster_connect": "18:15", "letzter_disconnect": "07:02",
+        "erste_abfahrt": None, "abfahrt_unsicher": False, "urlaub": False,
     }]
 
 
@@ -1900,6 +1904,7 @@ def test_append_recent_weekday_plug_window_addiert_stunden_zu_selbem_datum():
     # Fruehere Connect-Zeit bleibt (18:00 < 20:00), Disconnect wird uebernommen.
     assert result["0"] == [{
         "date": "2026-09-01", "stunden": 5.0, "erster_connect": "18:00", "letzter_disconnect": "23:00",
+        "erste_abfahrt": None, "abfahrt_unsicher": False, "urlaub": False,
     }]
 
 
@@ -4697,3 +4702,125 @@ def test_drop_negative_weekday_days_entfernt_nur_negative():
     assert repaired["0"] == [{"date": "2026-09-22", "kwh": 22.77}]
     assert repaired["1"] == days["1"]
     assert drop_negative_weekday_days(repaired) == (repaired, 0)
+
+
+# ----- Morgen-Abfahrt (Steckerprofil): Statistik je Wochentag ----------------
+
+_DEP = dict(
+    window_start_min=240, window_end_min=720, outlier_k=3.0, min_dev_min=45,
+    min_samples=4, consistency_min=0.6, p10_min_n=10,
+)
+
+
+def _dep_entries(times, **extra):
+    return [{"date": f"2026-09-{i + 1:02d}", "erste_abfahrt": t, **extra} for i, t in enumerate(times)]
+
+
+def test_parse_hhmm_minutes():
+    assert parse_hhmm_minutes("07:05") == 425
+    assert parse_hhmm_minutes("7:05") == 425
+    assert parse_hhmm_minutes("24:00") is None
+    assert parse_hhmm_minutes("07:60") is None
+    assert parse_hhmm_minutes(None) is None
+    assert parse_hhmm_minutes("abc") is None
+
+
+def test_departure_stats_ausreisser_wird_markiert_nicht_gemittelt():
+    # 7 x ca. 07:00, 1 x 10:00 -> 10:00 ist Ausreisser, typisch bleibt 07:0x
+    entries = _dep_entries(["07:00", "07:02", "06:58", "07:05", "07:00", "07:01", "07:03", "10:00"])
+    stats = plug_departure_stats(entries, **_DEP)
+    assert stats["status"] == "ok"
+    assert stats["n_gueltig"] == 8
+    assert stats["n_ausreisser"] == 1
+    assert stats["typisch"] == "07:01"
+    assert stats["frueh"] == "06:58"
+    assert stats["konfidenz"] == 0.88
+
+
+def test_departure_stats_zweigipflig_ist_uneinheitlich():
+    stats = plug_departure_stats(_dep_entries(["07:00"] * 4 + ["10:00"] * 4), **_DEP)
+    assert stats["status"] == "uneinheitlich"
+    assert stats["typisch"] is None and stats["frueh"] is None
+    assert stats["konfidenz"] == 0.0
+
+
+def test_departure_stats_unter_mindestanzahl_keine_zeit():
+    stats = plug_departure_stats(_dep_entries(["07:00", "07:05", "07:10"]), **_DEP)
+    assert stats["status"] == "nicht_belastbar"
+    assert stats["typisch"] is None
+    assert stats["n_gueltig"] == 3
+
+
+def test_departure_stats_ohne_messung_ist_keine_messung_nicht_null():
+    entries = [{"date": "2026-09-01", "stunden": 8.0}, {"date": "2026-09-08", "erste_abfahrt": None}]
+    stats = plug_departure_stats(entries, **_DEP)
+    assert stats["status"] == "keine_messung"
+    assert stats["n_gueltig"] == 0
+
+
+def test_departure_stats_urlaub_und_unsicher_zaehlen_nicht():
+    entries = (
+        _dep_entries(["07:00", "07:05", "07:10", "07:15"])
+        + _dep_entries(["03:30"], urlaub=True)
+        + _dep_entries(["09:00"], abfahrt_unsicher=True)
+    )
+    stats = plug_departure_stats(entries, **_DEP)
+    assert stats["n_gueltig"] == 4
+    assert stats["status"] == "ok"
+
+
+def test_departure_stats_ausserhalb_morgenfenster_zaehlt_nicht():
+    stats = plug_departure_stats(_dep_entries(["03:59", "12:00", "14:30"]), **_DEP)
+    assert stats["n_gueltig"] == 0
+
+
+def test_departure_stats_frueh_ist_p10_ab_zehn_messungen():
+    times = [f"07:{m:02d}" for m in range(0, 40, 4)]  # 10 Werte 07:00..07:36
+    stats = plug_departure_stats(_dep_entries(times), **_DEP)
+    assert stats["n_ausreisser"] == 0
+    assert stats["frueh"] == "07:00"  # ceil(0.1*10)=1. Wert
+    times12 = [f"07:{m:02d}" for m in range(0, 36, 3)]  # 12 Werte
+    stats12 = plug_departure_stats(_dep_entries(times12), **_DEP)
+    assert stats12["frueh"] == "07:03"  # ceil(0.1*12)=2. Wert, nicht der Einzelextremwert
+
+
+def test_departure_profile_alle_wochentage_und_urlaubszaehler():
+    days = {
+        "1": _dep_entries(["07:00"] * 4),
+        "2": _dep_entries(["08:00"], urlaub=True),
+    }
+    profile = plug_departure_profile(days, 240, 720, 3.0, 45, 4, 0.6, 10)
+    assert sorted(profile["wochentage"]) == list(range(7))
+    assert profile["wochentage"][1]["typisch"] == "07:00"
+    assert profile["wochentage"][0]["status"] == "keine_messung"
+    assert profile["urlaub_nicht_gewertet"] == 1
+
+
+def test_append_plug_window_merge_abfahrtsfelder():
+    days = {"0": [{
+        "date": "2026-09-01", "stunden": 1.0, "erster_connect": None, "letzter_disconnect": None,
+        "erste_abfahrt": "07:30", "abfahrt_unsicher": False, "urlaub": False,
+    }]}
+    result = append_recent_weekday_plug_window(
+        days, weekday=0, date_iso="2026-09-01", connected_hours=1.0, erster_connect=None,
+        letzter_disconnect=None, window=12, erste_abfahrt="07:10", abfahrt_unsicher=True, urlaub=True,
+    )
+    assert result["0"][0]["erste_abfahrt"] == "07:10"  # fruehere gewinnt
+    assert result["0"][0]["abfahrt_unsicher"] is True and result["0"][0]["urlaub"] is True
+
+
+def test_append_plug_window_fenstergroesse_12_und_alte_eintraege_ohne_felder_bleiben_gueltig():
+    days = {"0": [
+        {"date": f"2026-06-{d:02d}", "stunden": 1.0, "erster_connect": None, "letzter_disconnect": "07:00"}
+        for d in range(1, 13)
+    ]}
+    result = append_recent_weekday_plug_window(
+        days, weekday=0, date_iso="2026-09-01", connected_hours=2.0, erster_connect=None,
+        letzter_disconnect=None, window=12,
+    )
+    assert len(result["0"]) == 12
+    assert result["0"][0]["date"] == "2026-06-02"
+    # Altdaten ohne die neuen Felder liefern keine Abfahrtsmessung ...
+    assert plug_departure_stats(result["0"], **_DEP)["n_gueltig"] == 0
+    # ... und das Stunden-Profil bleibt unveraendert (Mittel der "stunden").
+    assert weekday_plug_window_profile_from_recent_days(result) == {0: round((11 * 1.0 + 2.0) / 12, 2)}

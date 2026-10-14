@@ -613,6 +613,9 @@
       "plug_window": {
         "name": "Plug Time Window"
       },
+      "morning_departure": {
+        "name": "Typical morning departure"
+      },
       "usage_profile_tomorrow": {
         "name": "Usage Profile (Needed Tomorrow)"
       },

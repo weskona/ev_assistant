@@ -613,6 +613,9 @@
       "plug_window": {
         "name": "Steck-Zeitfenster"
       },
+      "morning_departure": {
+        "name": "Typische Morgen-Abfahrt"
+      },
       "usage_profile_tomorrow": {
         "name": "Nutzungsprofil (morgen benötigt)"
       },

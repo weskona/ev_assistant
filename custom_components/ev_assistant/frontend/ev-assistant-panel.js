@@ -1129,6 +1129,11 @@ class EVAssistantPanel extends HTMLElement {
         <div class="hidden" id="plug-profil-content">
           <div class="sub-head">Ø Steckdauer pro Wochentag (Std.)</div>
           <div class="weekday-chart" id="plug-profil-weekday-chart"></div>
+          <div class="hidden" id="plug-dep-section">
+            <div class="sub-head plug-dep-head">Typische Abfahrt (Abstecken, morgens)</div>
+            <div class="weekday-chart wd-times" id="plug-dep-row"></div>
+            <div class="profil-empty plug-dep-note" id="plug-dep-note"></div>
+          </div>
         </div>
       </div>`;
 
@@ -1152,6 +1157,9 @@ class EVAssistantPanel extends HTMLElement {
       plugProfilEmpty:        q("#plug-profil-empty"),
       plugProfilContent:      q("#plug-profil-content"),
       plugProfilWeekdayChart: q("#plug-profil-weekday-chart"),
+      plugDepSection:         q("#plug-dep-section"),
+      plugDepRow:             q("#plug-dep-row"),
+      plugDepNote:            q("#plug-dep-note"),
     };
     return wrap;
   }
@@ -1924,6 +1932,70 @@ class EVAssistantPanel extends HTMLElement {
           <div class="wd-label">${label}</div>
         </div>`;
     }).join("");
+    this._updateAbfahrt();
+  }
+
+  // Typische Morgen-Abfahrt (Abstecken) je Wochentag (siehe coordinator.py::
+  // plug_departure_profile(), sensor.py::MorningDepartureSensor) -- reine
+  // Anzeige, keine Steuerung. Quelle sind nur die kleinen Attribute
+  // je_wochentag/urlaub_nicht_gewertet/mindestanzahl, keine Rohdaten. Fehlt der
+  // Sensor (aeltere Installation), wird der Abschnitt gar nicht gerendert.
+  _updateAbfahrt() {
+    const r = this._r;
+    if (!r.plugDepSection) return;
+    const eid = this._eid("morning_departure");
+    const state = eid ? this._hass.states[eid] : null;
+    const attrs = state ? state.attributes || {} : {};
+    const je = attrs.je_wochentag;
+    if (!je) {
+      r.plugDepSection.classList.add("hidden");
+      return;
+    }
+    r.plugDepSection.classList.remove("hidden");
+    const WEEKDAYS = [
+      ["montag", "Mo"], ["dienstag", "Di"], ["mittwoch", "Mi"], ["donnerstag", "Do"],
+      ["freitag", "Fr"], ["samstag", "Sa"], ["sonntag", "So"],
+    ];
+    const minN = attrs.mindestanzahl || 4;
+    const todayWd = new Date().getDay();
+    const todayIdx = todayWd === 0 ? 6 : todayWd - 1;
+    const tomorrowIdx = (todayIdx + 1) % 7;
+    const cell = (st) => {
+      if (!st) return "–";
+      if (st.status === "ok" && st.typisch) return st.typisch;
+      if (st.status === "nicht_belastbar") return `${st.n_gueltig}/${minN}`;
+      if (st.status === "uneinheitlich") return "?";
+      return "–";
+    };
+    r.plugDepRow.innerHTML = WEEKDAYS.map(([key, label], i) => {
+      const cls = i === tomorrowIdx ? " tomorrow" : (i === todayIdx ? " today" : "");
+      return `
+        <div class="wd-col">
+          <div class="wd-val${cls}">${cell(je[key])}</div>
+          <div class="wd-label">${label}</div>
+        </div>`;
+    }).join("");
+
+    const tom = je[WEEKDAYS[tomorrowIdx][0]] || {};
+    const parts = [`Morgen (${WEEKDAYS[tomorrowIdx][1]}):`];
+    if (tom.status === "ok") {
+      parts.push(`typisch ${tom.typisch}`);
+      if (tom.frueh) parts.push(`frühestens ${tom.frueh}`);
+      parts.push(`${tom.n_gueltig} gültige Messungen`);
+      parts.push(`${tom.n_ausreisser} Ausreißer`);
+    } else if (tom.status === "uneinheitlich") {
+      parts.push("uneinheitlich");
+      parts.push(`${tom.n_gueltig} gültige Messungen`);
+      parts.push(`${tom.n_ausreisser} Ausreißer`);
+    } else if (tom.status === "nicht_belastbar") {
+      parts.push(`noch nicht belastbar (${tom.n_gueltig}/${minN} Messungen)`);
+    } else {
+      parts.push("noch keine Messung");
+    }
+    let text = parts[0] + " " + parts.slice(1).join(" · ");
+    const urlaub = Number(attrs.urlaub_nicht_gewertet) || 0;
+    if (urlaub > 0) text += ` · Urlaub: ${urlaub} Tag${urlaub === 1 ? "" : "e"} nicht gewertet`;
+    r.plugDepNote.textContent = text;
   }
 
   _updateAnalyse() {
@@ -6378,6 +6450,15 @@ class EVAssistantPanel extends HTMLElement {
       .wd-bar.tomorrow { background: #4ade80; }
       .wd-bar.no-data  { background: transparent; border: 1px dashed var(--line-s); }
       .wd-label { font-size: 0.7rem; color: var(--ink-dim); margin-top: 6px; font-weight: 600; }
+      /* Zeile mit Uhrzeiten statt Balken (Steckerprofil, typische Abfahrt): gleiche
+         Spalten-Klassen, nur ohne feste Chart-Hoehe; schmal genug fuer 7 Spalten am Handy. */
+      .weekday-chart.wd-times { height: auto; align-items: flex-start; gap: 2px; margin-top: 0; }
+      .wd-times .wd-col { height: auto; }
+      .wd-times .wd-val { font-size: 0.72rem; margin-bottom: 0; color: var(--ink); white-space: nowrap; }
+      .wd-times .wd-val.today    { color: var(--accent); font-weight: 700; }
+      .wd-times .wd-val.tomorrow { color: #4ade80; font-weight: 700; }
+      .plug-dep-head { margin-top: 18px; }
+      .plug-dep-note { overflow-wrap: anywhere; }
 
       /* Mischpreis-Skala (Analyse-Tab: Wirtschaftlichkeit Netz-Zuschuss) --
          horizontaler Farbverlauf guenstig (Einspeisung) -> teuer (Netz),
