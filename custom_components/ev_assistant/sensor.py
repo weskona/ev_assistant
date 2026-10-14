@@ -1,7 +1,7 @@
 """Sensoren fuer ev_assistant."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
@@ -23,6 +23,7 @@ from .const import (
     DEFAULT_EVCC_MODE_CONTROL_ENABLED,
     DOMAIN,
     EFF_MIN_SAMPLES,
+    PLUG_DEPARTURE_MIN_SAMPLES,
     WARTUNG_PRESETS,
 )
 from .engine import latest_charge
@@ -87,6 +88,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
         HouseUsageProfileSensor(coordinator, entry),
         VehicleDischargeSensor(coordinator, entry),
         PlugWindowSensor(coordinator, entry),
+        MorningDepartureSensor(coordinator, entry),
         AvailableKwhSensor(coordinator, entry),
         EvccModeControlSensor(coordinator, entry),
         EvccChargePlanSensor(coordinator, entry),
@@ -1532,6 +1534,10 @@ class PlugWindowSensor(EvAssistantEntity, SensorEntity):
     _attr_icon = "mdi:ev-plug-type2"
     _attr_suggested_display_precision = 2
 
+    # Die Rohlisten sind gross (7 x PLUG_WINDOW_ENTRIES Eintraege) und gehoeren
+    # nicht in jeden Recorder-Datensatz.
+    _unrecorded_attributes = frozenset({"heute", "tage"})
+
     _WEEKDAY_KEYS = ["montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag"]
 
     def __init__(self, coordinator, entry):
@@ -1550,6 +1556,55 @@ class PlugWindowSensor(EvAssistantEntity, SensorEntity):
         attrs["heute"] = self.coordinator.data.get("plug_window_today")
         attrs["tage"] = self.coordinator.data.get("plug_window_weekday_days")
         return attrs
+
+
+class MorningDepartureSensor(EvAssistantEntity, SensorEntity):
+    """Typische Morgen-Abfahrt (Abstecken) am MORGIGEN Wochentag -- reine
+    Anzeige, KEINE Anbindung an die Steuerung (siehe coordinator.py::
+    _track_plug_departure(), engine.py::plug_departure_profile()). Zustand:
+    Zeitstempel in Lokalzeit; unavailable-frei None, solange die Zeit nicht
+    belastbar ist (zu wenige Messungen oder uneinheitlich). Attribute bewusst
+    klein (je Wochentag eine Handvoll Werte, KEINE Rohliste -- die steht im
+    Attribut "tage" des Sensors plug_window)."""
+
+    _attr_translation_key = "morning_departure"
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:car-clock"
+
+    _WEEKDAY_KEYS = PlugWindowSensor._WEEKDAY_KEYS
+
+    def __init__(self, coordinator, entry):
+        super().__init__(coordinator, entry, "morning_departure")
+
+    @property
+    def native_value(self):
+        tomorrow = dt_util.now().date() + timedelta(days=1)
+        stats = self.coordinator.plug_departure_profile()["wochentage"].get(tomorrow.weekday()) or {}
+        minutes = stats.get("typisch_min")
+        if minutes is None:
+            return None
+        return dt_util.start_of_local_day(tomorrow) + timedelta(minutes=minutes)
+
+    @property
+    def extra_state_attributes(self):
+        profile = self.coordinator.plug_departure_profile()
+        je_wochentag = {}
+        for wd, key in enumerate(self._WEEKDAY_KEYS):
+            stats = profile["wochentage"][wd]
+            je_wochentag[key] = {
+                "typisch": stats["typisch"],
+                "frueh": stats["frueh"],
+                "n_gueltig": stats["n_gueltig"],
+                "n_ausreisser": stats["n_ausreisser"],
+                "konfidenz": stats["konfidenz"],
+                "status": stats["status"],
+            }
+        return {
+            "je_wochentag": je_wochentag,
+            "urlaub_nicht_gewertet": profile["urlaub_nicht_gewertet"],
+            "mindestanzahl": PLUG_DEPARTURE_MIN_SAMPLES,
+        }
 
 
 class AvailableKwhSensor(EvAssistantEntity, SensorEntity):
