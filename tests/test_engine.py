@@ -4690,7 +4690,7 @@ def test_clamp_weekday_contribution_positiver_schnitt_daempft_weiter():
 
 
 def test_drop_negative_weekday_days_entfernt_nur_negative():
-    from custom_components.ev_assistant.engine import drop_negative_weekday_days
+    from engine import drop_negative_weekday_days
 
     days = {
         "0": [{"date": "2026-09-22", "kwh": 22.77}, {"date": "2026-09-28", "kwh": -69.75},
