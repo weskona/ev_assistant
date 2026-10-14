@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "minor_version": 1,
+  "key": "ev_assistant_data_01KXHD8EWNSG2J4AMK5PNW44NS",
+  "data": {
+    "history": [],
+    "totals": {
+      "kwh": 0.0,
+      "kosten": 0.0,
+      "count": 0
+    },
+    "last_price": 0.0,
+    "pending": [],
+    "efficiency_samples": [],
+    "measured_efficiency": null,
+    "odo": 66.4,
+    "odo_unit": "km"
+  }
+}
