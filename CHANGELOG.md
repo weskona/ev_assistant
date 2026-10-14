@@ -2,6 +2,21 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.49] - 2026-10-15
+
+### Added
+
+- **Typical morning departure: early outliers are now visible (display only, still nothing wired into evcc mode control or charge plans).** `frueh` is the earliest NON-outlier, so with 5 x 07:00 and 3 x 05:30 it stayed at 07:00 and the weekday was "ok", although the car left at 05:30 on 3 of 8 days. New fields per weekday in the attribute `je_wochentag` of the sensor "Typische Morgen-Abfahrt": `frueh_roh` (earliest valid value INCLUDING outliers, set from 4 valid measurements on, also for "uneinheitlich") and `n_ausreisser_frueh` (outliers earlier than the median; `n_ausreisser` stays the total). The panel line for tomorrow adds "frühester Wert inkl. Ausreißer HH:MM (N frühe Ausreißer)" when that value is earlier than `frueh` or the weekday is inconsistent. The weekday row (typical time) is unchanged.
+- **New status rule:** if the share of outliers among the valid measurements is above `PLUG_DEPARTURE_MAX_OUTLIER_SHARE` (0.25), the weekday is "uneinheitlich" (no typical time). Median, MAD, window edge, holiday handling and the existing confidence rule (`PLUG_DEPARTURE_CONSISTENCY_MIN`, 0.6) are unchanged. It is a separate rule on purpose: with a MAD of up to 15 minutes the outlier share equals 1 - confidence, with a larger MAD it is only smaller, so merging both into "confidence >= 0.75" would also discard widely spread weekdays without outliers that are "ok" today. Example: 5 x 07:00 + 3 x 05:30 has confidence 0.625 (previously "ok") but an outlier share of 0.375 (now "uneinheitlich").
+
+### Changed
+
+- **CI: new job "Engine-Tests (ohne HA)" in `validate.yml`** (installs only `pytest`, runs `tests/test_engine.py`, `tests/test_const.py`, `tests/test_check_release.py`). It protects the promise that the engine tests need no Home Assistant; `release.yml` depends on it through the reusable validate workflow. `test_engine.py` imported `drop_negative_weekday_days` via `custom_components.ev_assistant.engine` (pulls in `__init__.py` and `homeassistant`) and failed without HA; it now uses `from engine import ...` like the rest of the file. No product code changed.
+
+### Limits (honest)
+
+- **For any later charge planning use `frueh_roh`, not `frueh`:** `frueh` deliberately hides outliers and is only meant for the display of the typical time. The share rule only catches an early (or late) minority above 25 %; a single early day (below 25 %) stays visible only as `frueh_roh` / `n_ausreisser_frueh`.
+
 ## [0.99.48] - 2026-10-14
 
 ### Added

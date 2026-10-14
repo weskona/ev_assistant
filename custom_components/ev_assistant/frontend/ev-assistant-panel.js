@@ -1992,6 +1992,16 @@ class EVAssistantPanel extends HTMLElement {
     } else {
       parts.push("noch keine Messung");
     }
+    // Fruehester Wert INKLUSIVE Ausreisser (frueh_roh): "frueh" blendet Ausreisser aus
+    // -- fuer eine spaetere Ladeplanung zaehlt dieser Rand. Gezeigt, wenn er frueher
+    // als "frueh" liegt bzw. bei "uneinheitlich" (dort gibt es kein "frueh").
+    const fruehRoh = tom.frueh_roh;
+    const fruehAus = Number(tom.n_ausreisser_frueh) || 0;
+    if (fruehRoh && (tom.status === "uneinheitlich" || (tom.status === "ok" && tom.frueh && fruehRoh < tom.frueh))) {
+      let extra = `frühester Wert inkl. Ausreißer ${fruehRoh}`;
+      if (fruehAus > 0) extra += ` (${fruehAus} ${fruehAus === 1 ? "früher Ausreißer" : "frühe Ausreißer"})`;
+      parts.push(extra);
+    }
     let text = parts[0] + " " + parts.slice(1).join(" · ");
     const urlaub = Number(attrs.urlaub_nicht_gewertet) || 0;
     if (urlaub > 0) text += ` · Urlaub: ${urlaub} Tag${urlaub === 1 ? "" : "e"} nicht gewertet`;

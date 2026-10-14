@@ -4708,7 +4708,7 @@ def test_drop_negative_weekday_days_entfernt_nur_negative():
 
 _DEP = dict(
     window_start_min=240, window_end_min=720, outlier_k=3.0, min_dev_min=45,
-    min_samples=4, consistency_min=0.6, p10_min_n=10,
+    min_samples=4, consistency_min=0.6, p10_min_n=10, max_outlier_share=0.25,
 )
 
 
@@ -4789,7 +4789,7 @@ def test_departure_profile_alle_wochentage_und_urlaubszaehler():
         "1": _dep_entries(["07:00"] * 4),
         "2": _dep_entries(["08:00"], urlaub=True),
     }
-    profile = plug_departure_profile(days, 240, 720, 3.0, 45, 4, 0.6, 10)
+    profile = plug_departure_profile(days, 240, 720, 3.0, 45, 4, 0.6, 10, 0.25)
     assert sorted(profile["wochentage"]) == list(range(7))
     assert profile["wochentage"][1]["typisch"] == "07:00"
     assert profile["wochentage"][0]["status"] == "keine_messung"
@@ -4824,3 +4824,76 @@ def test_append_plug_window_fenstergroesse_12_und_alte_eintraege_ohne_felder_ble
     assert plug_departure_stats(result["0"], **_DEP)["n_gueltig"] == 0
     # ... und das Stunden-Profil bleibt unveraendert (Mittel der "stunden").
     assert weekday_plug_window_profile_from_recent_days(result) == {0: round((11 * 1.0 + 2.0) / 12, 2)}
+
+
+# ----- Fruehe Ausreisser sichtbar machen (frueh_roh, Ausreisseranteil) --------
+
+def test_frueh_roh_gleich_frueh_wenn_nur_spaeter_ausreisser():
+    entries = _dep_entries(["07:00", "07:02", "06:58", "07:05", "07:00", "07:01", "07:03", "10:00"])
+    stats = plug_departure_stats(entries, **_DEP)
+    assert stats["status"] == "ok"
+    assert stats["frueh_roh"] == stats["frueh"] == "06:58"
+    assert stats["n_ausreisser"] == 1
+    assert stats["n_ausreisser_frueh"] == 0
+
+
+def test_frueh_roh_zeigt_einzelnen_fruehen_ausreisser():
+    entries = _dep_entries(["07:00", "07:02", "06:58", "07:05", "07:00", "07:01", "07:03", "05:30"])
+    stats = plug_departure_stats(entries, **_DEP)
+    assert stats["status"] == "ok"
+    assert stats["frueh"] == "06:58"
+    assert stats["frueh_roh"] == "05:30"
+    assert stats["n_ausreisser"] == 1
+    assert stats["n_ausreisser_frueh"] == 1
+
+
+def test_drei_von_acht_frueh_ist_uneinheitlich_obwohl_konfidenz_ueber_schwelle():
+    stats = plug_departure_stats(_dep_entries(["07:00"] * 5 + ["05:30"] * 3), **_DEP)
+    assert stats["konfidenz"] == 0.62          # 5/8 -- nach der Konfidenzregel allein waere es "ok"
+    assert stats["status"] == "uneinheitlich"  # Ausreisseranteil 3/8 = 0,375 > 0,25
+    assert stats["typisch"] is None and stats["frueh"] is None
+    assert stats["frueh_roh"] == "05:30"
+    assert stats["n_ausreisser"] == 3 and stats["n_ausreisser_frueh"] == 3
+
+
+def test_ausreisseranteil_genau_25_prozent_ist_noch_ok():
+    stats = plug_departure_stats(_dep_entries(["07:00"] * 6 + ["10:00"] * 2), **_DEP)
+    assert stats["n_ausreisser"] == 2
+    assert stats["status"] == "ok"
+    assert stats["typisch"] == "07:00"
+    assert stats["frueh_roh"] == "07:00"
+    assert stats["n_ausreisser_frueh"] == 0
+
+
+def test_knapp_ueber_25_prozent_kippt_auf_uneinheitlich():
+    stats = plug_departure_stats(_dep_entries(["07:00"] * 5 + ["10:00"] * 2), **_DEP)  # 2/7 = 0,29
+    assert stats["status"] == "uneinheitlich"
+
+
+def test_frueh_roh_none_unter_mindestanzahl():
+    stats = plug_departure_stats(_dep_entries(["07:00", "05:30", "07:05"]), **_DEP)
+    assert stats["status"] == "nicht_belastbar"
+    assert stats["frueh_roh"] is None and stats["frueh_roh_min"] is None
+
+
+def test_frueh_roh_bei_zweigipfliger_verteilung_gesetzt():
+    stats = plug_departure_stats(_dep_entries(["07:00"] * 4 + ["10:00"] * 4), **_DEP)
+    assert stats["status"] == "uneinheitlich"
+    assert stats["frueh_roh"] == "07:00"
+
+
+def test_frueh_roh_ignoriert_urlaub_und_unsichere_werte():
+    entries = (
+        _dep_entries(["07:00", "07:05", "07:10", "07:15"])
+        + _dep_entries(["04:10"], urlaub=True)
+        + _dep_entries(["04:20"], abfahrt_unsicher=True)
+    )
+    stats = plug_departure_stats(entries, **_DEP)
+    assert stats["frueh_roh"] == "07:00"
+    assert stats["n_gueltig"] == 4 and stats["n_ausreisser_frueh"] == 0
+
+
+def test_ausreisser_spaeter_als_median_zaehlen_nicht_als_frueh():
+    entries = _dep_entries(["07:00"] * 6 + ["10:00", "11:00"])
+    stats = plug_departure_stats(entries, **_DEP)
+    assert stats["n_ausreisser"] == 2 and stats["n_ausreisser_frueh"] == 0

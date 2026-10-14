@@ -318,6 +318,7 @@ async def test_sensor_morning_departure_klein_und_aware_timestamp(hass, coordina
     assert set(attrs) == {"je_wochentag", "urlaub_nicht_gewertet", "mindestanzahl"}
     je = attrs["je_wochentag"][sensor._WEEKDAY_KEYS[morgen.weekday()]]
     assert je["status"] == "ok" and je["n_gueltig"] == 5 and je["n_ausreisser"] == 1
+    assert je["frueh_roh"] == "06:55" and je["n_ausreisser_frueh"] == 0
     assert attrs["mindestanzahl"] == 4
 
 
