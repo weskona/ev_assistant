@@ -1824,6 +1824,9 @@ def append_recent_weekday_plug_window(
     erster_connect: Optional[str],
     letzter_disconnect: Optional[str],
     window: int,
+    erste_abfahrt: Optional[str] = None,
+    abfahrt_unsicher: bool = False,
+    urlaub: bool = False,
 ) -> dict:
     """Bucht die Steck-Beobachtung eines Kalendertages (Gesamtdauer in
     Stunden, erste Connect-/letzte Disconnect-Uhrzeit als "HH:MM") in die
@@ -1831,7 +1834,11 @@ def append_recent_weekday_plug_window(
     vorhandenen Eintrag fuer DASSELBE Datum (falls der Tag zwischenzeitlich
     schon einmal, z.B. vor einem HA-Neustart, teilweise gebucht wurde),
     behaelt dabei aber die jeweils fruehere Connect- bzw. spaetere
-    Disconnect-Uhrzeit. `connected_hours=0.0` fuer ein noch nicht
+    Disconnect-Uhrzeit. Die Felder der Morgen-Abfahrt (`erste_abfahrt`,
+    `abfahrt_unsicher`, `urlaub`) werden beim Zusammenfuehren wie folgt
+    behandelt: fruehere Abfahrt gewinnt, "unsicher"/"urlaub" gelten per ODER.
+    Eintraege OHNE diese Felder (vor 0.99.48 gebucht) bleiben gueltig, liefern
+    aber keine Abfahrtsmessung. `connected_hours=0.0` fuer ein noch nicht
     vorhandenes Datum legt einen leeren "gar nicht angesteckt"-Beobachtungs-
     tag an, analog append_recent_weekday_day(). Kappt danach auf die
     letzten `window` Eintraege (aelteste zuerst verworfen)."""
@@ -1847,6 +1854,11 @@ def append_recent_weekday_plug_window(
                 entry.get("letzter_disconnect") is None or letzter_disconnect > entry["letzter_disconnect"]
             ):
                 entry["letzter_disconnect"] = letzter_disconnect
+            if erste_abfahrt and (entry.get("erste_abfahrt") is None or erste_abfahrt < entry["erste_abfahrt"]):
+                entry["erste_abfahrt"] = erste_abfahrt
+            entry.setdefault("erste_abfahrt", None)
+            entry["abfahrt_unsicher"] = bool(entry.get("abfahrt_unsicher")) or bool(abfahrt_unsicher)
+            entry["urlaub"] = bool(entry.get("urlaub")) or bool(urlaub)
             break
     else:
         days.append({
@@ -1854,6 +1866,9 @@ def append_recent_weekday_plug_window(
             "stunden": round(connected_hours, 2),
             "erster_connect": erster_connect,
             "letzter_disconnect": letzter_disconnect,
+            "erste_abfahrt": erste_abfahrt,
+            "abfahrt_unsicher": bool(abfahrt_unsicher),
+            "urlaub": bool(urlaub),
         })
     days.sort(key=lambda d: d["date"])
     result[key] = days[-window:]
@@ -1880,6 +1895,131 @@ def weekday_plug_window_profile_from_recent_days(weekday_days: dict) -> Optional
         if days:
             result[wd] = round(sum(d["stunden"] for d in days) / len(days), 2)
     return result or None
+
+
+def _round_half_up(value: float) -> int:
+    return int(math.floor(value + 0.5))
+
+
+def _median(values: list) -> float:
+    ordered = sorted(values)
+    n = len(ordered)
+    mid = n // 2
+    return float(ordered[mid]) if n % 2 else (ordered[mid - 1] + ordered[mid]) / 2.0
+
+
+def _fmt_minutes(minutes: Optional[int]) -> Optional[str]:
+    if minutes is None:
+        return None
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def parse_hhmm_minutes(value) -> Optional[int]:
+    """"HH:MM" -> Minuten seit Mitternacht, None bei fehlendem/ungueltigem Wert."""
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"(\d{1,2}):(\d{2})", value.strip())
+    if not match:
+        return None
+    hours, minutes = int(match.group(1)), int(match.group(2))
+    if hours > 23 or minutes > 59:
+        return None
+    return hours * 60 + minutes
+
+
+def plug_departure_stats(
+    entries: list,
+    window_start_min: int,
+    window_end_min: int,
+    outlier_k: float,
+    min_dev_min: int,
+    min_samples: int,
+    consistency_min: float,
+    p10_min_n: int,
+) -> dict:
+    """Statistik der Morgen-Abfahrt (Abstecken) EINES Wochentags aus den
+    Steckeintraegen (siehe append_recent_weekday_plug_window()).
+
+    Gueltige Messung = Eintrag mit `erste_abfahrt` im Morgenfenster, weder
+    `abfahrt_unsicher` noch `urlaub`. Eintraege ohne Messung (Nacht ohne
+    Anstecken, Tag ohne Morgen-Abstecken, Altdaten) zaehlen NICHT mit (kein
+    0-Wert). Uhrzeiten werden bewusst nie gemittelt: Median, MAD und
+    Perzentil arbeiten auf den Minuten seit Mitternacht (bei gerader Anzahl
+    liegt der Median zwischen den mittleren Messungen, kaufmaennisch gerundet).
+
+    - Ausreisser: |t - Median| > max(outlier_k * MAD, min_dev_min).
+    - typisch: Median der Nicht-Ausreisser; frueh: fruehester Nicht-Ausreisser,
+      ab `p10_min_n` Nicht-Ausreissern das 10. Perzentil (Nearest-Rank).
+    - konfidenz: Anteil ALLER gueltigen Messungen innerhalb von min_dev_min um
+      ihren Median.
+    - status: "keine_messung" (n=0), "nicht_belastbar" (n < min_samples),
+      "uneinheitlich" (konfidenz < consistency_min), sonst "ok".
+    Rohdaten bleiben unveraendert; Ausreisser werden nur gezaehlt."""
+    values = []
+    for entry in entries or []:
+        if entry.get("abfahrt_unsicher") or entry.get("urlaub"):
+            continue
+        minutes = parse_hhmm_minutes(entry.get("erste_abfahrt"))
+        if minutes is None or not window_start_min <= minutes < window_end_min:
+            continue
+        values.append(minutes)
+    n = len(values)
+    result = {
+        "typisch_min": None, "frueh_min": None, "typisch": None, "frueh": None,
+        "n_gueltig": n, "n_ausreisser": 0, "konfidenz": None, "status": "keine_messung",
+    }
+    if n == 0:
+        return result
+    median = _median(values)
+    mad = _median([abs(v - median) for v in values])
+    threshold = max(outlier_k * mad, float(min_dev_min))
+    kept = [v for v in values if abs(v - median) <= threshold]
+    result["n_ausreisser"] = n - len(kept)
+    result["konfidenz"] = round(sum(1 for v in values if abs(v - median) <= min_dev_min) / n, 2)
+    if n < min_samples:
+        result["status"] = "nicht_belastbar"
+        return result
+    if result["konfidenz"] < consistency_min:
+        result["status"] = "uneinheitlich"
+        return result
+    ordered = sorted(kept)
+    if len(ordered) >= p10_min_n:
+        frueh = ordered[max(math.ceil(0.1 * len(ordered)) - 1, 0)]
+    else:
+        frueh = ordered[0]
+    result["typisch_min"] = _round_half_up(_median(kept))
+    result["frueh_min"] = frueh
+    result["typisch"] = _fmt_minutes(result["typisch_min"])
+    result["frueh"] = _fmt_minutes(frueh)
+    result["status"] = "ok"
+    return result
+
+
+def plug_departure_profile(
+    weekday_days: dict,
+    window_start_min: int,
+    window_end_min: int,
+    outlier_k: float,
+    min_dev_min: int,
+    min_samples: int,
+    consistency_min: float,
+    p10_min_n: int,
+) -> dict:
+    """Abfahrtsstatistik je Wochentag (0=Montag..6=Sonntag) plus Zahl der
+    wegen Urlaub nicht gewerteten Eintraege: {"wochentage": {wd: stats},
+    "urlaub_nicht_gewertet": n}. Immer alle 7 Wochentage (leere = keine_messung)."""
+    weekday_days = weekday_days or {}
+    profile = {
+        wd: plug_departure_stats(
+            weekday_days.get(str(wd)) or [], window_start_min, window_end_min,
+            outlier_k, min_dev_min, min_samples, consistency_min, p10_min_n,
+        )
+        for wd in range(7)
+    }
+    urlaub = sum(
+        1 for entries in weekday_days.values() for entry in entries if entry.get("urlaub")
+    )
+    return {"wochentage": profile, "urlaub_nicht_gewertet": urlaub}
 
 
 def clamp_weekday_contribution(

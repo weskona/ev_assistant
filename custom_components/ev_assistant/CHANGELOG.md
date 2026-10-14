@@ -2,6 +2,27 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.48] - 2026-10-14
+
+### Added
+
+- **Typical morning departure (unplugging), per weekday and per vehicle:** a new diagnostic sensor "Typische Morgen-Abfahrt" (`morning_departure`, timestamp) shows the typical departure for tomorrow's weekday; the existing "Steckerprofil" card in the panel gets a section "Typische Abfahrt (Abstecken, morgens)" with one time per weekday (`HH:MM`, `n/4` while there are too few measurements, `?` if inconsistent, `–` without measurement) and a line for tomorrow (typical, earliest, valid measurements, outliers, holiday days not counted). **Display only: nothing is wired into evcc mode control or charge plans.**
+  - Capture: the departure candidate is created when the vehicle goes from plugged to unplugged (time = start of the unplugged state) and is only confirmed after it stayed unplugged for 10 minutes (re-plugging earlier discards it). Only the first confirmed departure of a calendar day counts, and only between 04:00 and 12:00 local time. Nights without plugging in and days without a morning unplug yield no measurement (not 0).
+  - Uncertain times: if the gap to the previous successful evcc poll is larger than 3 poll intervals (evcc unreachable, Home Assistant restart) at the moment of the detection, the entry is flagged uncertain. Uncertain departures stay in the raw data but are not used for the statistics.
+  - Holiday: the holiday flag is frozen on the day entry; the service `urlaub_seit` additionally marks plug entries from the given date on (idempotent, nothing is deleted). Marked days are not counted.
+  - Statistics (pure, tested): median and MAD of the minutes since midnight (times are never averaged); outlier if `|t - median| > max(3 * MAD, 45 min)`; typical = median of the non-outliers, earliest = earliest non-outlier (10th percentile from 10 values on); confidence = share of the measurements within 45 minutes of the median, below 0.6 "inconsistent" (no time); below 4 valid measurements "not reliable yet" (no time). Raw data is kept, outliers are only counted.
+  - The plug profile now keeps 12 entries per weekday (`PLUG_WINDOW_ENTRIES`, before: 8 shared with the usage profiles), so the average plug duration is also computed over up to 12 weeks; the calculation itself is unchanged. Old entries without the new fields stay valid but yield no departure measurement.
+  - The attributes `heute` and `tage` of the "Steck-Zeitfenster" sensor are no longer written to the recorder database (`_unrecorded_attributes`); they stay visible in the state and in the diagnostics.
+
+### Changed
+
+- **Plug profile is now per vehicle:** the plug state counts only if evcc reports THIS vehicle on the loadpoint (`vehicleName`); another vehicle on the same loadpoint counts as unplugged. While evcc has not yet identified the vehicle (several vehicles in evcc), the previous state is kept (no edge). If the vehicle cannot be matched to an evcc vehicle, the loadpoint state is used as before.
+
+### Limits (honest)
+
+- The build-up takes about 4 weeks per weekday (at least 4 valid measurements); there is **no backfill**: `letzter_disconnect` of the existing entries is overwritten on every edge and is not the morning departure, and evcc's `/api/sessions` only knows charging sessions (`finished` = end of charging, no `connectedDuration`).
+- Unplugging is not exactly the departure time (the car may stand unplugged for a while), accuracy about ±15 s of the poll plus the habits of the household.
+
 ## [0.99.47] - 2026-10-13
 
 ### Fixed
