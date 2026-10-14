@@ -169,6 +169,7 @@ from .const import (
     PANEL_LAYOUT_SIZES,
     PLUG_DEPARTURE_CONFIRM_S,
     PLUG_DEPARTURE_CONSISTENCY_MIN,
+    PLUG_DEPARTURE_MAX_OUTLIER_SHARE,
     PLUG_DEPARTURE_MIN_DEV_MIN,
     PLUG_DEPARTURE_MIN_SAMPLES,
     PLUG_DEPARTURE_OUTLIER_K,
@@ -1359,6 +1360,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             PLUG_DEPARTURE_MIN_SAMPLES,
             PLUG_DEPARTURE_CONSISTENCY_MIN,
             PLUG_DEPARTURE_P10_MIN_N,
+            PLUG_DEPARTURE_MAX_OUTLIER_SHARE,
         )
 
     def _mark_plug_urlaub_since(self, since_date: date) -> int:
