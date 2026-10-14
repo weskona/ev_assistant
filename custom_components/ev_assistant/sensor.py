@@ -1595,8 +1595,10 @@ class MorningDepartureSensor(EvAssistantEntity, SensorEntity):
             je_wochentag[key] = {
                 "typisch": stats["typisch"],
                 "frueh": stats["frueh"],
+                "frueh_roh": stats["frueh_roh"],
                 "n_gueltig": stats["n_gueltig"],
                 "n_ausreisser": stats["n_ausreisser"],
+                "n_ausreisser_frueh": stats["n_ausreisser_frueh"],
                 "konfidenz": stats["konfidenz"],
                 "status": stats["status"],
             }
