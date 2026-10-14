@@ -513,6 +513,12 @@ PLUG_DEPARTURE_CONSISTENCY_MIN = 0.6
 # Ab so vielen Nicht-Ausreissern gilt als "frueh" das 10. Perzentil statt des
 # fruehesten Einzelwerts.
 PLUG_DEPARTURE_P10_MIN_N = 10
+# Ist der Anteil der Ausreisser an den gueltigen Messungen eines Wochentags
+# groesser als das, gilt er als "uneinheitlich" (keine typische Zeit): ein
+# systematisch fruehes (oder spaetes) Drittel darf nicht hinter einem "ok" und
+# einer typischen Zeit verschwinden. Bewusst EINE EIGENE Regel neben
+# PLUG_DEPARTURE_CONSISTENCY_MIN (siehe engine.plug_departure_stats()).
+PLUG_DEPARTURE_MAX_OUTLIER_SHARE = 0.25
 DEFAULT_IDLE_TIMEOUT = 600.0
 DEFAULT_DROP_ENDS = 1.0
 
