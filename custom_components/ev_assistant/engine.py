@@ -1936,6 +1936,7 @@ def plug_departure_stats(
     min_samples: int,
     consistency_min: float,
     p10_min_n: int,
+    max_outlier_share: float,
 ) -> dict:
     """Statistik der Morgen-Abfahrt (Abstecken) EINES Wochentags aus den
     Steckeintraegen (siehe append_recent_weekday_plug_window()).
@@ -1952,8 +1953,20 @@ def plug_departure_stats(
       ab `p10_min_n` Nicht-Ausreissern das 10. Perzentil (Nearest-Rank).
     - konfidenz: Anteil ALLER gueltigen Messungen innerhalb von min_dev_min um
       ihren Median.
+    - frueh_roh: fruehester GUELTIGER Wert INKLUSIVE Ausreisser, ab
+      `min_samples` gueltigen Messungen gesetzt -- auch bei "uneinheitlich", wo
+      der fruehe Rand am meisten zaehlt (`frueh` blendet Ausreisser aus: bei
+      5 x 07:00 + 3 x 05:30 stuende `frueh` sonst bei 07:00, obwohl das Auto
+      an 3 von 8 Tagen schon um 05:30 fuhr). Fuer eine spaetere Ladeplanung
+      gilt frueh_roh, nicht frueh. n_ausreisser_frueh: Ausreisser mit t < Median
+      (n_ausreisser bleibt die Gesamtzahl).
     - status: "keine_messung" (n=0), "nicht_belastbar" (n < min_samples),
-      "uneinheitlich" (konfidenz < consistency_min), sonst "ok".
+      "uneinheitlich" (konfidenz < consistency_min ODER Ausreisseranteil >
+      max_outlier_share), sonst "ok". Zwei getrennte Regeln: bei MAD <= 15 Min
+      (Schwelle = 45 Min) ist der Ausreisseranteil gleich 1 - konfidenz, bei
+      groesserem MAD nur noch <= 1 - konfidenz -- ein Zusammenlegen (Konfidenz
+      >= 0,75) wuerde daher auch breit streuende Wochentage ohne Ausreisser
+      verwerfen, die bisher "ok" sind. Die Konfidenzregel bleibt unveraendert.
     Rohdaten bleiben unveraendert; Ausreisser werden nur gezaehlt."""
     values = []
     for entry in entries or []:
@@ -1966,7 +1979,9 @@ def plug_departure_stats(
     n = len(values)
     result = {
         "typisch_min": None, "frueh_min": None, "typisch": None, "frueh": None,
-        "n_gueltig": n, "n_ausreisser": 0, "konfidenz": None, "status": "keine_messung",
+        "frueh_roh_min": None, "frueh_roh": None,
+        "n_gueltig": n, "n_ausreisser": 0, "n_ausreisser_frueh": 0, "konfidenz": None,
+        "status": "keine_messung",
     }
     if n == 0:
         return result
@@ -1975,11 +1990,16 @@ def plug_departure_stats(
     threshold = max(outlier_k * mad, float(min_dev_min))
     kept = [v for v in values if abs(v - median) <= threshold]
     result["n_ausreisser"] = n - len(kept)
+    result["n_ausreisser_frueh"] = sum(
+        1 for v in values if abs(v - median) > threshold and v < median
+    )
     result["konfidenz"] = round(sum(1 for v in values if abs(v - median) <= min_dev_min) / n, 2)
     if n < min_samples:
         result["status"] = "nicht_belastbar"
         return result
-    if result["konfidenz"] < consistency_min:
+    result["frueh_roh_min"] = min(values)
+    result["frueh_roh"] = _fmt_minutes(result["frueh_roh_min"])
+    if result["konfidenz"] < consistency_min or result["n_ausreisser"] / n > max_outlier_share:
         result["status"] = "uneinheitlich"
         return result
     ordered = sorted(kept)
@@ -2004,6 +2024,7 @@ def plug_departure_profile(
     min_samples: int,
     consistency_min: float,
     p10_min_n: int,
+    max_outlier_share: float,
 ) -> dict:
     """Abfahrtsstatistik je Wochentag (0=Montag..6=Sonntag) plus Zahl der
     wegen Urlaub nicht gewerteten Eintraege: {"wochentage": {wd: stats},
@@ -2012,7 +2033,7 @@ def plug_departure_profile(
     profile = {
         wd: plug_departure_stats(
             weekday_days.get(str(wd)) or [], window_start_min, window_end_min,
-            outlier_k, min_dev_min, min_samples, consistency_min, p10_min_n,
+            outlier_k, min_dev_min, min_samples, consistency_min, p10_min_n, max_outlier_share,
         )
         for wd in range(7)
     }
