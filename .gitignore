@@ -2,3 +2,6 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .DS_Store
+
+# lokale Daten-Sicherungen (enthalten Fahrten/Ladehistorie) -- nie committen
+.backup_storage_*
