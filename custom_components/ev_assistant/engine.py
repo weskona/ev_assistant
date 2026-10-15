@@ -2358,6 +2358,30 @@ def kwh_to_km(kwh: Optional[float], consumption_kwh_100km: Optional[float]) -> O
     return round(max(0.0, kwh) / consumption_kwh_100km * 100.0, 1)
 
 
+def apply_usage_buffer(
+    need_kwh: float,
+    buffer_km: Optional[float],
+    buffer_pct: float,
+    consumption_kwh_100km: Optional[float],
+) -> dict:
+    """Puffer auf den Bedarf NACH dem PV-Abzug. Mit gesetztem km-Puffer
+    (>= 0) und positivem Verbrauch ein FESTER Zuschlag in kWh
+    (km * Verbrauch / 100, art "km") -- bleibt als Mindestreserve erhalten,
+    wird nicht durch PV gekuerzt. Sonst der prozentuale Rueckfall (art
+    "prozent"). Nie negativ, 2 Nachkommastellen."""
+    need = max(0.0, float(need_kwh))
+    if (
+        buffer_km is not None and buffer_km >= 0
+        and consumption_kwh_100km is not None and consumption_kwh_100km > 0
+    ):
+        puffer = float(buffer_km) * float(consumption_kwh_100km) / 100.0
+        art = "km"
+    else:
+        puffer = need * max(0.0, float(buffer_pct)) / 100.0
+        art = "prozent"
+    return {"kwh": round(need + puffer, 2), "art": art, "puffer_kwh": round(puffer, 2)}
+
+
 def round_km_display(km: Optional[float]) -> Optional[int]:
     """Anzeigerundung einer km-Schaetzung: auf 5 km unter 100, auf 10 km ab
     100 (kaufmaennisch, nicht Pythons Banker-Rundung). Haengt bewusst nicht

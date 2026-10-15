@@ -62,6 +62,7 @@ from .const import (
     SERVICE_SET_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
     SERVICE_SET_HIDDEN_TABS,
     SERVICE_SET_PANEL_LAYOUT,
+    SERVICE_SET_USAGE_PROFILE_BUFFER_KM,
     SERVICE_SET_USAGE_PROFILE_BUFFER_PCT,
     SERVICE_SET_VEHICLE_IMAGE,
     SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED,
@@ -509,6 +510,12 @@ SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA = vol.Schema({
     vol.Optional("buffer_pct"): vol.Any(None, vol.Coerce(float)),
 })
 
+# buffer_km: wie buffer_pct -- fehlend/null setzt den Override zurueck.
+SET_USAGE_PROFILE_BUFFER_KM_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Optional("buffer_km"): vol.Any(None, vol.Coerce(float)),
+})
+
 URLAUB_SEIT_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
     vol.Required("seit_ts"): vol.Coerce(float),
@@ -862,6 +869,11 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_set_usage_profile_buffer_pct(call.data.get("buffer_pct"))
 
+    async def _handle_set_usage_profile_buffer_km(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_set_usage_profile_buffer_km(call.data.get("buffer_km"))
+
     async def _handle_set_weekly_full_charge_enabled(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
@@ -1057,6 +1069,10 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_SET_USAGE_PROFILE_BUFFER_PCT, _handle_set_usage_profile_buffer_pct,
         schema=SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_USAGE_PROFILE_BUFFER_KM, _handle_set_usage_profile_buffer_km,
+        schema=SET_USAGE_PROFILE_BUFFER_KM_SCHEMA,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED, _handle_set_weekly_full_charge_enabled,

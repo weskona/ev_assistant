@@ -85,6 +85,7 @@ from .const import (
     CONF_TRIP_MIN_KM,
     CONF_URLAUB_ENTITY,
     CONF_USABLE_KWH,
+    CONF_USAGE_PROFILE_BUFFER_KM,
     CONF_USAGE_PROFILE_BUFFER_PCT,
     CONF_VEHICLE_HERSTELLER,
     CONF_VEHICLE_MODELL,
@@ -118,6 +119,7 @@ from .const import (
     DEFAULT_TRIP_IDLE_TIMEOUT,
     DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH,
+    DEFAULT_USAGE_PROFILE_BUFFER_KM,
     DEFAULT_USAGE_PROFILE_BUFFER_PCT,
     DEFAULT_WALLBOX_MIN_POWER_W,
     DEFAULT_WEEKLY_FULL_CHARGE_ENABLED,
@@ -188,6 +190,7 @@ from .const import (
     TRIP_CONSUMPTION_MIN_KWH_100KM,
     TRIP_END_SOC_CORRECTION_MAX_DELTA,
     TRIP_END_SOC_CORRECTION_WINDOW_S,
+    USAGE_PROFILE_BUFFER_KM_MAX,
     USAGE_PROFILE_WINDOW_DAYS,
     VEHICLE_DISCHARGE_CONFIRM_SECONDS,
     VOLLLADUNG_CONFIRM_SECONDS,
@@ -221,6 +224,7 @@ from .engine import (
     apply_anbieter_delta,
     apply_opportunistic_surplus_target,
     apply_realtime_pv_override,
+    apply_usage_buffer,
     apply_weekly_balancing_override,
     average_efficiency,
     battery_capacity_samples,
@@ -586,6 +590,9 @@ def _empty_data() -> dict:
         # Reload der Integration) angepasst werden muss. None = kein
         # Override, es gilt der konfigurierte/Default-Wert.
         "usage_profile_buffer_pct_override": None,
+        # km-Variante (0.99.52), siehe _usage_profile_buffer_km(). Fehlt der
+        # Schluessel in alten Daten/Backups, gilt er wie None.
+        "usage_profile_buffer_km_override": None,
         # Zeitstempel der letzten erreichten Vollladung (siehe
         # _maybe_mark_vollladung_erreicht()/VOLLLADUNG_SOC_THRESHOLD) --
         # None = noch nie beobachtet (gilt als sofort faellig, siehe
@@ -6630,6 +6637,37 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return float(override)
         return float(self._opt(CONF_USAGE_PROFILE_BUFFER_PCT, DEFAULT_USAGE_PROFILE_BUFFER_PCT))
 
+    def _usage_profile_buffer_km(self) -> float:
+        """km-Puffer: Laufzeit-Override vor CONF_USAGE_PROFILE_BUFFER_KM
+        (Standard 30). Gleiche Begruendung wie _usage_profile_buffer_pct()
+        fuer den Override in self.data statt entry.options."""
+        override = self.data.get("usage_profile_buffer_km_override")
+        if override is not None:
+            return float(override)
+        return float(self._opt(CONF_USAGE_PROFILE_BUFFER_KM, DEFAULT_USAGE_PROFILE_BUFFER_KM))
+
+    async def async_set_usage_profile_buffer_km(self, buffer_km: Optional[float]) -> None:
+        """Setzt/loescht den km-Override (None = Reset auf Konfigurationswert),
+        geklemmt auf [0, USAGE_PROFILE_BUFFER_KM_MAX]."""
+        self.data["usage_profile_buffer_km_override"] = (
+            None if buffer_km is None else max(0.0, min(USAGE_PROFILE_BUFFER_KM_MAX, float(buffer_km)))
+        )
+        self.async_set_updated_data(self.data)
+        await self._async_apply_evcc_mode_control()
+        self._save_soon()
+
+    def usage_buffer_info(self, need_kwh: float) -> dict:
+        """apply_usage_buffer() mit den aufgeloesten Werten und dem Verbrauch
+        aus range_conversion(). Ergebnis zusaetzlich mit puffer_km (der
+        wirksame km-Wert, nur bei art "km") und puffer_prozent (Rueckfall)."""
+        conv = self.range_conversion()
+        buffer_pct = self._usage_profile_buffer_pct()
+        buffer_km = self._usage_profile_buffer_km()
+        res = apply_usage_buffer(need_kwh, buffer_km, buffer_pct, conv.get("verbrauch_kwh_100km"))
+        res["puffer_km"] = buffer_km if res["art"] == "km" else None
+        res["puffer_prozent"] = buffer_pct
+        return res
+
     async def async_set_usage_profile_buffer_pct(self, buffer_pct: Optional[float]) -> None:
         """Setzt/loescht den Laufzeit-Override aus _usage_profile_buffer_
         pct() -- `buffer_pct=None` setzt auf den konfigurierten Wert
@@ -6723,12 +6761,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         raw = profile.get(tomorrow_wd)
         if raw is None:
             return None
-        buffer_pct = self._usage_profile_buffer_pct()
+        buf = self.usage_buffer_info(raw)
         return {
             "wochentag": _WEEKDAY_NAMES_DE[tomorrow_wd],
             "roh_kwh": raw,
-            "puffer_prozent": buffer_pct,
-            "benoetigt_kwh": round(raw * (1.0 + buffer_pct / 100.0), 2),
+            "puffer_prozent": buf["puffer_prozent"],
+            "puffer_art": buf["art"],
+            "puffer_km": buf["puffer_km"],
+            "puffer_kwh": buf["puffer_kwh"],
+            "benoetigt_kwh": buf["kwh"],
         }
 
     def available_kwh(self) -> Optional[float]:
@@ -7224,14 +7265,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # trotzdem sinnvoll, da rest_heute (s.o.) weiterhin vom heutigen
         # Ueberschuss profitiert.
         pv_ueberschuss_nach_heute = net_need_after_pv_kwh(pv_fuer_auto, rest_heute_roh)
-        buffer_pct = self._usage_profile_buffer_pct()
         min_raw = net_need_after_pv_kwh(rest_heute + profile.get(tomorrow_wd, 0.0), pv_ueberschuss_nach_heute)
-        min_kwh = round(min_raw * (1.0 + buffer_pct / 100.0), 2)
+        min_buf = self.usage_buffer_info(min_raw)
+        min_kwh = min_buf["kwh"]
         target_raw = net_need_after_pv_kwh(
             rest_heute + weekday_usage_profile_window_kwh(profile, tomorrow_wd, EVCC_MODE_TARGET_DAYS),
             pv_ueberschuss_nach_heute,
         )
-        target_kwh = round(target_raw * (1.0 + buffer_pct / 100.0), 2)
+        target_buf = self.usage_buffer_info(target_raw)
+        target_kwh = target_buf["kwh"]
         usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
         mode = determine_evcc_mode(available, min_kwh, target_kwh)
         target_soc = kwh_to_soc_percent(target_kwh, usable_kwh)
@@ -7422,6 +7464,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "haus_rest_heute_kwh": haus_rest_heute,
             "pv_fuer_auto_kwh": pv_fuer_auto,
             "pv_ueberschuss_puffer_kwh": pv_ueberschuss_nach_heute,
+            "puffer_art": min_buf["art"],
+            "puffer_km": min_buf["puffer_km"],
+            "puffer_kwh": min_buf["puffer_kwh"],
+            "puffer_prozent": min_buf["puffer_prozent"],
             "pv_override_mischpreis_kwh": pv_override_mischpreis_kwh,
             "pv_override_max_mischpreis_kwh": max_blended_price,
             "wallbox_min_power_w": wallbox_min_power_w,

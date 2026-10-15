@@ -151,7 +151,7 @@
           "motor_entity": "Motor-/Fahr-Sensor (optional, binary_sensor)",
           "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)",
           "trip_auto_confirm": "Fahrt automatisch ins Fahrtenbuch übernehmen (ohne manuelle Bestätigung)",
-          "usage_profile_buffer_pct": "Puffer für Nutzungsprofil (%, auf den Wochentags-Durchschnitt)",
+          "usage_profile_buffer_km": "Puffer für Nutzungsprofil (km, fester Zuschlag auf den Wochentags-Bedarf)",
           "pv_forecast_entity": "PV-Ertragsprognose für morgen (optional, beliebige sensor-Entität, z.B. Solcast/Forecast.Solar)",
           "outside_temp_entity": "Außentemperatur (optional, Wetter-Integration oder Sensor — für temperaturabhängige Verbrauchs-/Reichweitenschätzung)"
         },
@@ -345,7 +345,7 @@
           "motor_entity": "Motor-/Fahr-Sensor (optional, binary_sensor)",
           "motor_debounce_s": "Debounce für Motor-/Fahr-Sensor (s)",
           "trip_auto_confirm": "Fahrt automatisch ins Fahrtenbuch übernehmen (ohne manuelle Bestätigung)",
-          "usage_profile_buffer_pct": "Puffer für Nutzungsprofil (%, auf den Wochentags-Durchschnitt)",
+          "usage_profile_buffer_km": "Puffer für Nutzungsprofil (km, fester Zuschlag auf den Wochentags-Bedarf)",
           "pv_forecast_entity": "PV-Ertragsprognose für morgen (optional, beliebige sensor-Entität, z.B. Solcast/Forecast.Solar)",
           "outside_temp_entity": "Außentemperatur (optional, Wetter-Integration oder Sensor — für temperaturabhängige Verbrauchs-/Reichweitenschätzung)"
         },
