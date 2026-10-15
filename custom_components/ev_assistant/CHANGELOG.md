@@ -13,6 +13,22 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.50] - 2026-10-15
+
+### Changed
+
+- **Charge control shows range (km) first, SoC and kWh second (display only; nothing written to evcc and no control logic changed).** Card "Automatic charge control": new first row "Reichweite jetzt", "Min-SoC" is now "Mindestens bis morgen", "Ziel-SoC" is "Ziel", "Max. Ziel-SoC" is "Maximal laden bis" (slider label "ca. 175 km · 64 %"), "Rest-Bedarf heute" and "Sonne reicht für" are in km. SoC and kWh are shown small below; the technical terms and the kWh chain stay as tooltips. The charge-plan popup (slider label, feedback "Erreichbar: +90 km (12,5 kWh), fertig ca. 07:20"), the plan status and the wallbox line "Min-Limit · Ladelimit" are km-first as well. The sliders stay SoC (evcc unit). Without a known consumption the panel falls back to % / kWh as before.
+- **One conversion, on the server.** The panel no longer back-calculates `usable_kwh` from `available_kwh / soc` (rounding error at low SoC); it uses the server attributes. `RangeEstimateSensor` no longer duplicates the consumption selection but uses the same method as `range_estimate_km()` and the charge-plan km conversion (temperature band, else rolling 30 days, else lifetime). The server text `erwartung` is km-first too ("Erreichbar: +65 km (12,5 kWh), ..."), "Knapp: ..." when tight; without a consumption it stays the kWh text.
+
+### Added
+
+- **Attributes on `sensor.*evcc_mode_control` (contract for the Glow card).** Always present when the consumption is known, also when the automatic control is off: `usable_kwh`, `verbrauch_kwh_100km` (the one in use), `km_pro_prozent`, `reichweite_km` (identical to the state of the range estimate sensor, missing if the SoC is unknown). With active control additionally `min_km`, `target_km`, `target_soc_max_km`, `rest_heute_km`, `pv_fuer_auto_km`. Values are unrounded (1 decimal); the display rounds to 5 km below 100 km and to 10 km above. If the consumption is unknown, all these keys are missing (no 0, no None).
+- `engine.soc_to_km()`, `engine.kwh_to_km()`, `engine.round_km_display()` (pure, tested; None for unknown or non-positive consumption/usable kWh, never negative).
+
+### Honest limits
+
+- The km values are an estimate from your real consumption in the current temperature band; they can differ from the on-board display. The target time may have different weather (another band), so the same SoC can mean another range then. The unit is always km (`odo_unit` "mi" only affects the odometer display; consumption is per 100 km).
+
 ## [0.99.49] - 2026-10-15
 
 ### Added

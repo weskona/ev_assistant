@@ -2339,6 +2339,37 @@ def calculate_range_km(
     return round(battery_kwh / consumption_kwh_per_100km * 100.0, 1)
 
 
+def soc_to_km(
+    soc_pct: Optional[float], usable_kwh: Optional[float], consumption_kwh_100km: Optional[float],
+) -> Optional[float]:
+    """SoC% -> km ueber nutzbare kWh und Verbrauch (eine Quelle der Umrechnung
+    fuer Karte, Popup, Text und Attribute). None bei unbekanntem oder nicht
+    positivem Verbrauch/usable_kwh bzw. unbekanntem SoC; nie negativ."""
+    if soc_pct is None or not usable_kwh or usable_kwh <= 0:
+        return None
+    return kwh_to_km(soc_pct / 100.0 * usable_kwh, consumption_kwh_100km)
+
+
+def kwh_to_km(kwh: Optional[float], consumption_kwh_100km: Optional[float]) -> Optional[float]:
+    """kWh -> km ueber den Verbrauch (kWh/100 km). None ohne positiven
+    Verbrauch bzw. ohne kWh-Wert; negative kWh werden zu 0 geklemmt."""
+    if kwh is None or consumption_kwh_100km is None or consumption_kwh_100km <= 0:
+        return None
+    return round(max(0.0, kwh) / consumption_kwh_100km * 100.0, 1)
+
+
+def round_km_display(km: Optional[float]) -> Optional[int]:
+    """Anzeigerundung einer km-Schaetzung: auf 5 km unter 100, auf 10 km ab
+    100 (kaufmaennisch, nicht Pythons Banker-Rundung). Haengt bewusst nicht
+    an Nachkommastellen: eine Schaetzung ist keine Messung."""
+    if km is None or km != km:
+        return None
+    km = max(0.0, float(km))
+    if km < 100 and int(km / 5.0 + 0.5) * 5 < 100:
+        return int(km / 5.0 + 0.5) * 5
+    return int(km / 10.0 + 0.5) * 10
+
+
 def range_km_to_soc_percent(
     target_range_km: float, usable_kwh: float, consumption_kwh_per_100km: Optional[float],
 ) -> Optional[int]:

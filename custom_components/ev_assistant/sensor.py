@@ -26,7 +26,7 @@ from .const import (
     PLUG_DEPARTURE_MIN_SAMPLES,
     WARTUNG_PRESETS,
 )
-from .engine import latest_charge
+from .engine import kwh_to_km, latest_charge, soc_to_km
 from .entity import EvAssistantEntity
 
 
@@ -889,11 +889,8 @@ class RangeEstimateSensor(EvAssistantEntity, SensorEntity):
         coordinator = self.coordinator
         buckets = coordinator._consumption_by_temp_bucket()
         bucket = coordinator.current_temp_bucket()
-        bucket_consumption = buckets.get(bucket)
-        if bucket_consumption is not None:
-            consumption = bucket_consumption
-        else:
-            consumption = coordinator._vehicle_avg_consumption_kwh_per_100km_rolling()
+        # Eine Quelle fuer den Verbrauch (wie range_estimate_km()).
+        consumption = coordinator._current_consumption_estimate_kwh_per_100km()
         attrs = {}
         if coordinator._outside_temp is not None:
             attrs["aussentemperatur"] = round(coordinator._outside_temp, 1)
@@ -1709,13 +1706,22 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
         # von CONF_EVCC_MODE_CONTROL_ENABLED -- das Panel soll den Status
         # also auch ohne aktive evcc-Steuerung anzeigen koennen.
         urlaub_aktiv = self.coordinator._urlaub_aktiv()
+        # Umrechnungsgroessen (usable_kwh, Verbrauch, km pro %) haengen nur an
+        # Konfiguration und Verbrauch -- Popup und Wallbox-Zeile brauchen sie
+        # auch ohne aktive Steuerung. Fehlt der Verbrauch, fehlen alle
+        # km-Schluessel (kein 0, kein None).
+        conv = self.coordinator.range_conversion()
+        reichweite = self.coordinator.range_estimate_km() if conv else None
+        if reichweite is not None:
+            conv = {**conv, "reichweite_km": reichweite}
         if not self._enabled():
-            return {"urlaub_aktiv": urlaub_aktiv}
+            return {"urlaub_aktiv": urlaub_aktiv, **conv}
         targets = self.coordinator._evcc_mode_targets()
         if not targets:
-            return {"urlaub_aktiv": urlaub_aktiv}
+            return {"urlaub_aktiv": urlaub_aktiv, **conv}
         attrs = {
             "urlaub_aktiv": urlaub_aktiv,
+            **conv,
             "min_soc": targets["min_soc"],
             "target_soc": targets["target_soc"],
             "target_soc_max": targets["target_soc_max"],
@@ -1760,6 +1766,20 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
         written = self.coordinator.data.get("evcc_mode_control")
         if written and "geschrieben_ts" in written:
             attrs["zuletzt_geschrieben"] = written["geschrieben_ts"]
+        if conv:
+            consumption = conv["verbrauch_kwh_100km"]
+            for key, kwh in (
+                ("min_km", targets["min_kwh"]),
+                ("target_km", targets["target_kwh"]),
+                ("rest_heute_km", targets["rest_heute_kwh"]),
+                ("pv_fuer_auto_km", targets["pv_fuer_auto_kwh"]),
+            ):
+                km = kwh_to_km(kwh, consumption)
+                if km is not None:
+                    attrs[key] = km
+            km = soc_to_km(targets["target_soc_max"], conv["usable_kwh"], consumption)
+            if km is not None:
+                attrs["target_soc_max_km"] = km
         return attrs
 
 
