@@ -1397,7 +1397,15 @@ class UsageProfileSensor(EvAssistantEntity, SensorEntity):
         profile = self.coordinator._effective_vehicle_usage_profile()
         if not profile:
             return {}
-        return {self._WEEKDAY_KEYS[wd]: kwh for wd, kwh in profile.items()}
+        attrs = {self._WEEKDAY_KEYS[wd]: kwh for wd, kwh in profile.items()}
+        # km-zuerst (0.99.51): Bedarf je Wochentag in km, selber Verbrauch wie
+        # range_estimate_km(); fehlt ganz ohne bekannten Verbrauch.
+        consumption = self.coordinator.range_conversion().get("verbrauch_kwh_100km")
+        if consumption:
+            attrs["km_je_wochentag"] = {
+                self._WEEKDAY_KEYS[wd]: kwh_to_km(kwh, consumption) for wd, kwh in profile.items()
+            }
+        return attrs
 
 
 class UsageProfileTomorrowSensor(EvAssistantEntity, SensorEntity):
@@ -1426,7 +1434,16 @@ class UsageProfileTomorrowSensor(EvAssistantEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         need = self.coordinator.usage_profile_tomorrow()
-        return dict(need) if need else {}
+        if not need:
+            return {}
+        attrs = dict(need)
+        consumption = self.coordinator.range_conversion().get("verbrauch_kwh_100km")
+        if consumption:
+            for key, kwh_key in (("roh_km", "roh_kwh"), ("benoetigt_km", "benoetigt_kwh")):
+                km = kwh_to_km(need.get(kwh_key), consumption)
+                if km is not None:
+                    attrs[key] = km
+        return attrs
 
 
 class HouseUsageProfileSensor(EvAssistantEntity, SensorEntity):
