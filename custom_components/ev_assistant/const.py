@@ -394,6 +394,14 @@ CONF_EVCC_MODE_CONTROL_ENABLED = "evcc_mode_control_enabled"
 # separat opt-in ist und genau deswegen gelegentlich eine echte
 # 100%-Vollladung braucht (Zellbalancing).
 CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX = "evcc_mode_control_target_soc_max"
+# Sanftes Nachladen (0.99.53): "now" aus determine_evcc_mode() nur noch, wenn
+# das Ziel sonst nicht erreichbar waere; der Bedarf "bis morgen" wird erst nach
+# Sonnenuntergang mit minpv nachgeladen (siehe engine.evcc_now_entschaerfen()).
+# Aus = exakt das bisherige Verhalten.
+CONF_EVCC_SOFT_RECHARGE_ENABLED = "evcc_soft_recharge_enabled"
+# Rueckfall-Abfahrtszeit ("HH:MM"), solange fuer den Wochentag keine
+# belastbare Abfahrtsstatistik (plug_departure_profile frueh_roh) vorliegt.
+CONF_EVCC_DEPARTURE_FALLBACK_TIME = "evcc_departure_fallback_time"
 # Optional, nur relevant bei aktiver evcc-Steuerung oben: Mindestladeleistung
 # der Wallbox, gegen die engine.apply_realtime_pv_override() den aktuellen
 # PV-Ueberschuss (siehe coordinator.py::_evcc_realtime_pv_surplus_w()) prueft,
@@ -622,6 +630,7 @@ DEFAULT_MOTOR_DEBOUNCE = 60.0
 DEFAULT_TRIP_AUTO_CONFIRM = False
 DEFAULT_USAGE_PROFILE_BUFFER_PCT = 20.0
 DEFAULT_USAGE_PROFILE_BUFFER_KM = 30.0
+DEFAULT_EVCC_SOFT_RECHARGE_ENABLED = True
 USAGE_PROFILE_BUFFER_KM_MAX = 300.0
 # Mindestanzahl Kalendertage Fahrtenbuch-Historie, bevor ein Nutzungsprofil
 # gezeigt wird (siehe engine.py::weekday_usage_profile()) -- 7 Tage
@@ -658,6 +667,17 @@ EVCC_BATTERY_PRIORITY_VEHICLE_SOC = 0
 # ueberwog nicht den Nachteil (unnoetiges Netzladen bei einer knappen, sich
 # oft noch aendernden Prognose fuer einen Tag, der noch gar nicht ansteht).
 EVCC_MODE_TARGET_DAYS = 1
+# Standard fuer CONF_EVCC_DEPARTURE_FALLBACK_TIME (bewusst frueh: lieber
+# etwas zu frueh unter Zeitdruck als zu spaet).
+EVCC_DEPARTURE_FALLBACK_TIME = "06:00"
+# Horizont fuer den "sofort"-Teil (Rest-Bedarf heute): reicht der Mindeststrom
+# dafuer nicht innerhalb dieser Stunden, bleibt es bei "now".
+EVCC_SOFORT_HORIZON_H = 2.0
+# Reserve (h) auf die Mindestleistungs-Ladedauer in zu_langsam().
+EVCC_NACHLADEN_RESERVE_H = 0.5
+# Spannungsannahme wie DEFAULT_WALLBOX_MIN_POWER_W (kW je A und Phase).
+EVCC_PHASE_KW_PER_A = 0.23
+EVCC_MIN_CURRENT_FALLBACK_A = 6.0
 
 # Mindest-Haltezeit (Sekunden) fuer engine.apply_opportunistic_surplus_target()
 # bevor ein Aktiv/Inaktiv-Wechsel der PV-Ueberschuss-Zielanhebung uebernommen

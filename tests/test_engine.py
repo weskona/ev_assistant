@@ -4986,3 +4986,95 @@ def test_apply_usage_buffer_randwerte_nie_negativ_und_gerundet():
     assert apply_usage_buffer(5.0, -10.0, 20.0, 20.0)["art"] == "prozent"  # negativ -> Rueckfall
     assert apply_usage_buffer(-3.0, None, -50.0, None)["kwh"] == 0.0
     assert apply_usage_buffer(1.0, 33.0, 0.0, 17.33)["kwh"] == round(1.0 + 33.0 * 17.33 / 100.0, 2)
+
+
+# ----- zu_langsam / evcc_now_entschaerfen (0.99.53) -------------------------
+
+def _ent(basis="now", available=20.0, sofort=16.0, min_kwh=26.0, sonne_unten=True, stunden=18.0, p=1.38, **kw):
+    from engine import evcc_now_entschaerfen
+
+    return evcc_now_entschaerfen(basis, available, sofort, min_kwh, sonne_unten, stunden, p, **kw)
+
+
+def test_zu_langsam_formel():
+    from engine import zu_langsam
+
+    assert zu_langsam(2.76, 2.5, 1.38, 0.5) is True  # 2 h + 0,5 h >= 2,5 h (Grenze zaehlt)
+    assert zu_langsam(2.76, 2.6, 1.38, 0.5) is False
+    assert zu_langsam(1.0, 5.0, 0.0, 0.5) is True  # unbrauchbare Mindestleistung
+
+
+@pytest.mark.parametrize("basis", ["pv", "minpv"])
+def test_entschaerfen_anderer_basismodus_unveraendert(basis):
+    assert _ent(basis=basis) == {"modus": basis, "grund": None, "halt": None}
+
+
+def test_entschaerfen_tag_und_genug_zeit_wartet():
+    r = _ent(sonne_unten=False)
+    assert (r["modus"], r["grund"]) == ("pv", "wartet_auf_sonnenuntergang")
+
+
+def test_entschaerfen_nacht_genug_zeit_minpv_zu_wenig_zeit_now():
+    assert (_ent(sonne_unten=True)["modus"], _ent(sonne_unten=True)["grund"]) == ("minpv", "nachladen_sanft")
+    r = _ent(available=16.0, sonne_unten=True, stunden=7.0)
+    assert (r["modus"], r["grund"], r["halt"]) == ("now", "frist", "frist")
+
+
+def test_entschaerfen_sofort_defizit_klein_minpv_gross_now():
+    r = _ent(available=15.0)  # Defizit 1 kWh -> 0,72 h + 0,5 < 2 h
+    assert (r["modus"], r["grund"]) == ("minpv", "sofort_sanft")
+    r = _ent(available=10.0)  # Defizit 6 kWh -> 4,3 h + 0,5 >= 2 h
+    assert (r["modus"], r["grund"], r["halt"]) == ("now", "sofort_zu_langsam", "sofort_zu_langsam")
+
+
+def test_entschaerfen_sommerfall_fristdruck_oeffnet_tor():
+    # 12 kWh bei 1,4 kW: 8,57 h + 0,5 h = 9,07 h vor 05:30 -> ab ca. 20:25 (Sonne noch oben)
+    args = dict(available=8.0, sofort=8.0, min_kwh=20.0, sonne_unten=False, p=1.4)
+    assert _ent(stunden=9.2, **args)["modus"] == "pv"
+    r = _ent(stunden=9.0, **args)
+    assert (r["modus"], r["grund"]) == ("now", "frist")
+
+
+def test_entschaerfen_sonne_unbekannt_ist_minpv_nicht_now():
+    r = _ent(sonne_unten=None)
+    assert (r["modus"], r["grund"]) == ("minpv", "nachladen_sanft")
+    assert _ent(sonne_unten=None, available=16.0, stunden=7.0)["modus"] == "now"  # nur durch Fristdruck
+
+
+def test_entschaerfen_haltezeit_ohne_flattern_frist():
+    # Fristdruck startet "now"; waehrend es laedt schrumpft das Defizit schneller als
+    # die Mindestleistung annimmt -- ohne Halt wuerde es zurueckfallen, mit Halt nicht.
+    args = dict(sofort=8.0, min_kwh=20.0, sonne_unten=True, p=1.4)
+    r = _ent(available=8.0, stunden=9.0, **args)
+    assert r["modus"] == "now"
+    ohne = _ent(available=9.0, stunden=8.5, **args)
+    assert ohne["modus"] == "minpv"  # Grenze: ohne Halt faellt es zurueck
+    halt = r["halt"]
+    for available, stunden in ((9.0, 8.5), (12.0, 8.0), (19.9, 7.0)):
+        r = _ent(available=available, stunden=stunden, halt=halt, **args)
+        assert (r["modus"], r["grund"]) == ("now", "frist")
+        halt = r["halt"]
+    r = _ent(basis="pv", available=20.0, halt=halt, **args)  # Ziel erreicht -> Halt weg
+    assert r["modus"] == "pv" and r["halt"] is None
+
+
+def test_entschaerfen_haltezeit_sofort_bis_schwelle():
+    args = dict(sofort=16.0, min_kwh=26.0, sonne_unten=True)
+    halt = _ent(available=10.0, **args)["halt"]
+    assert halt == "sofort_zu_langsam"
+    assert _ent(available=15.0, halt=halt, **args)["modus"] == "now"  # ohne Halt waere es minpv
+    r = _ent(available=16.0, halt=halt, **args)  # Schwelle erreicht
+    assert r["halt"] is None and r["modus"] != "now"
+
+
+def test_entschaerfen_phasen_verschieben_grenze():
+    kw = dict(available=16.0, sofort=16.0, min_kwh=22.0, sonne_unten=True, stunden=4.8)
+    assert _ent(p=1.38, **kw)["modus"] == "now"  # 6/1,38 + 0,5 = 4,85 >= 4,8
+    assert _ent(p=4.14, **kw)["modus"] == "minpv"  # 3 Phasen: 1,95 h
+
+
+def test_entschaerfen_sofort_nie_ueber_min():
+    # sofort > min (z.B. grosser PV-Ueberschuss fuer morgen) wird auf min gekappt:
+    # bei available >= min gibt es kein sofort-Defizit mehr
+    r = _ent(available=10.0, sofort=30.0, min_kwh=10.0, sonne_unten=False)
+    assert r["grund"] == "wartet_auf_sonnenuntergang"

@@ -2,6 +2,34 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.53] - 2026-10-15
+
+### Changed
+
+- **Gentle top-up: evcc "now" only when needed, the need until tomorrow is topped up after sunset (option, default on).** A "now" from `determine_evcc_mode()` (grid charging at full power) is softened as long as the minimum current still reaches the target in time. Only exception point: directly after `determine_evcc_mode()` in `_evcc_mode_targets()`; every other base mode (pv/minpv) is unchanged, and so are the need calculation, `determine_evcc_mode()`, weekly balancing, real-time PV override, surplus target boost, manual mode, vacation pause, charge plan, battery priority and the change gate.
+  - Rest of today (net of PV) plus buffer is "sofort" (never more than `min_kwh`). If the missing part cannot be charged at minimum power within 2 h (reserve 0.5 h): stays **"now"** (`sofort_zu_langsam`), else **"minpv"** (`sofort_sanft`).
+  - Otherwise (below `min_kwh`): with the sun up and enough time until the next departure the mode is **"pv"** (`wartet_auf_sonnenuntergang`); after sunset it is **"minpv"** (`nachladen_sanft`). If the minimum current would no longer make it until departure, the gate opens early and it is **"now"** (`frist`), e.g. 12 kWh at 1.4 kW with departure 05:30 from about 20:25.
+  - Hold time against flapping: "now" chosen because of `frist` or `sofort_zu_langsam` stays until the available energy reaches the respective threshold. State persists in the stored data; it is cleared on reaching the goal and on pause, manual mode, vacation or active charge plan.
+  - Departure deadline = next departure: `frueh_roh` of the weekday that is still ahead (today if not yet reached, else tomorrow), without a reliable value the fallback time (new option, default 06:00). Minimum power = `effectiveMinCurrent` (else `minCurrent`, else 6 A) x phases x 0.23 kW; phases = `phasesConfigured` if set, else 1 (lowest assumption, `phasesActive` deliberately not used).
+  - Without `sun.sun` (missing/unknown) the gate counts as open: gentle charging, never "now" just because of that.
+- **`min_soc` 0 in exactly the softened case.** evcc's own Min-SoC charges at full power immediately, independent of the mode (`minSocNotReached` -> fast charging), which would undo the softening. So when a base "now" was softened, `min_soc = 0` is written to evcc; if it stays "now" the calculated Min-SoC is written as before.
+- Panel (display only, card "Automatic charge control"): a status line under "Mindestens bis morgen" ("Nachladen ab Sonnenuntergang (ca. 18:40)", "Lädt sanft, fertig ca. 03:10", "Dringend: Frist 06:30"). "Mindestens bis morgen" derives its SoC from `min_kwh`, since the written `min_soc` can be 0.
+
+### Added
+
+- Options "Sanftes Nachladen" (default on; off = exactly the previous behaviour) and "Rückfall-Abfahrtszeit" (HH:MM, default 06:00).
+- Attributes on `sensor.*evcc_mode_control` (None with the option off): `nachladen_status` ("nicht_noetig", "wartet_auf_sonnenuntergang", "sanft", "sofort_sanft", "frist", "sofort_zu_langsam"), `nachladen_grund`, `nachladen_ab` (sunset timestamp, only while waiting), `abfahrt_frist`, `frist_quelle` ("profil" | "fallback"), `sofort_kwh`, `sofort_km` (consumption known). Event log: category `evcc_nachladen_status` on every status change, `nachladen_grund` in `evcc_modus_geschrieben`.
+- `engine.zu_langsam()`, `engine.evcc_now_entschaerfen()` (pure, tested).
+
+### Honest limits
+
+- "now" now only happens when the backlog is too big or the deadline is close. Gentle charging takes longer: e.g. 4.8 kWh at 1.4 kW about 3.4 h.
+- The minimum power is an estimate (phases, current); it is re-evaluated every minute, so a wrong estimate shows up in the next cycle, not never.
+- Before sunset nothing is charged from the grid for tomorrow, except under deadline pressure.
+- Missing `sun.sun` means gentle charging instead of "now".
+- With no measured departure yet (a reliable weekday value needs about 4 weeks of data) the deadline is the fallback time; the real departure may be later, then the deadline pressure starts earlier than necessary.
+- In the softened case `min_soc = 0` is written, so evcc's own safety net for an HA outage is weaker: evcc then only follows its mode (pv waits for sun).
+
 ## [0.99.52] - 2026-10-15
 
 ### Changed

@@ -2382,6 +2382,66 @@ def apply_usage_buffer(
     return {"kwh": round(need + puffer, 2), "art": art, "puffer_kwh": round(puffer, 2)}
 
 
+def zu_langsam(deficit_kwh: float, stunden: float, p_min_kw: float, reserve_h: float) -> bool:
+    """True, wenn der Mindeststrom das Defizit nicht mehr rechtzeitig schafft:
+    deficit / p_min + reserve_h >= stunden. Unbrauchbare Mindestleistung
+    (<= 0) gilt vorsichtshalber als zu langsam."""
+    if p_min_kw is None or p_min_kw <= 0:
+        return True
+    return max(0.0, deficit_kwh) / p_min_kw + reserve_h >= stunden
+
+
+def evcc_now_entschaerfen(
+    basis_modus: str,
+    available: float,
+    sofort_kwh: float,
+    min_kwh: float,
+    sonne_unten: Optional[bool],
+    stunden_bis_abfahrt: Optional[float],
+    p_min_kw: float,
+    reserve_h: float = 0.5,
+    sofort_horizont_h: float = 2.0,
+    halt: Optional[str] = None,
+) -> dict:
+    """Entschaerft ein "now" aus determine_evcc_mode(): nur wenn das Ziel
+    sonst nicht erreichbar waere, bleibt es "now". Jeder andere Basismodus
+    kommt unveraendert zurueck (grund None, halt None).
+
+    a) available < sofort_kwh (Rest heute + Puffer, ohne morgen): zu_langsam
+       innerhalb sofort_horizont_h -> "now" (sofort_zu_langsam), sonst
+       "minpv" (sofort_sanft).
+    b) sonst (available < min_kwh): frist_druck = zu_langsam bis zur
+       Abfahrt; Tor offen = Sonne unten ODER unbekannt (None) ODER
+       frist_druck. Tor zu -> "pv" (wartet_auf_sonnenuntergang); Tor offen
+       und frist_druck -> "now" (frist); sonst "minpv" (nachladen_sanft).
+       Unbekannte Frist (None) gibt keinen Fristdruck.
+
+    halt (Haltezeit gegen Flattern): wurde "now" wegen "frist" oder
+    "sofort_zu_langsam" gewaehlt, bleibt es, bis available die jeweilige
+    Schwelle (min_kwh bzw. sofort_kwh) erreicht. Rueckgabe: {modus, grund,
+    halt} mit dem neuen Halte-Grund (None = keiner)."""
+    if basis_modus != "now":
+        return {"modus": basis_modus, "grund": None, "halt": None}
+    sofort = min(sofort_kwh, min_kwh)
+    if halt == "sofort_zu_langsam" and available < sofort:
+        return {"modus": "now", "grund": "sofort_zu_langsam", "halt": "sofort_zu_langsam"}
+    if halt == "frist" and available < min_kwh:
+        return {"modus": "now", "grund": "frist", "halt": "frist"}
+    if available < sofort:
+        if zu_langsam(sofort - available, sofort_horizont_h, p_min_kw, reserve_h):
+            return {"modus": "now", "grund": "sofort_zu_langsam", "halt": "sofort_zu_langsam"}
+        return {"modus": "minpv", "grund": "sofort_sanft", "halt": None}
+    frist_druck = (
+        stunden_bis_abfahrt is not None
+        and zu_langsam(min_kwh - available, stunden_bis_abfahrt, p_min_kw, reserve_h)
+    )
+    if sonne_unten is False and not frist_druck:
+        return {"modus": "pv", "grund": "wartet_auf_sonnenuntergang", "halt": None}
+    if frist_druck:
+        return {"modus": "now", "grund": "frist", "halt": "frist"}
+    return {"modus": "minpv", "grund": "nachladen_sanft", "halt": None}
+
+
 def round_km_display(km: Optional[float]) -> Optional[int]:
     """Anzeigerundung einer km-Schaetzung: auf 5 km unter 100, auf 10 km ab
     100 (kaufmaennisch, nicht Pythons Banker-Rundung). Haengt bewusst nicht
