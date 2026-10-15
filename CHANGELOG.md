@@ -13,6 +13,16 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.51] - 2026-10-15
+
+### Changed
+
+- **Usage profile tab shows range (km) first too (display only).** The weekday chart "Ø Bedarf pro Wochentag (ca. km)" and the KPIs "km verfügbar", "km benötigt morgen" and "km PV-Prognose morgen" show km as the main value, the kWh value in the label/tooltip (same tooltip as the charge-control card: estimate from your real consumption in the current temperature band, can differ from the on-board display). The house usage profile and the plug profile are unchanged (kWh and clock times). Without a known consumption the tab falls back to kWh as before.
+
+### Added
+
+- **Server attributes (contract for the Glow card), only when the consumption is known** (same consumption as `range_estimate_km()`): `km_je_wochentag` (per weekday) on the usage profile sensor, `roh_km` and `benoetigt_km` on the tomorrow-need sensor, `verfuegbare_km`, `benoetigt_morgen_km` and `pv_prognose_morgen_km` on the "charge before PV recommended" binary sensor. The kWh attributes stay unchanged.
+
 ## [0.99.50] - 2026-10-15
 
 ### Changed

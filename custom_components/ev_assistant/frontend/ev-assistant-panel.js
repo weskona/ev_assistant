@@ -1107,7 +1107,7 @@ class EVAssistantPanel extends HTMLElement {
             <div class="kpi hidden" id="profil-pv-forecast-kpi"><div class="kv" id="profil-pv-forecast">—</div><div class="kl">kWh PV-Prognose morgen</div></div>
           </div>
           <div class="divider"></div>
-          <div class="sub-head">Ø kWh-Bedarf pro Wochentag</div>
+          <div class="sub-head" id="profil-weekday-head">Ø kWh-Bedarf pro Wochentag</div>
           <div class="weekday-chart" id="profil-weekday-chart"></div>
         </div>
       </div>
@@ -1144,6 +1144,7 @@ class EVAssistantPanel extends HTMLElement {
       profilUrlaubBadge:  q("#profil-urlaub-badge"),
       profilRecommendIcon: q("#profil-recommend-icon"),
       profilRecommendText: q("#profil-recommend-text"),
+      profilWeekdayHead:   q("#profil-weekday-head"),
       profilAvailable:     q("#profil-available"),
       profilNeedTomorrow:  q("#profil-need-tomorrow"),
       profilBuffer:        q("#profil-buffer"),
@@ -1770,17 +1771,24 @@ class EVAssistantPanel extends HTMLElement {
       ["freitag", "Fr"], ["samstag", "Sa"], ["sonntag", "So"],
     ];
     const values = WEEKDAYS.map(([key]) => parseFloat(profile.attributes[key]) || 0);
+    // km zuerst (Server-Attribut km_je_wochentag, 0.99.51); kWh im Tooltip.
+    // Ohne Verbrauch bleibt es bei kWh wie bisher.
+    const kmByDay = profile.attributes.km_je_wochentag || null;
+    const hasKm = !!kmByDay && WEEKDAYS.every(([key]) => typeof kmByDay[key] === "number");
+    if (r.profilWeekdayHead) r.profilWeekdayHead.textContent = hasKm ? "Ø Bedarf pro Wochentag (ca. km)" : "Ø kWh-Bedarf pro Wochentag";
     const maxVal = Math.max(...values, 0.1);
     const todayWd = new Date().getDay(); // 0=Sonntag..6=Samstag (JS-Konvention)
     const todayIdx = todayWd === 0 ? 6 : todayWd - 1; // -> 0=Montag..6=Sonntag
     const tomorrowIdx = (todayIdx + 1) % 7;
 
-    r.profilWeekdayChart.innerHTML = WEEKDAYS.map(([, label], i) => {
+    r.profilWeekdayChart.innerHTML = WEEKDAYS.map(([key, label], i) => {
       const pct = Math.max(2, Math.round((values[i] / maxVal) * 100));
       const cls = i === tomorrowIdx ? "wd-bar tomorrow" : (i === todayIdx ? "wd-bar today" : "wd-bar");
+      const valText = hasKm ? String(this._roundKm(kmByDay[key])) : this._fmtNum(values[i], 1);
+      const tip = hasKm ? `${this._fmtNum(values[i], 1)} kWh · ${this._KM_TIP}` : "";
       return `
-        <div class="wd-col">
-          <div class="wd-val">${this._fmtNum(values[i], 1)}</div>
+        <div class="wd-col"${tip ? ` title="${tip}"` : ""}>
+          <div class="wd-val">${valText}</div>
           <div class="wd-bar-track"><div class="${cls}" style="height:${pct}%"></div></div>
           <div class="wd-label">${label}</div>
         </div>`;
@@ -1788,12 +1796,31 @@ class EVAssistantPanel extends HTMLElement {
 
     const availEid = this._eid("available_kwh");
     const available = availEid ? parseFloat(this._raw(availEid)) : NaN;
-    r.profilAvailable.textContent = isNaN(available) ? "—" : this._fmtNum(available, 1);
+    // KPI km zuerst, kWh in der Beschriftung; ohne km-Attribut wie bisher kWh.
+    const setKpi = (kvEl, km, kwh, labelKm, labelKwh) => {
+      if (!kvEl) return;
+      const hasK = typeof km === "number" && !isNaN(km);
+      const hasW = typeof kwh === "number" && !isNaN(kwh);
+      const kl = kvEl.nextElementSibling;
+      if (hasK) {
+        kvEl.textContent = String(this._roundKm(km));
+        if (kl) kl.textContent = hasW ? `${labelKm} (${this._fmtNum(kwh, 1)} kWh)` : labelKm;
+        kvEl.parentElement.title = this._KM_TIP;
+      } else {
+        kvEl.textContent = hasW ? this._fmtNum(kwh, 1) : "—";
+        if (kl) kl.textContent = labelKwh;
+        kvEl.parentElement.title = "";
+      }
+    };
+    const recEid0 = this._eid("charge_before_pv_recommended");
+    const recAttrs = (recEid0 && this._hass.states[recEid0] && this._hass.states[recEid0].attributes) || {};
+    const modeAttrs0 = (modeCtrlState && modeCtrlState.attributes) || {};
+    setKpi(r.profilAvailable, typeof recAttrs.verfuegbare_km === "number" ? recAttrs.verfuegbare_km : modeAttrs0.reichweite_km, available, "km verfügbar", "kWh verfügbar");
 
     const needEid = this._eid("usage_profile_tomorrow");
     const needState = needEid ? this._hass.states[needEid] : null;
     const need = needState ? parseFloat(needState.state) : NaN;
-    r.profilNeedTomorrow.textContent = isNaN(need) ? "—" : this._fmtNum(need, 1);
+    setKpi(r.profilNeedTomorrow, needState && needState.attributes ? needState.attributes.benoetigt_km : null, need, "km benötigt morgen", "kWh benötigt morgen");
     const bufferPct = needState && needState.attributes ? parseFloat(needState.attributes.puffer_prozent) : NaN;
     r.profilBuffer.textContent = isNaN(bufferPct) ? "—" : this._fmtNum(bufferPct, 0);
 
@@ -1802,7 +1829,7 @@ class EVAssistantPanel extends HTMLElement {
     const pvForecast = recState && recState.attributes ? parseFloat(recState.attributes.pv_prognose_morgen_kwh) : NaN;
     const hasPvForecast = !isNaN(pvForecast);
     r.profilPvForecastKpi.classList.toggle("hidden", !hasPvForecast);
-    if (hasPvForecast) r.profilPvForecast.textContent = this._fmtNum(pvForecast, 1);
+    if (hasPvForecast) setKpi(r.profilPvForecast, recAttrs.pv_prognose_morgen_km, pvForecast, "km PV-Prognose morgen", "kWh PV-Prognose morgen");
 
     if (!recState || recState.state === "unknown" || recState.state === "unavailable") {
       r.profilRecommendIcon.setAttribute("icon", "mdi:battery-unknown");

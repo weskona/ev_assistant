@@ -134,3 +134,37 @@ async def test_feedback_text_ohne_verbrauch_bleibt_kwh(hass, coordinators):
     text = coordinator._evcc_charge_plan_feedback_text(75, time.time() + 12 * 3600)
     assert text.startswith("Benoetigt ca. 12.5 kWh")
     assert "km" not in text
+
+
+async def test_nutzungsprofil_km_attribute(hass, coordinators):
+    from custom_components.ev_assistant.sensor import UsageProfileSensor, UsageProfileTomorrowSensor
+
+    coordinator, entry = await _enabled(hass, coordinators, "rk10")
+    profil = UsageProfileSensor(coordinator, entry).extra_state_attributes
+    # 10 kWh je Wochentag bei 20 kWh/100 km = 50 km; kWh-Attribute bleiben
+    assert profil["montag"] == 10.0
+    assert set(profil["km_je_wochentag"].values()) == {50.0}
+    assert len(profil["km_je_wochentag"]) == 7
+    morgen = UsageProfileTomorrowSensor(coordinator, entry).extra_state_attributes
+    assert morgen["benoetigt_km"] == round(morgen["benoetigt_kwh"] / 20.0 * 100.0, 1)
+    assert morgen["roh_km"] == round(morgen["roh_kwh"] / 20.0 * 100.0, 1)
+
+
+async def test_nutzungsprofil_ohne_verbrauch_keine_km(hass, coordinators):
+    from custom_components.ev_assistant.sensor import UsageProfileSensor, UsageProfileTomorrowSensor
+
+    coordinator, entry = await _enabled(hass, coordinators, "rk11")
+    coordinator._vehicle_avg_consumption_kwh_per_100km = lambda: None
+    coordinator._rolling_consumption_cache = None
+    assert "km_je_wochentag" not in UsageProfileSensor(coordinator, entry).extra_state_attributes
+    morgen = UsageProfileTomorrowSensor(coordinator, entry).extra_state_attributes
+    assert "benoetigt_km" not in morgen and "benoetigt_kwh" in morgen
+
+
+async def test_empfehlung_km_attribute(hass, coordinators):
+    from custom_components.ev_assistant.binary_sensor import ChargeBeforePvBinarySensor
+
+    coordinator, entry = await _enabled(hass, coordinators, "rk12")
+    attrs = ChargeBeforePvBinarySensor(coordinator, entry).extra_state_attributes
+    assert attrs["verfuegbare_km"] == round(attrs["verfuegbare_kwh"] / 20.0 * 100.0, 1)
+    assert attrs["benoetigt_morgen_km"] == round(attrs["benoetigt_morgen_kwh"] / 20.0 * 100.0, 1)
