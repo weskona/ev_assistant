@@ -266,6 +266,10 @@ CONF_TRIP_AUTO_CONFIRM = "trip_auto_confirm"
 # coordinator.py::usage_profile_tomorrow()) -- soll verhindern, dass ein
 # leicht ueberdurchschnittlicher Tag den Akku knapp werden laesst.
 CONF_USAGE_PROFILE_BUFFER_PCT = "usage_profile_buffer_pct"
+# Seit 0.99.52 der eigentliche Puffer: FESTER km-Zuschlag (in kWh umgerechnet
+# mit dem aktuellen Verbrauch, siehe engine.apply_usage_buffer()). Der %-Wert
+# oben bleibt nur als Rueckfall bei unbekanntem Verbrauch erhalten.
+CONF_USAGE_PROFILE_BUFFER_KM = "usage_profile_buffer_km"
 # Optional: beliebige Sensor-Entitaet mit der PV-Ertragsprognose fuer morgen
 # (kWh oder Wh, z.B. Solcast "Forecast Tomorrow" oder Forecast.Solar
 # "Estimated Energy Production - Tomorrow") -- siehe
@@ -617,6 +621,8 @@ DEFAULT_TRIP_IDLE_TIMEOUT = 300.0
 DEFAULT_MOTOR_DEBOUNCE = 60.0
 DEFAULT_TRIP_AUTO_CONFIRM = False
 DEFAULT_USAGE_PROFILE_BUFFER_PCT = 20.0
+DEFAULT_USAGE_PROFILE_BUFFER_KM = 30.0
+USAGE_PROFILE_BUFFER_KM_MAX = 300.0
 # Mindestanzahl Kalendertage Fahrtenbuch-Historie, bevor ein Nutzungsprofil
 # gezeigt wird (siehe engine.py::weekday_usage_profile()) -- 7 Tage
 # garantieren, dass jeder Wochentag mindestens einmal vorkommt.
@@ -774,6 +780,7 @@ SERVICE_EDIT_MAINTENANCE = "edit_maintenance"
 SERVICE_DELETE_MAINTENANCE = "delete_maintenance"
 SERVICE_MARK_MAINTENANCE_DONE = "mark_maintenance_done"
 SERVICE_SET_USAGE_PROFILE_BUFFER_PCT = "set_usage_profile_buffer_pct"
+SERVICE_SET_USAGE_PROFILE_BUFFER_KM = "set_usage_profile_buffer_km"
 SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED = "set_weekly_full_charge_enabled"
 SERVICE_SET_VEHICLE_IMAGE = "set_vehicle_image"
 SERVICE_CLEAR_VEHICLE_IMAGE = "clear_vehicle_image"

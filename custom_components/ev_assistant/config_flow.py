@@ -66,7 +66,7 @@ from .const import (
     CONF_TRIP_MIN_KM,
     CONF_URLAUB_ENTITY,
     CONF_USABLE_KWH,
-    CONF_USAGE_PROFILE_BUFFER_PCT,
+    CONF_USAGE_PROFILE_BUFFER_KM,
     CONF_VEHICLE_HERSTELLER,
     CONF_VEHICLE_MODELL,
     CONF_VERBRENNER_L_100KM,
@@ -97,7 +97,7 @@ from .const import (
     DEFAULT_TRIP_IDLE_TIMEOUT,
     DEFAULT_TRIP_MIN_KM,
     DEFAULT_USABLE_KWH,
-    DEFAULT_USAGE_PROFILE_BUFFER_PCT,
+    DEFAULT_USAGE_PROFILE_BUFFER_KM,
     DEFAULT_WALLBOX_MIN_POWER_W,
     DEFAULT_WEEKLY_FULL_CHARGE_ENABLED,
     DEFAULT_WEEKLY_FULL_CHARGE_INTERVAL_DAYS,
@@ -109,6 +109,7 @@ from .const import (
     LADE_MODUS_NUR_ZUHAUSE,
     NOTIFY_EVENTS,
     SOC_THRESHOLD_OPTIONS,
+    USAGE_PROFILE_BUFFER_KM_MAX,
     resolve_home_charging_method,
 )
 
@@ -522,10 +523,13 @@ def build_trip_schema(cur: dict) -> vol.Schema:
         vol.Optional(
             CONF_TRIP_AUTO_CONFIRM, default=cur.get(CONF_TRIP_AUTO_CONFIRM, DEFAULT_TRIP_AUTO_CONFIRM)
         ): bool,
+        # Seit 0.99.52 km statt % (fester Zuschlag). Ein gespeicherter
+        # %-Wert bleibt unberuehrt in entry.data (Rueckfall bei unbekanntem
+        # Verbrauch), das Feld ist nur nicht mehr im Formular.
         vol.Optional(
-            CONF_USAGE_PROFILE_BUFFER_PCT,
-            default=cur.get(CONF_USAGE_PROFILE_BUFFER_PCT, DEFAULT_USAGE_PROFILE_BUFFER_PCT),
-        ): vol.Coerce(float),
+            CONF_USAGE_PROFILE_BUFFER_KM,
+            default=cur.get(CONF_USAGE_PROFILE_BUFFER_KM, DEFAULT_USAGE_PROFILE_BUFFER_KM),
+        ): vol.All(vol.Coerce(float), vol.Range(min=0, max=USAGE_PROFILE_BUFFER_KM_MAX)),
         vol.Optional(CONF_PV_FORECAST_ENTITY, description=sv(CONF_PV_FORECAST_ENTITY)): _PV_FORECAST_ENTITY,
         vol.Optional(CONF_OUTSIDE_TEMP_ENTITY, description=sv(CONF_OUTSIDE_TEMP_ENTITY)): _OUTSIDE_TEMP_ENTITY,
     })

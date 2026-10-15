@@ -1103,7 +1103,7 @@ class EVAssistantPanel extends HTMLElement {
           <div class="kpi-row">
             <div class="kpi"><div class="kv" id="profil-available">—</div><div class="kl">kWh verfügbar</div></div>
             <div class="kpi"><div class="kv" id="profil-need-tomorrow">—</div><div class="kl">kWh benötigt morgen</div></div>
-            <div class="kpi"><div class="kv" id="profil-buffer">—</div><div class="kl">% Puffer</div></div>
+            <div class="kpi"><div class="kv" id="profil-buffer">—</div><div class="kl" id="profil-buffer-label">% Puffer</div></div>
             <div class="kpi hidden" id="profil-pv-forecast-kpi"><div class="kv" id="profil-pv-forecast">—</div><div class="kl">kWh PV-Prognose morgen</div></div>
           </div>
           <div class="divider"></div>
@@ -1148,6 +1148,7 @@ class EVAssistantPanel extends HTMLElement {
       profilAvailable:     q("#profil-available"),
       profilNeedTomorrow:  q("#profil-need-tomorrow"),
       profilBuffer:        q("#profil-buffer"),
+      profilBufferLabel:   q("#profil-buffer-label"),
       profilPvForecastKpi: q("#profil-pv-forecast-kpi"),
       profilPvForecast:    q("#profil-pv-forecast"),
       profilWeekdayChart:  q("#profil-weekday-chart"),
@@ -1821,8 +1822,14 @@ class EVAssistantPanel extends HTMLElement {
     const needState = needEid ? this._hass.states[needEid] : null;
     const need = needState ? parseFloat(needState.state) : NaN;
     setKpi(r.profilNeedTomorrow, needState && needState.attributes ? needState.attributes.benoetigt_km : null, need, "km benötigt morgen", "kWh benötigt morgen");
-    const bufferPct = needState && needState.attributes ? parseFloat(needState.attributes.puffer_prozent) : NaN;
-    r.profilBuffer.textContent = isNaN(bufferPct) ? "—" : this._fmtNum(bufferPct, 0);
+    const needAttrs = (needState && needState.attributes) || {};
+    const bufferIsKm = needAttrs.puffer_art === "km" && !isNaN(parseFloat(needAttrs.puffer_km));
+    const bufferVal = bufferIsKm ? parseFloat(needAttrs.puffer_km) : parseFloat(needAttrs.puffer_prozent);
+    r.profilBuffer.textContent = isNaN(bufferVal) ? "—" : this._fmtNum(bufferVal, 0);
+    if (r.profilBufferLabel) {
+      r.profilBufferLabel.textContent = bufferIsKm ? "km Puffer" : "% Puffer";
+      r.profilBufferLabel.parentElement.title = bufferIsKm ? this._BUFFER_TIP : "";
+    }
 
     const recEid = this._eid("charge_before_pv_recommended");
     const recState = recEid ? this._hass.states[recEid] : null;
@@ -4950,7 +4957,8 @@ class EVAssistantPanel extends HTMLElement {
     buffer.innerHTML = `
       <div class="beta-wb-buffer-row">
         <span class="beta-wb-buffer-label">Puffer</span>
-        <span class="beta-wb-buffer-val" id="beta-wb-buffer-val">—%</span>
+        <span class="beta-wb-buffer-val" id="beta-wb-buffer-val">—</span>
+        <span class="beta-wb-buffer-sub" id="beta-wb-buffer-sub"></span>
         <button type="button" class="beta-wb-buffer-reset" id="beta-wb-buffer-reset" title="Auf Konfigurationswert zurücksetzen">
           <ha-icon icon="mdi:restore"></ha-icon>
         </button>
@@ -4961,18 +4969,22 @@ class EVAssistantPanel extends HTMLElement {
     const qb = (s) => buffer.querySelector(s);
     this._r.betaWbBufferSection = buffer;
     this._r.betaWbBufferVal     = qb("#beta-wb-buffer-val");
+    this._r.betaWbBufferSub     = qb("#beta-wb-buffer-sub");
     this._r.betaWbBufferSlider  = qb("#beta-wb-buffer-slider");
     this._r.betaWbBufferReset   = qb("#beta-wb-buffer-reset");
     // Live-Vorschau beim Ziehen (input), Service-Aufruf erst beim Loslassen
     // (change) -- verhindert eine Flut von Service-Calls waehrend des
     // Ziehens (jeder Aufruf loest eine evcc-Neubewertung aus).
     this._r.betaWbBufferSlider.addEventListener("input", (e) => {
-      this._r.betaWbBufferVal.textContent = `${e.target.value}%`;
+      this._showBufferLabel(parseFloat(e.target.value), this._bufferKmMode);
     });
     this._r.betaWbBufferSlider.addEventListener("change", (e) => {
-      this._call("set_usage_profile_buffer_pct", { buffer_pct: parseFloat(e.target.value) });
+      if (this._bufferKmMode) this._call("set_usage_profile_buffer_km", { buffer_km: parseFloat(e.target.value) });
+      else this._call("set_usage_profile_buffer_pct", { buffer_pct: parseFloat(e.target.value) });
     });
+    // Reset loescht beide Overrides (je nach Modus wirkt nur einer).
     this._r.betaWbBufferReset.addEventListener("click", () => {
+      this._call("set_usage_profile_buffer_km", {});
       this._call("set_usage_profile_buffer_pct", {});
     });
 
@@ -5271,6 +5283,27 @@ class EVAssistantPanel extends HTMLElement {
     const consumption = Number(a.verbrauch_kwh_100km);
     if (!(kmPerPct > 0) || !(usableKwh > 0) || !(consumption > 0)) return null;
     return { kmPerPct, usableKwh, consumption };
+  }
+
+  get _BUFFER_TIP() {
+    return "Fester Zuschlag auf den Bedarf. Bleibt auch an sonnigen Tagen als Mindestreserve erhalten, wird nicht von der PV-Prognose gekürzt.";
+  }
+
+  // Puffer-Label: km-Modus gross "Puffer 30 km", klein "ca. 4,8 kWh"
+  // (Umrechnung nur zur Anzeige mit dem Server-Verbrauch); %-Modus mit Hinweis.
+  _showBufferLabel(value, kmMode) {
+    const r = this._r;
+    if (!r.betaWbBufferVal) return;
+    if (kmMode) {
+      const conv = this._rangeConv();
+      r.betaWbBufferVal.textContent = `Puffer ${this._fmtNum(value, 0)} km`;
+      r.betaWbBufferSub.textContent = conv ? `ca. ${this._fmtNum(value * conv.consumption / 100, 1)} kWh` : "";
+      r.betaWbBufferSection.title = this._BUFFER_TIP;
+    } else {
+      r.betaWbBufferVal.textContent = `${this._fmtNum(value, 0)}%`;
+      r.betaWbBufferSub.textContent = "Verbrauch unbekannt, Puffer in %";
+      r.betaWbBufferSection.title = "";
+    }
   }
 
   // Anzeigerundung wie engine.round_km_display(): 5 km unter 100, 10 km ab 100.
@@ -5989,10 +6022,17 @@ class EVAssistantPanel extends HTMLElement {
       if (this.shadowRoot.activeElement !== r.betaWbBufferSlider) {
         const needEid = this._eid("usage_profile_tomorrow");
         const needState = needEid ? this._hass.states[needEid] : null;
-        const bufferPct = needState && needState.attributes ? parseFloat(needState.attributes.puffer_prozent) : NaN;
-        if (!isNaN(bufferPct)) {
-          r.betaWbBufferSlider.value = bufferPct;
-          r.betaWbBufferVal.textContent = `${this._fmtNum(bufferPct, 0)}%`;
+        const nAttrs = (needState && needState.attributes) || {};
+        // km-Modus nur, wenn der Server den Puffer wirklich in km angewendet
+        // hat (puffer_art "km", also Verbrauch bekannt); sonst % mit Hinweis.
+        const kmMode = nAttrs.puffer_art === "km" && !isNaN(parseFloat(nAttrs.puffer_km));
+        const bufferNow = kmMode ? parseFloat(nAttrs.puffer_km) : parseFloat(nAttrs.puffer_prozent);
+        this._bufferKmMode = kmMode;
+        r.betaWbBufferSlider.max = "100";
+        r.betaWbBufferSlider.step = kmMode ? "5" : "1";
+        if (!isNaN(bufferNow)) {
+          r.betaWbBufferSlider.value = bufferNow;
+          this._showBufferLabel(bufferNow, kmMode);
         }
       }
       // Balancing-Schalter: aktuellen Wert + Status/naechste Faelligkeit aus
@@ -7110,6 +7150,7 @@ class EVAssistantPanel extends HTMLElement {
       .beta-wallbox-buffer { min-width: 0; }
       .beta-wb-buffer-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
       .beta-wb-buffer-label { font-size: 0.78rem; color: var(--ink-mid); flex: 1; }
+      .beta-wb-buffer-sub { font-size: 0.7rem; color: var(--ink-mid); }
       .beta-wb-buffer-val { font-size: 0.85rem; font-weight: 700; font-family: var(--font-mono); }
       .beta-wb-buffer-reset {
         display: grid; place-items: center; border: none; background: none; color: var(--ink-dim);

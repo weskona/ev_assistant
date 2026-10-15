@@ -682,6 +682,7 @@ async def test_evcc_mode_targets_pv_ueberschuss_reduziert_min_und_target(hass, c
         options={CONF_USABLE_KWH: 50.0, CONF_PV_FORECAST_TODAY_REMAINING_ENTITY: "sensor.pv_rest"},
     )
     _seed_usage_profile(coordinator, weekday_kwh=10.0)  # jeder Wochentag 10 kWh
+    coordinator.range_conversion = lambda: {}  # Verbrauch unbekannt -> %-Rueckfall (siehe test_buffer_km.py fuer km)
     coordinator._soc = 50.0
     coordinator._day_fraction_elapsed = lambda: 0.0
     # Heutiger Bedarf 10 kWh, PV-Prognose 15 kWh -> 5 kWh Ueberschuss uebrig.
@@ -714,6 +715,7 @@ async def test_evcc_mode_targets_grosser_pv_ueberschuss_deckt_gesamten_puffer(ha
         options={CONF_USABLE_KWH: 50.0, CONF_PV_FORECAST_TODAY_REMAINING_ENTITY: "sensor.pv_rest"},
     )
     _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator.range_conversion = lambda: {}  # Verbrauch unbekannt -> %-Rueckfall (siehe test_buffer_km.py fuer km)
     coordinator._soc = 50.0
     coordinator._day_fraction_elapsed = lambda: 0.0
     # 50 kWh PV-Prognose decken heute (10) + den kompletten Zwei-Tage-Puffer
@@ -1066,6 +1068,7 @@ async def test_set_usage_profile_buffer_pct_none_setzt_zurueck(hass, coordinator
 async def test_set_usage_profile_buffer_pct_wirkt_sich_auf_usage_profile_tomorrow_aus(hass, coordinators):
     coordinator, _ = await _make_coordinator(hass, coordinators, "upbp6")
     _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator.range_conversion = lambda: {}  # Verbrauch unbekannt -> %-Rueckfall (siehe test_buffer_km.py fuer km)
     await coordinator.async_set_usage_profile_buffer_pct(50.0)
     need = coordinator.usage_profile_tomorrow()
     assert need["puffer_prozent"] == 50.0
@@ -1417,6 +1420,7 @@ async def test_apply_evcc_mode_control_target_soc_null_evcc_spiegelt_fahrzeug_de
     )
     # weekday_kwh=0.0 -> min_kwh/target_kwh runden auf 0.0 -> target_soc=0.
     _seed_usage_profile(coordinator, weekday_kwh=0.0)
+    coordinator.range_conversion = lambda: {}  # Verbrauch unbekannt -> %-Rueckfall (siehe test_buffer_km.py fuer km)
     coordinator._soc = 50.0
     coordinator._evcc_client = _fake_evcc_client(probe_result="loadpoint")
     coordinator._evcc_state = {"loadpoints": [{}]}

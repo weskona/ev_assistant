@@ -4949,3 +4949,40 @@ def test_soc_to_km_passt_zu_calculate_range_km():
 
     for soc in (0, 7, 33.3, 80, 100):
         assert soc_to_km(soc, 45, 17.3) == calculate_range_km(soc, 45, 17.3)
+
+
+# ----- apply_usage_buffer (0.99.52) -----------------------------------------
+
+def test_apply_usage_buffer_km_pfad_fester_zuschlag():
+    from engine import apply_usage_buffer
+
+    res = apply_usage_buffer(10.0, 30.0, 20.0, 20.0)  # 30 km * 20 kWh/100 km = 6 kWh
+    assert res == {"kwh": 16.0, "art": "km", "puffer_kwh": 6.0}
+
+
+def test_apply_usage_buffer_km_wird_nicht_prozentual_gekuerzt_bedarf_null_ist_boden():
+    from engine import apply_usage_buffer
+
+    res = apply_usage_buffer(0.0, 30.0, 20.0, 22.0)
+    assert res["art"] == "km"
+    assert res["kwh"] == 6.6 and res["puffer_kwh"] == 6.6
+
+
+def test_apply_usage_buffer_prozent_rueckfall():
+    from engine import apply_usage_buffer
+
+    for cons in (None, 0.0, -5.0):
+        res = apply_usage_buffer(10.0, 30.0, 20.0, cons)
+        assert res == {"kwh": 12.0, "art": "prozent", "puffer_kwh": 2.0}
+    # kein km-Wert -> ebenfalls %-Pfad
+    assert apply_usage_buffer(10.0, None, 50.0, 20.0)["kwh"] == 15.0
+
+
+def test_apply_usage_buffer_randwerte_nie_negativ_und_gerundet():
+    from engine import apply_usage_buffer
+
+    assert apply_usage_buffer(-3.0, 0.0, 20.0, 20.0)["kwh"] == 0.0  # km 0 gilt als gesetzt
+    assert apply_usage_buffer(5.0, 0.0, 20.0, 20.0) == {"kwh": 5.0, "art": "km", "puffer_kwh": 0.0}
+    assert apply_usage_buffer(5.0, -10.0, 20.0, 20.0)["art"] == "prozent"  # negativ -> Rueckfall
+    assert apply_usage_buffer(-3.0, None, -50.0, None)["kwh"] == 0.0
+    assert apply_usage_buffer(1.0, 33.0, 0.0, 17.33)["kwh"] == round(1.0 + 33.0 * 17.33 / 100.0, 2)

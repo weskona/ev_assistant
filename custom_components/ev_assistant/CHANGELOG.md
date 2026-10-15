@@ -2,6 +2,26 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.52] - 2026-10-15
+
+### Changed
+
+- **Buffer in km instead of % (fixed surcharge, not reduced by PV).** The safety buffer for the usage profile is now a fixed surcharge in km (default 30 km, option range 0..300, step 5) instead of a percentage. It is converted to kWh with the consumption currently in use (`verbrauch_kwh_100km`, i.e. the temperature band) and added to the need **after** the PV deduction, so it stays as a minimum reserve even on sunny days. It applies to `min_kwh`, `target_kwh` and the tomorrow-need (`benoetigt_kwh`, hence "charge before PV" too). The calculation of the need itself (profile, rest of today, PV deduction, surplus for tomorrow), `determine_evcc_mode()` and everything else is unchanged.
+- **Existing installations change from a 20 % surcharge to 30 km.** The new option has its own key, so a stored percentage is not carried over. With about 22 kWh/100 km that is roughly 6.6 kWh fixed instead of 20 % of the need, so the buffer is usually larger and no longer shrinks with a small need: with a fully PV-covered need `min_kwh` is now the buffer (e.g. 6.6 kWh) instead of 0. That can change how often "charge before PV" triggers. Set the option to 0 for no buffer.
+- **Panel:** with a known consumption the buffer slider works in km (0-100, step 5), label "Puffer 30 km", small "ca. 4,8 kWh"; the reset deletes the km override. The usage profile KPI "% Puffer" becomes "km Puffer". Without a known consumption the slider stays in % with a hint.
+- Options flow: the percentage field is replaced by the km field. A stored percentage stays untouched (invisible) and is only used as fallback.
+
+### Added
+
+- Service `set_usage_profile_buffer_km` (runtime override, `buffer_km` missing or `null` resets, clamped to 0..300, part of backup/restore like the percentage override). The service `set_usage_profile_buffer_pct` stays registered unchanged; its description now names it as the fallback value.
+- `engine.apply_usage_buffer()` (pure, tested).
+- Attributes `puffer_art` ("km" | "prozent"), `puffer_km`, `puffer_kwh` on the tomorrow-need sensor and on `sensor.*evcc_mode_control` (contract for the Glow card; the latter also `puffer_prozent`). `puffer_prozent` keeps its meaning (the percentage fallback value).
+
+### Honest limits
+
+- The km buffer needs a known consumption; without it the percentage (default 20 %) applies as before, `puffer_art` says which one is in use. The conversion uses the consumption in the current temperature band, so the same 30 km are more or fewer kWh in winter than in summer.
+- The fixed buffer is also charged on days with a lot of PV: the car is kept at least that far above the need (that is the point of a minimum reserve).
+
 ## [0.99.51] - 2026-10-15
 
 ### Changed
