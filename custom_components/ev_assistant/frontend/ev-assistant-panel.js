@@ -4846,10 +4846,11 @@ class EVAssistantPanel extends HTMLElement {
     // einspaltiger Liste, siehe CSS weiter unten.
     list.className = "beta-status-list beta-evcc-status-grid";
     list.innerHTML = `
-      <div class="beta-status-row"><span class="bl">Min-SoC</span><span class="bv" id="beta-evcc-min-soc">—</span></div>
-      <div class="beta-status-row"><span class="bl">Ziel-SoC</span><span class="bv" id="beta-evcc-target-soc">—</span></div>
+      <div class="beta-status-row hidden" id="beta-evcc-reichweite-row"><span class="bl">Reichweite jetzt</span><span class="bv" id="beta-evcc-reichweite">—</span></div>
+      <div class="beta-status-row"><span class="bl">Mindestens bis morgen</span><span class="bv" id="beta-evcc-min-soc">—</span></div>
+      <div class="beta-status-row"><span class="bl">Ziel</span><span class="bv" id="beta-evcc-target-soc">—</span></div>
       <div class="beta-status-row"><span class="bl">Rest-Bedarf heute</span><span class="bv" id="beta-evcc-rest-heute">—</span></div>
-      <div class="beta-status-row"><span class="bl">PV fürs Auto</span><span class="bv" id="beta-evcc-pv-fuer-auto">—</span></div>
+      <div class="beta-status-row"><span class="bl">Sonne reicht für</span><span class="bv" id="beta-evcc-pv-fuer-auto">—</span></div>
       <div class="beta-status-row"><span class="bl">Zuletzt geschrieben</span><span class="bv" id="beta-evcc-last-written">—</span></div>
       <div class="beta-status-row hidden" id="beta-evcc-scope-warn-row">
         <span class="bl">SoC-Steuerung</span><span class="bv beta-evcc-warn">nicht verfügbar — siehe Repariere</span>
@@ -4884,7 +4885,7 @@ class EVAssistantPanel extends HTMLElement {
     socmax.className = "beta-evcc-socmax";
     socmax.innerHTML = `
       <div class="beta-evcc-socmax-row">
-        <span class="bl">Max. Ziel-SoC</span>
+        <span class="bl" title="Max. Ziel-SoC">Maximal laden bis</span>
         <span class="beta-evcc-socmax-val" id="beta-evcc-socmax-val">—%</span>
         <button type="button" class="beta-evcc-socmax-reset" id="beta-evcc-socmax-reset" title="Auf Standardwert (80%) zurücksetzen">
           <ha-icon icon="mdi:restore"></ha-icon>
@@ -4898,7 +4899,7 @@ class EVAssistantPanel extends HTMLElement {
     this._r.betaEvccSocMaxSlider = qs("#beta-evcc-socmax-slider");
     this._r.betaEvccSocMaxReset  = qs("#beta-evcc-socmax-reset");
     this._r.betaEvccSocMaxSlider.addEventListener("input", (e) => {
-      this._r.betaEvccSocMaxVal.textContent = `${e.target.value}%`;
+      this._r.betaEvccSocMaxVal.textContent = this._socWithKm(parseFloat(e.target.value));
     });
     this._r.betaEvccSocMaxSlider.addEventListener("change", (e) => {
       this._call("set_evcc_mode_control_target_soc_max", { target_soc_max: parseInt(e.target.value, 10) });
@@ -5129,6 +5130,8 @@ class EVAssistantPanel extends HTMLElement {
     this._r.betaEvccManualSection = manual;
     this._r.betaEvccModeLabel   = badge.querySelector("#beta-evcc-mode-label");
     this._r.betaEvccDot         = badge.querySelector(".beta-evcc-dot");
+    this._r.betaEvccReichweiteRow = q("#beta-evcc-reichweite-row");
+    this._r.betaEvccReichweite  = q("#beta-evcc-reichweite");
     this._r.betaEvccMinSoc      = q("#beta-evcc-min-soc");
     this._r.betaEvccTargetSoc   = q("#beta-evcc-target-soc");
     this._r.betaEvccRestHeute   = q("#beta-evcc-rest-heute");
@@ -5227,6 +5230,78 @@ class EVAssistantPanel extends HTMLElement {
     return overlay;
   }
 
+  // --- Reichweite km-zuerst ----------------------------------------------
+  // Der Server rechnet (usable_kwh, verbrauch_kwh_100km, km_pro_prozent als
+  // Attribute des evcc_mode_control-Sensors, siehe coordinator.py::
+  // range_conversion()); das Panel zeigt nur an. Ohne diese Attribute bleibt
+  // es bei % bzw. kWh fuehrend, wie vor 0.99.50.
+  _rangeConv() {
+    const eid = this._eid("evcc_mode_control");
+    const st = eid && this._hass ? this._hass.states[eid] : null;
+    const a = (st && st.attributes) || {};
+    const kmPerPct = Number(a.km_pro_prozent);
+    const usableKwh = Number(a.usable_kwh);
+    const consumption = Number(a.verbrauch_kwh_100km);
+    if (!(kmPerPct > 0) || !(usableKwh > 0) || !(consumption > 0)) return null;
+    return { kmPerPct, usableKwh, consumption };
+  }
+
+  // Anzeigerundung wie engine.round_km_display(): 5 km unter 100, 10 km ab 100.
+  _roundKm(km) {
+    if (typeof km !== "number" || isNaN(km)) return null;
+    km = Math.max(0, km);
+    const r5 = Math.floor(km / 5 + 0.5) * 5;
+    return r5 < 100 ? r5 : Math.floor(km / 10 + 0.5) * 10;
+  }
+
+  // EIN Helfer fuer alle km-zuerst-Anzeigen: {soc, kwh, km} (je optional,
+  // km bevorzugt vom Server) -> {main: "ca. 230 km", sub: "80 % · 31,5 kWh",
+  // pct: "80 %", km}. Ohne km (Verbrauch unbekannt): % bzw. kWh fuehrend.
+  _fmtRange({ soc = null, kwh = null, km = null } = {}) {
+    const conv = this._rangeConv();
+    const num = (v) => (typeof v === "number" && !isNaN(v) ? v : null);
+    soc = num(soc); kwh = num(kwh); km = num(km);
+    if (conv) {
+      if (km === null && soc !== null) km = soc * conv.kmPerPct;
+      if (km === null && kwh !== null) km = (kwh / conv.consumption) * 100;
+      if (kwh === null && soc !== null) kwh = (soc / 100) * conv.usableKwh;
+    }
+    const kmR = km === null ? null : this._roundKm(km);
+    const pct = soc === null ? null : `${Math.round(soc)} %`;
+    const kwhT = kwh === null ? null : `${this._fmtNum(kwh, 1)} kWh`;
+    if (kmR !== null) {
+      return { main: `ca. ${kmR} km`, sub: [pct, kwhT].filter(Boolean).join(" · "), pct, km: kmR };
+    }
+    return { main: pct || kwhT || "—", sub: pct ? (kwhT || "") : "", pct, km: null };
+  }
+
+  // Slider-Label "ca. 175 km · 64 %" (km zuerst), ohne km nur "64 %".
+  _socWithKm(soc) {
+    const r = this._fmtRange({ soc });
+    return r.km !== null ? `${r.main} · ${r.pct}` : r.main;
+  }
+
+  // Zeile fuellen: Hauptwert plus kleine Zweitzeile; Tooltip nennt den
+  // technischen Begriff und, bei km, die ehrliche Einschraenkung.
+  _setRange(el, r, techTip) {
+    if (!el) return;
+    el.textContent = r.main;
+    if (r.sub) {
+      const sub = document.createElement("span");
+      sub.className = "range-sub";
+      sub.textContent = r.sub;
+      el.appendChild(sub);
+    }
+    const row = el.parentElement;
+    if (row) {
+      row.title = [techTip, r.km !== null ? this._KM_TIP : ""].filter(Boolean).join("\n");
+    }
+  }
+
+  get _KM_TIP() {
+    return "Schätzung nach deinem realen Verbrauch im aktuellen Temperaturband, kann von der Bordanzeige abweichen.";
+  }
+
   // Kombinierte "64% · 175 km"-Anzeige fuer den Slider-Wert (Nutzerwunsch
   // 2026-09-23: "km und soc zusammen im slider anzeigen") -- km wird aus
   // _ladeplanConversionInputs() abgeleitet, "—" ohne bekannten Verbrauch/
@@ -5234,13 +5309,7 @@ class EVAssistantPanel extends HTMLElement {
   _updateLadeplanSocValueLabel() {
     if (!this._lp.socValue) return;
     const socVal = parseFloat(this._lp.socSlider.value);
-    let kmText = "—";
-    const conv = this._ladeplanConversionInputs();
-    if (conv && !isNaN(socVal)) {
-      const km = ((socVal / 100) * conv.usableKwh) / conv.consumption * 100;
-      kmText = `${Math.round(km)} km`;
-    }
-    this._lp.socValue.textContent = `${socVal}% · ${kmText}`;
+    this._lp.socValue.textContent = isNaN(socVal) ? "—" : this._socWithKm(socVal);
   }
 
   // Ermittelt das MINIMUM (aktueller SoC, Nutzerwunsch 2026-09-22: "der
@@ -5340,7 +5409,8 @@ class EVAssistantPanel extends HTMLElement {
     const availEid = this._eid("available_kwh");
     const available = availEid ? parseFloat(this._raw(availEid) ?? NaN) : NaN;
     if (isNaN(soc) || soc <= 0 || isNaN(available)) return null;
-    const usableKwh = available / (soc / 100);
+    const conv = this._rangeConv();
+    const usableKwh = conv ? conv.usableKwh : available / (soc / 100);
     if (!(usableKwh > 0)) return null;
     const rangeEid = this._eid("range_estimate");
     const rs = rangeEid && this._hass ? this._hass.states[rangeEid] : null;
@@ -5368,7 +5438,8 @@ class EVAssistantPanel extends HTMLElement {
     const availEid = this._eid("available_kwh");
     const available = availEid ? parseFloat(this._raw(availEid) ?? NaN) : NaN;
     if (isNaN(soc) || soc <= 0 || isNaN(available)) return null;
-    const usableKwh = available / (soc / 100);
+    const conv = this._rangeConv();
+    const usableKwh = conv ? conv.usableKwh : available / (soc / 100);
     if (!(usableKwh > 0)) return null;
 
     const targetSoc = parseFloat(this._lp.socSlider.value);
@@ -5384,9 +5455,15 @@ class EVAssistantPanel extends HTMLElement {
     const hoursAvailable = (targetTime - nowTs) / 3600;
     const puffer = hoursAvailable - hoursNeeded;
     const finishText = this._fmtTime(nowTs + hoursNeeded * 3600);
-    const kwhText = `${neededKwh.toFixed(1)} kWh nötig`;
+    // km zuerst, kWh in Klammern (wie coordinator.py::_evcc_charge_plan_
+    // feedback_text()); ohne Verbrauch bleibt der kWh-Text.
+    const neededKm = conv ? this._roundKm((neededKwh / conv.consumption) * 100) : null;
+    const kwhText = neededKm !== null
+      ? `+${neededKm} km (${this._fmtNum(neededKwh, 1)} kWh)`
+      : `${neededKwh.toFixed(1)} kWh nötig`;
+    const sep = neededKm !== null ? ": " : " – ";
     if (puffer < 0) {
-      return { level: "bad", text: `Nicht rechtzeitig – ${kwhText}, fehlen ca. ${this._fmtDuration(Math.abs(puffer) * 60)}` };
+      return { level: "bad", text: `Nicht rechtzeitig${sep}${kwhText}, fehlen ca. ${this._fmtDuration(Math.abs(puffer) * 60)}` };
     }
     // Schwelle wie bei coordinator.py::_evcc_charge_plan_feedback_text()
     // (0.25h) -- ein Slider-Fall mit z.B. 36 min Puffer (< 1h, aber deutlich
@@ -5394,9 +5471,9 @@ class EVAssistantPanel extends HTMLElement {
     // unangebracht alarmierend orange (Nutzerwunsch 2026-09-23: "warum ist
     // es orange wenn es vor der zielzeit ist?").
     if (puffer < 0.25) {
-      return { level: "warn", text: `Knapp – ${kwhText}, fertig ca. ${finishText}` };
+      return { level: "warn", text: `Knapp${sep}${kwhText}, fertig ca. ${finishText}` };
     }
-    return { level: "ok", text: `Erreichbar – ${kwhText}, fertig ca. ${finishText}` };
+    return { level: "ok", text: `Erreichbar${sep}${kwhText}, fertig ca. ${finishText}` };
   }
 
   _updateLadeplanLiveFeedback() {
@@ -5815,27 +5892,36 @@ class EVAssistantPanel extends HTMLElement {
 
       const pct = (v) => (typeof v === "number" ? `${Math.round(v)} %` : "—");
       const kwh = (v) => (typeof v === "number" ? `${this._fmtNum(v, 1)} kWh` : "—");
-      r.betaEvccMinSoc.textContent      = pct(attrs.min_soc);
-      r.betaEvccTargetSoc.textContent   = pct(attrs.target_soc);
+      // km zuerst (Server-Attribute), SoC/kWh klein darunter; ohne Attribute
+      // wie bisher % bzw. kWh fuehrend (siehe _fmtRange()).
+      const socEidR = this._eid("soc_entity");
+      const socNow = socEidR ? parseFloat(this._raw(socEidR) ?? NaN) : NaN;
+      const availEidR = this._eid("available_kwh");
+      const availNow = availEidR ? parseFloat(this._raw(availEidR) ?? NaN) : NaN;
+      const nowR = this._fmtRange({ soc: socNow, kwh: availNow, km: attrs.reichweite_km });
+      r.betaEvccReichweiteRow.classList.toggle("hidden", nowR.km === null);
+      this._setRange(r.betaEvccReichweite, nowR, "Reichweite aus aktuellem SoC");
+      this._setRange(r.betaEvccMinSoc, this._fmtRange({ soc: attrs.min_soc, kwh: attrs.min_kwh, km: attrs.min_km }), "Min-SoC");
+      this._setRange(r.betaEvccTargetSoc, this._fmtRange({ soc: attrs.target_soc, kwh: attrs.target_kwh, km: attrs.target_km }), "Ziel-SoC");
       // Max-Ziel-SoC-Regler: analog r.betaWbBufferSlider unten -- NICHT
       // ueberschreiben, waehrend der Nutzer ihn gerade selbst zieht.
       if (this.shadowRoot.activeElement !== r.betaEvccSocMaxSlider && typeof attrs.target_soc_max === "number") {
         r.betaEvccSocMaxSlider.value = attrs.target_soc_max;
-        r.betaEvccSocMaxVal.textContent = `${Math.round(attrs.target_soc_max)}%`;
+        r.betaEvccSocMaxVal.textContent = this._socWithKm(attrs.target_soc_max);
       }
-      r.betaEvccPvFuerAuto.textContent  = kwh(attrs.pv_fuer_auto_kwh);
+      this._setRange(r.betaEvccPvFuerAuto, this._fmtRange({ kwh: attrs.pv_fuer_auto_kwh, km: attrs.pv_fuer_auto_km }), "PV für Auto");
       r.betaEvccLastWritten.textContent = this._fmtDate(attrs.zuletzt_geschrieben);
 
       // Rest-Bedarf heute: Endwert direkt sichtbar, komplette Rechenkette als
       // Tooltip -- analog dem Erklaerungs-Muster am Kartentitel in
       // _buildBetaAcDcCard(), hier aber pro Zeile, da die Kette sich auf
       // GENAU diesen Wert bezieht.
-      r.betaEvccRestHeute.textContent = kwh(attrs.rest_heute_kwh);
+      this._setRange(r.betaEvccRestHeute, this._fmtRange({ kwh: attrs.rest_heute_kwh, km: attrs.rest_heute_km }), "Rest-Bedarf heute");
       const chainParts = [];
       if (typeof attrs.rest_heute_roh_kwh === "number") chainParts.push(`Fahrzeug-Bedarf ${this._fmtNum(attrs.rest_heute_roh_kwh, 1)} kWh`);
       if (typeof attrs.pv_rest_heute_roh_kwh === "number") chainParts.push(`PV-Prognose ${this._fmtNum(attrs.pv_rest_heute_roh_kwh, 1)} kWh`);
       if (typeof attrs.haus_rest_heute_kwh === "number" && attrs.haus_rest_heute_kwh > 0) chainParts.push(`abzüglich Haus/Speicher ${this._fmtNum(attrs.haus_rest_heute_kwh, 1)} kWh`);
-      r.betaEvccRestHeute.title = chainParts.length ? chainParts.join(" · ") : "";
+      if (chainParts.length) r.betaEvccRestHeute.parentElement.title += `${r.betaEvccRestHeute.parentElement.title ? "\n" : ""}${chainParts.join(" · ")}`;
 
       // Fehlende SoC-Steuerung (siehe Repair-Issue evcc_soc_scope_failed)
       // sichtbar machen statt nur im Log/unter Einstellungen -> System ->
@@ -5913,16 +5999,19 @@ class EVAssistantPanel extends HTMLElement {
         const soc = socEid ? parseFloat(this._raw(socEid) ?? NaN) : NaN;
         const rangeEid = this._eid("range_estimate");
         const range = rangeEid ? parseFloat(this._raw(rangeEid) ?? NaN) : NaN;
-        const socText = isNaN(soc) ? "—" : `${Math.round(soc)}%`;
-        const rangeText = isNaN(range) ? "—" : `${this._fmtNum(range, 0)} km`;
-        r.betaPlanCurrent.textContent = `${socText} · ${rangeText}`;
+        const availEidP = this._eid("available_kwh");
+        const availP = availEidP ? parseFloat(this._raw(availEidP) ?? NaN) : NaN;
+        const modeEidP = this._eid("evcc_mode_control");
+        const modeAttrsP = (modeEidP && this._hass.states[modeEidP] && this._hass.states[modeEidP].attributes) || {};
+        const curR = this._fmtRange({ soc, kwh: availP, km: typeof modeAttrsP.reichweite_km === "number" ? modeAttrsP.reichweite_km : range });
+        r.betaPlanCurrent.textContent = curR.sub ? `${curR.main} · ${curR.sub}` : curR.main;
 
         const hasPlan = planState.state && planState.state !== "unknown";
         r.betaPlanStatus.classList.toggle("hidden", !hasPlan);
         r.betaPlanClearBtn.classList.toggle("hidden", !hasPlan);
         if (hasPlan) {
           const planAttrs = planState.attributes || {};
-          const targetSoc = typeof planAttrs.target_soc === "number" ? `${Math.round(planAttrs.target_soc)}%` : "—";
+          const targetSoc = typeof planAttrs.target_soc === "number" ? this._socWithKm(planAttrs.target_soc) : "—";
           r.betaPlanTarget.textContent = `${targetSoc} bis ${this._fmtDate(new Date(planState.state).getTime() / 1000)}`;
           const projStart = planAttrs.projected_start ? new Date(planAttrs.projected_start).getTime() / 1000 : null;
           r.betaPlanStartRow.classList.toggle("hidden", !projStart);
@@ -5990,8 +6079,15 @@ class EVAssistantPanel extends HTMLElement {
       // Min-Limit/Ladelimit -- IMMER sichtbar (auch nicht verbunden), aus
       // den live "effective*"-evcc-Feldern (siehe coordinator.py::
       // evcc_live_attrs(), korrigiert fuer Fahrzeug-Scope).
-      const fmtPct = (v) => (typeof v === "number" ? `${Math.round(v)}%` : "—");
-      r.betaWbLimits.textContent = `Min-Limit ${fmtPct(ev("min_soc"))} · Ladelimit ${fmtPct(ev("limit_soc"))}`;
+      // km zuerst (Plan-Entscheidung 0.99.50), ohne Verbrauch wie bisher in %.
+      const limR = (v) => (typeof v === "number" ? this._fmtRange({ soc: v }) : { main: "—", pct: null, km: null });
+      const minR = limR(ev("min_soc"));
+      const limitR = limR(ev("limit_soc"));
+      r.betaWbLimits.textContent = `Min-Limit ${minR.main} · Ladelimit ${limitR.main}`;
+      r.betaWbLimits.title = [
+        `Min-SoC ${minR.pct || "—"} · Ziel-SoC ${limitR.pct || "—"} (evcc)`,
+        minR.km !== null ? this._KM_TIP : "",
+      ].filter(Boolean).join("\n");
     }
 
     // Letzte Heimladung -- dieselbe Quelle wie Fahrzeug-Tab (_homeSessions/
@@ -7017,6 +7113,7 @@ class EVAssistantPanel extends HTMLElement {
       .beta-status-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 0.85rem; }
       .beta-status-row .bl { color: var(--ink-mid); }
       .beta-status-row .bv { font-weight: 600; }
+      .beta-status-row .bv .range-sub { display: block; font-size: 0.75em; font-weight: 400; opacity: 0.7; }
       /* Kompaktes 2-Spalten-Grid nur fuer die evcc-Modus-Karte (Nutzerwunsch
          2026-09-29: "das layout der karte muss kompakter werden. die ist zu
          groß") -- andere Karten mit .beta-status-list (z.B. "Letzte Ladung")

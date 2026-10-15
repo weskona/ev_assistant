@@ -4897,3 +4897,55 @@ def test_ausreisser_spaeter_als_median_zaehlen_nicht_als_frueh():
     entries = _dep_entries(["07:00"] * 6 + ["10:00", "11:00"])
     stats = plug_departure_stats(entries, **_DEP)
     assert stats["n_ausreisser"] == 2 and stats["n_ausreisser_frueh"] == 0
+
+
+# ----- km-Umrechnung (0.99.50) -----------------------------------------------
+
+def test_soc_to_km_und_kwh_to_km():
+    from engine import kwh_to_km, soc_to_km
+
+    assert soc_to_km(80, 45, 18) == 200.0
+    assert kwh_to_km(12.5, 20) == 62.5
+    assert kwh_to_km(-3, 20) == 0.0  # nie negativ
+    assert soc_to_km(0, 45, 18) == 0.0
+
+
+@pytest.mark.parametrize("args", [
+    (None, 45, 18), (80, None, 18), (80, 0, 18), (80, -1, 18), (80, 45, None), (80, 45, 0), (80, 45, -5),
+])
+def test_soc_to_km_none_faelle(args):
+    from engine import soc_to_km
+
+    assert soc_to_km(*args) is None
+
+
+def test_kwh_to_km_none_faelle():
+    from engine import kwh_to_km
+
+    assert kwh_to_km(None, 18) is None
+    assert kwh_to_km(5, None) is None
+    assert kwh_to_km(5, 0) is None
+
+
+@pytest.mark.parametrize("km,expected", [
+    (0, 0), (2.4, 0), (2.5, 5), (97.4, 95), (97.5, 100), (99, 100), (99.9, 100), (100, 100),
+    (104.9, 100), (105, 110), (234.9, 230), (235, 240), (-3, 0),
+])
+def test_round_km_display_grenzen(km, expected):
+    from engine import round_km_display
+
+    assert round_km_display(km) == expected
+
+
+def test_round_km_display_none():
+    from engine import round_km_display
+
+    assert round_km_display(None) is None
+    assert round_km_display(float("nan")) is None
+
+
+def test_soc_to_km_passt_zu_calculate_range_km():
+    from engine import calculate_range_km, soc_to_km
+
+    for soc in (0, 7, 33.3, 80, 100):
+        assert soc_to_km(soc, 45, 17.3) == calculate_range_km(soc, 45, 17.3)
