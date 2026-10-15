@@ -81,7 +81,7 @@ Once set up, EV Assistant registers a sidebar panel automatically — no dashboa
 
 ### Requirements
 
-- **Home Assistant 2024.1** or later
+- **Home Assistant 2024.4** or later
 - **evcc** (the add-on/binary itself, reachable over the network) — optional, but required for home charging history and live energy-flow data in the panel. EV Assistant talks to evcc's own REST API directly — no separate `evcc_intg` HA integration needed.
 - Any vehicle with an SoC sensor in HA (WiCAN Pro / MQTT, manufacturer cloud integrations, evcc vehicle sensors, ...)
 
@@ -156,7 +156,7 @@ Nach der Einrichtung registriert EV Assistant automatisch ein Seitenleisten-Pane
 
 ### Voraussetzungen
 
-- **Home Assistant 2024.1** oder neuer
+- **Home Assistant 2024.4** oder neuer
 - **evcc** (das Addon/die Binary selbst, im Netzwerk erreichbar) — optional, aber erforderlich für die Heimladen-Historie und Live-Energieflussdaten im Panel. EV Assistant spricht evccs eigene REST-API direkt an — keine separate `evcc_intg`-HA-Integration nötig.
 - Jedes Fahrzeug mit einem SoC-Sensor in HA (WiCAN Pro / MQTT, Hersteller-Cloud-Integrationen, evcc-Fahrzeugsensoren, ...)
 
