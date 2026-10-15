@@ -7,7 +7,7 @@
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
 [![GitHub Release](https://img.shields.io/github/v/release/weskona/ev_assistant)](https://github.com/weskona/ev_assistant/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![HA min version](https://img.shields.io/badge/Home%20Assistant-2024.1%2B-blue)](https://www.home-assistant.io)
+[![HA min version](https://img.shields.io/badge/Home%20Assistant-2024.4%2B-blue)](https://www.home-assistant.io)
 [![Validate](https://github.com/weskona/ev_assistant/actions/workflows/validate.yml/badge.svg)](https://github.com/weskona/ev_assistant/actions/workflows/validate.yml)
 [![Downloads](https://img.shields.io/github/downloads/weskona/ev_assistant/total)](https://github.com/weskona/ev_assistant/releases)
 
@@ -99,7 +99,7 @@ Das [Wiki](https://github.com/weskona/ev_assistant/wiki) hat die vollständige R
 
 ## Voraussetzungen
 
-- **Home Assistant 2024.1** oder neuer
+- **Home Assistant 2024.4** oder neuer
 - **evcc** (das Addon/die Binary selbst, im Netzwerk erreichbar) — optional, aber erforderlich für die Heimladen-Historie und Live-Energieflussdaten im Panel. EV Assistant spricht evccs eigene REST-API direkt an — keine separate `evcc_intg`-HA-Integration nötig.
 - Jedes Fahrzeug mit einem SoC-Sensor in HA (WiCAN Pro / MQTT, Hersteller-Cloud-Integrationen, evcc-Fahrzeugsensoren, ...)
 
