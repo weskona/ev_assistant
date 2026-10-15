@@ -1271,11 +1271,41 @@ mark_maintenance_done:
       selector:
         date:
 
+set_usage_profile_buffer_km:
+  name: Nutzungsprofil-Puffer (km) setzen
+  description: >
+    Setzt den festen Sicherheitspuffer in km (Zuschlag auf den Bedarf nach
+    PV-Abzug, in kWh umgerechnet mit dem aktuellen Verbrauch) für die
+    evcc-Modus-/SoC-Steuerung und die "Laden vor PV"-Empfehlung als
+    Laufzeit-Override. Ohne buffer_km (oder mit null) wird der Override
+    zurückgesetzt, es gilt wieder der in den Optionen konfigurierte Wert.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    buffer_km:
+      name: Puffer (km, optional)
+      description: Ohne Angabe wird der Override zurückgesetzt.
+      required: false
+      example: 30
+      selector:
+        number:
+          min: 0
+          max: 300
+          step: 5
+          unit_of_measurement: "km"
+
 set_usage_profile_buffer_pct:
   name: Nutzungsprofil-Puffer setzen
   description: >
-    Setzt den Sicherheitspuffer (%) für die evcc-Modus-/SoC-Steuerung und
-    die "Laden vor PV"-Empfehlung direkt als Laufzeit-Override, ohne den
+    Setzt den prozentualen Sicherheitspuffer als Laufzeit-Override. Seit
+    0.99.52 gilt er nur noch als Rückfall-Wert, wenn der Verbrauch (und damit
+    der km-Puffer, siehe set_usage_profile_buffer_km) unbekannt ist. Wirkt auf
+    die evcc-Modus-/SoC-Steuerung und die "Laden vor PV"-Empfehlung, ohne den
     Options-Flow (samt Neuladen der Integration) öffnen zu müssen. Ohne
     buffer_pct wird der Override zurückgesetzt, es gilt wieder der in den
     Optionen konfigurierte Wert.

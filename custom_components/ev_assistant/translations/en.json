@@ -151,7 +151,7 @@
           "motor_entity": "Motor/driving sensor (optional, binary_sensor)",
           "motor_debounce_s": "Debounce for motor/driving sensor (s)",
           "trip_auto_confirm": "Automatically add trips to the log (without manual confirmation)",
-          "usage_profile_buffer_pct": "Buffer for usage profile (%, on the weekday average)",
+          "usage_profile_buffer_km": "Buffer for usage profile (km, fixed surcharge on the weekday need)",
           "pv_forecast_entity": "PV forecast for tomorrow (optional, any sensor entity, e.g. Solcast/Forecast.Solar)",
           "outside_temp_entity": "Outside temperature (optional, weather integration or sensor — for temperature-aware consumption/range estimation)"
         },
@@ -345,7 +345,7 @@
           "motor_entity": "Motor/driving sensor (optional, binary_sensor)",
           "motor_debounce_s": "Debounce for motor/driving sensor (s)",
           "trip_auto_confirm": "Automatically add trips to the log (without manual confirmation)",
-          "usage_profile_buffer_pct": "Buffer for usage profile (%, on the weekday average)",
+          "usage_profile_buffer_km": "Buffer for usage profile (km, fixed surcharge on the weekday need)",
           "pv_forecast_entity": "PV forecast for tomorrow (optional, any sensor entity, e.g. Solcast/Forecast.Solar)",
           "outside_temp_entity": "Outside temperature (optional, weather integration or sensor — for temperature-aware consumption/range estimation)"
         },
