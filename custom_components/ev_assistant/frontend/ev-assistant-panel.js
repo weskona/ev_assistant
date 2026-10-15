@@ -4882,6 +4882,7 @@ class EVAssistantPanel extends HTMLElement {
     list.innerHTML = `
       <div class="beta-status-row hidden" id="beta-evcc-reichweite-row"><span class="bl">Reichweite jetzt</span><span class="bv" id="beta-evcc-reichweite">—</span></div>
       <div class="beta-status-row"><span class="bl">Mindestens bis morgen</span><span class="bv" id="beta-evcc-min-soc">—</span></div>
+      <div class="beta-status-row hidden beta-evcc-nachladen-row" id="beta-evcc-nachladen-row"><span class="bl">Nachladen</span><span class="bv" id="beta-evcc-nachladen">—</span></div>
       <div class="beta-status-row"><span class="bl">Ziel</span><span class="bv" id="beta-evcc-target-soc">—</span></div>
       <div class="beta-status-row"><span class="bl">Rest-Bedarf heute</span><span class="bv" id="beta-evcc-rest-heute">—</span></div>
       <div class="beta-status-row"><span class="bl">Sonne reicht für</span><span class="bv" id="beta-evcc-pv-fuer-auto">—</span></div>
@@ -5172,6 +5173,8 @@ class EVAssistantPanel extends HTMLElement {
     this._r.betaEvccReichweiteRow = q("#beta-evcc-reichweite-row");
     this._r.betaEvccReichweite  = q("#beta-evcc-reichweite");
     this._r.betaEvccMinSoc      = q("#beta-evcc-min-soc");
+    this._r.betaEvccNachladenRow = q("#beta-evcc-nachladen-row");
+    this._r.betaEvccNachladen   = q("#beta-evcc-nachladen");
     this._r.betaEvccTargetSoc   = q("#beta-evcc-target-soc");
     this._r.betaEvccRestHeute   = q("#beta-evcc-rest-heute");
     this._r.betaEvccPvFuerAuto  = q("#beta-evcc-pv-fuer-auto");
@@ -5283,6 +5286,42 @@ class EVAssistantPanel extends HTMLElement {
     const consumption = Number(a.verbrauch_kwh_100km);
     if (!(kmPerPct > 0) || !(usableKwh > 0) || !(consumption > 0)) return null;
     return { kmPerPct, usableKwh, consumption };
+  }
+
+  // Statuszeile des sanften Nachladens (nur Anzeige, Werte vom Server).
+  _updateNachladenZeile(attrs) {
+    const r = this._r;
+    if (!r.betaEvccNachladenRow) return;
+    const hhmm = (iso) => {
+      const d = new Date(iso);
+      return isNaN(d) ? null : d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+    };
+    const st = attrs.nachladen_status;
+    let text = null;
+    let tip = "";
+    if (st === "wartet_auf_sonnenuntergang") {
+      const t = attrs.nachladen_ab ? hhmm(attrs.nachladen_ab) : null;
+      text = t ? `Nachladen ab Sonnenuntergang (ca. ${t})` : "Nachladen ab Sonnenuntergang";
+    } else if (st === "sanft" || st === "sofort_sanft") {
+      const pW = Number(attrs.wallbox_min_power_w);
+      const missing = Number(attrs.min_kwh) - Number(attrs.verfuegbare_kwh);
+      if (pW > 0 && missing > 0) {
+        const t = hhmm(new Date(Date.now() + missing / (pW / 1000) * 3600000).toISOString());
+        text = t ? `Lädt sanft, fertig ca. ${t}` : "Lädt sanft";
+        tip = "Schätzung mit der Wallbox-Mindestleistung; echte Dauer kann abweichen.";
+      } else {
+        text = "Lädt sanft";
+      }
+    } else if (st === "frist" || st === "sofort_zu_langsam") {
+      const t = attrs.abfahrt_frist ? hhmm(attrs.abfahrt_frist) : null;
+      text = st === "frist" && t ? `Dringend: Frist ${t}` : "Dringend: sanftes Laden reicht nicht";
+      if (st === "frist" && attrs.frist_quelle === "fallback") tip = "Frist aus der Rückfallzeit (noch keine Abfahrtsstatistik).";
+    }
+    r.betaEvccNachladenRow.classList.toggle("hidden", text === null);
+    if (text !== null) {
+      r.betaEvccNachladen.textContent = text;
+      r.betaEvccNachladenRow.title = tip;
+    }
   }
 
   get _BUFFER_TIP() {
@@ -5961,7 +6000,13 @@ class EVAssistantPanel extends HTMLElement {
       const nowR = this._fmtRange({ soc: socNow, kwh: availNow, km: attrs.reichweite_km });
       r.betaEvccReichweiteRow.classList.toggle("hidden", nowR.km === null);
       this._setRange(r.betaEvccReichweite, nowR, "Reichweite aus aktuellem SoC");
-      this._setRange(r.betaEvccMinSoc, this._fmtRange({ soc: attrs.min_soc, kwh: attrs.min_kwh, km: attrs.min_km }), "Min-SoC");
+      // min_soc ist der an evcc GESCHRIEBENE Wert (0 bei entschaerftem "now",
+      // siehe Nachladen-Zeile) -- die Anzeige "Mindestens bis morgen" leitet
+      // den SoC deshalb aus min_kwh ab.
+      const minSocDisp = attrs.usable_kwh > 0 && typeof attrs.min_kwh === "number"
+        ? Math.round(attrs.min_kwh / attrs.usable_kwh * 100) : attrs.min_soc;
+      this._setRange(r.betaEvccMinSoc, this._fmtRange({ soc: minSocDisp, kwh: attrs.min_kwh, km: attrs.min_km }), "Min-SoC");
+      this._updateNachladenZeile(attrs);
       this._setRange(r.betaEvccTargetSoc, this._fmtRange({ soc: attrs.target_soc, kwh: attrs.target_kwh, km: attrs.target_km }), "Ziel-SoC");
       // Max-Ziel-SoC-Regler: analog r.betaWbBufferSlider unten -- NICHT
       // ueberschreiben, waehrend der Nutzer ihn gerade selbst zieht.

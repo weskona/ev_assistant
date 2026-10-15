@@ -1769,6 +1769,13 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             "puffer_km": targets["puffer_km"],
             "puffer_kwh": targets["puffer_kwh"],
             "puffer_prozent": targets["puffer_prozent"],
+            # Sanftes Nachladen (None = Option aus)
+            "nachladen_status": targets["nachladen_status"],
+            "nachladen_grund": targets["nachladen_grund"],
+            "nachladen_ab": targets["nachladen_ab"],
+            "abfahrt_frist": targets["abfahrt_frist"],
+            "frist_quelle": targets["frist_quelle"],
+            "sofort_kwh": targets["sofort_kwh"],
             "aktiv": True,
             "min_soc_scope": self.coordinator.data.get("evcc_min_soc_scope"),
             "limit_soc_scope": self.coordinator.data.get("evcc_limit_soc_scope"),
@@ -1801,6 +1808,8 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             km = soc_to_km(targets["target_soc_max"], conv["usable_kwh"], consumption)
             if km is not None:
                 attrs["target_soc_max_km"] = km
+            if targets.get("sofort_km") is not None:
+                attrs["sofort_km"] = targets["sofort_km"]
         return attrs
 
 
