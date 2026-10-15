@@ -245,6 +245,7 @@ from .engine import (
     home_session_solar_and_cost,
     house_weekday_usage_profile,
     is_plausible_trip_consumption,
+    kwh_to_km,
     kwh_to_soc_percent,
     ladekarte_legacy_gebuehren,
     ladekarten_summary,
@@ -270,6 +271,7 @@ from .engine import (
     restore_surplus_target_active,
     rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
+    round_km_display,
     session_totals_since,
     split_by_age,
     split_period_baseline_entry,
@@ -5772,6 +5774,22 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             consumption = bucket_consumption
         return consumption
 
+    def range_conversion(self) -> dict:
+        """EINE Quelle der SoC/kWh->km-Umrechnung fuer Sensor-Attribute, Text
+        und Panel: nutzbare Kapazitaet (CONF_USABLE_KWH, wie available_kwh())
+        und der Verbrauch von _current_consumption_estimate_kwh_per_100km()
+        (wie range_estimate_km()). Leeres Dict, wenn Verbrauch oder
+        Kapazitaet unbekannt/nicht positiv sind -- dann gibt es keine km."""
+        usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
+        consumption = self._current_consumption_estimate_kwh_per_100km()
+        if usable_kwh <= 0 or consumption is None or consumption <= 0:
+            return {}
+        return {
+            "usable_kwh": usable_kwh,
+            "verbrauch_kwh_100km": consumption,
+            "km_pro_prozent": round(usable_kwh / consumption, 3),
+        }
+
     def battery_capacity_kwh(self) -> Optional[float]:
         """Rollierend geschaetzte tatsaechliche Akku-Gesamtkapazitaet aus
         Fremd- UND Heim-Ladesessions mit ausreichend grossem SoC-Hub (siehe
@@ -7886,8 +7904,20 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         puffer_h = hours_available - hours_needed
         if puffer_h >= 0.25:
             einschaetzung = f"komfortabel erreichbar, ca. {puffer_h:.1f} h Puffer"
+            km_prefix = "Erreichbar"
         else:
             einschaetzung = "knapp, vsl. durchgehendes Laden bis kurz vor der Zielzeit noetig"
+            km_prefix = "Knapp"
+        # km zuerst (Schaetzung, siehe range_conversion()), kWh in Klammern;
+        # ohne bekannten Verbrauch bleibt es beim kWh-Text.
+        needed_km = round_km_display(
+            kwh_to_km(needed_kwh, self.range_conversion().get("verbrauch_kwh_100km"))
+        )
+        if needed_km is not None:
+            return (
+                f"{km_prefix}: +{needed_km} km ({needed_kwh:.1f}".replace(".", ",") + f" kWh), bei max. {max_power_kw:.1f} kW "
+                f"etwa {hours_needed:.1f} h (vsl. fertig ca. {finish_local}) -- {einschaetzung}."
+            )
         return (
             f"Benoetigt ca. {needed_kwh:.1f} kWh, bei max. {max_power_kw:.1f} kW Ladeleistung etwa "
             f"{hours_needed:.1f} h (vsl. fertig ca. {finish_local}) -- {einschaetzung}."
