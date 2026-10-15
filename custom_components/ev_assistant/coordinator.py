@@ -36,11 +36,13 @@ from .const import (
     CONF_DROP_ENDS,
     CONF_EFFICIENCY,
     CONF_EVCC_BATTERY_PRIORITY_ENABLED,
+    CONF_EVCC_DEPARTURE_FALLBACK_TIME,
     CONF_EVCC_HOST,
     CONF_EVCC_LOADPOINT_TITLE,
     CONF_EVCC_MODE_CONTROL_ENABLED,
     CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
     CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
+    CONF_EVCC_SOFT_RECHARGE_ENABLED,
     CONF_EVCC_VEHICLE_NAME,
     CONF_GPS_ENTITY,
     CONF_HOME_CONSUMPTION_ENTITY,
@@ -106,6 +108,7 @@ from .const import (
     DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED,
     DEFAULT_EVCC_MODE_CONTROL_ENABLED,
     DEFAULT_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
+    DEFAULT_EVCC_SOFT_RECHARGE_ENABLED,
     DEFAULT_IDLE_TIMEOUT,
     DEFAULT_MOTOR_DEBOUNCE,
     DEFAULT_NOISE,
@@ -131,7 +134,12 @@ from .const import (
     EFF_MIN_SAMPLES,
     EFF_MIN_SOC_DELTA,
     EVCC_BATTERY_PRIORITY_VEHICLE_SOC,
+    EVCC_DEPARTURE_FALLBACK_TIME,
+    EVCC_MIN_CURRENT_FALLBACK_A,
     EVCC_MODE_TARGET_DAYS,
+    EVCC_NACHLADEN_RESERVE_H,
+    EVCC_PHASE_KW_PER_A,
+    EVCC_SOFORT_HORIZON_H,
     EVCC_UEBERSCHUSS_ZIEL_HEARTBEAT_SAVE_S,
     EVCC_UEBERSCHUSS_ZIEL_HOLD_S,
     EVCC_UEBERSCHUSS_ZIEL_RESTORE_MAX_AGE_S,
@@ -244,6 +252,7 @@ from .engine import (
     drop_negative_weekday_days,
     equivalent_full_cycles_from_totals,
     estimate_battery_capacity_kwh,
+    evcc_now_entschaerfen,
     home_capacity_sample,
     home_charging_tick_split,
     home_session_solar_and_cost,
@@ -593,6 +602,11 @@ def _empty_data() -> dict:
         # km-Variante (0.99.52), siehe _usage_profile_buffer_km(). Fehlt der
         # Schluessel in alten Daten/Backups, gilt er wie None.
         "usage_profile_buffer_km_override": None,
+        # Sanftes Nachladen (0.99.53): Haltezeit gegen Flattern
+        # ({"grund": "frist"|"sofort_zu_langsam", "ts"}) und zuletzt
+        # geloggter Status; ueberleben Neustarts, fehlend = None.
+        "evcc_now_halt": None,
+        "evcc_nachladen_status": None,
         # Zeitstempel der letzten erreichten Vollladung (siehe
         # _maybe_mark_vollladung_erreicht()/VOLLLADUNG_SOC_THRESHOLD) --
         # None = noch nie beobachtet (gilt als sofort faellig, siehe
@@ -7276,6 +7290,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         target_kwh = target_buf["kwh"]
         usable_kwh = float(self._opt(CONF_USABLE_KWH, DEFAULT_USABLE_KWH))
         mode = determine_evcc_mode(available, min_kwh, target_kwh)
+        # Sanftes Nachladen: entschaerft ein "now" (einzige Eingriffsstelle,
+        # VOR dem Balancing-Override); jeder andere Basismodus bleibt.
+        nachladen = self._evcc_nachladen(mode, available, rest_heute, min_kwh)
+        mode = nachladen["modus"]
         target_soc = kwh_to_soc_percent(target_kwh, usable_kwh)
         # Obergrenze fuers taeglich-profilbasierte Ziel-SoC (siehe CONF_EVCC_
         # MODE_CONTROL_TARGET_SOC_MAX-Kommentar in const.py, Nutzerwunsch
@@ -7453,9 +7471,20 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "pv_ueberschuss_w": pv_surplus_w,
             "min_kwh": min_kwh,
             "target_kwh": target_kwh,
-            "min_soc": kwh_to_soc_percent(min_kwh, usable_kwh),
+            # Entschaerftes "now": evccs Min-SoC laedt unabhaengig vom Modus
+            # sofort mit voller Leistung (minSocNotReached -> fastCharging),
+            # daher in genau diesem Fall 0 schreiben.
+            "min_soc": 0 if nachladen["entschaerft"] else kwh_to_soc_percent(min_kwh, usable_kwh),
             "target_soc": target_soc,
             "target_soc_max": target_soc_max,
+            "nachladen_status": nachladen["status"],
+            "nachladen_grund": nachladen["grund"],
+            "nachladen_halt": nachladen["halt"],
+            "nachladen_ab": nachladen["nachladen_ab"],
+            "abfahrt_frist": nachladen["abfahrt_frist"],
+            "frist_quelle": nachladen["frist_quelle"],
+            "sofort_kwh": nachladen["sofort_kwh"],
+            "sofort_km": nachladen["sofort_km"],
             "ueberschuss_ziel_erweitert_aktiv": self._ueberschuss_ziel_aktiv,
             "verfuegbare_kwh": available,
             "rest_heute_kwh": rest_heute,
@@ -7615,12 +7644,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # Steuerung pausiert waehrend Urlaub -- kein neues now/minpv
             # erzwingen, bestehender evcc-/manueller Zustand bleibt
             # unangetastet (siehe CONF_URLAUB_ENTITY-Kommentar in const.py).
+            self._nachladen_halt_loeschen()
             return
         if self.data.get("evcc_mode_control_paused"):
             # Manuell angeforderte Pause (siehe async_set_evcc_mode_control_
             # pause()/Panel-Schalter) -- bleibt aktiv, bis sie explizit
             # wieder ausgeschaltet wird (Nutzerentscheidung, Produktions-
             # feedback 2026-09-18: einfacher Dauer-Schalter statt Zeitfenster).
+            self._nachladen_halt_loeschen()
             return
         if self.data.get("evcc_manual_mode_active"):
             # Manuell gesetzter Modus (siehe async_set_evcc_manual_mode()) --
@@ -7637,10 +7668,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # -- unabhaengig davon, ob per ev_assistant oder direkt in evccs
             # eigener Oberflaeche gesetzt. Die profilbasierte Steuerung soll
             # dem nicht ins Gehege kommen (Nutzerentscheidung 2026-09-19).
+            self._nachladen_halt_loeschen()
             return
         targets = self._evcc_mode_targets()
         if targets is None:
             return
+        self._nachladen_festschreiben(targets)
         last = self.data.get("evcc_mode_control") or {}
         new_state = {
             # "modus_effektiv" statt "modus": inkl. der Echtzeit-PV-
@@ -7749,6 +7782,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             f"target_soc={new_state['target_soc']}, verfuegbar={targets.get('verfuegbare_kwh')}kWh, "
             f"min={targets.get('min_kwh')}kWh, target={targets.get('target_kwh')}kWh, "
             f"pv_override_aktiv={targets.get('pv_override_aktiv')}, "
+            f"nachladen_grund={targets.get('nachladen_grund')}, "
             f"balancing_faellig={targets.get('balancing_faellig')}, "
             f"balancing_aktiv={targets.get('balancing_aktiv')}, "
             f"balancing_erzwungen={targets.get('balancing_erzwungen')}",
@@ -7811,6 +7845,124 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["evcc_manual_mode"] = None
         self.async_set_updated_data(self.data)
         self._save_soon()
+
+    def _evcc_min_charge_power_kw(self) -> float:
+        """Geschaetzte MINDEST-Ladeleistung des aktuellen Loadpoints in kW:
+        effectiveMinCurrent (sonst minCurrent, sonst 6 A) * Phasen * 0,23.
+        Phasen wie _evcc_max_charge_power_kw(), aber mit der NIEDRIGSTEN
+        Annahme: fest konfigurierte Phasen, sonst 1 (auch bei 1p3p-Ladern
+        ohne feste Konfiguration -- evcc startet im minpv einphasig).
+        "phasesActive" bewusst nicht. Nur eine Schaetzung, wird aber jede
+        Minute neu bewertet."""
+        loadpoint = self._current_loadpoint() or {}
+        current = loadpoint.get("effectiveMinCurrent", loadpoint.get("minCurrent"))
+        if not isinstance(current, (int, float)) or current <= 0:
+            current = EVCC_MIN_CURRENT_FALLBACK_A
+        phases_configured = loadpoint.get("phasesConfigured")
+        phases = phases_configured if isinstance(phases_configured, (int, float)) and phases_configured > 0 else 1
+        return round(float(current) * phases * EVCC_PHASE_KW_PER_A, 3)
+
+    def _sun_below_horizon(self) -> Optional[bool]:
+        """sun.sun: True = Sonne unten, False = oben, None bei fehlender/
+        unknown/unavailable Entitaet (zaehlt als "Tor offen", nie als now)."""
+        state = self.hass.states.get("sun.sun")
+        if state is None:
+            return None
+        if state.state == "below_horizon":
+            return True
+        if state.state == "above_horizon":
+            return False
+        return None
+
+    def _evcc_departure_deadline(self, now: datetime) -> tuple:
+        """(Frist-Zeitpunkt, Quelle) = naechste Abfahrt: frueh_roh des
+        Wochentags, der noch bevorsteht (heute, wenn die Zeit noch nicht
+        erreicht ist, sonst morgen); ohne belastbaren Wert die Rueckfallzeit
+        (Option, Standard EVCC_DEPARTURE_FALLBACK_TIME)."""
+        wochentage = (self.plug_departure_profile() or {}).get("wochentage") or {}
+        fb_min = parse_hhmm_minutes(self._opt(CONF_EVCC_DEPARTURE_FALLBACK_TIME, EVCC_DEPARTURE_FALLBACK_TIME))
+        if fb_min is None:
+            fb_min = parse_hhmm_minutes(EVCC_DEPARTURE_FALLBACK_TIME)
+        for offset in (0, 1):
+            day = now + timedelta(days=offset)
+            stats = wochentage.get(day.weekday()) or wochentage.get(str(day.weekday())) or {}
+            minutes = stats.get("frueh_roh_min")
+            quelle = "profil"
+            if minutes is None:
+                minutes, quelle = fb_min, "fallback"
+            deadline = day.replace(hour=minutes // 60, minute=minutes % 60, second=0, microsecond=0)
+            if deadline > now:
+                return deadline, quelle
+        return deadline, quelle
+
+    def _nachladen_festschreiben(self, targets: dict) -> None:
+        """Schreibpfad-only: Haltezeit festschreiben und Statuswechsel des
+        sanften Nachladens ins Event-Log schreiben."""
+        halt = targets.get("nachladen_halt")
+        alt_halt = (self.data.get("evcc_now_halt") or {}).get("grund")
+        if halt != alt_halt:
+            self.data["evcc_now_halt"] = {"grund": halt, "ts": dt_util.utcnow().timestamp()} if halt else None
+            self._save_soon()
+        status = targets.get("nachladen_status")
+        if status is not None and status != self.data.get("evcc_nachladen_status"):
+            self._log_event(
+                "evcc_nachladen_status",
+                f"{self.data.get('evcc_nachladen_status')}->{status}, grund={targets.get('nachladen_grund')}, "
+                f"verfuegbar={targets.get('verfuegbare_kwh')}kWh, min={targets.get('min_kwh')}kWh, "
+                f"sofort={targets.get('sofort_kwh')}kWh, frist={targets.get('abfahrt_frist')}",
+            )
+            self.data["evcc_nachladen_status"] = status
+            self._save_soon()
+        elif status is None and self.data.get("evcc_nachladen_status") is not None:
+            self.data["evcc_nachladen_status"] = None  # Option ausgeschaltet
+            self._save_soon()
+
+    def _nachladen_halt_loeschen(self) -> None:
+        """Haltezeit/Status des sanften Nachladens verwerfen (Pause, manueller
+        Modus, Urlaub, aktiver Ladeplan)."""
+        if self.data.get("evcc_now_halt") is not None or self.data.get("evcc_nachladen_status") is not None:
+            self.data["evcc_now_halt"] = None
+            self.data["evcc_nachladen_status"] = None
+            self._save_soon()
+
+    def _evcc_nachladen(self, base_mode: str, available: float, rest_heute: float, min_kwh: float) -> dict:
+        """Sanftes Nachladen (Option CONF_EVCC_SOFT_RECHARGE_ENABLED): ruft
+        engine.evcc_now_entschaerfen() mit den Live-Werten auf. Liest die
+        Haltezeit nur (self.data["evcc_now_halt"]), festgeschrieben wird sie
+        im Schreibpfad. Option aus: Modus unveraendert, status None."""
+        res = {
+            "modus": base_mode, "grund": None, "halt": None, "status": None, "entschaerft": False,
+            "sofort_kwh": None, "sofort_km": None, "nachladen_ab": None, "abfahrt_frist": None,
+            "frist_quelle": None,
+        }
+        if not self._opt(CONF_EVCC_SOFT_RECHARGE_ENABLED, DEFAULT_EVCC_SOFT_RECHARGE_ENABLED):
+            return res
+        sofort_kwh = min(self.usage_buffer_info(rest_heute)["kwh"], min_kwh)
+        res["sofort_kwh"] = sofort_kwh
+        res["sofort_km"] = kwh_to_km(sofort_kwh, self.range_conversion().get("verbrauch_kwh_100km"))
+        now = dt_util.now()
+        deadline, quelle = self._evcc_departure_deadline(now)
+        res["abfahrt_frist"] = deadline.isoformat()
+        res["frist_quelle"] = quelle
+        below = self._sun_below_horizon()
+        out = evcc_now_entschaerfen(
+            base_mode, available, sofort_kwh, min_kwh, below,
+            (deadline - now).total_seconds() / 3600.0, self._evcc_min_charge_power_kw(),
+            reserve_h=EVCC_NACHLADEN_RESERVE_H, sofort_horizont_h=EVCC_SOFORT_HORIZON_H,
+            halt=(self.data.get("evcc_now_halt") or {}).get("grund"),
+        )
+        res.update(modus=out["modus"], grund=out["grund"], halt=out["halt"])
+        res["entschaerft"] = base_mode == "now" and out["modus"] != "now"
+        grund = out["grund"]
+        res["status"] = {
+            None: "nicht_noetig", "nachladen_sanft": "sanft", "sofort_sanft": "sofort_sanft",
+            "wartet_auf_sonnenuntergang": "wartet_auf_sonnenuntergang", "frist": "frist",
+            "sofort_zu_langsam": "sofort_zu_langsam",
+        }[grund]
+        if grund == "wartet_auf_sonnenuntergang":
+            sun = self.hass.states.get("sun.sun")
+            res["nachladen_ab"] = sun.attributes.get("next_setting") if sun is not None else None
+        return res
 
     def _evcc_charge_plan_status(self, *, auch_fahrzeugplan: bool = True) -> Optional[dict]:
         """Live-Status von evccs eigenem Ladeplan (Zielzeit-Laden, siehe
