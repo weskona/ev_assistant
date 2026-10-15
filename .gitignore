@@ -5,3 +5,6 @@ __pycache__/
 
 # lokale Daten-Sicherungen (enthalten Fahrten/Ladehistorie) -- nie committen
 .backup_storage_*
+
+# Daten-Sicherungen (enthalten Fahrten/Ladehistorie) -- nie committen
+backups/
