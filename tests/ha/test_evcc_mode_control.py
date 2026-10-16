@@ -3203,3 +3203,37 @@ async def test_vollladung_ausreisser_wird_nicht_verbucht_dauerhaft_schon(hass, c
     assert coordinator.data["vollladung_letzter_ts"] is None
     coordinator._maybe_mark_vollladung_erreicht(99.0, t0 + 100 + 121)
     assert coordinator.data["vollladung_letzter_ts"] == t0 + 100 + 121
+
+
+async def test_event_log_modus_geschrieben_enthaelt_pv_w_und_ueberschuss_w(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_MODE_CONTROL_ENABLED, CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "aemc_log",
+        options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator._evcc_client = _fake_evcc_client(probe_result="loadpoint")
+    coordinator._evcc_state = {"loadpoints": [{}], "gridPower": -321.0, "pvPower": 456.0}
+
+    await coordinator._async_apply_evcc_mode_control()
+
+    texts = [e["text"] for e in coordinator.data["event_log"] if e["kategorie"] == "evcc_modus_geschrieben"]
+    assert texts and "pv_w=456.0" in texts[-1] and "ueberschuss_w=321.0" in texts[-1]
+
+
+async def test_evcc_mode_targets_nachts_ohne_pv_kein_override(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH, CONF_WALLBOX_MIN_POWER_W
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "emt_nacht",
+        options={CONF_USABLE_KWH: 50.0, CONF_WALLBOX_MIN_POWER_W: 1400.0},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=1.0)
+    coordinator._soc = 90.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    coordinator._evcc_state = {"loadpoints": [{}], "gridPower": -10.0, "pvPower": 0}
+    assert coordinator._evcc_mode_targets()["modus_effektiv"] == "pv"
+    coordinator._evcc_state = {"loadpoints": [{}], "gridPower": -600.0, "pvPower": 3000}
+    assert coordinator._evcc_mode_targets()["modus_effektiv"] == "minpv"

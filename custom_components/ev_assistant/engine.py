@@ -1424,6 +1424,8 @@ def apply_realtime_pv_override(
     feedin_price: Optional[float] = None,
     grid_price: Optional[float] = None,
     max_blended_price: Optional[float] = None,
+    pv_power_w: Optional[float] = None,
+    min_surplus_share_pct: float = 0.0,
 ) -> str:
     """Zweite, schnellere Entscheidungsebene ueber determine_evcc_mode()/
     apply_weekly_balancing_override() (deren Ergebnis hier als `base_mode`
@@ -1460,14 +1462,33 @@ def apply_realtime_pv_override(
     eingespeist), statt trotzdem teuren Netzstrom zuzukaufen. Fehlt
     einer der drei Werte (z.B. evcc meldet gerade keine Tarife, oder die
     Option ist nicht konfiguriert), bleibt das Verhalten unveraendert
-    (reine Watt-Schwelle wie zuvor) -- rein additiv, Default aus."""
+    (reine Watt-Schwelle wie zuvor) -- rein additiv, Default aus.
+
+    Zwei Schutzbedingungen gegen Bilanzrauschen (nachts/Daemmerung
+    reichen wenige Watt -gridPower, um sonst ~1,4 kW Netzstrom zu ziehen,
+    Vorfall 0.93.4):
+    - Erzeugungs-Gate: ist `pv_power_w` bekannt und <= 0, wird nicht
+      hochgestuft. None (kein PV-Zaehler in evcc) = altes Verhalten. Der
+      Ueberschuss wird bewusst NICHT auf die PV-Leistung gedeckelt (ein
+      einspeisender Hausspeicher bleibt "pv").
+    - Mindestanteil: Hochstufen erst ab pv_surplus_w >= min_surplus_share_pct
+      /100 * wallbox_min_power_w. War der letzte Modus "minpv", bleibt er bis
+      pv_surplus_w < Schwelle - hysteresis_w (nie unter 0).
+    Die Preis-Kappung gilt zusaetzlich (die strengere gewinnt)."""
     if base_mode != "pv":
         return base_mode
     if pv_surplus_w <= 0:
         return "pv"
+    if pv_power_w is not None and pv_power_w <= 0:
+        return "pv"
+    min_surplus_w = max(0.0, min_surplus_share_pct) / 100.0 * wallbox_min_power_w
     if last_effective_mode == "minpv":
+        if pv_surplus_w < max(0.0, min_surplus_w - hysteresis_w):
+            return "pv"
         candidate = "pv" if pv_surplus_w >= wallbox_min_power_w + hysteresis_w else "minpv"
     else:
+        if pv_surplus_w < min_surplus_w:
+            return "pv"
         candidate = "pv" if pv_surplus_w >= wallbox_min_power_w else "minpv"
     if (
         candidate == "minpv"

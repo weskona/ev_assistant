@@ -685,6 +685,11 @@ EVCC_MIN_CURRENT_FALLBACK_A = 6.0
 # 2026-09-19: mehrere kW Sprung innerhalb einer Minute) nicht durchschlagen
 # zu lassen, kurz genug, um laengere echte Ueberschussphasen noch sinnvoll
 # zu nutzen.
+# Mindestanteil (in % der Wallbox-Mindestleistung), den der Ueberschuss haben
+# muss, damit der Echtzeit-Override pv -> minpv hochstuft (siehe engine.
+# apply_realtime_pv_override()). Diagnose 2026-10-16: reale Wolkenfaelle >= ~400 W,
+# Bilanzrauschen 4..119 W; 15 % von 1400 W = 210 W.
+EVCC_REALTIME_OVERRIDE_MIN_SURPLUS_PCT_DEFAULT = 15
 EVCC_UEBERSCHUSS_ZIEL_HOLD_S = 300.0
 # Wie alt der persistierte Zustand der Ueberschuss-Zielanhebung (siehe
 # engine.restore_surplus_target_active()) beim Start hoechstens sein darf, um
