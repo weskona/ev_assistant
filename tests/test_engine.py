@@ -5078,3 +5078,52 @@ def test_entschaerfen_sofort_nie_ueber_min():
     # bei available >= min gibt es kein sofort-Defizit mehr
     r = _ent(available=10.0, sofort=30.0, min_kwh=10.0, sonne_unten=False)
     assert r["grund"] == "wartet_auf_sonnenuntergang"
+
+
+# ----- apply_realtime_pv_override: Schutzbedingungen (0.99.54) ---------------
+
+def _ov(surplus, pv_power=None, last=None, share=15.0, **kw):
+    return apply_realtime_pv_override(
+        base_mode="pv", pv_surplus_w=surplus, wallbox_min_power_w=1400.0, hysteresis_w=100.0,
+        last_effective_mode=last, pv_power_w=pv_power, min_surplus_share_pct=share, **kw,
+    )
+
+
+def test_override_nacht_ohne_erzeugung_bleibt_pv():
+    assert _ov(10.0, pv_power=0.0) == "pv"
+    assert _ov(600.0, pv_power=0.0, last="minpv") == "pv"
+
+
+def test_override_ohne_pv_messung_altes_verhalten_mit_mindestanteil():
+    assert _ov(600.0, pv_power=None) == "minpv"
+    assert _ov(10.0, pv_power=None) == "pv"  # Mindestanteil gilt weiter
+    assert _ov(10.0, pv_power=None, share=0.0) == "minpv"  # Default = alt
+
+
+def test_override_daemmerung_kleiner_ueberschuss_bleibt_pv():
+    assert _ov(25.0, pv_power=30.0) == "pv"
+
+
+def test_override_wolke_stuft_wie_bisher_hoch():
+    assert _ov(600.0, pv_power=3000.0) == "minpv"
+
+
+def test_override_mindestanteil_schwelle_und_totband():
+    assert _ov(209.0, pv_power=500.0) == "pv"
+    assert _ov(210.0, pv_power=500.0) == "minpv"
+    assert _ov(110.0, pv_power=500.0, last="minpv") == "minpv"  # Totband haelt
+    assert _ov(109.0, pv_power=500.0, last="minpv") == "pv"
+    assert _ov(150.0, pv_power=500.0, last="pv") == "pv"  # kein Hochstufen unter Schwelle
+
+
+def test_override_totband_nie_unter_null():
+    assert _ov(5.0, pv_power=500.0, last="minpv", share=5.0) == "minpv"  # 70 W - 100 -> 0
+
+
+def test_override_speisender_hausspeicher_bleibt_pv():
+    assert _ov(2000.0, pv_power=200.0) == "pv"
+
+
+def test_override_preis_kappung_strenger_gewinnt():
+    assert _ov(600.0, pv_power=3000.0, feedin_price=0.081, grid_price=0.298, max_blended_price=0.1) == "pv"
+    assert _ov(600.0, pv_power=3000.0, feedin_price=0.081, grid_price=0.298, max_blended_price=1.0) == "minpv"
