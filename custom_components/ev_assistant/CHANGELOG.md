@@ -13,6 +13,29 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.55] - 2026-10-16
+
+### Changed
+
+- **Real-time PV override: two protection conditions against balance noise.** `apply_realtime_pv_override()` (pv -> minpv) now steps up only with real PV generation (`pvPower` > 0 W) and a surplus of at least 15 % of the wallbox minimum power (`EVCC_REALTIME_OVERRIDE_MIN_SURPLUS_PCT_DEFAULT`, e.g. 210 W at 1400 W). Very small surpluses at dusk or at night are fed in instead of being topped up with grid power (incident 0.93.4: 3 to 13 W had triggered ~1.4 kW of grid charging). Once at minpv, it stays until the surplus falls below the threshold minus the dead band (never below 0). Without a PV measurement in evcc (`pvPower` missing) only the minimum share applies. Dead band, price cap (the stricter condition wins), the surplus value shown, surplus target boost, balancing and everything else are unchanged; the surplus is deliberately not capped to the PV power (a feeding house battery still stays at pv).
+- Event log: `evcc_modus_geschrieben` now also records `pv_w` (PV power) and `ueberschuss_w` (surplus).
+
+### Honest limits
+
+- The 15 % default is derived from the last 2 weeks: real cloud cases were above about 400 W, noise cases at 4 to 119 W. PV power was only recorded from 2026-10-09, so earlier up-steps (incl. several at night) could not be reconstructed with values. The threshold is a constant, not an option.
+### Fixed
+
+- **Configure/setup flow: HTTP 500 after step 2 on Home Assistant 2026.9.** The "fallback departure time" field added in 0.99.53 used `vol.Match(...)`, which Home Assistant's form serialization (probatio, Core 2026.9) cannot convert. Showing the evcc step then raised `ValueError: unable to serialize schema`, so the dialog stayed on step 2 and every further click showed a misleading "not a valid option at 'lade_modus'". The field is now a plain text field; the `HH:MM` format is checked in the step itself (field error "Please enter a time in HH:MM format" instead of silently ignoring a bad value).
+
+### Added
+
+- Regression test that runs every config/options-flow form through Home Assistant's own serialization (the existing flow tests call the step methods directly and never reached it).
+
+### Changed
+
+- Panel: free text (card, provider, maintenance, location and vehicle names, event log) is now HTML-escaped before it is put into the page. A name containing `"` no longer truncates the value when editing, and `<...>` is no longer interpreted as HTML.
+- Minimum Home Assistant version in the READMEs now matches `hacs.json` (2024.4).
+
 ## [0.99.54] - 2026-10-16
 
 ### Fixed

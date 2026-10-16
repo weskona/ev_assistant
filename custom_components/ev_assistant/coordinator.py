@@ -139,6 +139,7 @@ from .const import (
     EVCC_MODE_TARGET_DAYS,
     EVCC_NACHLADEN_RESERVE_H,
     EVCC_PHASE_KW_PER_A,
+    EVCC_REALTIME_OVERRIDE_MIN_SURPLUS_PCT_DEFAULT,
     EVCC_SOFORT_HORIZON_H,
     EVCC_UEBERSCHUSS_ZIEL_HEARTBEAT_SAVE_S,
     EVCC_UEBERSCHUSS_ZIEL_HOLD_S,
@@ -1763,6 +1764,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if not isinstance(grid_power, (int, float)):
             return None
         return -float(grid_power)
+
+    def _evcc_pv_power_w(self) -> Optional[float]:
+        """Echte PV-Erzeugung (evcc pvPower) in W; None = Schluessel fehlt
+        oder nicht numerisch (z.B. kein PV-Zaehler), 0 = gemessen 0 W."""
+        value = self._evcc_state.get("pvPower") if self._evcc_state is not None else None
+        return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
     def _evcc_max_charge_power_kw(self) -> Optional[float]:
         """Maximale ERREICHBARE Ladeleistung des aktuellen Loadpoints in kW
@@ -7367,6 +7374,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # _evcc_mode_targets() mehrfach pro Zyklus aufgerufen wird (Sensor +
         # Schreibpfad), da dieselbe Referenz fuer alle Aufrufe gilt.
         pv_surplus_w = self._evcc_realtime_pv_surplus_w()
+        pv_power_w = self._evcc_pv_power_w()
         wallbox_min_power_w = float(self._opt(CONF_WALLBOX_MIN_POWER_W, DEFAULT_WALLBOX_MIN_POWER_W))
         last_effective_mode = (self.data.get("evcc_mode_control") or {}).get("modus")
         # Wirtschaftliche Kappung (siehe CONF_EVCC_REALTIME_OVERRIDE_MIN_
@@ -7399,6 +7407,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 feedin_price=feedin_price,
                 grid_price=grid_price,
                 max_blended_price=max_blended_price,
+                pv_power_w=pv_power_w,
+                min_surplus_share_pct=EVCC_REALTIME_OVERRIDE_MIN_SURPLUS_PCT_DEFAULT,
             )
         # Transparenz-Attribut (siehe EvccModeControlSensor-Docstring):
         # zeigt den Mischpreis eines Netz-Zuschusses IMMER, wenn gerade
@@ -7431,7 +7441,6 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # aktualisiert -- _evcc_mode_targets() wird sowohl vom Schreibpfad
         # als auch vom Sensor aufgerufen, beide sollen denselben (bereits
         # angehobenen) target_soc sehen.
-        pv_power_w = self._evcc_state.get("pvPower") if self._evcc_state is not None else None
         # ceiling_soc=target_soc_max (statt des Funktions-Defaults 100):
         # ohne diese Uebergabe wuerde die Ueberschuss-Zielanhebung das
         # taeglich gedeckelte Ziel-SoC oben bei echtem PV-Ueberschuss
@@ -7442,7 +7451,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 mode,
                 target_soc,
                 pv_surplus_w,
-                pv_power_w if isinstance(pv_power_w, (int, float)) else None,
+                pv_power_w,
                 self._ueberschuss_ziel_aktiv,
                 self._ueberschuss_ziel_pending_seit_ts,
                 dt_util.utcnow().timestamp(),
@@ -7469,6 +7478,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "modus_effektiv": effective_mode,
             "pv_override_aktiv": effective_mode != mode,
             "pv_ueberschuss_w": pv_surplus_w,
+            "pv_leistung_w": pv_power_w,
             "min_kwh": min_kwh,
             "target_kwh": target_kwh,
             # Entschaerftes "now": evccs Min-SoC laedt unabhaengig vom Modus
@@ -7782,6 +7792,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             f"target_soc={new_state['target_soc']}, verfuegbar={targets.get('verfuegbare_kwh')}kWh, "
             f"min={targets.get('min_kwh')}kWh, target={targets.get('target_kwh')}kWh, "
             f"pv_override_aktiv={targets.get('pv_override_aktiv')}, "
+            f"pv_w={targets.get('pv_leistung_w')}, ueberschuss_w={targets.get('pv_ueberschuss_w')}, "
             f"nachladen_grund={targets.get('nachladen_grund')}, "
             f"balancing_faellig={targets.get('balancing_faellig')}, "
             f"balancing_aktiv={targets.get('balancing_aktiv')}, "
