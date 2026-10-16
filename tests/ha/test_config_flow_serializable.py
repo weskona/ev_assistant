@@ -9,7 +9,15 @@ die async_step_*-Methoden direkt auf und gehen nie durch diese Serialisierung.""
 import pytest
 from homeassistant.helpers import config_validation as cv
 
-from custom_components.ev_assistant import config_flow
+# Imports aus custom_components.* wie in den uebrigen tests/ha/-Tests erst
+# INNERHALB der Tests (siehe conftest.py): auf Modulebene scheitert schon das
+# Einsammeln der Tests mit "No module named 'custom_components'".
+_BUILDER_NAMES = [
+    "build_comparison_schema", "build_detection_schema", "build_evcc_loadpoint_schema",
+    "build_evcc_schema", "build_heimladen_schema", "build_leasing_schema",
+    "build_modus_schema", "build_output_schema", "build_power_schema",
+    "build_trip_schema", "build_vehicle_schema",
+]
 
 
 def _to_field_list(schema):
@@ -22,17 +30,19 @@ def _to_field_list(schema):
     return to_field_list(schema, custom_serializer=cv.custom_serializer)
 
 
-_BUILDERS = sorted(
-    name for name in dir(config_flow) if name.startswith("build_") and name.endswith("_schema")
-)
+def test_builderliste_vollstaendig():
+    """Faengt ein neu hinzugekommenes build_*_schema() ab, das hier noch
+    nicht mitgeprueft wuerde."""
+    from custom_components.ev_assistant import config_flow
+
+    found = sorted(n for n in dir(config_flow) if n.startswith("build_") and n.endswith("_schema"))
+    assert found == sorted(_BUILDER_NAMES)
 
 
-def test_builder_gefunden():
-    assert "build_evcc_schema" in _BUILDERS and "build_modus_schema" in _BUILDERS
-
-
-@pytest.mark.parametrize("name", _BUILDERS)
+@pytest.mark.parametrize("name", _BUILDER_NAMES)
 def test_formular_serialisierbar(name):
+    from custom_components.ev_assistant import config_flow
+
     builder = getattr(config_flow, name)
     schema = builder({}, ["Loadpoint 1", "Loadpoint 2"]) if name == "build_evcc_loadpoint_schema" else builder({})
     assert _to_field_list(schema)
@@ -43,6 +53,7 @@ def test_formular_serialisierbar(name):
     ("24:00", False), ("06:60", False), ("abc", False), ("0600", False),
 ])
 def test_rueckfall_abfahrtszeit_pruefung(value, ok):
+    from custom_components.ev_assistant import config_flow
     from custom_components.ev_assistant.const import CONF_EVCC_DEPARTURE_FALLBACK_TIME
 
     errors: dict = {}
@@ -53,6 +64,8 @@ def test_rueckfall_abfahrtszeit_pruefung(value, ok):
 
 
 def test_rueckfall_abfahrtszeit_leer_ist_erlaubt():
+    from custom_components.ev_assistant import config_flow
+
     errors: dict = {}
     config_flow._validate_departure_time({}, errors)
     assert errors == {}
