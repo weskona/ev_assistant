@@ -4,6 +4,16 @@
 
 const ACCENT_H = 127;
 
+// HTML-Escaping fuer Freitext (Ladekarten-/Anbieter-/Wartungs-/Ortsnamen,
+// Ereignisprotokoll, Fahrzeugnamen), der per Template-String in innerHTML
+// bzw. in value="..."/title="..."-Attribute eingesetzt wird. Ohne das bricht
+// ein Name mit " das Markup (beim Bearbeiten wird der Wert abgeschnitten und
+// so ggf. falsch gespeichert) und ein Name mit <...> wuerde als HTML
+// ausgefuehrt. Zahlen, feste Texte und ids bleiben unveraendert.
+const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => (
+  { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]
+));
+
 // Modulweit statt lokal in _buildAppbar(), damit die "Sichtbare Tabs"-
 // Kachel (_buildEinstellungen(), Nutzerwunsch 2026-09-27: Leasing/
 // Ladekarten/Wartung ausblendbar machen) dieselbe Liste/Labels nutzt statt
@@ -1788,7 +1798,7 @@ class EVAssistantPanel extends HTMLElement {
       const valText = hasKm ? String(this._roundKm(kmByDay[key])) : this._fmtNum(values[i], 1);
       const tip = hasKm ? `${this._fmtNum(values[i], 1)} kWh · ${this._KM_TIP}` : "";
       return `
-        <div class="wd-col"${tip ? ` title="${tip}"` : ""}>
+        <div class="wd-col"${tip ? ` title="${esc(tip)}"` : ""}>
           <div class="wd-val">${valText}</div>
           <div class="wd-bar-track"><div class="${cls}" style="height:${pct}%"></div></div>
           <div class="wd-label">${label}</div>
@@ -2124,7 +2134,7 @@ class EVAssistantPanel extends HTMLElement {
         return `
           <div class="anbieter-bar-row">
             <div class="anbieter-bar-top">
-              <div class="anbieter-bar-label" title="${label}">${label}</div>
+              <div class="anbieter-bar-label" title="${esc(label)}">${esc(label)}</div>
               <div class="anbieter-bar-val">
                 <div class="anbieter-bar-val-main">${pctText}</div>
                 <div class="anbieter-bar-val-sub">${subParts.join(" · ")}</div>
@@ -2613,7 +2623,7 @@ class EVAssistantPanel extends HTMLElement {
       }).join("");
       row.innerHTML = `
         <div class="hist-top">
-          <span class="hist-date">${k.name}${aktiv ? "" : ` <span class="hist-meta">· gekündigt</span>`}</span>
+          <span class="hist-date">${esc(k.name)}${aktiv ? "" : ` <span class="hist-meta">· gekündigt</span>`}</span>
           <div class="hist-actions">
             <button class="btn-icon sm lk-edit" title="Bearbeiten"><ha-icon icon="mdi:pencil"></ha-icon></button>
             <button class="btn-icon sm lk-delete" title="Löschen"><ha-icon icon="mdi:delete"></ha-icon></button>
@@ -2637,7 +2647,7 @@ class EVAssistantPanel extends HTMLElement {
           <ha-icon icon="mdi:plus" style="--mdc-icon-size:14px;vertical-align:-2px"></ha-icon> Preisänderung
         </button>
         <div class="hist-edit-form hidden">
-          <label>Name<input type="text" class="lke-name" value="${k.name}"></label>
+          <label>Name<input type="text" class="lke-name" value="${esc(k.name)}"></label>
           <label>Startgebühr € (früheste Stufe)<input type="text" inputmode="decimal" class="lke-gebuehr" value="${stufen[0] ? stufen[0].gebuehr : ""}"></label>
           <label>Startdatum<input type="date" class="lke-start" value="${k.start_datum || ""}"></label>
           <label>Enddatum (optional)<input type="date" class="lke-end" value="${k.end_datum || ""}"></label>
@@ -2958,7 +2968,7 @@ class EVAssistantPanel extends HTMLElement {
     if (sig === this._wtPresetSig) return;
     this._wtPresetSig = sig;
     select.innerHTML = `<option value="">— eigene —</option>`
-      + presets.map((p) => `<option value="${p.key}">${p.name}</option>`).join("");
+      + presets.map((p) => `<option value="${esc(p.key)}">${esc(p.name)}</option>`).join("");
   }
 
   _updateWartung() {
@@ -3047,7 +3057,7 @@ class EVAssistantPanel extends HTMLElement {
         <div class="hist-top">
           <span class="hist-date">
             <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${color};margin-right:6px"></span>
-            ${p.name}${p.aktiv === false ? ` <span class="hist-meta">· pausiert</span>` : ""}
+            ${esc(p.name)}${p.aktiv === false ? ` <span class="hist-meta">· pausiert</span>` : ""}
           </span>
           <div class="hist-actions">
             <button class="btn-icon sm wt-done" title="Als erledigt markieren"><ha-icon icon="mdi:check"></ha-icon></button>
@@ -3065,7 +3075,7 @@ class EVAssistantPanel extends HTMLElement {
         </div>
         <div class="hist-edit-form grouped hidden">
           <div class="wt-group">
-            <label>Name<input type="text" class="wte-name" value="${p.name}"></label>
+            <label>Name<input type="text" class="wte-name" value="${esc(p.name)}"></label>
             <label><input type="checkbox" class="wte-aktiv" ${p.aktiv !== false ? "checked" : ""}> Aktiv</label>
           </div>
           <div class="wt-group">
@@ -3416,7 +3426,7 @@ class EVAssistantPanel extends HTMLElement {
     const opts = [`<option value="">— keine —</option>`];
     this._ladekartenList().forEach((k) => {
       const sel = k.id === selectedId ? " selected" : "";
-      opts.push(`<option value="${k.id}"${sel}>${k.name}</option>`);
+      opts.push(`<option value="${esc(k.id)}"${sel}>${esc(k.name)}</option>`);
     });
     return opts.join("");
   }
@@ -3438,7 +3448,7 @@ class EVAssistantPanel extends HTMLElement {
   // Freitext-Inputs (list="...") in Erfassen-/Bearbeiten-/Bestaetigen-
   // Formularen -- Auswahl fuellt das Feld, freie Eingabe bleibt moeglich.
   _anbieterOptionsHtml() {
-    return this._bekannteAnbieter().map((name) => `<option value="${name}"></option>`).join("");
+    return this._bekannteAnbieter().map((name) => `<option value="${esc(name)}"></option>`).join("");
   }
 
   // Fertiges <datalist>-Element fuer einmalig aus Template-Strings
@@ -3489,7 +3499,7 @@ class EVAssistantPanel extends HTMLElement {
           <label>Startgebühr € (optional)<input type="text" inputmode="decimal" class="pf-fee" value="${st.fee}" placeholder="0,00"></label>
           <label>Blockiergebühr € (optional)<input type="text" inputmode="decimal" class="pf-block-fee" value="${st.blockFee}" placeholder="0,00"></label>
           <label>Zeitgebühr € (optional)<input type="text" inputmode="decimal" class="pf-time-fee" value="${st.timeFee}" placeholder="0,00"></label>
-          <label>Anbieter (optional)<input type="text" class="pf-anbieter" list="pf-anbieter-list-${key}" value="${st.anbieter}" placeholder="z.B. EnBW"></label>
+          <label>Anbieter (optional)<input type="text" class="pf-anbieter" list="pf-anbieter-list-${key}" value="${esc(st.anbieter)}" placeholder="z.B. EnBW"></label>
           ${this._anbieterDatalistHtml(`pf-anbieter-list-${key}`)}
         </div>
         <div class="pend-actions">
@@ -3573,8 +3583,8 @@ class EVAssistantPanel extends HTMLElement {
           <span class="pend-estimate-val">${p.km != null ? this._fmtNum(p.km, 1) : "—"}<small>km</small></span>
         </div>
         <div class="pend-inputs">
-          <label>Startort<input type="text" class="pf-start" value="${st.start_ort}"></label>
-          <label>Zielort<input type="text" class="pf-end" value="${st.end_ort}"></label>
+          <label>Startort<input type="text" class="pf-start" value="${esc(st.start_ort)}"></label>
+          <label>Zielort<input type="text" class="pf-end" value="${esc(st.end_ort)}"></label>
         </div>
         <div class="pend-actions">
           <button class="btn btn-ghost pf-discard">Verwerfen</button>
@@ -3670,8 +3680,8 @@ class EVAssistantPanel extends HTMLElement {
             ${h.startgebuehr ? `<span class="hist-fee">+ ${this._fmtNum(h.startgebuehr, 2)} € Startgebühr</span>` : ""}
             ${h.blockiergebuehr ? `<span class="hist-fee">+ ${this._fmtNum(h.blockiergebuehr, 2)} € Blockiergebühr</span>` : ""}
             ${h.zeitgebuehr ? `<span class="hist-fee">+ ${this._fmtNum(h.zeitgebuehr, 2)} € Zeitgebühr</span>` : ""}
-            ${this._karteName(h.karte_id) ? `<span class="hist-fee">🎫 ${this._karteName(h.karte_id)}</span>` : ""}
-            ${h.anbieter ? `<span class="hist-fee">🏢 ${h.anbieter}</span>` : ""}
+            ${this._karteName(h.karte_id) ? `<span class="hist-fee">🎫 ${esc(this._karteName(h.karte_id))}</span>` : ""}
+            ${h.anbieter ? `<span class="hist-fee">🏢 ${esc(h.anbieter)}</span>` : ""}
           </div>
           <span class="hist-cost">${this._fmtNum(h.kosten, 2)} €</span>
         </div>
@@ -3687,7 +3697,7 @@ class EVAssistantPanel extends HTMLElement {
           <label>SoC Start (%)<input type="text" inputmode="decimal" class="hf-soc-start" value="${h.soc_start ?? ""}"></label>
           <label>SoC Ende (%)<input type="text" inputmode="decimal" class="hf-soc-end" value="${h.soc_end ?? ""}"></label>
           ${hasKarten ? `<label>Ladekarte<select class="hf-karte">${this._karteOptionsHtml(h.karte_id)}</select></label>` : ""}
-          <label>Anbieter (optional)<input type="text" class="hf-anbieter" list="hf-anbieter-list-${ts}" value="${h.anbieter || ""}"></label>
+          <label>Anbieter (optional)<input type="text" class="hf-anbieter" list="hf-anbieter-list-${ts}" value="${esc(h.anbieter)}"></label>
           ${this._anbieterDatalistHtml(`hf-anbieter-list-${ts}`)}
           <button class="btn btn-primary hf-save">Speichern</button>
           <button class="btn btn-ghost hf-cancel">Abbrechen</button>
@@ -3815,10 +3825,10 @@ class EVAssistantPanel extends HTMLElement {
           </div>
         </div>
         ${(h.soc_start != null && h.soc_end != null) ? `<div class="soc-bar-wrap"><div class="soc-bar-fill trip" style="--soc-w:${Math.min(100, Math.max(0, h.soc_start - h.soc_end) * 2).toFixed(1)}%"></div></div>` : ""}
-        <div class="hist-route">${h.start_ort} → ${h.end_ort}</div>
+        <div class="hist-route">${esc(h.start_ort)} → ${esc(h.end_ort)}</div>
         <div class="hist-edit-form hidden">
-          <label>Startort<input type="text" class="hf-start" value="${h.start_ort}"></label>
-          <label>Zielort<input type="text" class="hf-end" value="${h.end_ort}"></label>
+          <label>Startort<input type="text" class="hf-start" value="${esc(h.start_ort)}"></label>
+          <label>Zielort<input type="text" class="hf-end" value="${esc(h.end_ort)}"></label>
           <label>Start<input type="datetime-local" class="hf-start-ts" value="${this._toDatetimeLocal(h.start_ts)}"></label>
           <label>Ende<input type="datetime-local" class="hf-end-ts" value="${this._toDatetimeLocal(h.end_ts)}"></label>
           <label>Strecke (km)<input type="text" inputmode="decimal" class="hf-km" value="${h.km ?? ""}"></label>
@@ -4059,7 +4069,7 @@ class EVAssistantPanel extends HTMLElement {
     view.innerHTML = sorted.map((e) => {
       const d = new Date(e.ts * 1000);
       const zeit = d.toLocaleDateString("de-DE") + " " + d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-      return `<div class="log-line"><span class="log-ts">${zeit}</span><span class="log-kat">${e.kategorie}</span><span class="log-text">${e.text}</span></div>`;
+      return `<div class="log-line"><span class="log-ts">${zeit}</span><span class="log-kat">${esc(e.kategorie)}</span><span class="log-text">${esc(e.text)}</span></div>`;
     }).join("");
     // Scrollposition nur korrigieren, wenn der Nutzer ohnehin oben war
     // (frisch geoeffnet/nicht gescrollt) -- sonst Kampf mit eigenem Scrollen
@@ -4162,7 +4172,7 @@ class EVAssistantPanel extends HTMLElement {
       toolbar.innerHTML = `
         <select class="hist-vehicle-select">
           <option value="">Alle Fahrzeuge</option>
-          ${vehicles.map((v) => `<option value="${v}"${v === this._homeVehicleFilter ? " selected" : ""}>${v}</option>`).join("")}
+          ${vehicles.map((v) => `<option value="${esc(v)}"${v === this._homeVehicleFilter ? " selected" : ""}>${esc(v)}</option>`).join("")}
         </select>`;
       const select = toolbar.querySelector(".hist-vehicle-select");
       if (select) {
