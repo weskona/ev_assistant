@@ -116,6 +116,7 @@ from .const import (
     USAGE_PROFILE_BUFFER_KM_MAX,
     resolve_home_charging_method,
 )
+from .engine import parse_hhmm_minutes
 
 _SOC_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="sensor", device_class="battery")
@@ -218,6 +219,13 @@ _HOME_CHARGING_METHOD = selector.SelectSelector(
         translation_key="home_charging_method",
         mode=selector.SelectSelectorMode.LIST,
     )
+)
+# Freitext "HH:MM" statt vol.Match(...): HAs Formular-Serialisierung (probatio,
+# ab Core 2026.9) kennt vol.Match nicht und wirft beim Aufbau des Formulars
+# einen 500er -- die Format-Pruefung passiert stattdessen im Schritt selbst
+# (siehe _validate_departure_time()).
+_TIME_HHMM = selector.TextSelector(
+    selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
 )
 _NOTIFY_ENTITIES = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="notify", multiple=True)
@@ -358,7 +366,7 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
         vol.Optional(
             CONF_EVCC_DEPARTURE_FALLBACK_TIME,
             default=cur.get(CONF_EVCC_DEPARTURE_FALLBACK_TIME, EVCC_DEPARTURE_FALLBACK_TIME),
-        ): vol.All(str, vol.Match(r"^([01]?\d|2[0-3]):[0-5]\d$")),
+        ): _TIME_HHMM,
         vol.Optional(
             CONF_EVCC_BATTERY_PRIORITY_ENABLED,
             default=cur.get(CONF_EVCC_BATTERY_PRIORITY_ENABLED, DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED),
@@ -595,6 +603,14 @@ def build_comparison_schema(cur: dict) -> vol.Schema:
     })
 
 
+def _validate_departure_time(cleaned: dict, errors: dict) -> None:
+    """Prueft die Rueckfall-Abfahrtszeit ("HH:MM"); ungueltig -> Feldfehler.
+    Leer/fehlend ist erlaubt (dann gilt der Standard)."""
+    value = cleaned.get(CONF_EVCC_DEPARTURE_FALLBACK_TIME)
+    if value is not None and parse_hhmm_minutes(value) is None:
+        errors[CONF_EVCC_DEPARTURE_FALLBACK_TIME] = "invalid_time"
+
+
 def _has_vehicle_name(data: dict) -> bool:
     return bool(data.get(CONF_VEHICLE_HERSTELLER)) and bool(data.get(CONF_VEHICLE_MODELL))
 
@@ -739,6 +755,7 @@ class EvAssistantConfigFlow(ConfigFlow, domain=DOMAIN):
                     errors["base"] = "cannot_connect"
                 else:
                     titles = found
+            _validate_departure_time(cleaned, errors)
             if not errors:
                 self._data = {**self._data, **cleaned}
                 if len(titles) > 1:
@@ -925,6 +942,7 @@ class EvAssistantOptionsFlow(OptionsFlow):
                     errors["base"] = "cannot_connect"
                 else:
                     titles = found
+            _validate_departure_time(cleaned, errors)
             if not errors:
                 self._data = _merge_step(self._data, cleaned, build_evcc_schema({}))
                 if len(titles) > 1:

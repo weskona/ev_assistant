@@ -2,6 +2,21 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.54] - 2026-10-16
+
+### Fixed
+
+- **Configure/setup flow: HTTP 500 after step 2 on Home Assistant 2026.9.** The "fallback departure time" field added in 0.99.53 used `vol.Match(...)`, which Home Assistant's form serialization (probatio, Core 2026.9) cannot convert. Showing the evcc step then raised `ValueError: unable to serialize schema`, so the dialog stayed on step 2 and every further click showed a misleading "not a valid option at 'lade_modus'". The field is now a plain text field; the `HH:MM` format is checked in the step itself (field error "Please enter a time in HH:MM format" instead of silently ignoring a bad value).
+
+### Added
+
+- Regression test that runs every config/options-flow form through Home Assistant's own serialization (the existing flow tests call the step methods directly and never reached it).
+
+### Changed
+
+- Panel: free text (card, provider, maintenance, location and vehicle names, event log) is now HTML-escaped before it is put into the page. A name containing `"` no longer truncates the value when editing, and `<...>` is no longer interpreted as HTML.
+- Minimum Home Assistant version in the READMEs now matches `hacs.json` (2024.4).
+
 ## [0.99.53] - 2026-10-15
 
 ### Changed

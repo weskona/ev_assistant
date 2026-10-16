@@ -224,7 +224,8 @@
     "error": {
       "vehicle_name_required": "Bitte Hersteller und Modell angeben.",
       "noise_too_high": "Das SoC-Rauschen muss kleiner sein als die Start-Schwelle.",
-      "cannot_connect": "Verbindung zu evcc fehlgeschlagen. Bitte Host pruefen."
+      "cannot_connect": "Verbindung zu evcc fehlgeschlagen. Bitte Host pruefen.",
+      "invalid_time": "Bitte eine Uhrzeit im Format HH:MM angeben, z.B. 06:00."
     },
     "abort": {
       "already_configured": "Für diese SoC-Entität ist bereits ein Fahrzeug eingerichtet."
@@ -422,7 +423,8 @@
     "error": {
       "vehicle_name_required": "Bitte Hersteller und Modell angeben.",
       "noise_too_high": "Das SoC-Rauschen muss kleiner sein als die Start-Schwelle.",
-      "cannot_connect": "Verbindung zu evcc fehlgeschlagen. Bitte Host pruefen."
+      "cannot_connect": "Verbindung zu evcc fehlgeschlagen. Bitte Host pruefen.",
+      "invalid_time": "Bitte eine Uhrzeit im Format HH:MM angeben, z.B. 06:00."
     }
   },
   "selector": {

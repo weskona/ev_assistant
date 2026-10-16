@@ -224,7 +224,8 @@
     "error": {
       "vehicle_name_required": "Please enter manufacturer and model.",
       "noise_too_high": "The SoC noise value must be smaller than the start threshold.",
-      "cannot_connect": "Could not connect to evcc. Please check the host."
+      "cannot_connect": "Could not connect to evcc. Please check the host.",
+      "invalid_time": "Please enter a time in HH:MM format, e.g. 06:00."
     },
     "abort": {
       "already_configured": "A vehicle is already configured for this SoC entity."
@@ -422,7 +423,8 @@
     "error": {
       "vehicle_name_required": "Please enter manufacturer and model.",
       "noise_too_high": "The SoC noise value must be smaller than the start threshold.",
-      "cannot_connect": "Could not connect to evcc. Please check the host."
+      "cannot_connect": "Could not connect to evcc. Please check the host.",
+      "invalid_time": "Please enter a time in HH:MM format, e.g. 06:00."
     }
   },
   "selector": {
