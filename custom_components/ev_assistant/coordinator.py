@@ -972,6 +972,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # persistiert, aus demselben Grund wie oben.
         if self._migrate_wartung_hu_typ():
             await self._save()
+        # Migration: Erledigt-Zaehler fuer das Erstintervall (Issue #48).
+        if self._migrate_wartung_erledigt_anzahl():
+            await self._save()
         # Umbenennung: HU-Punkte von "HU/TÜV" auf das kuerzere Preset "HU"
         # (siehe _migrate_wartung_hu_name()) -- MUSS nach der typ-Migration
         # oben laufen, damit ein gerade erst getaggter Punkt sofort mit
@@ -4263,6 +4266,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._home_capacity_version += 1
         return True
 
+    def _migrate_wartung_erledigt_anzahl(self) -> bool:
+        """Einmalige Migration (Issue #48): Wartungspunkte ohne Erledigt-
+        Zaehler bekommen `erledigt_anzahl` = 1, wenn sie ein last_done haben,
+        sonst 0. So aendert sich bei Bestandspunkten nichts, auch wenn spaeter
+        ein Erstintervall eingetragen wird (ein reines Startwert-last_done
+        zaehlt dann als erledigt, korrigierbar ueber edit_maintenance).
+        Idempotent ohne Flag: nach dem ersten Lauf tragen alle Punkte den
+        Zaehler. Gibt True zurueck, wenn etwas geaendert wurde."""
+        geaendert = False
+        for punkt in self.data.get("wartung") or []:
+            if "erledigt_anzahl" not in punkt:
+                punkt["erledigt_anzahl"] = 1 if punkt.get("last_done") else 0
+                geaendert = True
+        return geaendert
+
     def _migrate_wartung_hu_typ(self) -> bool:
         """Einmalige Migration bestehender HU/TUEV-Wartungspunkte von vor
         Einfuehrung des "typ"-Markers (siehe async_add_maintenance()) --
@@ -5191,6 +5209,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         last_done_datum: Optional[str] = None,
         reminder_monate: Optional[float] = None,
         reminder_km: Optional[float] = None,
+        erst_km_intervall: Optional[float] = None,
+        erst_zeit_intervall_monate: Optional[int] = None,
     ) -> Optional[int]:
         """Legt einen neuen Wartungspunkt an (siehe engine.wartung_status()
         fuer die Faelligkeitsberechnung) -- id ist ein simpler Millisekunden-
@@ -5209,6 +5229,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         WARTUNG_TAGE_PRO_MONAT in Tage umgerechnet und als reminder_tage
         gespeichert (die Schwelle selbst braucht keine Kalenderpraezision,
         anders als zeit_intervall_monate).
+
+        `erst_km_intervall`/`erst_zeit_intervall_monate` (Issue #48) ersetzen
+        das regulaere Intervall, solange der Punkt noch nie erledigt wurde
+        (`erledigt_anzahl` 0, siehe engine.wartung_status()) -- z.B. erste
+        Inspektion nach 12.500 km, danach alle 25.000 km. Zaehlen nicht als
+        eigenes Faelligkeitskriterium.
 
         Ohne Namen (auch nicht aus dem Preset) oder ohne mindestens ein
         Faelligkeitskriterium (km_intervall/zeit_intervall_monate/
@@ -5253,6 +5279,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "aktiv": True,
             "reminder_tage": round(reminder_monate * WARTUNG_TAGE_PRO_MONAT, 1) if reminder_monate is not None else None,
             "reminder_km": reminder_km,
+            "erst_km_intervall": erst_km_intervall or None,
+            "erst_zeit_intervall_monate": erst_zeit_intervall_monate or None,
+            "erledigt_anzahl": 0,
         }
         punkte = list(self.data.get("wartung") or [])
         punkte.append(punkt)
@@ -5274,6 +5303,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         aktiv: Optional[bool] = None,
         reminder_monate: Optional[float] = None,
         reminder_km: Optional[float] = None,
+        erst_km_intervall: Optional[float] = None,
+        erst_zeit_intervall_monate: Optional[int] = None,
+        erledigt_anzahl: Optional[int] = None,
     ) -> bool:
         """Korrigiert einen bestehenden Wartungspunkt -- alle Felder
         optional, nur mitgegebene Werte werden geaendert (analog
@@ -5290,7 +5322,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         den zuletzt erfassten Service direkt (z.B. ein Tippfehler) -- fuer
         "gerade jetzt erledigt" siehe async_mark_maintenance_done(). Gibt
         False zurueck, wenn keine id gefunden wurde oder die Aenderung
-        mangels Kriterium verworfen wurde."""
+        mangels Kriterium verworfen wurde. `erst_km_intervall`/`erst_zeit_
+        intervall_monate` (Erstintervall, Issue #48): leerer String loescht;
+        `erledigt_anzahl` korrigiert den Erledigt-Zaehler (0 = Erstintervall
+        gilt wieder, z.B. bei einem migrierten Punkt, dessen last_done nur ein
+        Startwert war)."""
         punkte = self.data.get("wartung") or []
         for punkt in punkte:
             if punkt.get("id") != wartung_id:
@@ -5312,6 +5348,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 )
             if reminder_km is not None:
                 punkt["reminder_km"] = None if reminder_km == "" else float(reminder_km)
+            if erst_km_intervall is not None:
+                punkt["erst_km_intervall"] = None if erst_km_intervall == "" else float(erst_km_intervall)
+            if erst_zeit_intervall_monate is not None:
+                punkt["erst_zeit_intervall_monate"] = (
+                    None if erst_zeit_intervall_monate == "" else int(erst_zeit_intervall_monate)
+                )
+            if erledigt_anzahl is not None:
+                punkt["erledigt_anzahl"] = max(0, int(erledigt_anzahl))
             if last_done_km is not None or last_done_datum is not None:
                 last_done = dict(punkt.get("last_done") or {})
                 if last_done_km is not None:
@@ -5370,6 +5414,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 effektiv_km = km if km is not None else self._odo_km()
                 effektiv_datum = datum or dt_util.now().date().isoformat()
                 punkt["last_done"] = {"km": effektiv_km, "datum": effektiv_datum}
+                # Erledigt-Zaehler (Erstintervall, Issue #48): ab dem ersten
+                # Erledigen gelten die regulaeren Intervalle.
+                punkt["erledigt_anzahl"] = int(punkt.get("erledigt_anzahl") or 0) + 1
                 neues_festes_datum = wartung_festes_datum_fortschreiben(
                     punkt.get("festes_datum"), punkt.get("zeit_intervall_monate"), effektiv_datum,
                 )
@@ -6765,6 +6812,26 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._save()
         self.hass.config_entries.async_update_entry(self.entry, data=new_data)
 
+    async def async_set_evcc_realtime_override_min_solar_share(self, min_solar_share: Optional[float]) -> None:
+        """Schreibt CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE direkt in
+        entry.data (gleiches Muster wie async_set_evcc_mode_control_target_
+        soc_max()); der Options-Flow zeigt danach denselben Wert.
+        `min_solar_share=None` entfernt die Option (jeder PV-Ueberschuss unter
+        der Mindestladeleistung wird dann mit Netzstrom ergaenzt). Werte werden
+        auf 0..100 geklemmt. Hat NICHTS mit dem festen Mindestanteil des
+        Ueberschusses (15 % der Wallbox-Mindestleistung, seit 0.99.55) zu tun."""
+        new_data = dict(self.entry.data)
+        if min_solar_share is None:
+            new_data.pop(CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE, None)
+        else:
+            new_data[CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE] = max(0.0, min(100.0, float(min_solar_share)))
+        self._log_event(
+            "evcc_min_solar_anteil_geaendert",
+            f"min_solar_share={new_data.get(CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE)}",
+        )
+        await self._save()
+        self.hass.config_entries.async_update_entry(self.entry, data=new_data)
+
     def usage_profile_tomorrow(self) -> Optional[dict]:
         """Wochentags-Bedarf (siehe _effective_vehicle_usage_profile()) fuer
         den morgigen Wochentag, zzgl. CONF_USAGE_PROFILE_BUFFER_PCT Puffer --
@@ -7533,6 +7600,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "puffer_prozent": min_buf["puffer_prozent"],
             "pv_override_mischpreis_kwh": pv_override_mischpreis_kwh,
             "pv_override_max_mischpreis_kwh": max_blended_price,
+            "pv_override_min_solar_share_pct": None if min_solar_share_pct is None else float(min_solar_share_pct),
             "wallbox_min_power_w": wallbox_min_power_w,
             "balancing_enabled": balancing_enabled,
             # "aktiv" = Override wirksam (Ziel 100 %, auch schon waehrend
