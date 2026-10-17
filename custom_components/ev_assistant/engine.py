@@ -1512,6 +1512,7 @@ def apply_opportunistic_surplus_target(
     now_ts: float,
     min_hold_s: float,
     ceiling_soc: int = 100,
+    sonne_unten: Optional[bool] = None,
 ) -> tuple[Optional[int], bool, Optional[float]]:
     """Hebt target_soc voruebergehend auf `ceiling_soc` an, wenn Modus "pv"
     ist (Tagesbedarf laut Profil bereits gedeckt, siehe determine_evcc_mode())
@@ -1572,7 +1573,21 @@ def apply_opportunistic_surplus_target(
     Netzbezug -- das genaue Gegenteil von "nur Solar-Ueberschuss nutzen").
     Ohne dieses Gate wuerde reines Bilanzrauschen dieselbe Anhebung ausloesen
     wie echter (wenn auch geringer) Solarertrag. None (kein evcc-State) wird
-    wie 0 behandelt -- konservativ nicht aktivieren."""
+    wie 0 behandelt -- konservativ nicht aktivieren.
+
+    Halten bei Wolken (0.99.56): ist die Anhebung bereits aktiv, endet sie
+    NICHT mehr bei pv_surplus_w <= 0, solange der Basismodus "pv" ist und
+    echte PV-Leistung (pv_power_w > 0) anliegt -- im Modus pv laedt evcc ohne
+    Ueberschuss ohnehin nicht, ein Absenken des Ziels waere dort nur ein
+    Stopp mit mindestens min_hold_s plus evccs Einschaltverzoegerung bis zur
+    Wiederanhebung. Der Phantom-Ueberschuss bei 0 W PV (Vorfall 0.93.4) ist
+    seit 0.99.55 am Echtzeit-Override abgesichert. Absenken:
+    - sofort, wenn `sonne_unten` True ist oder der Basismodus nicht mehr
+      "pv" ist;
+    - nach min_hold_s durchgehend, wenn pv_power_w <= 0 oder None ist
+      (wie bisher, kein Punktesammeln).
+    `sonne_unten` None (unbekannt) verhaelt sich wie "Sonne oben".
+    Die Aktivierung ist unveraendert."""
     raw_ok = (
         mode == "pv"
         and target_soc is not None
@@ -1582,6 +1597,13 @@ def apply_opportunistic_surplus_target(
         and pv_power_w is not None
         and pv_power_w > 0
     )
+    if was_active:
+        pv_da = pv_power_w is not None and pv_power_w > 0
+        if sonne_unten is True or mode != "pv":
+            was_active, pending_since_ts = False, None
+            raw_ok = False
+        else:
+            raw_ok = pv_da  # Halten: unabhaengig von Ueberschuss und Ziel < Deckel
     if raw_ok == was_active:
         pending_since_ts = None  # im Einklang -- kein Wechsel ansteht
     elif pending_since_ts is None:
@@ -1596,6 +1618,42 @@ def apply_opportunistic_surplus_target(
         else ceiling_soc if was_active else target_soc
     )
     return effective_target_soc, was_active, pending_since_ts
+
+
+def pv_mode_target(mode: str, target_soc: Optional[int], ceiling_soc: int) -> Optional[int]:
+    """Im Basismodus "pv" ist das evcc-Ladeziel immer `ceiling_soc` (das
+    eingestellte maximale Ziel-SoC), nie darunter: evcc laedt im Modus pv ohne
+    Ueberschuss ohnehin nicht, ein mit dem Bedarf schrumpfendes Ziel waere dort
+    nur Schreib-Rauschen und wuerde bei Wolken eine laufende Ladung stoppen.
+    Ein hoeheres Ziel (z. B. Balancing 100 %) bleibt (max()). Andere Basismodi
+    (minpv/now) und target_soc None bleiben unveraendert."""
+    if mode != "pv" or target_soc is None:
+        return target_soc
+    return max(ceiling_soc, target_soc)
+
+
+def sticky_min_soc(
+    new_min_soc: Optional[int],
+    last_min_soc: Optional[int],
+    unchanged_otherwise: bool,
+    threshold: int = 5,
+) -> Optional[int]:
+    """Schreib-Gate fuer min_soc: bleibt ein neuer Wert weniger als
+    `threshold` Prozentpunkte vom zuletzt geschriebenen entfernt, gilt der
+    alte weiter (kein Schreibvorgang wegen 1-%-Schritten der Bedarfsrechnung).
+    Nur wenn sonst nichts zu schreiben ist (`unchanged_otherwise`: Modus und
+    Ziel gleich) und weder alter noch neuer Wert None oder 0 ist -- der
+    Wechsel von/nach 0 (kein Min-SoC) bedeutet etwas anderes und wird immer
+    geschrieben."""
+    if (
+        not unchanged_otherwise
+        or new_min_soc is None
+        or last_min_soc is None
+        or new_min_soc == 0
+        or last_min_soc == 0
+    ):
+        return new_min_soc
+    return last_min_soc if abs(new_min_soc - last_min_soc) < threshold else new_min_soc
 
 
 def restore_surplus_target_active(

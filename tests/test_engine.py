@@ -5127,3 +5127,131 @@ def test_override_speisender_hausspeicher_bleibt_pv():
 def test_override_preis_kappung_strenger_gewinnt():
     assert _ov(600.0, pv_power=3000.0, feedin_price=0.081, grid_price=0.298, max_blended_price=0.1) == "pv"
     assert _ov(600.0, pv_power=3000.0, feedin_price=0.081, grid_price=0.298, max_blended_price=1.0) == "minpv"
+
+
+# ----- apply_opportunistic_surplus_target: Halten bei Wolken (0.99.56) -------
+
+def _zt(mode="pv", target=26, surplus=300.0, pv=500.0, active=True, pending=None, now=0.0, sonne=None, ceiling=80):
+    return apply_opportunistic_surplus_target(
+        mode=mode, target_soc=target, pv_surplus_w=surplus, pv_power_w=pv,
+        was_active=active, pending_since_ts=pending, now_ts=now, min_hold_s=300.0,
+        ceiling_soc=ceiling, sonne_unten=sonne,
+    )
+
+
+def test_ziel_halten_ohne_ueberschuss_bei_pv_leistung_20_minuten():
+    active, pending = True, None
+    for t in range(0, 1200, 60):
+        soc, active, pending = _zt(surplus=-100.0, pv=400.0, active=active, pending=pending, now=float(t))
+        assert (soc, active, pending) == (80, True, None)
+
+
+def test_ziel_wolkenverlauf_eine_aktivierung_kein_abfall():
+    active, pending, wechsel = False, None, 0
+    for i, t in enumerate(range(0, 3900, 30)):
+        # erst 5 min durchgehend Ueberschuss (Aktivierung), dann 60 min Wolken
+        surplus = 300.0 if (i < 11 or (i // 2) % 2 == 0) else -200.0
+        _, neu, pending = _zt(surplus=surplus, pv=500.0, active=active, pending=pending, now=float(t))
+        wechsel += neu != active
+        active = neu
+    assert active is True and wechsel == 1
+
+
+def test_ziel_pv_leistung_null_haelt_unter_5_min_faellt_danach():
+    soc, active, pending = _zt(pv=0.0, now=1000.0)
+    assert (soc, active, pending) == (80, True, 1000.0)
+    soc, active, pending = _zt(pv=0.0, pending=pending, now=1299.0)
+    assert (soc, active) == (80, True)
+    soc, active, pending = _zt(pv=0.0, pending=pending, now=1300.0)
+    assert (soc, active, pending) == (26, False, None)
+
+
+def test_ziel_pv_leistung_none_wie_null():
+    _, active, pending = _zt(pv=None, now=0.0)
+    assert (active, pending) == (True, 0.0)
+    _, active, _ = _zt(pv=None, pending=pending, now=300.0)
+    assert active is False
+
+
+def test_ziel_pv_wieder_da_verwirft_timer():
+    _, active, pending = _zt(pv=0.0, now=0.0)
+    _, active, pending = _zt(pv=300.0, pending=pending, now=200.0)
+    assert (active, pending) == (True, None)
+    _, active, pending = _zt(pv=0.0, pending=pending, now=250.0)
+    assert pending == 250.0  # kein Punktesammeln: Timer startet neu
+
+
+def test_ziel_sonne_unten_sofort_aus_auch_bei_pv_leistung():
+    soc, active, pending = _zt(pv=800.0, surplus=500.0, sonne=True)
+    assert (soc, active, pending) == (26, False, None)
+
+
+def test_ziel_sonne_unbekannt_gilt_als_oben():
+    assert _zt(sonne=None)[1] is True and _zt(sonne=False)[1] is True
+
+
+def test_ziel_basismodus_nicht_pv_sofort_aus():
+    for mode in ("minpv", "now"):
+        soc, active, pending = _zt(mode=mode)
+        assert (soc, active, pending) == (26, False, None)
+
+
+def test_ziel_aktivierung_unveraendert():
+    assert _zt(active=False, now=0.0)[1:] == (False, 0.0)
+    _, active, _ = _zt(active=False, pending=0.0, now=300.0)
+    assert active is True
+    assert _zt(active=False, surplus=-50.0, pv=500.0)[1:] == (False, None)  # Ueberschuss noetig
+    assert _zt(active=False, surplus=300.0, pv=0.0)[1:] == (False, None)  # PV-Leistung noetig
+
+
+def test_ziel_nacht_phantomueberschuss_aktiviert_nie():
+    active, pending = False, None
+    for t in range(0, 7200, 60):
+        _, active, pending = _zt(surplus=12.0, pv=0.0, active=active, pending=pending, now=float(t))
+        assert active is False
+    _, a, _ = _zt(surplus=12.0, pv=0.0, active=False, sonne=True, now=0.0)
+    assert a is False
+
+
+def test_ziel_balancing_100_bleibt_beim_halten():
+    soc, active, _ = _zt(target=100, surplus=-100.0, pv=400.0)
+    assert (soc, active) == (100, True)
+
+
+# ----- pv_mode_target / sticky_min_soc (0.99.56) -----------------------------
+
+def test_pv_mode_target_pv_immer_maximum():
+    from engine import pv_mode_target
+    assert pv_mode_target("pv", 12, 80) == 80
+    assert pv_mode_target("pv", 80, 80) == 80
+    assert pv_mode_target("pv", 100, 80) == 100  # Balancing gewinnt
+    assert pv_mode_target("pv", 0, 80) == 80
+
+
+def test_pv_mode_target_andere_modi_und_none_unveraendert():
+    from engine import pv_mode_target
+    assert pv_mode_target("minpv", 12, 80) == 12
+    assert pv_mode_target("now", 12, 80) == 12
+    assert pv_mode_target("pv", None, 80) is None
+
+
+def test_sticky_min_soc_unter_schwelle_bleibt_alt():
+    from engine import sticky_min_soc
+    assert sticky_min_soc(22, 23, True) == 23
+    assert sticky_min_soc(19, 23, True) == 23
+    assert sticky_min_soc(24, 23, True) == 23  # symmetrisch
+
+
+def test_sticky_min_soc_ab_5_punkten_neu():
+    from engine import sticky_min_soc
+    assert sticky_min_soc(18, 23, True) == 18
+    assert sticky_min_soc(28, 23, True) == 28
+
+
+def test_sticky_min_soc_ausnahmen_schreiben_immer():
+    from engine import sticky_min_soc
+    assert sticky_min_soc(22, 23, False) == 22  # Modus/Ziel hat sich geaendert
+    assert sticky_min_soc(0, 2, True) == 0
+    assert sticky_min_soc(2, 0, True) == 2
+    assert sticky_min_soc(None, 23, True) is None
+    assert sticky_min_soc(22, None, True) == 22

@@ -279,6 +279,7 @@ from .engine import (
     plug_departure_profile,
     pop_pending,
     previous_period_date,
+    pv_mode_target,
     range_km_to_soc_percent,
     remaining_today_kwh,
     remove_weekday_day,
@@ -289,6 +290,7 @@ from .engine import (
     session_totals_since,
     split_by_age,
     split_period_baseline_entry,
+    sticky_min_soc,
     tankerkoenig_should_notify,
     temp_bucket_contribution,
     temperature_bucket,
@@ -6789,6 +6791,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "puffer_prozent": buf["puffer_prozent"],
             "puffer_art": buf["art"],
             "puffer_km": buf["puffer_km"],
+            "puffer_km_max": USAGE_PROFILE_BUFFER_KM_MAX,
             "puffer_kwh": buf["puffer_kwh"],
             "benoetigt_kwh": buf["kwh"],
         }
@@ -7446,6 +7449,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # taeglich gedeckelte Ziel-SoC oben bei echtem PV-Ueberschuss
         # trotzdem auf 100 hochsetzen -- genau das Verhalten, das die neue
         # Obergrenze ja gerade verhindern soll ("nicht immer bis 100% laden").
+        ziel_war_aktiv = self._ueberschuss_ziel_aktiv
+        sonne_unten = self._sun_below_horizon()
         target_soc, self._ueberschuss_ziel_aktiv, self._ueberschuss_ziel_pending_seit_ts = (
             apply_opportunistic_surplus_target(
                 mode,
@@ -7457,8 +7462,27 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 dt_util.utcnow().timestamp(),
                 EVCC_UEBERSCHUSS_ZIEL_HOLD_S,
                 ceiling_soc=target_soc_max,
+                sonne_unten=sonne_unten,
             )
         )
+        if ziel_war_aktiv != self._ueberschuss_ziel_aktiv:
+            if self._ueberschuss_ziel_aktiv:
+                grund = "ueberschuss_da"
+            elif sonne_unten is True:
+                grund = "sonne_unten"
+            elif mode != "pv":
+                grund = "modus_nicht_pv"
+            else:
+                grund = "pv_weg"
+            self._log_event(
+                "ziel_anhebung_geaendert",
+                f"{'an' if self._ueberschuss_ziel_aktiv else 'aus'}, grund={grund}, "
+                f"pv_w={pv_power_w}, ueberschuss_w={pv_surplus_w}",
+            )
+        # Basismodus pv: Ziel immer = maximales Ziel-SoC (siehe engine.
+        # pv_mode_target()); die Ueberschuss-Zielanhebung oben ist dort damit
+        # ohnehin enthalten, ihr Zustand wird nur weitergefuehrt.
+        target_soc = pv_mode_target(mode, target_soc, target_soc_max)
         # Zustand fuer die Wiederherstellung nach Reload/Neustart (Issue #27)
         # im Speicher mitfuehren; "ts" = letzte Auswertung, solange aktiv.
         # Gespeichert wird bei Wechsel sofort gebuendelt, sonst hoechstens
@@ -7695,6 +7719,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "min_soc": targets["min_soc"],
             "target_soc": targets["target_soc"],
         }
+        # min_soc: Aenderungen unter 5 Prozentpunkten (1-%-Schritte der
+        # Bedarfsrechnung) nicht schreiben, solange Modus und Ziel gleich sind.
+        new_state["min_soc"] = sticky_min_soc(
+            new_state["min_soc"], last.get("min_soc"),
+            last.get("modus") == new_state["modus"] and last.get("target_soc") == new_state["target_soc"],
+        )
         loadpoint = self._current_loadpoint() or {}
         live = {
             # normalize_evcc_mode(): seit evcc 0.316.0 meldet der Loadpoint
@@ -7793,6 +7823,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             f"min={targets.get('min_kwh')}kWh, target={targets.get('target_kwh')}kWh, "
             f"pv_override_aktiv={targets.get('pv_override_aktiv')}, "
             f"pv_w={targets.get('pv_leistung_w')}, ueberschuss_w={targets.get('pv_ueberschuss_w')}, "
+            f"ziel_anhebung={'an' if targets.get('ueberschuss_ziel_erweitert_aktiv') else 'aus'}, "
             f"nachladen_grund={targets.get('nachladen_grund')}, "
             f"balancing_faellig={targets.get('balancing_faellig')}, "
             f"balancing_aktiv={targets.get('balancing_aktiv')}, "

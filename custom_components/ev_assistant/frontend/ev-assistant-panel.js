@@ -6083,8 +6083,16 @@ class EVAssistantPanel extends HTMLElement {
         const kmMode = nAttrs.puffer_art === "km" && !isNaN(parseFloat(nAttrs.puffer_km));
         const bufferNow = kmMode ? parseFloat(nAttrs.puffer_km) : parseFloat(nAttrs.puffer_prozent);
         this._bufferKmMode = kmMode;
-        r.betaWbBufferSlider.max = "100";
-        r.betaWbBufferSlider.step = kmMode ? "5" : "1";
+        // Grenzen je Modus: km bis puffer_km_max vom Server (Rueckfall 300),
+        // % bis 100. Liegt der Wert darueber, wird das Maximum angehoben --
+        // ein range-Input klemmt .value sonst still auf max. Step 5 im
+        // km-Modus nur, wenn der Wert darauf liegt (sonst rastet der Regler
+        // optisch um und eine Beruehrung wuerde einen anderen Wert senden).
+        const kmMaxAttr = parseFloat(nAttrs.puffer_km_max);
+        let sliderMax = kmMode ? (isNaN(kmMaxAttr) ? 300 : kmMaxAttr) : 100;
+        if (!isNaN(bufferNow) && bufferNow > sliderMax) sliderMax = bufferNow;
+        r.betaWbBufferSlider.max = String(sliderMax);
+        r.betaWbBufferSlider.step = kmMode && (isNaN(bufferNow) || bufferNow % 5 === 0) ? "5" : "1";
         if (!isNaN(bufferNow)) {
           r.betaWbBufferSlider.value = bufferNow;
           this._showBufferLabel(bufferNow, kmMode);
