@@ -7446,6 +7446,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # taeglich gedeckelte Ziel-SoC oben bei echtem PV-Ueberschuss
         # trotzdem auf 100 hochsetzen -- genau das Verhalten, das die neue
         # Obergrenze ja gerade verhindern soll ("nicht immer bis 100% laden").
+        ziel_war_aktiv = self._ueberschuss_ziel_aktiv
+        sonne_unten = self._sun_below_horizon()
         target_soc, self._ueberschuss_ziel_aktiv, self._ueberschuss_ziel_pending_seit_ts = (
             apply_opportunistic_surplus_target(
                 mode,
@@ -7457,8 +7459,23 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 dt_util.utcnow().timestamp(),
                 EVCC_UEBERSCHUSS_ZIEL_HOLD_S,
                 ceiling_soc=target_soc_max,
+                sonne_unten=sonne_unten,
             )
         )
+        if ziel_war_aktiv != self._ueberschuss_ziel_aktiv:
+            if self._ueberschuss_ziel_aktiv:
+                grund = "ueberschuss_da"
+            elif sonne_unten is True:
+                grund = "sonne_unten"
+            elif mode != "pv":
+                grund = "modus_nicht_pv"
+            else:
+                grund = "pv_weg"
+            self._log_event(
+                "ziel_anhebung_geaendert",
+                f"{'an' if self._ueberschuss_ziel_aktiv else 'aus'}, grund={grund}, "
+                f"pv_w={pv_power_w}, ueberschuss_w={pv_surplus_w}",
+            )
         # Zustand fuer die Wiederherstellung nach Reload/Neustart (Issue #27)
         # im Speicher mitfuehren; "ts" = letzte Auswertung, solange aktiv.
         # Gespeichert wird bei Wechsel sofort gebuendelt, sonst hoechstens
@@ -7793,6 +7810,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             f"min={targets.get('min_kwh')}kWh, target={targets.get('target_kwh')}kWh, "
             f"pv_override_aktiv={targets.get('pv_override_aktiv')}, "
             f"pv_w={targets.get('pv_leistung_w')}, ueberschuss_w={targets.get('pv_ueberschuss_w')}, "
+            f"ziel_anhebung={'an' if targets.get('ueberschuss_ziel_erweitert_aktiv') else 'aus'}, "
             f"nachladen_grund={targets.get('nachladen_grund')}, "
             f"balancing_faellig={targets.get('balancing_faellig')}, "
             f"balancing_aktiv={targets.get('balancing_aktiv')}, "

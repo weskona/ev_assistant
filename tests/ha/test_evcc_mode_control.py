@@ -3237,3 +3237,35 @@ async def test_evcc_mode_targets_nachts_ohne_pv_kein_override(hass, coordinators
     assert coordinator._evcc_mode_targets()["modus_effektiv"] == "pv"
     coordinator._evcc_state = {"loadpoints": [{}], "gridPower": -600.0, "pvPower": 3000}
     assert coordinator._evcc_mode_targets()["modus_effektiv"] == "minpv"
+
+
+async def test_ziel_anhebung_halten_und_event_log_bei_sonnenuntergang(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
+        CONF_USABLE_KWH,
+    )
+
+    jetzt = dt_util.utcnow().timestamp()
+    coordinator = await _make_coordinator_mit_store(
+        hass, coordinators, "ue_halten",
+        {"ueberschuss_ziel": {"aktiv": True, "ts": jetzt - 30}},
+        {CONF_USABLE_KWH: 50.0, CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX: 80},
+    )
+    _bereite_pv_tag_vor(coordinator)
+    coordinator._evcc_client = _fake_evcc_client(probe_result="loadpoint")
+    coordinator._evcc_state = {"loadpoints": [{}], "gridPower": 150.0, "pvPower": 400.0}  # Wolke
+    hass.states.async_set("sun.sun", "above_horizon")
+    targets = coordinator._evcc_mode_targets()
+    assert coordinator._ueberschuss_ziel_aktiv is True and targets["target_soc"] == 80
+    assert not any(e["kategorie"] == "ziel_anhebung_geaendert" for e in coordinator.data["event_log"])
+
+    hass.states.async_set("sun.sun", "below_horizon")
+    targets = coordinator._evcc_mode_targets()
+    assert coordinator._ueberschuss_ziel_aktiv is False and targets["target_soc"] < 80
+    eintraege = [e for e in coordinator.data["event_log"] if e["kategorie"] == "ziel_anhebung_geaendert"]
+    assert len(eintraege) == 1 and "aus, grund=sonne_unten" in eintraege[0]["text"]
+
+    await coordinator._async_apply_evcc_mode_control()
+    zeile = [e["text"] for e in coordinator.data["event_log"] if e["kategorie"] == "evcc_modus_geschrieben"][-1]
+    assert "ziel_anhebung=aus" in zeile

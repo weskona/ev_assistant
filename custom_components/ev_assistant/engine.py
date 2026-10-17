@@ -1512,6 +1512,7 @@ def apply_opportunistic_surplus_target(
     now_ts: float,
     min_hold_s: float,
     ceiling_soc: int = 100,
+    sonne_unten: Optional[bool] = None,
 ) -> tuple[Optional[int], bool, Optional[float]]:
     """Hebt target_soc voruebergehend auf `ceiling_soc` an, wenn Modus "pv"
     ist (Tagesbedarf laut Profil bereits gedeckt, siehe determine_evcc_mode())
@@ -1572,7 +1573,21 @@ def apply_opportunistic_surplus_target(
     Netzbezug -- das genaue Gegenteil von "nur Solar-Ueberschuss nutzen").
     Ohne dieses Gate wuerde reines Bilanzrauschen dieselbe Anhebung ausloesen
     wie echter (wenn auch geringer) Solarertrag. None (kein evcc-State) wird
-    wie 0 behandelt -- konservativ nicht aktivieren."""
+    wie 0 behandelt -- konservativ nicht aktivieren.
+
+    Halten bei Wolken (0.99.56): ist die Anhebung bereits aktiv, endet sie
+    NICHT mehr bei pv_surplus_w <= 0, solange der Basismodus "pv" ist und
+    echte PV-Leistung (pv_power_w > 0) anliegt -- im Modus pv laedt evcc ohne
+    Ueberschuss ohnehin nicht, ein Absenken des Ziels waere dort nur ein
+    Stopp mit mindestens min_hold_s plus evccs Einschaltverzoegerung bis zur
+    Wiederanhebung. Der Phantom-Ueberschuss bei 0 W PV (Vorfall 0.93.4) ist
+    seit 0.99.55 am Echtzeit-Override abgesichert. Absenken:
+    - sofort, wenn `sonne_unten` True ist oder der Basismodus nicht mehr
+      "pv" ist;
+    - nach min_hold_s durchgehend, wenn pv_power_w <= 0 oder None ist
+      (wie bisher, kein Punktesammeln).
+    `sonne_unten` None (unbekannt) verhaelt sich wie "Sonne oben".
+    Die Aktivierung ist unveraendert."""
     raw_ok = (
         mode == "pv"
         and target_soc is not None
@@ -1582,6 +1597,13 @@ def apply_opportunistic_surplus_target(
         and pv_power_w is not None
         and pv_power_w > 0
     )
+    if was_active:
+        pv_da = pv_power_w is not None and pv_power_w > 0
+        if sonne_unten is True or mode != "pv":
+            was_active, pending_since_ts = False, None
+            raw_ok = False
+        else:
+            raw_ok = pv_da  # Halten: unabhaengig von Ueberschuss und Ziel < Deckel
     if raw_ok == was_active:
         pending_since_ts = None  # im Einklang -- kein Wechsel ansteht
     elif pending_since_ts is None:

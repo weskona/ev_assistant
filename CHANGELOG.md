@@ -2,6 +2,17 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.56] - 2026-10-17
+
+### Changed
+
+- **Surplus target raise now holds through clouds.** Once active (unchanged activation: base mode `pv`, target below the ceiling, surplus > 0, PV power > 0, 5 minutes continuous), the raised target stays as long as the base mode is `pv` and real PV power (> 0 W) is present, even with a surplus of 0 or below. Before, the target fell back to the profile target after 5 minutes of cloud, evcc stopped if the car was above it, and re-raising took at least 5 minutes plus evcc's switch-on delay. It is lowered after 5 minutes of continuous missing PV power (or unknown), immediately at sunset (`sun.sun` below the horizon) and immediately when the base mode is no longer `pv` (the base mode is checked, not the real-time override result: if the override steps up to `minpv` at a small surplus the raise stays only while the base mode is `pv`). Highest target wins as before (balancing 100 % stays); real-time override, balancing, restore after restart and the change gate are unchanged.
+- Event log: new entry `ziel_anhebung_geaendert` (`an`/`aus`, reason `ueberschuss_da`, `pv_weg`, `sonne_unten`, `modus_nicht_pv`) and the field `ziel_anhebung=an|aus` in `evcc_modus_geschrieben`.
+
+### Honest limits
+
+- Holding without surplus relies on the 0.99.55 protection of the real-time override; a small risk remains at dusk with a surplus of at least 15 % of the wallbox minimum power while PV power is still above 0 W. The hold time constant (5 minutes) is unchanged.
+
 ## [0.99.55] - 2026-10-16
 
 ### Changed
