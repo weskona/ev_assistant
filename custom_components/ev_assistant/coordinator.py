@@ -6765,6 +6765,26 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._save()
         self.hass.config_entries.async_update_entry(self.entry, data=new_data)
 
+    async def async_set_evcc_realtime_override_min_solar_share(self, min_solar_share: Optional[float]) -> None:
+        """Schreibt CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE direkt in
+        entry.data (gleiches Muster wie async_set_evcc_mode_control_target_
+        soc_max()); der Options-Flow zeigt danach denselben Wert.
+        `min_solar_share=None` entfernt die Option (jeder PV-Ueberschuss unter
+        der Mindestladeleistung wird dann mit Netzstrom ergaenzt). Werte werden
+        auf 0..100 geklemmt. Hat NICHTS mit dem festen Mindestanteil des
+        Ueberschusses (15 % der Wallbox-Mindestleistung, seit 0.99.55) zu tun."""
+        new_data = dict(self.entry.data)
+        if min_solar_share is None:
+            new_data.pop(CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE, None)
+        else:
+            new_data[CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE] = max(0.0, min(100.0, float(min_solar_share)))
+        self._log_event(
+            "evcc_min_solar_anteil_geaendert",
+            f"min_solar_share={new_data.get(CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE)}",
+        )
+        await self._save()
+        self.hass.config_entries.async_update_entry(self.entry, data=new_data)
+
     def usage_profile_tomorrow(self) -> Optional[dict]:
         """Wochentags-Bedarf (siehe _effective_vehicle_usage_profile()) fuer
         den morgigen Wochentag, zzgl. CONF_USAGE_PROFILE_BUFFER_PCT Puffer --
@@ -7533,6 +7553,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "puffer_prozent": min_buf["puffer_prozent"],
             "pv_override_mischpreis_kwh": pv_override_mischpreis_kwh,
             "pv_override_max_mischpreis_kwh": max_blended_price,
+            "pv_override_min_solar_share_pct": None if min_solar_share_pct is None else float(min_solar_share_pct),
             "wallbox_min_power_w": wallbox_min_power_w,
             "balancing_enabled": balancing_enabled,
             # "aktiv" = Override wirksam (Ziel 100 %, auch schon waehrend

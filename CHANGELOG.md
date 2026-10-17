@@ -2,6 +2,17 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.57] - 2026-10-17
+
+### Added
+
+- **Service `set_evcc_realtime_override_min_solar_share` (Issue #49).** Sets the minimum solar share of the economic cap (`evcc_realtime_override_min_solar_share`, 0 to 100 %) without the options flow, e.g. from a dashboard card. Like `set_evcc_mode_control_target_soc_max` it writes the value permanently to the config entry (short reload), so the options flow shows the same value afterwards. Without `min_solar_share` (or `null`) the option is removed: every PV surplus below the minimum charge power is then topped up with grid power. Values are clamped to 0..100; each change is logged as `evcc_min_solar_anteil_geaendert`.
+- New attribute `pv_override_min_solar_share_pct` on the evcc mode control sensor: the configured percentage itself, `null` if not set (until now only the derived price ceiling `pv_override_max_mischpreis_kwh` existed). Like the other attributes it is only present while the evcc control is active.
+
+### Honest limits
+
+- This is unrelated to the fixed minimum share of the surplus (15 % of the wallbox minimum power, since 0.99.55), which is not configurable.
+
 ## [0.99.56] - 2026-10-17
 
 ### Changed

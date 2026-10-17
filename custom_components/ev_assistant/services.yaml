@@ -1412,6 +1412,36 @@ set_evcc_mode_control_target_soc_max:
           max: 100
           unit_of_measurement: "%"
 
+set_evcc_realtime_override_min_solar_share:
+  name: Mindest-Solaranteil für Netz-Zuschuss setzen
+  description: >
+    Setzt den Mindest-Solaranteil der wirtschaftlichen Kappung des
+    Echtzeit-Overrides direkt (z.B. aus einer Dashboard-Karte), ohne den
+    Options-Flow zu öffnen. Der Wert wird dauerhaft in die Konfiguration
+    geschrieben (kurzes Neuladen der Integration), der Options-Flow zeigt
+    danach denselben Wert. Ohne min_solar_share wird die Option entfernt —
+    dann wird jeder PV-Überschuss unter der Mindestladeleistung mit
+    Netzstrom ergänzt. Unabhängig vom festen Mindestanteil des Überschusses
+    (15 % der Wallbox-Mindestleistung).
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    min_solar_share:
+      name: Mindest-Solaranteil in % (optional)
+      description: Ohne Angabe wird die Option entfernt.
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 5
+          unit_of_measurement: "%"
+
 set_evcc_mode_control_pause:
   name: evcc-Modus-/SoC-Steuerung pausieren
   description: >
