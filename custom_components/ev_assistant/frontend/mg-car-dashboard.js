@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=36  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=37  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.5.11";
+const VERSION = "3.5.12";
 // Version der Datenschnittstelle zu ev_assistant (Panel-Konfiguration, Websocket-Befehle, evcc_live),
 // die diese Karte erwartet. Meldet ev_assistant in der Panel-Konfiguration eine andere "api_version",
 // warnt die Karte (Konsole + Hinweis). Ohne "api_version" (ältere ev_assistant-Versionen) keine Warnung.
@@ -170,6 +170,14 @@ const EVA_SMART_OPTS = [
   { ac: "on",   mode: "minpv", label: "immer", sub: "immer",  long: "immer laden (Mindestleistung)", icon: "mdi:infinity" },
   { ac: "once", mode: "minpv", label: "1x",    sub: "einmal", long: "einmal laden (Mindestleistung)", glyph: "1x" },
 ];
+// manuelle Modi in der Auswahl der zweiten Kachel (v wie die Auswahl-Logik in _render_mgmt_eva: off/pv/once/minpv/now)
+const EVA_MANUAL = [
+  { v: "off",   act: "evamode2", dv: "off",  label: "Aus",           short: "Aus",       icon: "mdi:power-off",      color: "#8b91a1", sub: "nicht laden", needs: "mode" },
+  { v: "pv",    act: "evasmart", dv: "off",  label: "Smart · aus",   short: "Smart",     icon: "mdi:solar-power",    color: "#34d399", sub: "nur PV-Überschuss" },
+  { v: "once",  act: "evasmart", dv: "once", label: "Smart · 1x",    short: "Smart · 1x", glyph: "1x",               color: "#34d399", sub: "einmal mit Mindestleistung", needs: "alwayscharge" },
+  { v: "minpv", act: "evasmart", dv: "on",   label: "Smart · immer", short: "Smart · immer", icon: "mdi:infinity",   color: "#34d399", sub: "immer mit Mindestleistung" },
+  { v: "now",   act: "evamode2", dv: "now",  label: "Schnell",       short: "Schnell",   icon: "mdi:lightning-bolt", color: "#f87171", sub: "sofort mit voller Leistung" },
+];
 const EVA_MODES = [EVA_AUTO, { v: "pv", label: "Smart" }, { v: "minpv", label: "Smart · immer" }, EVA_NOW];   // Beschriftung „evcc: …“
 
 /* ---------------- Helfer ---------------- */
@@ -234,6 +242,7 @@ class MgCarDashboard extends HTMLElement {
         if (e.type === "change" && c.contains("simgfile")) { const f = t.files?.[0]; t.value = ""; this._uploadImg(f); }
         else if (e.type === "change" && c.contains("srestfile")) { const f = t.files?.[0]; t.value = ""; this._readRestore(f); }
         else if (e.type === "change" && c.contains("fpreset")) this._wtPreset(t.value, true);
+        else if (e.type === "change" && c.contains("pvminsel")) { t.blur(); this._setPvMin(t.value); }
         else if (e.type === "change" && c.contains("slogkat")) { this._logKat = t.value; this._renderLogList(); }
         else if (e.type === "input" && c.contains("slogq")) { this._logQ = t.value; this._renderLogList(); }
       };
@@ -471,7 +480,7 @@ class MgCarDashboard extends HTMLElement {
   /* --- Lademanagement: Vorgabe, evcc-Modus (inkl. Immer laden), Ladestrom, Mindestladung, Ladeplan + Vollladung (ev_assistant) --- */
   _render_mgmt() {
     const el = this.shadowRoot.getElementById("mgmt"); if (!el) return;
-    if (this.shadowRoot.activeElement?.classList?.contains("pin")) return;   // während der Eingabe nicht neu zeichnen
+    if (/\b(pin|pvminsel)\b/.test(this.shadowRoot.activeElement?.className || "")) return;   // während der Eingabe nicht neu zeichnen
     const c = this._config.car, ev = c.evcc || {}, E = this._eva();
     const step = (lbl, ic, cfgId, unit) => {
       const id = this._real(cfgId), st = this._st(id); if (!st) return "";   // nur eine echte Entität lässt sich einstellen
@@ -592,13 +601,10 @@ class MgCarDashboard extends HTMLElement {
     const mInfo = evM === "now" ? { t: "Schnell", i: icon(EVA_NOW.icon), c: EVA_NOW.color }
       : evM === "off" ? { t: "Aus", i: icon("mdi:power-off"), c: "#8b91a1" }
       : so ? { t: `Smart · ${so.label === "aus" ? "PV" : so.label}`, i: so.glyph ? "" : ico(so), c: EVA_SMART.color } : { t: "–", i: icon("mdi:help"), c: "var(--muted)" };
-    const limV = Number(L.limit_soc) > 0 ? `${de(Number(L.limit_soc), 0)} %` : "–";
-    const plan = this._st(E.evcc_charge_plan), pi = this._planInfo(plan), pa = plan?.attributes || {};
-    const planV = pi ? `${pi.soc != null ? `${Math.round(pi.soc)} % · ` : ""}${pi.date ? `${WD[pi.date.getDay()]} ${pad(pi.date.getHours())}:${pad(pi.date.getMinutes())}` : ""}` : "kein Plan";
-    // Kopf: aktueller evcc-Lademodus oben rechts, darunter als kleiner Hinweis Ladeziel und Ladeplan in evcc
+    const plan = this._st(E.evcc_charge_plan), pi = this._planInfo(plan);
+    // Kopf: aktueller evcc-Lademodus oben rechts
     const head = `<div class="hd"><span class="ttl">Lademanagement</span>
-      <span class="lbl mnow" style="--cc:${mInfo.c}" title="Lademodus in evcc">${mInfo.i}${esc(mInfo.t)}</span></div>
-      <div class="mhint" title="Aktueller Stand in evcc"><span class="msrc">evcc</span><span>Ladeziel <b>${limV}</b></span><span>Ladeplan <b>${pi ? esc(planV) : "–"}</b>${pi && pa.aktiv ? " · läuft" : ""}</span></div>`;
+      <span class="lbl mnow" style="--cc:${mInfo.c}" title="Lademodus in evcc">${mInfo.i}${esc(mInfo.t)}</span></div>`;
 
     // --- ev_assistant: Lademodus (Auto oder manuell) ---
     const o = this._evaSel && Date.now() - this._evaSel.t < 20000 ? this._evaSel.v : null;
@@ -607,12 +613,14 @@ class MgCarDashboard extends HTMLElement {
     // die Kachel des Modus, auf dem evcc gerade steht
     const evSel = evM === "off" ? "off" : evM === "now" ? "now" : evM === "minpv" ? (evAc === "once" ? "once" : "minpv") : evM === "pv" ? "pv" : ms.cur !== "auto" ? ms.cur : null;
     const sel = o || (ms.cur === "auto" && !paused ? "auto" : evSel);
-    const smartSel = ["pv", "minpv", "once"].includes(sel), selOpt = EVA_SMART_OPTS.find((x) => (sel === "pv" ? x.ac === "off" : sel === "minpv" ? x.ac === "on" : x.ac === "once"));
     const tile = (m, on, act, inner, extra = "") => `<button class="mmode ${on ? "sel" : ""}" style="--cc:${m.color}" data-act="${act}" ${extra} title="${esc(m.title || "")}"><span class="mmh">${inner}</span></button>`;
+    // zweite Kachel: alle manuellen Modi als Auswahl (Aus, Smart · aus/1x/immer, Schnell)
+    const man = EVA_MANUAL.find((m) => m.v === sel);
+    this._evaSelCur = man?.v || null;
     const modes = `<div class="mmodes m3">
       ${tile(EVA_AUTO, sel === "auto", "evamode2", `${icon(EVA_AUTO.icon)}<b>Auto</b>`, `data-v="auto"`)}
-      ${tile({ ...EVA_SMART, title: smartSel ? `Smart · ${selOpt.long}` : "Smart: aus (nur PV), immer oder 1x" }, smartSel, "evasmartmenu", `${smartSel ? ico(selOpt) : icon("mdi:solar-power")}<b>Smart</b>${icon("mdi:chevron-down", "mchv")}`)}
-      ${tile(EVA_NOW, sel === "now", "evamode2", `${icon(EVA_NOW.icon)}<b>Schnell</b>`, `data-v="now"`)}</div>`;
+      ${tile({ color: (man || {}).color || EVA_SMART.color, title: "Lademodus manuell wählen" }, !!man, "evamanmenu", `${man ? (man.glyph ? `<span class="glyph">${man.glyph}</span>` : icon(man.icon)) : icon("mdi:hand-back-right-outline")}<b>${man ? esc(man.short) : "Manuell"}</b>${icon("mdi:chevron-down", "mchv")}`)}
+      ${this._pvMinTile(ma, "mmode")}</div>`;
 
     // --- ev_assistant: Ladeziel, Vollladung, Automatik pausieren ---
     const r = this._renderLimitRow(this._config.car, this._config.car.evcc || {}, E, ma, mc);
@@ -637,8 +645,42 @@ class MgCarDashboard extends HTMLElement {
     const rec = this._st(E.charge_before_pv_recommended);
     const err = this._mgmtErr ? `<div class="mpe err merr">${icon("mdi:alert-circle-outline")}<span>ev_assistant: ${esc(this._mgmtErr.msg)}</span></div>` : "";
     el.innerHTML = head + err + `
-      <div class="mgrp"><span class="mgl">ev_assistant</span>${modes}${ctl}${planForm}</div>
+      <div class="mgrp">${modes}${ctl}${planForm}</div>
       ${rec?.state === "on" ? `<div class="lrows"><button class="lrow warn" data-act="more" data-entity="${esc(E.charge_before_pv_recommended)}">${icon("mdi:weather-cloudy-alert")}<span>Empfehlung</span><b>Laden vor PV sinnvoll</b></button></div>` : ""}`;
+  }
+
+  /* Mindest-PV-Anteil für den Netz-Zuschuss (ev_assistant ab 0.99.57: Dienst set_evcc_realtime_override_min_solar_share,
+     Attribut pv_override_min_solar_share_pct). Unter der Mindestladeleistung der Wallbox wird nur dann Netzstrom
+     dazugenommen, wenn mindestens dieser Anteil aus PV kommt. „aus“ = jeder PV-Überschuss wird mit Netzstrom ergänzt. */
+  _pvMinCur(ma) {
+    const has = Object.prototype.hasOwnProperty.call(ma, "pv_override_min_solar_share_pct"), raw = ma.pv_override_min_solar_share_pct;
+    const real = typeof raw === "number" ? raw : null, o = this._pvMinSet;
+    if (o && (Date.now() - o.t > 90000 || (has && real === o.v))) this._pvMinSet = null;
+    return { has, v: this._pvMinSet ? this._pvMinSet.v : real };
+  }
+  _pvMinTile(ma, cls) {
+    if (!this._hass?.services?.ev_assistant?.set_evcc_realtime_override_min_solar_share || !this._evaEntryId()) return "";
+    const { v } = this._pvMinCur(ma), rv = v == null ? null : Math.round(v / 5) * 5;
+    let opts = `<option value=""${v == null ? " selected" : ""}>aus</option>`;
+    for (let x = 0; x <= 100; x += 5) opts += `<option value="${x}"${rv === x ? " selected" : ""}>${x} %</option>`;
+    return `<label class="${cls} mpvmin${v != null ? " sel" : ""}" style="--cc:var(--e-solar)" title="Netzstrom nur dazunehmen, wenn mindestens dieser Anteil aus PV kommt">
+      <span class="mmh">${icon("mdi:solar-power-variant")}<b>${v == null ? "PV aus" : `ab ${de(v, 0)} %`}</b>${icon("mdi:chevron-down", "mchv")}</span>
+      <select class="pvminsel" aria-label="Laden ab PV-Anteil">${opts}</select></label>`;
+  }
+  // dieselbe Einstellung als Auswahl in einer Kennzahl-Kachel (Netz-Zuschuss auf „Profil & Analyse“)
+  _pvMinSel(ma) {
+    if (!this._hass?.services?.ev_assistant?.set_evcc_realtime_override_min_solar_share || !this._evaEntryId()) return "";
+    const { v } = this._pvMinCur(ma), rv = v == null ? null : Math.round(v / 5) * 5;
+    let opts = `<option value=""${v == null ? " selected" : ""}>aus</option>`;
+    for (let x = 0; x <= 100; x += 5) opts += `<option value="${x}"${rv === x ? " selected" : ""}>${x} %</option>`;
+    return `<div class="pst pbuf"><span>Laden ab PV</span><select class="pbufsel pvminsel" aria-label="Laden ab PV-Anteil">${opts}</select></div>`;
+  }
+  _setPvMin(val) {
+    const v = val === "" ? null : Number(val);
+    this._pvMinSet = { v, t: Date.now() };
+    this._evaCall("set_evcc_realtime_override_min_solar_share", v == null ? {} : { min_solar_share: v })
+      .catch((x) => { this._pvMinSet = null; this._mgmtFail(x); });
+    this._render_mgmt(); if (this._subPage() === "prof") this._render_misch();
   }
 
   /* Hinweis, wenn der Aufruf erfolgreich war, der Plan-Sensor den Plan aber (noch) nicht zeigt. Ältere ev_assistant-
@@ -1582,6 +1624,7 @@ class MgCarDashboard extends HTMLElement {
   /* Wirtschaftlichkeit Netz-Zuschuss: Skala Einspeisevergütung → Netzpreis, Marker Schwelle und Mischpreis */
   _render_misch() {
     const el = this.shadowRoot.getElementById("pmisch"), lv = this._live();
+    if (this.shadowRoot.activeElement?.classList?.contains("pvminsel")) return;   // Auswahl offen
     const fi = parseFloat(lv.tariff_feedin), gr = parseFloat(lv.tariff_grid);
     if (isNaN(fi) || isNaN(gr) || gr <= fi) { el.innerHTML = this._hd("Netz-Zuschuss") + `<div class="empty">evcc meldet keine Tarife (Netzpreis und Einspeisevergütung).</div>`; return; }
     const a = this._ea("evcc_mode_control")?.attributes || {};
@@ -1590,14 +1633,14 @@ class MgCarDashboard extends HTMLElement {
     let cur = null;
     if (sur != null && minP > 0) { const c = Math.max(0, Math.min(sur, minP)); cur = (c * fi + (minP - c) * gr) / minP; }
     const pct = (v) => Math.max(0, Math.min(100, ((v - fi) / (gr - fi)) * 100));
-    const solarMin = thr != null ? Math.round((1 - pct(thr) / 100) * 100) : null;
+    const pm = this._pvMinCur(a), solarMin = pm.has || pm.v != null ? (pm.v == null ? null : Math.round(pm.v)) : thr != null ? Math.round((1 - pct(thr) / 100) * 100) : null;
     const note = cur == null ? "Noch keine Live-Daten von evcc." : thr == null ? "Kein Mindest-Solaranteil konfiguriert – PV-Überschuss unter der Mindestladeleistung wird mit Netzstrom ergänzt."
       : cur <= thr ? "Mischpreis innerhalb der Schwelle – ein Netz-Zuschuss würde genutzt." : "Mischpreis über der Schwelle – der Überschuss wird eingespeist statt teuren Netzstrom zuzukaufen.";
     el.innerHTML = this._hd("Netz-Zuschuss", solarMin != null ? `lohnt ab <b>${solarMin} % PV</b>` : "") + `
       <div class="mscale">${thr != null ? `<span class="ms" style="left:${pct(thr)}%"></span>` : ""}${cur != null ? `<span class="mc" style="left:${pct(cur)}%"></span>` : ""}</div>
       <div class="mlab"><span>Einspeisung ${de(fi, 3)} €</span><span>Netz ${de(gr, 3)} €</span></div>
-      <div class="pstats two"><div class="pst"><span>Mischpreis jetzt</span><b>${cur != null ? de(cur, 3) : "–"}<small>€/kWh</small></b></div>
-        <div class="pst"><span>Schwelle</span><b>${thr != null ? de(thr, 3) : "–"}<small>€/kWh</small></b></div></div>
+      <div class="pstats two${this._pvMinSel(a) ? " three" : ""}"><div class="pst"><span>Mischpreis jetzt</span><b>${cur != null ? de(cur, 3) : "–"}<small>€/kWh</small></b></div>
+        <div class="pst"><span>Schwelle</span><b>${thr != null ? de(thr, 3) : "–"}<small>€/kWh</small></b></div>${this._pvMinSel(a)}</div>
       <div class="pnote">${note}</div>`;
   }
 
@@ -2484,7 +2527,18 @@ class MgCarDashboard extends HTMLElement {
       this._openMenuAt(el, menu);
       return;
     }
+    if (act === "evamanmenu") {
+      this._closeMenu();
+      const menu = document.createElement("div"); menu.className = "menu";
+      menu.innerHTML = EVA_MANUAL.filter((m) => !m.needs || this._evccEnt(m.needs)).map((m) => {
+        const isCur = m.v === this._evaSelCur;
+        return `<button class="mg-menu-item mi ${isCur ? "cur" : ""}" data-act="${m.act}" data-v="${m.dv}">${m.glyph ? `<span class="glyph">${m.glyph}</span>` : icon(m.icon)}<span>${m.label}<small style="opacity:.6;margin-left:6px">${m.sub}</small></span>${isCur ? icon("mdi:check", "ck") : ""}</button>`;
+      }).join("");
+      this._openMenuAt(el, menu);
+      return;
+    }
     if (act === "evamode2") {
+      this._closeMenu();
       const v = el.dataset.v;
       this._evaSel = { v, t: Date.now() }; this._evaModeOpt = { v: v === "off" ? "pv" : v, t: Date.now() }; this._evaSmartOpt = null;
       (this._opt ||= {}).pause = { v: v !== "auto", t: Date.now() };
@@ -2778,7 +2832,9 @@ const CAR_STYLE = `
 .mchv{--mdc-icon-size:18px;opacity:.6;margin-left:auto}
 .mmh .glyph{font-size:14px;font-weight:800;letter-spacing:-.02em;min-width:20px;text-align:center}
 .mmh .msub{font-size:12px;font-weight:600;opacity:.75;white-space:nowrap}
-.mmh b{white-space:nowrap}
+.mmh b{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mpvmin{position:relative}.mpvmin select{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:16px}
+.mpvmin:focus-within{border-color:rgba(255,255,255,.3)}
 .mmode.vorgabe{flex:none;min-width:0}
 .mmode.vorgabe.manual{background:linear-gradient(160deg,rgba(239,68,68,.18),rgba(239,68,68,.04));border-color:rgba(239,68,68,.55)}
 .mmode.vorgabe.manual .mmh{color:#ef4444}
@@ -3070,7 +3126,7 @@ const CAR_STYLE = `
 .mscale .ms,.mscale .mc{position:absolute;top:-5px;width:4px;height:22px;border-radius:2px;transform:translateX(-2px)}
 .mscale .ms{background:var(--orange)}.mscale .mc{background:#fff}
 .mlab{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-bottom:12px}
-.pstats.two{margin-bottom:8px}
+.pstats.two{margin-bottom:8px}.pstats.three{grid-template-columns:repeat(3,minmax(0,1fr))}
 .pnote{font-size:12.5px;color:var(--dim);line-height:1.45}
 .pdlg{max-width:720px}
 .pcols{display:grid;grid-template-columns:1fr 1fr;gap:10px}
