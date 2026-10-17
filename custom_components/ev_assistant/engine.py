@@ -1620,6 +1620,42 @@ def apply_opportunistic_surplus_target(
     return effective_target_soc, was_active, pending_since_ts
 
 
+def pv_mode_target(mode: str, target_soc: Optional[int], ceiling_soc: int) -> Optional[int]:
+    """Im Basismodus "pv" ist das evcc-Ladeziel immer `ceiling_soc` (das
+    eingestellte maximale Ziel-SoC), nie darunter: evcc laedt im Modus pv ohne
+    Ueberschuss ohnehin nicht, ein mit dem Bedarf schrumpfendes Ziel waere dort
+    nur Schreib-Rauschen und wuerde bei Wolken eine laufende Ladung stoppen.
+    Ein hoeheres Ziel (z. B. Balancing 100 %) bleibt (max()). Andere Basismodi
+    (minpv/now) und target_soc None bleiben unveraendert."""
+    if mode != "pv" or target_soc is None:
+        return target_soc
+    return max(ceiling_soc, target_soc)
+
+
+def sticky_min_soc(
+    new_min_soc: Optional[int],
+    last_min_soc: Optional[int],
+    unchanged_otherwise: bool,
+    threshold: int = 5,
+) -> Optional[int]:
+    """Schreib-Gate fuer min_soc: bleibt ein neuer Wert weniger als
+    `threshold` Prozentpunkte vom zuletzt geschriebenen entfernt, gilt der
+    alte weiter (kein Schreibvorgang wegen 1-%-Schritten der Bedarfsrechnung).
+    Nur wenn sonst nichts zu schreiben ist (`unchanged_otherwise`: Modus und
+    Ziel gleich) und weder alter noch neuer Wert None oder 0 ist -- der
+    Wechsel von/nach 0 (kein Min-SoC) bedeutet etwas anderes und wird immer
+    geschrieben."""
+    if (
+        not unchanged_otherwise
+        or new_min_soc is None
+        or last_min_soc is None
+        or new_min_soc == 0
+        or last_min_soc == 0
+    ):
+        return new_min_soc
+    return last_min_soc if abs(new_min_soc - last_min_soc) < threshold else new_min_soc
+
+
 def restore_surplus_target_active(
     persisted_active: object,
     persisted_ts: object,

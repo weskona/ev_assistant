@@ -5216,3 +5216,42 @@ def test_ziel_nacht_phantomueberschuss_aktiviert_nie():
 def test_ziel_balancing_100_bleibt_beim_halten():
     soc, active, _ = _zt(target=100, surplus=-100.0, pv=400.0)
     assert (soc, active) == (100, True)
+
+
+# ----- pv_mode_target / sticky_min_soc (0.99.56) -----------------------------
+
+def test_pv_mode_target_pv_immer_maximum():
+    from engine import pv_mode_target
+    assert pv_mode_target("pv", 12, 80) == 80
+    assert pv_mode_target("pv", 80, 80) == 80
+    assert pv_mode_target("pv", 100, 80) == 100  # Balancing gewinnt
+    assert pv_mode_target("pv", 0, 80) == 80
+
+
+def test_pv_mode_target_andere_modi_und_none_unveraendert():
+    from engine import pv_mode_target
+    assert pv_mode_target("minpv", 12, 80) == 12
+    assert pv_mode_target("now", 12, 80) == 12
+    assert pv_mode_target("pv", None, 80) is None
+
+
+def test_sticky_min_soc_unter_schwelle_bleibt_alt():
+    from engine import sticky_min_soc
+    assert sticky_min_soc(22, 23, True) == 23
+    assert sticky_min_soc(19, 23, True) == 23
+    assert sticky_min_soc(24, 23, True) == 23  # symmetrisch
+
+
+def test_sticky_min_soc_ab_5_punkten_neu():
+    from engine import sticky_min_soc
+    assert sticky_min_soc(18, 23, True) == 18
+    assert sticky_min_soc(28, 23, True) == 28
+
+
+def test_sticky_min_soc_ausnahmen_schreiben_immer():
+    from engine import sticky_min_soc
+    assert sticky_min_soc(22, 23, False) == 22  # Modus/Ziel hat sich geaendert
+    assert sticky_min_soc(0, 2, True) == 0
+    assert sticky_min_soc(2, 0, True) == 2
+    assert sticky_min_soc(None, 23, True) is None
+    assert sticky_min_soc(22, None, True) == 22

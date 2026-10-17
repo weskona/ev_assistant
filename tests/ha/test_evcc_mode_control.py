@@ -1400,7 +1400,7 @@ async def test_apply_evcc_mode_control_evcc_live_zustand_stimmt_ueberein_kein_er
 
 
 async def test_apply_evcc_mode_control_target_soc_null_evcc_spiegelt_fahrzeug_default_kein_endlos_schreiben(
-    hass, coordinators
+    hass, coordinators, monkeypatch
 ):
     """Produktionsvorfall 2026-09-26 (Event-Log, 11:04-11:08 Uhr, 5 identische
     Rewrites im Minutentakt): evcc behandelt limitSoc=0 nicht als "Ziel 0%",
@@ -1415,6 +1415,10 @@ async def test_apply_evcc_mode_control_target_soc_null_evcc_spiegelt_fahrzeug_de
         CONF_USABLE_KWH,
     )
 
+    # Seit 0.99.56 ist das Ziel im Modus pv immer das Maximum; die allgemeine
+    # Absicherung gegen das evcc-Spiegeln von limitSoc=0 bleibt trotzdem
+    # bestehen und wird hier ohne diese Regel geprueft.
+    monkeypatch.setattr("custom_components.ev_assistant.coordinator.pv_mode_target", lambda m, t, c: t)
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "aemc_zero1", options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0},
     )
@@ -3061,7 +3065,7 @@ async def test_ueberschuss_ziel_nach_reload_veraltet_startet_konservativ(hass, c
     _bereite_pv_tag_vor(coordinator)
     assert coordinator._ueberschuss_ziel_aktiv is False
     targets = coordinator._evcc_mode_targets()
-    assert targets["target_soc"] < 100
+    assert targets["target_soc"] == 100  # Modus pv: immer das Maximum
     assert not any(
         e.get("kategorie") == "ueberschuss_ziel_wiederhergestellt" for e in coordinator.data.get("event_log", [])
     )
@@ -3262,10 +3266,57 @@ async def test_ziel_anhebung_halten_und_event_log_bei_sonnenuntergang(hass, coor
 
     hass.states.async_set("sun.sun", "below_horizon")
     targets = coordinator._evcc_mode_targets()
-    assert coordinator._ueberschuss_ziel_aktiv is False and targets["target_soc"] < 80
+    assert coordinator._ueberschuss_ziel_aktiv is False and targets["target_soc"] == 80  # pv: immer Maximum
     eintraege = [e for e in coordinator.data["event_log"] if e["kategorie"] == "ziel_anhebung_geaendert"]
     assert len(eintraege) == 1 and "aus, grund=sonne_unten" in eintraege[0]["text"]
 
     await coordinator._async_apply_evcc_mode_control()
     zeile = [e["text"] for e in coordinator.data["event_log"] if e["kategorie"] == "evcc_modus_geschrieben"][-1]
     assert "ziel_anhebung=aus" in zeile
+
+
+async def test_pv_modus_ziel_konstant_maximum_und_min_soc_gate_ab_5_punkten(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
+        CONF_USABLE_KWH,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "pv_max_gate",
+        options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0, CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX: 80},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator.range_conversion = lambda: {}
+    coordinator._soc = 90.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    coordinator._evcc_client = _fake_evcc_client(probe_result="loadpoint")
+    coordinator._evcc_state = {"loadpoints": [{}]}
+    await coordinator._async_apply_evcc_mode_control()
+    first = dict(coordinator.data["evcc_mode_control"])
+    assert first["modus"] == "pv" and first["target_soc"] == 80 and first["min_soc"] > 0
+    writes = coordinator._evcc_client.async_set_mode.await_count
+
+    def evcc_spiegelt(state):
+        coordinator._evcc_state = {"loadpoints": [{
+            "mode": state["modus"], "effectiveMinSoc": state["min_soc"], "effectiveLimitSoc": state["target_soc"],
+        }]}
+
+    evcc_spiegelt(first)
+    # Bedarf schrumpft: min_soc waere 1-4 Punkte kleiner -> kein Schreibvorgang, Ziel bleibt 80
+    for delta in (1, 2, 4):
+        coordinator._evcc_mode_targets = (
+            lambda d=delta: {**_orig(coordinator), "min_soc": first["min_soc"] - d}
+        )
+        await coordinator._async_apply_evcc_mode_control()
+    assert coordinator._evcc_client.async_set_mode.await_count == writes
+    # ab 5 Punkten wird geschrieben
+    coordinator._evcc_mode_targets = lambda: {**_orig(coordinator), "min_soc": first["min_soc"] - 5}
+    await coordinator._async_apply_evcc_mode_control()
+    assert coordinator._evcc_client.async_set_mode.await_count == writes + 1
+    assert coordinator.data["evcc_mode_control"]["min_soc"] == first["min_soc"] - 5
+    assert coordinator.data["evcc_mode_control"]["target_soc"] == 80
+
+
+def _orig(coordinator):
+    return type(coordinator)._evcc_mode_targets(coordinator)

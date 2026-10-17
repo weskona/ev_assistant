@@ -279,6 +279,7 @@ from .engine import (
     plug_departure_profile,
     pop_pending,
     previous_period_date,
+    pv_mode_target,
     range_km_to_soc_percent,
     remaining_today_kwh,
     remove_weekday_day,
@@ -289,6 +290,7 @@ from .engine import (
     session_totals_since,
     split_by_age,
     split_period_baseline_entry,
+    sticky_min_soc,
     tankerkoenig_should_notify,
     temp_bucket_contribution,
     temperature_bucket,
@@ -7477,6 +7479,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 f"{'an' if self._ueberschuss_ziel_aktiv else 'aus'}, grund={grund}, "
                 f"pv_w={pv_power_w}, ueberschuss_w={pv_surplus_w}",
             )
+        # Basismodus pv: Ziel immer = maximales Ziel-SoC (siehe engine.
+        # pv_mode_target()); die Ueberschuss-Zielanhebung oben ist dort damit
+        # ohnehin enthalten, ihr Zustand wird nur weitergefuehrt.
+        target_soc = pv_mode_target(mode, target_soc, target_soc_max)
         # Zustand fuer die Wiederherstellung nach Reload/Neustart (Issue #27)
         # im Speicher mitfuehren; "ts" = letzte Auswertung, solange aktiv.
         # Gespeichert wird bei Wechsel sofort gebuendelt, sonst hoechstens
@@ -7713,6 +7719,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "min_soc": targets["min_soc"],
             "target_soc": targets["target_soc"],
         }
+        # min_soc: Aenderungen unter 5 Prozentpunkten (1-%-Schritte der
+        # Bedarfsrechnung) nicht schreiben, solange Modus und Ziel gleich sind.
+        new_state["min_soc"] = sticky_min_soc(
+            new_state["min_soc"], last.get("min_soc"),
+            last.get("modus") == new_state["modus"] and last.get("target_soc") == new_state["target_soc"],
+        )
         loadpoint = self._current_loadpoint() or {}
         live = {
             # normalize_evcc_mode(): seit evcc 0.316.0 meldet der Loadpoint
