@@ -1689,6 +1689,9 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
     berechnete Mischpreis-Obergrenze (siehe engine.min_solar_share_price_
     ceiling()) -- None ohne konfigurierten Mindest-Solaranteil oder ohne
     bekannte evcc-Tarife, fuers Panel (Analyse-Tab: Mischpreis-Skala).
+    "pv_override_min_solar_share_pct" ist der konfigurierte Prozentwert selbst
+    (None = nicht gesetzt), damit Karten ihn ohne Rueckrechnen aus den
+    Tarifen anzeigen koennen.
     "wallbox_min_power_w" (der konfigurierte oder Default-Wert, siehe
     CONF_WALLBOX_MIN_POWER_W) wird zusaetzlich mitgegeben, damit das
     Panel dort einen KONTINUIERLICHEN Mischpreis aus dem ebenfalls immer
@@ -1751,6 +1754,7 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             "pv_ueberschuss_w": targets["pv_ueberschuss_w"],
             "pv_override_mischpreis_kwh": targets["pv_override_mischpreis_kwh"],
             "pv_override_max_mischpreis_kwh": targets["pv_override_max_mischpreis_kwh"],
+            "pv_override_min_solar_share_pct": targets["pv_override_min_solar_share_pct"],
             "wallbox_min_power_w": targets["wallbox_min_power_w"],
             # Ueberschuss-Zielanhebung (siehe engine.apply_opportunistic_
             # surplus_target()) -- target_soc oben ist bereits inkl. dieser

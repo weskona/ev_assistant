@@ -60,6 +60,7 @@ from .const import (
     SERVICE_SET_EVCC_MANUAL_MODE,
     SERVICE_SET_EVCC_MODE_CONTROL_PAUSE,
     SERVICE_SET_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
+    SERVICE_SET_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
     SERVICE_SET_HIDDEN_TABS,
     SERVICE_SET_PANEL_LAYOUT,
     SERVICE_SET_USAGE_PROFILE_BUFFER_KM,
@@ -466,6 +467,8 @@ ADD_MAINTENANCE_SCHEMA = vol.Schema({
     vol.Optional("last_done_datum"): str,
     vol.Optional("reminder_monate"): vol.Coerce(float),
     vol.Optional("reminder_km"): vol.Coerce(float),
+    vol.Optional("erst_km_intervall"): vol.Coerce(float),
+    vol.Optional("erst_zeit_intervall_monate"): vol.Coerce(int),
 })
 
 EDIT_MAINTENANCE_SCHEMA = vol.Schema({
@@ -483,6 +486,9 @@ EDIT_MAINTENANCE_SCHEMA = vol.Schema({
     vol.Optional("aktiv"): bool,
     vol.Optional("reminder_monate"): vol.Any("", vol.Coerce(float)),
     vol.Optional("reminder_km"): vol.Any("", vol.Coerce(float)),
+    vol.Optional("erst_km_intervall"): vol.Any("", vol.Coerce(float)),
+    vol.Optional("erst_zeit_intervall_monate"): vol.Any("", vol.Coerce(int)),
+    vol.Optional("erledigt_anzahl"): vol.All(vol.Coerce(int), vol.Range(min=0)),
 })
 
 DELETE_MAINTENANCE_SCHEMA = vol.Schema({
@@ -540,6 +546,14 @@ SET_WEEKLY_FULL_CHARGE_ENABLED_SCHEMA = vol.Schema({
 SET_EVCC_MODE_CONTROL_TARGET_SOC_MAX_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
     vol.Optional("target_soc_max"): vol.Any(None, vol.All(vol.Coerce(int), vol.Range(min=1, max=100))),
+})
+
+# Mindest-Solaranteil fuer den Netz-Zuschuss (Issue #49): None/fehlend entfernt
+# die Option, sonst 0..100 (siehe coordinator.py::async_set_evcc_realtime_
+# override_min_solar_share()).
+SET_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Optional("min_solar_share"): vol.Any(None, vol.All(vol.Coerce(float), vol.Range(min=0, max=100))),
 })
 
 # Einfacher Dauer-Schalter (siehe coordinator.py::async_set_evcc_mode_
@@ -833,6 +847,8 @@ def _register_services(hass: HomeAssistant) -> None:
                 last_done_datum=call.data.get("last_done_datum"),
                 reminder_monate=call.data.get("reminder_monate"),
                 reminder_km=call.data.get("reminder_km"),
+                erst_km_intervall=call.data.get("erst_km_intervall"),
+                erst_zeit_intervall_monate=call.data.get("erst_zeit_intervall_monate"),
             )
 
     async def _handle_edit_maintenance(call: ServiceCall) -> None:
@@ -850,6 +866,9 @@ def _register_services(hass: HomeAssistant) -> None:
                 aktiv=call.data.get("aktiv"),
                 reminder_monate=call.data.get("reminder_monate"),
                 reminder_km=call.data.get("reminder_km"),
+                erst_km_intervall=call.data.get("erst_km_intervall"),
+                erst_zeit_intervall_monate=call.data.get("erst_zeit_intervall_monate"),
+                erledigt_anzahl=call.data.get("erledigt_anzahl"),
             )
 
     async def _handle_delete_maintenance(call: ServiceCall) -> None:
@@ -883,6 +902,11 @@ def _register_services(hass: HomeAssistant) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
             await coordinator.async_set_evcc_mode_control_target_soc_max(call.data.get("target_soc_max"))
+
+    async def _handle_set_evcc_realtime_override_min_solar_share(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_set_evcc_realtime_override_min_solar_share(call.data.get("min_solar_share"))
 
     async def _handle_urlaub_seit(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
@@ -1082,6 +1106,11 @@ def _register_services(hass: HomeAssistant) -> None:
         DOMAIN, SERVICE_SET_EVCC_MODE_CONTROL_TARGET_SOC_MAX, _handle_set_evcc_mode_control_target_soc_max,
         schema=SET_EVCC_MODE_CONTROL_TARGET_SOC_MAX_SCHEMA,
     )
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
+        _handle_set_evcc_realtime_override_min_solar_share,
+        schema=SET_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE_SCHEMA,
+    )
     hass.services.async_register(DOMAIN, SERVICE_URLAUB_SEIT, _handle_urlaub_seit, schema=URLAUB_SEIT_SCHEMA)
     hass.services.async_register(
         DOMAIN, SERVICE_SET_EVCC_MODE_CONTROL_PAUSE, _handle_set_evcc_mode_control_pause,
@@ -1149,6 +1178,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_ADD_MAINTENANCE, SERVICE_EDIT_MAINTENANCE, SERVICE_DELETE_MAINTENANCE,
                 SERVICE_MARK_MAINTENANCE_DONE, SERVICE_URLAUB_SEIT,
                 SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED, SERVICE_SET_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
+                SERVICE_SET_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
                 SERVICE_SET_EVCC_MODE_CONTROL_PAUSE,
                 SERVICE_SET_EVCC_CHARGE_PLAN, SERVICE_CLEAR_EVCC_CHARGE_PLAN,
                 SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM, SERVICE_SET_EVCC_MANUAL_MODE,

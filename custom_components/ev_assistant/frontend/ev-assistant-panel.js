@@ -2751,11 +2751,11 @@ class EVAssistantPanel extends HTMLElement {
     const schema = {
       tuev: { sichtbar: ["fest", "zeit", "reminder-zeit"], pflicht: ["fest", "zeit"] },
       inspektion: {
-        sichtbar: ["km", "zeit", "lastservice", "reminder-zeit", "reminder-km", "kosten"], pflicht: null,
+        sichtbar: ["km", "zeit", "erst", "lastservice", "reminder-zeit", "reminder-km", "kosten"], pflicht: null,
       },
     };
     return schema[presetKey] || {
-      sichtbar: ["km", "zeit", "fest", "lastservice", "reminder-zeit", "reminder-km", "kosten"], pflicht: null,
+      sichtbar: ["km", "zeit", "fest", "erst", "lastservice", "reminder-zeit", "reminder-km", "kosten"], pflicht: null,
     };
   }
 
@@ -2802,6 +2802,12 @@ class EVAssistantPanel extends HTMLElement {
             <div class="wt-fld-km"><label>Kilometer-Intervall (optional)<input type="text" inputmode="decimal" class="wt-km-intervall" placeholder="z.B. 30000"></label></div>
             <div class="wt-fld-zeit"><label>Intervall (Monate, optional)<input type="text" inputmode="decimal" class="wt-zeit-intervall" placeholder="z.B. 24"></label></div>
             <div class="wt-fld-fest"><label>Festes Fälligkeitsdatum (optional)<input type="month" class="wt-festes-datum"></label></div>
+          </div>
+          <div class="wt-group wt-fld-erst">
+            <div class="sub-head wt-group-title">Abweichendes erstes Intervall (optional)</div>
+            <div class="dim wt-group-hint">Nur für die erste Fälligkeit (z.B. erste Inspektion nach 12.500 km / 12 Monaten), danach gelten die Intervalle oben.</div>
+            <label>Erstes Kilometer-Intervall<input type="text" inputmode="decimal" class="wt-erst-km" placeholder="z.B. 12500"></label>
+            <label>Erstes Intervall (Monate)<input type="text" inputmode="decimal" class="wt-erst-zeit" placeholder="z.B. 12"></label>
           </div>
           <div class="wt-group wt-fld-lastservice">
             <div class="sub-head wt-group-title">Letzter Service (optional)</div>
@@ -2852,6 +2858,8 @@ class EVAssistantPanel extends HTMLElement {
     const lastDatumInput = form.querySelector(".wt-last-datum");
     const reminderMonateInput = form.querySelector(".wt-reminder-monate");
     const reminderKmInput = form.querySelector(".wt-reminder-km");
+    const erstKmInput = form.querySelector(".wt-erst-km");
+    const erstZeitInput = form.querySelector(".wt-erst-zeit");
     const saveBtn = form.querySelector(".wt-save");
     const cancelBtn = form.querySelector(".wt-cancel");
     const faelligkeitHint = form.querySelector(".wt-faelligkeit-hint");
@@ -2859,6 +2867,7 @@ class EVAssistantPanel extends HTMLElement {
       km: form.querySelector(".wt-fld-km"),
       zeit: form.querySelector(".wt-fld-zeit"),
       fest: form.querySelector(".wt-fld-fest"),
+      erst: form.querySelector(".wt-fld-erst"),
       lastservice: form.querySelector(".wt-fld-lastservice"),
       "reminder-zeit": form.querySelector(".wt-fld-reminder-zeit"),
       "reminder-km": form.querySelector(".wt-fld-reminder-km"),
@@ -2927,6 +2936,8 @@ class EVAssistantPanel extends HTMLElement {
         lastDatumInput.value = "";
         reminderMonateInput.value = "";
         reminderKmInput.value = "";
+        erstKmInput.value = "";
+        erstZeitInput.value = "";
         applyFieldVisibility("");
         updateValidity();
       }
@@ -2955,6 +2966,10 @@ class EVAssistantPanel extends HTMLElement {
       if (!isNaN(reminderMonate)) payload.reminder_monate = reminderMonate;
       const reminderKm = parseFloat(reminderKmInput.value.replace(",", "."));
       if (!isNaN(reminderKm)) payload.reminder_km = reminderKm;
+      const erstKm = parseFloat(erstKmInput.value.replace(",", "."));
+      if (!isNaN(erstKm) && erstKm > 0) payload.erst_km_intervall = erstKm;
+      const erstZeit = parseInt(erstZeitInput.value, 10);
+      if (!isNaN(erstZeit) && erstZeit > 0) payload.erst_zeit_intervall_monate = erstZeit;
       this._call("add_maintenance", payload);
       form.classList.add("hidden");
     });
@@ -2990,7 +3005,8 @@ class EVAssistantPanel extends HTMLElement {
     if (!list) return;
     const sig = punkte.map((p) =>
       `${p.id}:${p.name}:${p.km_intervall}:${p.zeit_intervall_monate}:${p.festes_datum}:`
-      + `${JSON.stringify(p.last_done)}:${p.kosten}:${p.aktiv}:${p.reminder_tage}:${p.reminder_km}`
+      + `${JSON.stringify(p.last_done)}:${p.kosten}:${p.aktiv}:${p.reminder_tage}:${p.reminder_km}:`
+      + `${p.erst_km_intervall}:${p.erst_zeit_intervall_monate}:${p.erledigt_anzahl}`
     ).join("|");
     if (sig === this._wtSig && list.dataset.built === "1") return;
     this._wtSig = sig;
@@ -3034,8 +3050,10 @@ class EVAssistantPanel extends HTMLElement {
       }
       let secondaryKmText = null;
       if (p.rest_tage != null && p.rest_km != null) {
-        const zielKm = (p.last_done && p.last_done.km != null && p.km_intervall)
-          ? p.last_done.km + p.km_intervall : null;
+        // wirksames Intervall (Erstintervall, solange noch nie erledigt)
+        const kmWirksam = p.km_intervall_wirksam ?? p.km_intervall;
+        const zielKm = (p.last_done && p.last_done.km != null && kmWirksam)
+          ? p.last_done.km + kmWirksam : null;
         const abs = this._fmtNum(Math.abs(p.rest_km), 0);
         secondaryKmText = p.rest_km >= 0
           ? `noch ${abs} km` + (zielKm != null ? ` bis ${this._fmtNum(zielKm, 0)} km` : "")
@@ -3047,8 +3065,11 @@ class EVAssistantPanel extends HTMLElement {
         if (secondaryKmText) statusLine.push(secondaryKmText);
       }
       const kriterien = [];
-      if (p.km_intervall) kriterien.push(`alle ${this._fmtNum(p.km_intervall, 0)} km`);
-      if (p.zeit_intervall_monate) kriterien.push(`alle ${p.zeit_intervall_monate} Monate`);
+      const kmAnzeige = p.km_intervall_wirksam ?? p.km_intervall;
+      const zeitAnzeige = p.zeit_intervall_wirksam ?? p.zeit_intervall_monate;
+      const erstPhase = p.intervall_phase === "erst";
+      if (kmAnzeige) kriterien.push(`${erstPhase ? "erstes Intervall: " : ""}alle ${this._fmtNum(kmAnzeige, 0)} km`);
+      if (zeitAnzeige) kriterien.push(`${erstPhase && !kmAnzeige ? "erstes Intervall: " : ""}alle ${zeitAnzeige} Monate`);
       if (p.festes_datum) kriterien.push(`fest: ${fmtMonthYear(p.festes_datum)}`);
       const lastDoneParts = [];
       if (p.last_done && p.last_done.km != null) lastDoneParts.push(`${this._fmtNum(p.last_done.km, 0)} km`);
@@ -3085,6 +3106,12 @@ class EVAssistantPanel extends HTMLElement {
             <label>Intervall in Monaten (leer = kein Kriterium)<input type="text" inputmode="decimal" class="wte-zeit" value="${p.zeit_intervall_monate ?? ""}"></label>
             <label>Festes Fälligkeitsdatum (leer = kein Kriterium)<input type="month" class="wte-fest" value="${this._wartungDateToMonth(p.festes_datum)}"></label>
           </div>
+          ${p.typ !== "tuev" ? `<div class="wt-group">
+            <div class="sub-head wt-group-title">Abweichendes erstes Intervall (leer = keins)</div>
+            <div class="dim wt-group-hint">Gilt nur bis zum ersten Erledigen${p.erledigt_anzahl ? " (dieser Punkt wurde bereits erledigt)" : ""}.</div>
+            <label>Erstes Kilometer-Intervall<input type="text" inputmode="decimal" class="wte-erst-km" value="${p.erst_km_intervall ?? ""}"></label>
+            <label>Erstes Intervall (Monate)<input type="text" inputmode="decimal" class="wte-erst-zeit" value="${p.erst_zeit_intervall_monate ?? ""}"></label>
+          </div>` : ""}
           <div class="wt-group">
             <div class="sub-head wt-group-title">Letzter Service</div>
             <label>Kilometerstand<input type="text" inputmode="decimal" class="wte-last-km" value="${(p.last_done && p.last_done.km != null) ? p.last_done.km : ""}"></label>
@@ -3157,6 +3184,15 @@ class EVAssistantPanel extends HTMLElement {
         }
         const wteFestVal = row.querySelector(".wte-fest").value;
         payload.festes_datum = wteFestVal ? this._wartungMonthToDate(wteFestVal) : "";
+        const wteErstKm = row.querySelector(".wte-erst-km");
+        if (wteErstKm) {
+          const erstKmVal = wteErstKm.value.trim();
+          const vKm = parseFloat(erstKmVal.replace(",", "."));
+          payload.erst_km_intervall = (erstKmVal === "" || isNaN(vKm) || vKm <= 0) ? "" : vKm;
+          const erstZeitVal = row.querySelector(".wte-erst-zeit").value.trim();
+          const vZ = parseInt(erstZeitVal, 10);
+          payload.erst_zeit_intervall_monate = (erstZeitVal === "" || isNaN(vZ) || vZ <= 0) ? "" : vZ;
+        }
         const kostenVal = row.querySelector(".wte-kosten").value.trim();
         if (kostenVal === "") {
           payload.kosten = "";

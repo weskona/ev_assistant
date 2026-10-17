@@ -5255,3 +5255,67 @@ def test_sticky_min_soc_ausnahmen_schreiben_immer():
     assert sticky_min_soc(2, 0, True) == 2
     assert sticky_min_soc(None, 23, True) is None
     assert sticky_min_soc(22, None, True) == 22
+
+
+# ----- wartung_status(): abweichendes Erstintervall (Issue #48) --------------
+
+def _ws(km, last_km, last_datum, heute, erledigt, **kw):
+    return wartung_status(
+        aktueller_km=km, km_pro_tag=None, last_done={"km": last_km, "datum": last_datum},
+        km_intervall=25000.0, zeit_intervall_monate=24, festes_datum=None, heute=heute,
+        erst_km_intervall=12500.0, erst_zeit_intervall_monate=12, erledigt_anzahl=erledigt, **kw,
+    )
+
+
+def test_wartung_erstintervall_km_gilt_vor_dem_ersten_erledigen():
+    # Erstzulassung 0 km / 2026-01-01: erste Inspektion bei 12.500 km, nicht 25.000
+    r = _ws(12000.0, 0.0, "2026-01-01", "2026-03-01", 0)
+    assert r["intervall_phase"] == "erst"
+    assert r["rest_km"] == 500.0
+    assert r["km_intervall_wirksam"] == 12500.0 and r["zeit_intervall_wirksam"] == 12
+
+
+def test_wartung_erstintervall_zeit_gilt_vor_dem_ersten_erledigen():
+    r = _ws(1000.0, 0.0, "2026-01-01", "2026-12-20", 0)
+    assert r["naechste_quelle"] == "zeit" and r["faellig_datum"] == "2027-01-01"
+    assert r["status"] == "bald_faellig"
+
+
+def test_wartung_regulaere_intervalle_nach_dem_ersten_erledigen():
+    # erledigt bei 12.500 km / 2027-01-01 -> naechste bei 37.500 km / 2029-01-01
+    r = _ws(13000.0, 12500.0, "2027-01-01", "2027-02-01", 1)
+    assert r["intervall_phase"] == "regulaer"
+    assert r["rest_km"] == 24500.0
+    assert r["faellig_datum"] == "2029-01-01"
+    assert r["km_intervall_wirksam"] == 25000.0 and r["zeit_intervall_wirksam"] == 24
+
+
+def test_wartung_erstintervall_nur_km_zeit_bleibt_regulaer():
+    r = wartung_status(
+        aktueller_km=0.0, km_pro_tag=None, last_done={"km": 0.0, "datum": "2026-01-01"},
+        km_intervall=25000.0, zeit_intervall_monate=24, festes_datum=None, heute="2026-01-02",
+        erst_km_intervall=12500.0, erledigt_anzahl=0,
+    )
+    assert r["km_intervall_wirksam"] == 12500.0 and r["zeit_intervall_wirksam"] == 24
+    assert r["faellig_datum"] == "2028-01-01"
+
+
+def test_wartung_ohne_erstwerte_unveraendert_und_ohne_zusatzfelder():
+    r = wartung_status(
+        aktueller_km=10000.0, km_pro_tag=None, last_done={"km": 10000.0}, km_intervall=5000.0,
+        zeit_intervall_monate=None, festes_datum=None, heute="2026-01-01", erledigt_anzahl=0,
+    )
+    assert r == {"status": "ok", "naechste_quelle": "km", "rest_km": 5000.0}
+
+
+def test_wartung_uebersicht_reicht_erstintervall_durch():
+    punkt = {
+        "id": 1, "name": "Inspektion", "km_intervall": 25000.0, "zeit_intervall_monate": 24,
+        "erst_km_intervall": 12500.0, "erst_zeit_intervall_monate": 12, "erledigt_anzahl": 0,
+        "last_done": {"km": 0.0, "datum": "2026-01-01"}, "aktiv": True,
+    }
+    r = wartung_uebersicht([punkt], 12000.0, None, "2026-03-01")
+    assert r["punkte"][0]["intervall_phase"] == "erst" and r["punkte"][0]["rest_km"] == 500.0
+    punkt["erledigt_anzahl"] = 1
+    r = wartung_uebersicht([punkt], 12000.0, None, "2026-03-01")
+    assert r["punkte"][0]["intervall_phase"] == "regulaer" and r["punkte"][0]["rest_km"] == 13000.0

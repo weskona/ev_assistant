@@ -3320,3 +3320,53 @@ async def test_pv_modus_ziel_konstant_maximum_und_min_soc_gate_ab_5_punkten(hass
 
 def _orig(coordinator):
     return type(coordinator)._evcc_mode_targets(coordinator)
+
+
+# ----- Dienst set_evcc_realtime_override_min_solar_share (Issue #49) ---------
+
+async def test_set_min_solar_share_schreibt_in_entry_data_klemmt_und_entfernt(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE as KEY
+
+    coordinator, entry = await _make_coordinator(hass, coordinators, "mss_set1")
+    await coordinator.async_set_evcc_realtime_override_min_solar_share(50)
+    assert entry.data[KEY] == 50.0
+    await coordinator.async_set_evcc_realtime_override_min_solar_share(150)
+    assert entry.data[KEY] == 100.0
+    await coordinator.async_set_evcc_realtime_override_min_solar_share(-5)
+    assert entry.data[KEY] == 0.0
+    await coordinator.async_set_evcc_realtime_override_min_solar_share(None)
+    assert KEY not in entry.data
+    assert any(e["kategorie"] == "evcc_min_solar_anteil_geaendert" for e in coordinator.data["event_log"])
+
+
+async def test_set_min_solar_share_attribut_am_modus_sensor(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+    )
+    from custom_components.ev_assistant.const import CONF_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE as KEY
+    from custom_components.ev_assistant.sensor import EvccModeControlSensor
+
+    coordinator, entry = await _make_coordinator(
+        hass, coordinators, "mss_attr", options={CONF_USABLE_KWH: 50.0, CONF_EVCC_MODE_CONTROL_ENABLED: True},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    assert EvccModeControlSensor(coordinator, entry).extra_state_attributes["pv_override_min_solar_share_pct"] is None
+    hass.config_entries.async_update_entry(entry, options={**entry.options, KEY: 40.0})
+    assert EvccModeControlSensor(coordinator, entry).extra_state_attributes["pv_override_min_solar_share_pct"] == 40.0
+
+
+def test_set_min_solar_share_schema_bereich_und_null():
+    import pytest
+    import voluptuous as vol
+
+    from custom_components.ev_assistant import SET_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE_SCHEMA as S
+
+    assert S({"config_entry_id": "x"}) == {"config_entry_id": "x"}
+    assert S({"config_entry_id": "x", "min_solar_share": None})["min_solar_share"] is None
+    assert S({"config_entry_id": "x", "min_solar_share": "50"})["min_solar_share"] == 50.0
+    for bad in (-1, 101):
+        with pytest.raises(vol.Invalid):
+            S({"config_entry_id": "x", "min_solar_share": bad})
