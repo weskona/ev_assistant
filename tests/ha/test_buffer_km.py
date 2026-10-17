@@ -105,6 +105,7 @@ async def test_attribute_am_sensor_und_vor_pv_laden_konsistent(hass, coordinator
     u = UsageProfileTomorrowSensor(c, entry)
     assert u.native_value == 16.0
     assert u.extra_state_attributes["puffer_art"] == "km"
+    assert u.extra_state_attributes["puffer_km_max"] == 300.0  # Panel setzt keine eigene Grenze
     b = ChargeBeforePvBinarySensor(c, entry).extra_state_attributes
     assert b["benoetigt_morgen_kwh"] == 16.0
     await c.async_set_usage_profile_buffer_km(60.0)

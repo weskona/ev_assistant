@@ -13,6 +13,23 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.56] - 2026-10-17
+
+### Changed
+
+- **Base mode `pv`: the target SoC written to evcc is always the configured maximum target SoC.** Before, the target followed the shrinking need (e.g. 23 % → 12 % overnight in 1 % steps) and every step rewrote min SoC, target and mode (19 to 91 `pv→pv` writes per day since 3 Oct.). In `pv` evcc does not charge without surplus anyway, so a high target costs nothing and a target that falls during clouds would only stop a running charge. A higher target (balancing 100 %) still wins; `minpv`/`now` keep the profile target; "base mode" means the mode before the real-time override. Under a real-time step-up to `minpv` the high target applies at once (the grid share is only the gap to the minimum power; 0.99.55 protection applies).
+- **`min_soc` is only rewritten from a change of 5 percentage points** (while mode and target are unchanged, and never for a change from or to 0). So `min_soc` can lag the current profile value by up to 4 points (about 2 kWh at 50 kWh usable).
+- **Surplus target raise now holds through clouds** (in `pv` mode now moot for the written target because of the rule above; the state is still tracked, e.g. for restore after restart). Once active (unchanged activation: base mode `pv`, target below the ceiling, surplus > 0, PV power > 0, 5 minutes continuous), the raised target stays as long as the base mode is `pv` and real PV power (> 0 W) is present, even with a surplus of 0 or below. Before, the target fell back to the profile target after 5 minutes of cloud, evcc stopped if the car was above it, and re-raising took at least 5 minutes plus evcc's switch-on delay. It is lowered after 5 minutes of continuous missing PV power (or unknown), immediately at sunset (`sun.sun` below the horizon) and immediately when the base mode is no longer `pv` (the base mode is checked, not the real-time override result: if the override steps up to `minpv` at a small surplus the raise stays only while the base mode is `pv`). Highest target wins as before (balancing 100 % stays); real-time override, balancing, restore after restart and the change gate are unchanged.
+- Event log: new entry `ziel_anhebung_geaendert` (`an`/`aus`, reason `ueberschuss_da`, `pv_weg`, `sonne_unten`, `modus_nicht_pv`) and the field `ziel_anhebung=an|aus` in `evcc_modus_geschrieben`.
+
+### Fixed
+
+- **Buffer slider in km mode now goes up to 300 km.** The panel set the slider maximum to 100 in every mode, so a buffer above 100 km (options and service allow up to 300 km) was clamped by the browser and looked like 100; touching the slider would have lowered it. The server now exposes `puffer_km_max` on `usage_profile_tomorrow`; km mode uses it (fallback 300, step 5), percent mode stays at 100 (step 1). If the current value exceeds the maximum, the maximum is raised to it, and if it is not a multiple of 5 the step is 1 so that displaying never changes it.
+
+### Honest limits
+
+- Holding without surplus relies on the 0.99.55 protection of the real-time override; a small risk remains at dusk with a surplus of at least 15 % of the wallbox minimum power while PV power is still above 0 W. The hold time constant (5 minutes) is unchanged.
+
 ## [0.99.55] - 2026-10-16
 
 ### Changed
