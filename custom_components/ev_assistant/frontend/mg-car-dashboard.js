@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=37  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=38  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.5.12";
+const VERSION = "3.5.13";
 // Version der Datenschnittstelle zu ev_assistant (Panel-Konfiguration, Websocket-Befehle, evcc_live),
 // die diese Karte erwartet. Meldet ev_assistant in der Panel-Konfiguration eine andere "api_version",
 // warnt die Karte (Konsole + Hinweis). Ohne "api_version" (ältere ev_assistant-Versionen) keine Warnung.
@@ -273,8 +273,27 @@ class MgCarDashboard extends HTMLElement {
         </div>
       </div><dialog class="dlg" id="cardlg"></dialog>`;
     this._built = true;
+    // nur bei geändertem HTML neu schreiben – sonst springt iOS (Companion-App) beim Scrollen alle paar Sekunden nach oben (#20)
+    for (const id of ["live", "mgmt", "hist", "pweek", "pmorrow", "pana", "pmisch"]) this._guardHtml(this.shadowRoot.getElementById(id));
     this._showPage();
     requestAnimationFrame(() => { this._fit(); this._render_trips(); });
+  }
+
+  /* innerHTML eines Abschnitts: identisches HTML nicht erneut schreiben (DOM, Scroll-Position und Fokus bleiben) */
+  _guardHtml(el) {
+    if (!el || el._guardHtml) return;
+    el._guardHtml = true;
+    const d = Object.getOwnPropertyDescriptor(Element.prototype, "innerHTML");
+    Object.defineProperty(el, "innerHTML", {
+      configurable: true,
+      get() { return d.get.call(this); },
+      set(v) {
+        const s = String(v);
+        if (s !== "" && this._htmlG === s && this.firstChild) return;
+        this._htmlG = s;
+        d.set.call(this, s);
+      },
+    });
   }
 
   _update(force = false) {
@@ -1432,6 +1451,11 @@ class MgCarDashboard extends HTMLElement {
     const kw = this._st(pid)?.attributes?.unit_of_measurement?.toLowerCase() === "kw" ? 1 : 0.001;
     // aktuellen Wert bis "jetzt" fortschreiben
     const nowP = this._w(pnow) / 1000, nowS = this._num(c.soc);
+    // das HTML hängt über Date.now() von der Uhrzeit ab – daher eigener Schlüssel: neu zeichnen nur bei anderem Zeitraum,
+    // neuen Verlaufsdaten, geänderter Leistung (0,1 kW) oder Ladestand und alle 5 Minuten (iOS-Springen, #20)
+    const hKey = [hrs, H?.t, Math.round(nowP * 10), Math.round(nowS), Math.floor(t1 / 300000)].join("|");
+    if (el._hKey === hKey && el.firstChild) return;
+    el._hKey = hKey;
     const seg = this._ranges().map((r) =>
       `<button class="hseg ${r.h === hrs ? "sel" : ""}" data-act="hrange" data-h="${r.h}">${esc(r.label)}</button>`).join("");
     let body;
