@@ -6789,6 +6789,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "puffer_prozent": buf["puffer_prozent"],
             "puffer_art": buf["art"],
             "puffer_km": buf["puffer_km"],
+            "puffer_km_max": USAGE_PROFILE_BUFFER_KM_MAX,
             "puffer_kwh": buf["puffer_kwh"],
             "benoetigt_kwh": buf["kwh"],
         }
