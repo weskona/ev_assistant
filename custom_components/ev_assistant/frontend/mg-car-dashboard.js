@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=29  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=36  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.5.4";
+const VERSION = "3.5.11";
 // Version der Datenschnittstelle zu ev_assistant (Panel-Konfiguration, Websocket-Befehle, evcc_live),
 // die diese Karte erwartet. Meldet ev_assistant in der Panel-Konfiguration eine andere "api_version",
 // warnt die Karte (Konsole + Hinweis). Ohne "api_version" (ältere ev_assistant-Versionen) keine Warnung.
@@ -16,6 +16,8 @@ const FONT_URL = "https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;6
 const WD = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
 const WD_LONG = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"];
 const MON = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+const PWD = [["montag", "Mo"], ["dienstag", "Di"], ["mittwoch", "Mi"], ["donnerstag", "Do"], ["freitag", "Fr"], ["samstag", "Sa"], ["sonntag", "So"]];
+const PWD_LONG = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"];
 const MON_LONG = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
 
 /* =====================================================================
@@ -82,7 +84,7 @@ const CAR_DEFAULTS = {
       session_price: "eva:session_price",
       duration: "eva:duration",
       currents: "eva:currents",       // Ladestrom je Phase: evcc „chargeCurrents“ über ev_assistant, sonst „Ladestrom P1–P3“ der evcc-Integration; oder Liste eigener Sensoren
-      remaining: "",                  // Restladezeit (Sensor)
+      remaining: "",                  // Restladezeit (Sensor; leer = „Laderestzeit“ der evcc-Integration)
       finish: "",                     // voraussichtliches Ladeende (Sensor mit Zeitstempel)
       limit_soc: "eva:limit_soc",     // Ladeziel: automatisch das Select der evcc-Integration (auswählbar), sonst evcc-Live-Wert (nur Anzeige)
       min_soc: "eva:min_soc",         // Markierung „bis hier immer laden“
@@ -224,6 +226,19 @@ class MgCarDashboard extends HTMLElement {
       this.shadowRoot.addEventListener("error", (e) => { if (e.target?.classList?.contains("carimg")) this._carImageError(e.target); }, true);
     }
     if (!this._pinBound) { this._pinBound = true; this.shadowRoot.addEventListener("change", (e) => { const t = e.composedPath()[0]; if (t?.classList?.contains("pin")) { this._planTime = t.value; t.blur(); } }); }
+    if (!this._setBound) {   // Eingaben der Einstellungen-Seite (Dateiauswahl, Filter, Vorlage im Formular)
+      this._setBound = true;
+      const on = (e) => {
+        const t = e.composedPath()[0], c = t?.classList;
+        if (!c) return;
+        if (e.type === "change" && c.contains("simgfile")) { const f = t.files?.[0]; t.value = ""; this._uploadImg(f); }
+        else if (e.type === "change" && c.contains("srestfile")) { const f = t.files?.[0]; t.value = ""; this._readRestore(f); }
+        else if (e.type === "change" && c.contains("fpreset")) this._wtPreset(t.value, true);
+        else if (e.type === "change" && c.contains("slogkat")) { this._logKat = t.value; this._renderLogList(); }
+        else if (e.type === "input" && c.contains("slogq")) { this._logQ = t.value; this._renderLogList(); }
+      };
+      this.shadowRoot.addEventListener("change", on); this.shadowRoot.addEventListener("input", on);
+    }
     if (!this._hoverBound) {
       this._hoverBound = true;
       this.shadowRoot.addEventListener("pointermove", (e) => this._barHover(e));
@@ -233,13 +248,23 @@ class MgCarDashboard extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${STYLE}${CAR_STYLE}</style>
       <div class="wrap carpage">
         <div class="apiwarn" id="apiwarn" hidden></div>
-        <div class="grid">
+        <div class="pages"><div class="hsegs"><button class="hseg" data-act="page" data-p="main">Übersicht</button><button class="hseg" data-act="page" data-p="prof">Profil &amp; Analyse</button><button class="hseg" data-act="page" data-p="set">Einstellungen</button></div></div>
+        <div class="grid" id="pmain">
           <div class="col"><section class="panel car" id="car"></section><section class="panel grow" id="trips"></section></div>
           <div class="col"><section class="panel" id="live"></section><section class="panel" id="mgmt"></section></div>
           <div class="col"><section class="panel grow" id="hist"></section><section class="panel" id="lease" hidden></section><section class="panel" id="usage" hidden></section></div>
         </div>
+        <div class="grid pgrid" id="pprof" hidden>
+          <section class="panel" id="pweek"></section><section class="panel" id="pmorrow"></section>
+          <section class="panel" id="pana"></section><section class="panel" id="pmisch"></section>
+        </div>
+        <div class="grid sgrid" id="pset" hidden>
+          <div class="col"><section class="panel" id="swart"></section><section class="panel" id="slk"></section><section class="panel" id="slog"></section></div>
+          <div class="col"><section class="panel" id="simg"></section><section class="panel" id="sdata"></section></div>
+        </div>
       </div><dialog class="dlg" id="cardlg"></dialog>`;
     this._built = true;
+    this._showPage();
     requestAnimationFrame(() => { this._fit(); this._render_trips(); });
   }
 
@@ -264,6 +289,9 @@ class MgCarDashboard extends HTMLElement {
     this._render_hist();
     this._render_lease();
     this._render_usage();
+    if (this._subPage() === "prof") this._render_prof();
+    if (this._subPage() === "set") this._render_set();
+    if (this._dlg === "ana") this._renderAnaDlg();
   }
 
   /* evcc setzt die Sitzungswerte nach dem Laden auf 0 → letzte echte Sitzung aus dem Verlauf holen */
@@ -293,6 +321,10 @@ class MgCarDashboard extends HTMLElement {
         if (v != null) vals[id] = v;
       }
       this._lastSess = { end, vals, src: "history" };
+      if (this._evaEntryId()) {   // Start-/End-SoC kennt nur das evcc-Ladelogbuch: passende Sitzung (Ende ± 2 h) suchen
+        const m = (await this._evccSessions()).filter((x) => x.finished && Math.abs(x.te - end) < 2 * 3600000).sort((a, b) => Math.abs(a.te - end) - Math.abs(b.te - end))[0];
+        if (m) Object.assign(this._lastSess, { s0: m.s0, s1: m.s1, sessDur: m.dur });
+      }
     } catch (e) { this._lastSess = { err: true }; }
     this._log("letzte Ladung", this._lastSess);
     this._update(true);
@@ -309,7 +341,7 @@ class MgCarDashboard extends HTMLElement {
       if (ev.session_solar) vals[ev.session_solar] = x.pv;
       if (ev.session_price) vals[ev.session_price] = x.price;
       if (ev.duration) vals[ev.duration] = x.dur;
-      this._lastSess = { end: x.te, vals, src: "evcc" };
+      this._lastSess = { end: x.te, vals, src: "evcc", kwh: x.kwh, durMin: x.dur ?? (x.te > x.ts ? (x.te - x.ts) / 60000 : null), s0: x.s0, s1: x.s1 };
     } catch (e) { this._lastSess = { err: true }; }
     this._log("letzte Ladung", this._lastSess);
     this._update(true);
@@ -407,10 +439,12 @@ class MgCarDashboard extends HTMLElement {
       const dur = x.dur == null ? "" : x.dur >= 60 ? `${Math.floor(x.dur / 60)}:${pad(Math.round(x.dur % 60))} h` : `${Math.round(x.dur)} min`;
       const per = x.per != null ? x.per : x.cost != null && x.kwh > 0.05 ? x.cost / x.kwh : null;
       const pv = x.pv != null ? Math.max(0, Math.min(100, x.pv)) : null;
+      const avgP = x.kwh != null && x.dur > 1 ? x.kwh / (x.dur / 60) : null, soc = x.s0 != null && x.s1 != null ? `${Math.round(x.s0)} → ${Math.round(x.s1)} %` : null;
       return `${mh}<div class="chr ${x.type}">
         <span class="chi">${icon(x.type === "home" ? "mdi:home-lightning-bolt" : "mdi:ev-station")}</span>
-        <span class="chd"><b>${WD[dt.getDay()]} ${dt.getDate()}. ${MON[dt.getMonth()]}</b><small>${pad(dt.getHours())}:${pad(dt.getMinutes())} Uhr${dur ? ` · ${dur}` : ""}${x.type === "ext" ? ` · ${esc(x.who)}` : ""}</small></span>
-        <span class="chpv">${pv != null ? `<i class="pvbar"><i style="width:${pv}%"></i></i><small>${Math.round(pv)} % PV</small>` : x.s0 != null && x.s1 != null ? `<small>${Math.round(x.s0)} → ${Math.round(x.s1)} %</small>` : ""}</span>
+        <span class="chd"><b>${WD[dt.getDay()]} ${dt.getDate()}. ${MON[dt.getMonth()]}</b><small>${pad(dt.getHours())}:${pad(dt.getMinutes())} Uhr${dur ? ` · ${dur}` : ""}${x.type === "ext" ? ` · ${esc(x.who)}` : ""}</small>${soc || avgP != null ? `<small class="chsm">${[soc, avgP != null && `Ø ${de(avgP, 1)} kW`].filter(Boolean).join(" · ")}</small>` : ""}</span>
+        <span class="chpv">${pv != null ? `<i class="pvbar"><i style="width:${pv}%"></i></i><small>${Math.round(pv)} % PV</small>` : ""}</span>
+        <span class="chs"><b>${soc || "–"}</b><small>${avgP != null ? `Ø ${de(avgP, 1)} kW` : ""}</small></span>
         <span class="chk"><b>${x.kwh == null ? "–" : de(x.kwh, 1)}</b><small>kWh</small></span>
         <span class="chc"><b>${x.cost == null ? "–" : de(x.cost, 2) + " €"}</b><small>${per != null ? `${de(per * 100, 1)} ct/kWh` : ""}</small></span>
       </div>`;
@@ -548,7 +582,7 @@ class MgCarDashboard extends HTMLElement {
   _render_mgmt_eva(el) {
     const E = this._eva(), L = this._live(), mc = this._st(E.evcc_mode_control), ma = mc?.attributes || {};
     const ms = this._evaModeState(), entry = this._evaEntryId();
-    const modeSel = this._evccEnt("mode"), acSel = this._evccEnt("alwayscharge");
+    const acSel = this._evccEnt("alwayscharge");
     const acState = this._st(acSel)?.state;
 
     // --- evcc: Ist-Zustand ---
@@ -575,9 +609,8 @@ class MgCarDashboard extends HTMLElement {
     const sel = o || (ms.cur === "auto" && !paused ? "auto" : evSel);
     const smartSel = ["pv", "minpv", "once"].includes(sel), selOpt = EVA_SMART_OPTS.find((x) => (sel === "pv" ? x.ac === "off" : sel === "minpv" ? x.ac === "on" : x.ac === "once"));
     const tile = (m, on, act, inner, extra = "") => `<button class="mmode ${on ? "sel" : ""}" style="--cc:${m.color}" data-act="${act}" ${extra} title="${esc(m.title || "")}"><span class="mmh">${inner}</span></button>`;
-    const modes = `<div class="mmodes">
+    const modes = `<div class="mmodes m3">
       ${tile(EVA_AUTO, sel === "auto", "evamode2", `${icon(EVA_AUTO.icon)}<b>Auto</b>`, `data-v="auto"`)}
-      ${modeSel ? tile({ color: "#8b91a1", title: "nicht laden" }, sel === "off", "evamode2", `${icon("mdi:power-off")}<b>Aus</b>`, `data-v="off"`) : ""}
       ${tile({ ...EVA_SMART, title: smartSel ? `Smart · ${selOpt.long}` : "Smart: aus (nur PV), immer oder 1x" }, smartSel, "evasmartmenu", `${smartSel ? ico(selOpt) : icon("mdi:solar-power")}<b>Smart</b>${icon("mdi:chevron-down", "mchv")}`)}
       ${tile(EVA_NOW, sel === "now", "evamode2", `${icon(EVA_NOW.icon)}<b>Schnell</b>`, `data-v="now"`)}</div>`;
 
@@ -780,21 +813,32 @@ class MgCarDashboard extends HTMLElement {
     const val = (id) => (charging ? num(id) : L?.vals?.[id] ?? null);
     const kwh = val(ev.session_energy), pvp = val(ev.session_solar), cost = val(ev.session_price), dur = val(ev.duration);
     const durU = (this._st(ev.duration)?.attributes?.unit_of_measurement || "min").toLowerCase();
-    const durMin = dur == null ? null : durU === "h" ? dur * 60 : durU === "s" ? dur / 60 : dur;
+    // Dauer der letzten Ladung aus dem evcc-Ladelogbuch ist schon in Minuten (die Einheit des Sensors gilt dafür nicht)
+    const durMin = !charging && L?.durMin != null ? L.durMin : dur == null ? (!charging && L?.sessDur != null ? L.sessDur : null) : durU === "h" ? dur * 60 : durU === "s" ? dur / 60 : dur;
     const durTxt = durMin == null ? "–" : durMin >= 60 ? `${Math.floor(durMin / 60)}:${pad(Math.round(durMin % 60))} h` : `${Math.round(durMin)} min`;
     const cur = this._st(ev.session_price)?.attributes?.unit_of_measurement || "€";
+    const avgP = kwh != null && durMin > 1 ? kwh / (durMin / 60) : null;   // Ø Ladeleistung der (letzten) Sitzung
 
     // Kopf: Status
     const stTxt = charging ? "Lädt" : plugged ? "Bereit" : "Abgesteckt";
     const stCls = charging ? "on" : plugged ? "ready" : "";
 
     // links: große Zahl + Zeitangabe
-    let kicker = "", when = "";
+    let kicker = "", when = "", kickEnd = "";
     if (charging) {
-      kicker = `Lädt${durMin != null ? ` seit ${durTxt}` : ""}`;
-      const fin = this._st(ev.finish), finD = fin && !OFFLINE_HD.includes(fin.state) ? new Date(fin.state) : null, rem = this._fmt(ev.remaining);
+      // Ladeende: eigener Sensor (finish), sonst jetzt + Restladezeit (eigener Sensor oder „Laderestzeit“ der evcc-Integration)
+      const fin = this._st(ev.finish);
+      let finD = fin && !OFFLINE_HD.includes(fin.state) ? new Date(fin.state) : null;
+      if (!finD || isNaN(finD)) {
+        const rs = this._st(ev.remaining || this._evccEnt("chargeremainingduration", true)), rv = parseFloat(rs?.state);
+        const u = String(rs?.attributes?.unit_of_measurement || "s").toLowerCase();
+        const sec = isNaN(rv) || rv <= 0 ? null : u === "h" ? rv * 3600 : u === "min" ? rv * 60 : u === "d" ? rv * 86400 : rv;
+        finD = sec != null ? new Date(Date.now() + sec * 1000) : null;
+      }
+      const finTxt = finD && !isNaN(finD) ? `bis ${new Date(finD).toDateString() !== new Date().toDateString() ? `${WD[finD.getDay()]} ` : ""}${pad(finD.getHours())}:${pad(finD.getMinutes())} Uhr` : "";
+      kicker = `Lädt${durMin != null ? ` seit ${durTxt}` : ""}`; kickEnd = finTxt;
       const amps = this._phaseCurrents();
-      when = `${icon("mdi:flash")}<b>${p.v} ${p.u}</b>${amps ? `<span class="lamps">${amps}</span>` : ""}${finD && !isNaN(finD) ? ` · fertig ${pad(finD.getHours())}:${pad(finD.getMinutes())} Uhr` : rem ? ` · noch ${rem.v} ${rem.u}` : ""}`;
+      when = `${icon("mdi:flash")}<b>${p.v} ${p.u}</b>${avgP != null ? ` <span>(Ø ${de(avgP, 1)} kW)</span>` : ""}${amps ? `<span class="lamps">${amps}</span>` : ""}`;
     } else if (L) {
       const d = new Date(L.end);
       kicker = `Letzte Ladung · ${this._ago(d)}`;
@@ -815,13 +859,12 @@ class MgCarDashboard extends HTMLElement {
       <div class="lsplitl"><span class="pv">${icon("mdi:solar-power-variant")}PV <b>${de(pvK, 1)} kWh</b></span><span class="gr">${icon("mdi:transmission-tower")}Netz <b>${de(grK, 1)} kWh</b></span></div>` : "";
 
     // Kennzahlen
-    const per = cost != null && kwh > 0.05 ? cost / kwh : null, avgP = kwh != null && durMin > 1 ? kwh / (durMin / 60) : null;
+    const per = cost != null && kwh > 0.05 ? cost / kwh : null;
     const fact = (lbl, v) => `<div class="lfact"><span>${lbl}</span><b>${v}</b></div>`;
     const facts = [
       fact("Dauer", durTxt, ev.duration),
       fact("Kosten", cost == null ? "–" : `${de(cost, 2)} ${esc(cur)}`, ev.session_price),
       fact("Preis", per == null ? "–" : `${de(per * 100, 1)} ct/kWh`),
-      fact("Ø Leistung", avgP == null ? "–" : `${de(avgP, 1)} kW`),
     ].join("");
 
     // Plan, Modus, Hinweise als schmale Zeilen
@@ -839,8 +882,8 @@ class MgCarDashboard extends HTMLElement {
       <div class="lclick" data-act="charges" title="Alle Ladungen anzeigen">
       <div class="lhero ${charging ? "chg" : ""}">
         <div class="lhl">
-          <span class="lkick">${esc(kicker)}</span>
-          <div class="lbig"><b>${kwh == null ? "–" : de(kwh, 1)}</b><small>kWh</small></div>
+          <span class="lkick">${esc(kicker)}${kickEnd ? `<span class="lend"><i> · </i>${esc(kickEnd)}</span>` : ""}</span>
+          <div class="lbig"><b>${kwh == null ? "–" : de(kwh, 1)}</b><small>kWh</small>${!charging && avgP != null ? `<span class="lavg">Ø ${de(avgP, 1)} kW</span>` : ""}</div>
           ${when ? `<span class="lwhen">${when}</span>` : ""}
         </div>
         <div class="lringw">${ring}</div>
@@ -1172,7 +1215,8 @@ class MgCarDashboard extends HTMLElement {
       const list = (res?.sessions || []).filter((x) => !veh || !x.vehicle || String(x.vehicle).toLowerCase() === veh).map((x) => {
         const ts = x.created ? Date.parse(x.created) : NaN, te = x.finished ? Date.parse(x.finished) : Date.now();
         return { ts, te, kwh: x.chargedEnergy ?? null, pv: x.solarPercentage ?? null, price: x.price ?? null,
-          dur: typeof x.chargeDuration === "number" ? x.chargeDuration / 1e9 / 60 : null, finished: !!x.finished };
+          dur: typeof x.chargeDuration === "number" && x.chargeDuration > 0 ? x.chargeDuration / 1e9 / 60 : null, finished: !!x.finished,
+          s0: typeof x.socStart === "number" ? x.socStart : null, s1: typeof x.socEnd === "number" ? x.socEnd : null };
       }).filter((x) => !isNaN(x.ts) && x.te > x.ts);
       this._sess = { t: Date.now(), list };
     } catch (e) { this._sess = { t: Date.now(), list: [] }; }
@@ -1400,6 +1444,513 @@ class MgCarDashboard extends HTMLElement {
     if (H) el.style.minHeight = "";
   }
 
+
+  /* ---------- Unterseite „Profil & Analyse“ (Daten aus ev_assistant) ---------- */
+  _subPage() {
+    if (this._pg) return this._pg;
+    let v = null; try { v = localStorage.getItem("mg-car-page"); } catch (e) {}
+    return (this._pg = v === "prof" || v === "set" ? v : "main");
+  }
+  _showPage() {
+    const p = this._subPage(), sr = this.shadowRoot;
+    sr.getElementById("pmain").hidden = p !== "main";
+    sr.getElementById("pprof").hidden = p !== "prof";
+    sr.getElementById("pset").hidden = p !== "set";
+    sr.querySelectorAll('[data-act="page"]').forEach((b) => b.classList.toggle("sel", b.dataset.p === p));
+  }
+  _ea(key) { const id = this._eva()[key]; return id ? this._hass?.states[id] : null; }
+  _wdIdx() { const t = new Date().getDay(), today = t === 0 ? 6 : t - 1; return { today, tomorrow: (today + 1) % 7 }; }
+  _roundKm(km) { if (typeof km !== "number" || isNaN(km)) return null; km = Math.max(0, km); return km < 100 ? Math.round(km / 5) * 5 : Math.round(km / 10) * 10; }
+
+  _render_prof() {
+    this._render_week(); this._render_morrow(); this._render_ana(); this._render_misch();
+  }
+
+  _render_week() {
+    const el = this.shadowRoot.getElementById("pweek");
+    const P = this._ea("usage_profile")?.attributes || {}, Hs = this._ea("house_usage_profile")?.attributes || {};
+    const Pl = this._ea("plug_window")?.attributes || {}, Dp = this._ea("morning_departure")?.attributes?.je_wochentag || null;
+    const urlaub = !!this._ea("evcc_mode_control")?.attributes?.urlaub_aktiv;
+    const head = this._hd("Deine Woche", urlaub ? `<span class="pchip">Urlaub</span>` : "");
+    if (P.montag === undefined) { el.innerHTML = head + `<div class="empty">Noch nicht genug Fahrtenbuch-Historie (mindestens 7 Tage) für ein Nutzungsprofil.</div>`; return; }
+    const km = P.km_je_wochentag, hasKm = !!km && PWD.every(([k]) => typeof km[k] === "number");
+    const ev = PWD.map(([k]) => (hasKm ? km[k] : parseFloat(P[k]) || 0)), evMax = Math.max(0.1, ...ev);
+    const hs = PWD.map(([k]) => (Hs[k] !== undefined ? parseFloat(Hs[k]) : null)), hsMax = Math.max(0.1, ...hs.filter((x) => x != null));
+    const pl = PWD.map(([k]) => (Pl[k] !== undefined ? parseFloat(Pl[k]) : null));
+    const minN = this._ea("morning_departure")?.attributes?.mindestanzahl || 4;
+    const dep = (s) => !s ? "–" : s.status === "ok" && s.typisch ? s.typisch : s.status === "nicht_belastbar" ? `${s.n_gueltig}/${minN}` : s.status === "uneinheitlich" ? "?" : "–";
+    const { today, tomorrow } = this._wdIdx(), showHs = Hs.konfiguriert === true && hs.some((x) => x != null);
+    const days = PWD.map(([k, lbl], i) => {
+      const cls = i === tomorrow ? "tm" : i === today ? "td" : "";
+      return `<div class="pday ${cls}"><div class="pdn"><b>${lbl}</b>${i === tomorrow ? "<span>MORGEN</span>" : i === today ? "<span>HEUTE</span>" : ""}</div>
+        <div class="pmt ev"><small>Auto${hasKm ? " (ca.)" : ""}</small><b>${hasKm ? this._roundKm(ev[i]) : de(ev[i], 1)}<em>${hasKm ? "km" : "kWh"}</em></b><div class="pbar"><i style="width:${(ev[i] / evMax) * 100}%"></i></div></div>
+        ${showHs ? `<div class="pmt hs"><small>Haus</small><b>${hs[i] == null ? "–" : de(hs[i], 1)}<em>${hs[i] == null ? "" : "kWh"}</em></b><div class="pbar"><i style="width:${hs[i] == null ? 0 : (hs[i] / hsMax) * 100}%"></i></div></div>` : ""}
+        ${pl.some((x) => x != null) ? `<div class="pmt pl"><small>Steckt</small><b>${pl[i] == null ? "–" : de(pl[i], pl[i] >= 10 ? 0 : 1)}<em>${pl[i] == null ? "" : "h"}</em></b></div>` : ""}
+        ${Dp ? `<div class="pmt dp"><small>Abfahrt</small><b>${dep(Dp[k])}</b></div>` : ""}</div>`;
+    }).join("");
+    el.innerHTML = head + `<div class="pdays">${days}</div>`;
+  }
+
+  _render_morrow() {
+    const el = this.shadowRoot.getElementById("pmorrow");
+    if (this.shadowRoot.activeElement?.classList?.contains("pbufsel")) return;   // Auswahl offen: nicht neu zeichnen
+    if (!this._bufBound) {
+      this._bufBound = true;
+      el.addEventListener("change", (e) => {
+        const t = e.target; if (!t?.classList?.contains("pbufsel") || t.value === "") return;
+        const v = Number(t.value), id = this._evaEntryId(); t.blur();
+        if (!id) return;
+        this._bufSet = { v, t: Date.now() };
+        Promise.resolve(this._hass.callService("ev_assistant", "set_usage_profile_buffer_km", { config_entry_id: id, buffer_km: v }))
+          .catch((x) => { this._bufSet = null; this._render_morrow(); this._mgmtFail?.(x); });
+      });
+    }
+    const rec = this._ea("charge_before_pv_recommended"), ra = rec?.attributes || {};
+    const ma = this._ea("evcc_mode_control")?.attributes || {}, need = this._ea("usage_profile_tomorrow"), na = need?.attributes || {};
+    const avK = parseFloat(this._ea("available_kwh")?.state), needK = parseFloat(need?.state), pvK = parseFloat(ra.pv_prognose_morgen_kwh);
+    const avKm = typeof ra.verfuegbare_km === "number" ? ra.verfuegbare_km : typeof ma.reichweite_km === "number" ? ma.reichweite_km : null;
+    const st = (lbl, km, kwh, cls = "") => {
+      const k = this._roundKm(km), hasW = !isNaN(kwh);
+      return `<div class="pst ${cls}"><span>${lbl}</span><b>${k != null ? k : hasW ? de(kwh, 1) : "–"}<small>${k != null ? "km" : hasW ? "kWh" : ""}</small></b>${k != null && hasW ? `<em>${de(kwh, 1)} kWh</em>` : ""}</div>`;
+    };
+    const bufKm = na.puffer_art === "km" && !isNaN(parseFloat(na.puffer_km)), buf = bufKm ? parseFloat(na.puffer_km) : parseFloat(na.puffer_prozent);
+    const on = rec?.state === "on", known = rec && !OFFLINE_HD.includes(rec.state);
+    const hero = !known ? `<div class="phero"><div class="kick">Empfehlung</div><div class="pbig">Noch keine Empfehlung möglich</div></div>`
+      : `<div class="phero ${on ? "yes" : "no"}"><div class="kick">Empfehlung</div><div class="pbig">${on ? "Laden empfehlenswert" : "Laden kann warten"}</div>
+        <div class="psub">${on ? (isNaN(pvK) ? "Der Akku reicht laut Profil nicht sicher bis morgen." : "Akku plus PV-Prognose reichen laut Profil nicht sicher.") : (isNaN(pvK) ? "Akku reicht bis morgen – z. B. auf PV-Überschuss warten." : "Akku plus PV-Prognose decken den Bedarf.")}</div></div>`;
+    // wie weit reicht der Akku laut Profil (Tage ab morgen)
+    const P = this._ea("usage_profile")?.attributes || {}, kmD = P.km_je_wochentag;
+    let reach = "";
+    if (avKm != null && kmD) {
+      const { tomorrow } = this._wdIdx(); let left = avKm, segs = [], until = null;
+      for (let n = 0; n < 7; n++) {
+        const [k, l] = PWD[(tomorrow + n) % 7], d = Math.max(0, kmD[k] || 0);
+        const f = d > 0 ? Math.max(0, Math.min(1, left / d)) : 1; segs.push([l, f]); left -= d;
+        if (left < 0) break; until = PWD[(tomorrow + n) % 7][1];
+      }
+      reach = `<div class="sl2">Reicht laut Profil ${until ? `bis <b>${PWD_LONG[PWD.findIndex((x) => x[1] === until)]}</b>` : "<b>nicht bis morgen</b>"}</div>
+        <div class="preach">${segs.map(([l, f]) => `<span><i style="width:${f * 100}%"></i><small>${l}</small></span>`).join("")}</div>`;
+    }
+    // PV morgen abzüglich Hausverbrauch laut Hausprofil (was fürs Auto übrig bleibt)
+    const Hs = this._ea("house_usage_profile")?.attributes || {}, hsK = Hs.konfiguriert === true ? parseFloat(Hs[PWD[this._wdIdx().tomorrow][0]]) : NaN;
+    let pvTile = "";
+    if (!isNaN(pvK)) {
+      const net = isNaN(hsK) ? pvK : Math.max(0, pvK - hsK), kmPerKwh = pvK > 0 && typeof ra.pv_prognose_morgen_km === "number" ? ra.pv_prognose_morgen_km / pvK : null;
+      const k = this._roundKm(kmPerKwh != null ? net * kmPerKwh : NaN);
+      pvTile = `<div class="pst pv"><span>PV fürs Auto</span><b>${k != null ? k : de(net, 1)}<small>${k != null ? "km" : "kWh"}</small></b>
+        <em>${isNaN(hsK) ? `${de(pvK, 1)} kWh · ohne Hausprofil` : `${de(pvK, 1)} − ${de(hsK, 1)} kWh Haus`}</em></div>`;
+    }
+    // Puffer in km einstellbar (ev_assistant-Dienst set_usage_profile_buffer_km, 0–300 km in 5er-Schritten)
+    if (this._bufSet && (Date.now() - this._bufSet.t > 90000 || (bufKm && buf === this._bufSet.v))) this._bufSet = null;
+    const bufCur = this._bufSet ? this._bufSet.v : bufKm ? buf : null;
+    let opts = bufCur == null ? `<option value="" selected>${isNaN(buf) ? "–" : `${de(buf, 0)} %`}</option>` : "";
+    for (let v = 0; v <= 300; v += 5) opts += `<option value="${v}"${bufCur != null && Math.round(bufCur / 5) * 5 === v ? " selected" : ""}>${v} km</option>`;
+    const bufTile = this._evaEntryId() && this._hass?.services?.ev_assistant?.set_usage_profile_buffer_km
+      ? `<div class="pst pbuf"><span>Puffer</span><select class="pbufsel" aria-label="Puffer in km">${opts}</select>${bufKm && !isNaN(parseFloat(na.puffer_kwh)) ? `<em>${de(parseFloat(na.puffer_kwh), 1)} kWh</em>` : ""}</div>`
+      : `<div class="pst"><span>Puffer</span><b>${isNaN(buf) ? "–" : de(buf, 0)}<small>${bufKm ? "km" : "%"}</small></b></div>`;
+    el.innerHTML = this._hd("Morgen", PWD_LONG[this._wdIdx().tomorrow]) + hero + `<div class="pstats">
+      ${st("Verfügbar", avKm, avK)}${st("Bedarf morgen", na.benoetigt_km, needK)}
+      ${bufTile}${pvTile}</div>${reach}`;
+  }
+
+  _anaData() {
+    const L = this._ea("charging_location_breakdown")?.attributes || {}, R = this._ea("range_estimate")?.attributes || {};
+    return { L, R, heim: L.heim || {}, fremd: L.fremd || {}, acdc: L.ac_dc || {}, anb: Object.entries(L.anbieter || {}) };
+  }
+
+  _render_ana() {
+    const el = this.shadowRoot.getElementById("pana"), A = this._anaData(), num = (v, d) => (typeof v === "number" ? de(v, d) : "–");
+    const cap = parseFloat(this._ea("battery_capacity")?.state), cyc = parseFloat(this._ea("equivalent_full_cycles")?.state);
+    const bands = A.R.verbrauch_nach_temperatur || {}, band = A.R.temperaturband_aktuell, tNow = A.R.aussentemperatur;
+    const bv = band && typeof bands[band] === "number" ? bands[band] : null, warm = bands[">20°C"];
+    const anb = [...A.anb].sort((a, b) => (b[1].kwh ?? b[1].kosten ?? 0) - (a[1].kwh ?? a[1].kosten ?? 0));
+    const tile = (k, lbl, val, unit, sub, extra = "") => `<button class="ptile" data-act="ana" data-k="${k}"><span>${lbl}</span><b>${val}<small>${unit}</small></b><p>${sub}</p>${extra}<i class="pchev">›</i></button>`;
+    const tiles = [
+      tile("bat", "Batterie", isNaN(cap) ? "–" : de(cap, 1), "kWh", isNaN(cyc) ? "geschätzte Kapazität" : `${de(cyc, 0)} Vollzyklen`),
+      tile("temp", `Verbrauch${typeof tNow === "number" ? ` bei ${de(tNow, 0)} °C` : ""}`, bv != null ? de(bv, 1) : "–", "kWh/100km",
+        bv != null && typeof warm === "number" && band !== ">20°C" && warm > 0 ? `${bv >= warm ? "+" : ""}${Math.round((bv / warm - 1) * 100)} % ggü. > 20 °C` : band ? `Band ${esc(band)}` : "noch keine Daten"),
+      tile("cost", "Kosten", num(A.L.eur_je_100km, 2), "€/100km", `Heim ${num(A.heim.preis_je_kwh, 2)} · Fremd ${num(A.fremd.preis_je_kwh, 2)} €/kWh`),
+      tile("loc", "Autarkie gesamt", num(A.L.gesamt_autarkie_pct, 0), "%", `Heim-Solaranteil ${num(A.heim.solar_pct, 0)} %`),
+      tile("loc", "Ladeorte", num(A.heim.kwh_anteil_pct, 0), "% Heim", `${num(A.heim.kwh, 0)} / ${num(A.fremd.kwh, 0)} kWh`,
+        `<div class="pbar two"><i style="width:${A.heim.kwh_anteil_pct || 0}%"></i><i class="o" style="width:${A.fremd.kwh_anteil_pct || 0}%"></i></div>`),
+      A.acdc.dc || A.acdc.ac ? tile("acdc", "Schnellladen", num(A.acdc.dc?.anzahl, 0), "× DC", `${num(A.acdc.ac?.anzahl, 0)} × AC · DC Ø ${num(A.acdc.dc?.preis_je_kwh, 2)} €/kWh`) : "",
+      anb.length ? tile("anb", "Top-Anbieter", esc(anb[0][0]), "", `${anb[0][1].kosten != null ? de(anb[0][1].kosten, 0) + " €" : ""}${anb[0][1].kwh != null ? ` · ${de(anb[0][1].kwh, 0)} kWh` : ""}`) : "",
+    ].filter(Boolean);
+    el.innerHTML = this._hd("Analyse", "Kachel antippen für Details") + `<div class="ptiles">${tiles.join("")}</div>`;
+  }
+
+  /* Wirtschaftlichkeit Netz-Zuschuss: Skala Einspeisevergütung → Netzpreis, Marker Schwelle und Mischpreis */
+  _render_misch() {
+    const el = this.shadowRoot.getElementById("pmisch"), lv = this._live();
+    const fi = parseFloat(lv.tariff_feedin), gr = parseFloat(lv.tariff_grid);
+    if (isNaN(fi) || isNaN(gr) || gr <= fi) { el.innerHTML = this._hd("Netz-Zuschuss") + `<div class="empty">evcc meldet keine Tarife (Netzpreis und Einspeisevergütung).</div>`; return; }
+    const a = this._ea("evcc_mode_control")?.attributes || {};
+    const sur = typeof a.pv_ueberschuss_w === "number" ? a.pv_ueberschuss_w : null, minP = typeof a.wallbox_min_power_w === "number" ? a.wallbox_min_power_w : null;
+    const thr = typeof a.pv_override_max_mischpreis_kwh === "number" ? a.pv_override_max_mischpreis_kwh : null;
+    let cur = null;
+    if (sur != null && minP > 0) { const c = Math.max(0, Math.min(sur, minP)); cur = (c * fi + (minP - c) * gr) / minP; }
+    const pct = (v) => Math.max(0, Math.min(100, ((v - fi) / (gr - fi)) * 100));
+    const solarMin = thr != null ? Math.round((1 - pct(thr) / 100) * 100) : null;
+    const note = cur == null ? "Noch keine Live-Daten von evcc." : thr == null ? "Kein Mindest-Solaranteil konfiguriert – PV-Überschuss unter der Mindestladeleistung wird mit Netzstrom ergänzt."
+      : cur <= thr ? "Mischpreis innerhalb der Schwelle – ein Netz-Zuschuss würde genutzt." : "Mischpreis über der Schwelle – der Überschuss wird eingespeist statt teuren Netzstrom zuzukaufen.";
+    el.innerHTML = this._hd("Netz-Zuschuss", solarMin != null ? `lohnt ab <b>${solarMin} % PV</b>` : "") + `
+      <div class="mscale">${thr != null ? `<span class="ms" style="left:${pct(thr)}%"></span>` : ""}${cur != null ? `<span class="mc" style="left:${pct(cur)}%"></span>` : ""}</div>
+      <div class="mlab"><span>Einspeisung ${de(fi, 3)} €</span><span>Netz ${de(gr, 3)} €</span></div>
+      <div class="pstats two"><div class="pst"><span>Mischpreis jetzt</span><b>${cur != null ? de(cur, 3) : "–"}<small>€/kWh</small></b></div>
+        <div class="pst"><span>Schwelle</span><b>${thr != null ? de(thr, 3) : "–"}<small>€/kWh</small></b></div></div>
+      <div class="pnote">${note}</div>`;
+  }
+
+  _openAna(k) { this._anaK = k; this._openDlg("ana"); this._renderAnaDlg(); }
+  _renderAnaDlg() {
+    const d = this.shadowRoot.getElementById("cardlg");
+    if (!d || this._dlg !== "ana") return;
+    const A = this._anaData(), k = this._anaK, num = (v, dd) => (typeof v === "number" ? de(v, dd) : "–");
+    const col = (t, o, rows) => `<div class="pcol"><h4>${t}</h4>${rows.filter(Boolean).map(([l, v]) => `<p>${l}<b>${v}</b></p>`).join("")}</div>`;
+    let title = "", sub = "", body = "";
+    if (k === "temp") {
+      title = "Verbrauch nach Temperatur"; sub = "Ø kWh/100 km je Temperaturband (mind. 3 Fahrten)";
+      const B = A.R.verbrauch_nach_temperatur || {}, ks = ["<0°C", "0-10°C", "10-20°C", ">20°C"].filter((x) => B[x] !== undefined), mx = Math.max(0.1, ...ks.map((x) => B[x]));
+      body = ks.length ? `<div class="pbands">${ks.map((x) => `<div class="${x === A.R.temperaturband_aktuell ? "cur" : ""}"><em>${de(B[x], 1)}</em><i style="height:${(B[x] / mx) * 100}%"></i><small>${esc(x)}</small></div>`).join("")}</div>`
+        : `<div class="empty">Noch keine Außentemperatur konfiguriert oder zu wenige Fahrten je Temperaturband.</div>`;
+    } else if (k === "bat") {
+      title = "Batterie"; sub = "Geschätzte Kapazität und Vollzyklen";
+      body = `<div class="pcols">${col("Kapazität", 0, [["geschätzt", `${num(parseFloat(this._ea("battery_capacity")?.state), 1)} kWh`], ["Vollzyklen", num(parseFloat(this._ea("equivalent_full_cycles")?.state), 1)]])}</div>
+        <div class="pnote">Rollierender Schnitt aus Fremd- und Heimladungen mit großem SoC-Hub. Der Wert liegt meist über der echten Kapazität (Ladeverluste) – entscheidend ist der Trend über Monate. Vollzyklen aus Fahrtenbuch und Ladungen (0→100→0 = 1 Zyklus).</div>`;
+    } else if (k === "anb") {
+      title = "Verteilung nach Anbieter"; sub = "Nur tatsächliche Ladungskosten, ohne Grundgebühren";
+      const l = [...A.anb].sort((a, b) => (b[1].kwh ?? b[1].kosten ?? 0) - (a[1].kwh ?? a[1].kosten ?? 0)), byK = l.some(([, v]) => typeof v.kwh === "number");
+      const mx = Math.max(0.1, ...l.map(([, v]) => (byK ? v.kwh : v.kosten) || 0));
+      body = `<div class="panb">${l.map(([n, v]) => `<div><p><b>${esc(n)}</b><span>${byK ? `${num(v.kwh, 1)} kWh` : `${num(v.kosten, 2)} €`}${typeof v.preis_je_kwh === "number" ? ` · Ø ${de(v.preis_je_kwh, 3)} €/kWh` : ""}</span></p><i><em style="width:${(((byK ? v.kwh : v.kosten) || 0) / mx) * 100}%"></em></i></div>`).join("")}</div>`;
+    } else {
+      title = "Ladeorte"; sub = "Heim und Fremd über alle Ladungen";
+      const h = A.heim, f = A.fremd, ac = A.acdc.ac, dc = A.acdc.dc;
+      body = `<div class="pcols">${col(`Heim · ${num(h.kwh_anteil_pct, 0)} %`, 0, [["Energie", `${num(h.kwh, 1)} kWh`], ["Kosten", `${num(h.kosten, 2)} €`], ["Ø Preis", `${num(h.preis_je_kwh, 3)} €/kWh`], ["Solaranteil", `${num(h.solar_pct, 1)} %`]])}
+        ${col(`Fremd · ${num(f.kwh_anteil_pct, 0)} %`, 0, [["Energie", `${num(f.kwh, 1)} kWh`], ["Kosten", `${num(f.kosten, 2)} €`], ["Ø Preis", `${num(f.preis_je_kwh, 3)} €/kWh`]])}</div>
+        <div class="pcols">${col("Gesamt", 0, [["€/100 km", num(A.L.eur_je_100km, 2)], ["Autarkie", `${num(A.L.gesamt_autarkie_pct, 1)} %`]])}
+        ${ac || dc ? col("Fremd nach AC / DC", 0, [ac && ["AC", `${num(ac.anzahl, 0)} × · ${num(ac.kwh, 0)} kWh · Ø ${num(ac.preis_je_kwh, 2)} €`], dc && ["DC", `${num(dc.anzahl, 0)} × · ${num(dc.kwh, 0)} kWh · Ø ${num(dc.preis_je_kwh, 2)} €`]]) : ""}</div>
+        <div class="pnote">Solaranteil nur für Heimladungen, die evcc gesteuert hat. Fremdladung zählt beim Autarkiegrad als 0 % Solar. AC/DC geschätzt aus der Ø Ladeleistung je Ladung.</div>`;
+    }
+    d.innerHTML = `<div class="dpan pdlg"><div class="dhd"><span class="dico">${icon("mdi:chart-box-outline")}</span>
+      <span class="rtx"><span class="rname">${title}</span><span class="rsub">${sub}</span></span>
+      <button class="dx" data-act="cardclose" aria-label="Schließen">${icon("mdi:close")}</button></div><div class="dbody">${body}</div></div>`;
+  }
+
+  /* ---------- Unterseite „Einstellungen“ (Wartung, Ladekarten, Einstellungen aus ev_assistant) ---------- */
+  _render_set() {
+    this._render_wart(); this._render_lk(); this._render_img(); this._render_data(); this._render_log();
+  }
+  // nur neu zeichnen, wenn sich die Daten geändert haben (sonst gingen offene Datei-Auswahlen verloren)
+  _setSig(el, sig) { if (el._sig === sig) return false; el._sig = sig; return true; }
+  _fdate(iso) { if (!iso) return "–"; const d = new Date(iso); return isNaN(d) ? esc(iso) : d.toLocaleDateString("de-DE"); }
+  _fmonth(iso) { if (!iso) return "–"; const d = new Date(iso); return isNaN(d) ? esc(iso) : d.toLocaleDateString("de-DE", { month: "2-digit", year: "numeric" }); }
+  _toast(message) { this.dispatchEvent(new CustomEvent("hass-notification", { detail: { message }, bubbles: true, composed: true })); }
+  // ev_assistant-Dienst für das gewählte Fahrzeug aufrufen; Fehler im offenen Formular bzw. als Hinweis zeigen
+  _evaCall(service, data = {}) {
+    const config_entry_id = this._evaEntryId();
+    if (!config_entry_id) { this._toast("ev_assistant nicht gefunden"); return Promise.reject(new Error("ev_assistant nicht gefunden")); }
+    return Promise.resolve(this._hass.callService("ev_assistant", service, { config_entry_id, ...data })).catch((x) => {
+      const msg = x?.message || x?.error?.message || String(x);
+      const err = this._dlg === "form" && this.shadowRoot.querySelector("#cardlg .ferr");
+      if (err) err.textContent = msg; else this._toast(msg);
+      throw x;
+    });
+  }
+
+  /* Wartung */
+  _wartData() {
+    const a = this._ea("wartung_faellig")?.attributes || {};
+    return { punkte: Array.isArray(a.punkte) ? a.punkte : [], presets: Array.isArray(a.presets) ? a.presets : [] };
+  }
+  _render_wart() {
+    const el = this.shadowRoot.getElementById("swart"), { punkte } = this._wartData();
+    if (!this._setSig(el, this._evaEntryId() + JSON.stringify(punkte))) return;
+    const ST = { ok: ["OK", "ok"], bald_faellig: ["Bald fällig", "soon"], ueberfaellig: ["Überfällig", "over"], unbekannt: ["Unbekannt", ""] };
+    const add = `<button class="sbt" data-act="set" data-k="wt-add">${icon("mdi:plus")}Anlegen</button>`;
+    if (!punkte.length) { el.innerHTML = this._hd("Wartung", add) + `<div class="empty">Noch kein Wartungspunkt angelegt – z. B. HU oder Inspektion, fällig nach Kilometerstand, Zeit oder beidem (je nachdem, was zuerst kommt).</div>`; return; }
+    const items = punkte.map((p) => {
+      const [lbl, cls] = ST[p.status] || [esc(p.status), ""];
+      let when = "";
+      if (p.status !== "unbekannt") {
+        if (p.rest_tage != null) when = `${p.rest_tage >= 0 ? "in" : "vor"} ${Math.abs(p.rest_tage)} Tag${Math.abs(p.rest_tage) === 1 ? "" : "en"}${p.faellig_datum ? ` (${p.naechste_quelle === "fest" ? this._fmonth(p.faellig_datum) : this._fdate(p.faellig_datum)})` : ""}`;
+        else if (p.rest_km != null) when = `${p.rest_km >= 0 ? "in" : "vor"} ${de(Math.abs(p.rest_km), 0)} km`;
+        if (p.rest_tage != null && p.rest_km != null) {
+          const ziel = p.last_done?.km != null && p.km_intervall ? p.last_done.km + p.km_intervall : null;
+          when += ` · ${p.rest_km >= 0 ? `noch ${de(p.rest_km, 0)} km` : `${de(-p.rest_km, 0)} km über`}${ziel != null ? ` ${p.rest_km >= 0 ? "bis" : ""} ${de(ziel, 0)} km`.replace("  ", " ") : ""}`;
+        }
+      }
+      const krit = [p.km_intervall && `alle ${de(p.km_intervall, 0)} km`, p.zeit_intervall_monate && `alle ${p.zeit_intervall_monate} Monate`, p.festes_datum && `fest ${this._fmonth(p.festes_datum)}`].filter(Boolean).join(" · ") || "kein Kriterium";
+      const last = [p.last_done?.km != null && `${de(p.last_done.km, 0)} km`, p.last_done?.datum && this._fdate(p.last_done.datum)].filter(Boolean).join(" · ") || "–";
+      return `<div class="sitem ${cls}${p.aktiv === false ? " off" : ""}"><div class="stop"><i class="sdot"></i><b>${esc(p.name)}</b>${p.aktiv === false ? `<span class="stag">pausiert</span>` : ""}
+          <span class="sacts"><button class="sic" data-act="set" data-k="wt-done" data-id="${p.id}" title="Als erledigt markieren">${icon("mdi:check")}</button><button class="sic" data-act="set" data-k="wt-edit" data-id="${p.id}" title="Bearbeiten">${icon("mdi:pencil")}</button><button class="sic" data-act="set" data-k="wt-del" data-id="${p.id}" title="Löschen">${icon("mdi:delete-outline")}</button></span></div>
+        <div class="sstat"><b>${lbl}</b>${when ? ` · ${when}` : ""}</div>
+        <div class="smeta"><span>${krit}</span><span>Letzter Service: ${last}</span>${p.kosten != null ? `<span>${de(p.kosten, 2)} €</span>` : ""}</div></div>`;
+    }).join("");
+    const due = punkte.filter((p) => p.aktiv !== false && (p.status === "bald_faellig" || p.status === "ueberfaellig")).length;
+    el.innerHTML = this._hd("Wartung", add, null) + (due ? `<div class="snote warn">${icon("mdi:wrench-clock")}${due} Punkt${due > 1 ? "e" : ""} bald fällig oder überfällig</div>` : "") + `<div class="slist">${items}</div>`;
+  }
+
+  /* Ladekarten */
+  _render_lk() {
+    const el = this.shadowRoot.getElementById("slk"), a = this._ea("ladekarten_kosten")?.attributes || {};
+    const karten = Array.isArray(a.karten) ? a.karten : [];
+    if (!this._setSig(el, this._evaEntryId() + JSON.stringify(karten) + a.gesamt)) return;
+    const add = `<button class="sbt" data-act="set" data-k="lk-add">${icon("mdi:plus")}Anlegen</button>`;
+    if (!karten.length) { el.innerHTML = this._hd("Ladekarten", add) + `<div class="empty">Noch keine Ladekarte angelegt – z. B. eine Abo-Karte mit monatlicher Grundgebühr. Die aufgelaufene Gebühr fließt in die Fremdlade-Kosten ein (Ersparnis, €/100 km), aber nicht in den Preis je kWh.</div>`; return; }
+    const today = new Date().toISOString().slice(0, 10);
+    const items = karten.map((k) => {
+      const aktiv = !k.end_datum || k.end_datum >= today, st = [...(k.gebuehren || [])].sort((x, y) => (x.ab_datum < y.ab_datum ? -1 : 1));
+      const stufen = st.map((s, i) => `<span class="schip">ab ${this._fdate(s.ab_datum)} · <b>${de(s.gebuehr, 2)} €</b>${i ? `<button class="sx" data-act="set" data-k="lk-sdel" data-id="${k.id}" data-ab="${esc(s.ab_datum)}" title="Preisstufe entfernen">${icon("mdi:close")}</button>` : ""}</span>`).join("");
+      return `<div class="sitem${aktiv ? "" : " off"}"><div class="stop"><b>${esc(k.name)}</b>${aktiv ? "" : `<span class="stag">gekündigt</span>`}<span class="scost">${de(k.kosten ?? 0, 2)} €</span>
+          <span class="sacts"><button class="sic" data-act="set" data-k="lk-edit" data-id="${k.id}" title="Bearbeiten">${icon("mdi:pencil")}</button><button class="sic" data-act="set" data-k="lk-del" data-id="${k.id}" title="Löschen">${icon("mdi:delete-outline")}</button></span></div>
+        <div class="smeta"><span>${de(k.aktuelle_gebuehr ?? 0, 2)} €/Monat aktuell</span><span>seit ${this._fdate(k.start_datum)}${k.end_datum ? ` bis ${this._fdate(k.end_datum)}` : ""}</span></div>
+        <div class="schips">${stufen}<button class="schip add" data-act="set" data-k="lk-stufe" data-id="${k.id}">${icon("mdi:plus")}Preisänderung</button></div></div>`;
+    }).join("");
+    el.innerHTML = this._hd("Ladekarten", add) + `<div class="skpi"><b>${de(a.gesamt ?? 0, 2)}<small>€</small></b><span>Grundgebühren aufgelaufen</span></div><div class="slist">${items}</div>`;
+  }
+
+  /* Fahrzeugbild */
+  _render_img() {
+    const el = this.shadowRoot.getElementById("simg"), st = this._ea("vehicle_image");
+    const src = st && !OFFLINE_HD.includes(st.state) ? st.attributes?.entity_picture : null;
+    if (!this._setSig(el, (src || "") + "|" + (this._imgStatus || "") + this._imgBusy)) return;
+    el.innerHTML = this._hd("Fahrzeugbild") + `<div class="simgbox">${src ? `<img src="${esc(src)}" alt="Fahrzeugbild">` : `<span class="dim">Kein Bild gesetzt</span>`}</div>
+      <div class="pnote">JPEG, PNG oder WebP bis 10 MB. ev_assistant verkleinert es und entfernt alle Metadaten (z. B. GPS); Transparenz bleibt erhalten.</div>
+      <div class="srow"><label class="sbt${this._imgBusy ? " dis" : ""}">${icon("mdi:image-plus-outline")}Bild auswählen…<input type="file" class="simgfile" accept="image/jpeg,image/png,image/webp" hidden ${this._imgBusy ? "disabled" : ""}></label>
+      ${src ? `<button class="sbt" data-act="set" data-k="img-clear" ${this._imgBusy ? "disabled" : ""}>${icon("mdi:delete-outline")}Entfernen</button>` : ""}</div>
+      ${this._imgStatus ? `<div class="pnote">${esc(this._imgStatus)}</div>` : ""}`;
+  }
+  async _uploadImg(file) {
+    if (!file) return;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) { this._imgStatus = "Dieses Dateiformat wird nicht unterstützt. Erlaubt sind JPEG, PNG und WebP."; return this._render_img(); }
+    if (file.size > 10 * 1024 * 1024) { this._imgStatus = "Die Bilddatei ist zu groß (maximal 10 MB)."; return this._render_img(); }
+    this._imgBusy = true; this._imgStatus = "Wird hochgeladen…"; this._render_img();
+    try {
+      const form = new FormData(); form.append("file", file);
+      const resp = this._hass.fetchWithAuth ? await this._hass.fetchWithAuth("/api/file_upload", { method: "POST", body: form })
+        : await fetch("/api/file_upload", { method: "POST", body: form, headers: { Authorization: `Bearer ${this._hass.auth?.data?.access_token}` } });
+      if (!resp.ok) throw new Error(`Upload fehlgeschlagen (HTTP ${resp.status}).`);
+      const { file_id } = await resp.json();
+      await this._evaCall("set_vehicle_image", { file_id });
+      this._imgStatus = "Bild gesetzt.";
+    } catch (x) { this._imgStatus = x?.message || String(x); }
+    this._imgBusy = false; this._render_img();
+  }
+
+  /* Kennzahlen und Datensicherung */
+  _render_data() {
+    const el = this.shadowRoot.getElementById("sdata");
+    if (!this._setSig(el, "1" + (this._dataBusy || ""))) return;
+    const b = this._dataBusy;
+    el.innerHTML = this._hd("Daten") + `<div class="sblk"><h4>Datensicherung</h4><div class="pnote">Sichert Fahrtenbuch, Ladehistorie, Ladekarten, Wartungsplan, Kennzahlen und Ereignisprotokoll als Datei – ohne die Konfiguration (evcc-Host, Entitäten).</div>
+        <div class="srow"><button class="sbt" data-act="set" data-k="backup" ${b ? "disabled" : ""}>${icon("mdi:database-arrow-down-outline")}${b === "backup" ? "Wird erstellt…" : "Backup erstellen"}</button>
+        <label class="sbt">${icon("mdi:database-arrow-up-outline")}Wiederherstellen…<input type="file" class="srestfile" accept="application/json" hidden></label></div></div>
+      <div class="sblk"><h4>Kennzahlen seit Einrichtung</h4><div class="pnote">Setzt Verbrauch, Ersparnis und CO₂-Ersparnis auf einen neuen Startpunkt – z. B. wenn sie durch fehlerhafte Sensordaten kurz nach der Einrichtung verzerrt sind. Fahrtenbuch, Ladehistorie, Leasing und Wartung bleiben unverändert.</div>
+        <div class="srow"><button class="sbt" data-act="set" data-k="reset">${icon("mdi:restart-alert")}Zurücksetzen…</button></div></div>`;
+  }
+  // Datei, die ev_assistant unter /config/www ablegt, herunterladen
+  _download(name) {
+    const a = document.createElement("a"); a.href = `/local/${name}?t=${Date.now()}`; a.download = name; a.target = "_blank";
+    this.shadowRoot.appendChild(a); a.click(); a.remove();
+  }
+  _readRestore(file) {
+    if (!file) return;
+    const r = new FileReader();
+    r.onload = () => {
+      const text = String(r.result); let ok = false;
+      try { const p = JSON.parse(text); ok = !!p && typeof p === "object" && "history" in p; } catch (x) {}
+      if (!ok) { this._toast("Ungültige Datei – keine ev_assistant-Sicherung."); return; }
+      this._restore = { text, name: file.name, kb: Math.round(file.size / 1024) };
+      this._openForm("restore");
+    };
+    r.readAsText(file);
+  }
+
+  /* Ereignisprotokoll */
+  async _loadLog(force) {
+    const id = this._evaEntryId();
+    if (!id || !this._hass?.callWS || this._logBusy) return;
+    if (!force && this._log_?.entry === id && Date.now() - this._log_.t < 30000) return;
+    this._logBusy = true;
+    let list = [];
+    try { const r = await this._hass.callWS({ type: "ev_assistant/event_log", config_entry_id: id }); list = Array.isArray(r?.event_log) ? r.event_log : []; } catch (x) {}
+    this._logBusy = false; this._log_ = { entry: id, t: Date.now(), list };
+    this._renderLogList();
+  }
+  _render_log() {
+    const el = this.shadowRoot.getElementById("slog");
+    if (!el.querySelector(".sloglist")) {
+      el.innerHTML = this._hd("Ereignisprotokoll", `<button class="sbt" data-act="set" data-k="log-dl">${icon("mdi:file-download-outline")}Herunterladen</button>`)
+        + `<div class="pnote">Die letzten ca. 14 Tage: Moduswechsel, erkannte Fremdladungen und Fahrten, Probleme.</div>
+        <div class="srow"><select class="slogkat"><option value="alle">Alle Kategorien</option></select><input type="search" class="slogq" placeholder="Suchen…"></div><div class="sloglist"><div class="empty">Lädt…</div></div>`;
+    }
+    this._loadLog();
+  }
+  _renderLogList() {
+    const el = this.shadowRoot.getElementById("slog"), box = el?.querySelector(".sloglist");
+    if (!box) return;
+    const list = this._log_?.list, sel = el.querySelector(".slogkat");
+    if (!list) return;
+    const kats = [...new Set(list.map((e) => e.kategorie))].sort(), cur = this._logKat || "alle";
+    const ksig = kats.join("|");
+    if (sel._k !== ksig) { sel._k = ksig; sel.innerHTML = `<option value="alle">Alle Kategorien</option>` + kats.map((k) => `<option value="${esc(k)}">${esc(k)}</option>`).join(""); }
+    sel.value = kats.includes(cur) ? cur : "alle";
+    const q = (this._logQ || "").trim().toLowerCase();
+    const f = list.filter((e) => (sel.value === "alle" || e.kategorie === sel.value) && (!q || String(e.text).toLowerCase().includes(q) || String(e.kategorie).toLowerCase().includes(q))).sort((a, b) => b.ts - a.ts);
+    const top = box.scrollTop < 4;
+    box.innerHTML = !list.length ? `<div class="empty">Noch keine Einträge.</div>` : !f.length ? `<div class="empty">Keine Einträge für diesen Filter.</div>`
+      : f.slice(0, 300).map((e) => { const d = new Date(e.ts * 1000); return `<div class="sline"><span>${d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })} ${d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</span><em>${esc(e.kategorie)}</em><p>${esc(e.text)}</p></div>`; }).join("");
+    if (top) box.scrollTop = 0;
+  }
+
+  /* Formulare im Popup */
+  _openForm(kind, id, extra = {}) {
+    this._form = { kind, id, ...extra };
+    this._openDlg("form");
+    this._renderForm();
+  }
+  _renderForm() {
+    const d = this.shadowRoot.getElementById("cardlg"), F = this._form, k = F.kind;
+    const fld = (lbl, name, val = "", type = "text", attrs = "") => `<label class="sfld" data-f="${name}"><span>${lbl}</span><input name="${name}" type="${type}" ${type === "text" ? 'inputmode="decimal"' : ""} value="${esc(typeof val === "number" ? String(val).replace(".", ",") : val ?? "")}" ${attrs}></label>`;
+    const txt = (lbl, name, val = "", ph = "") => `<label class="sfld" data-f="${name}"><span>${lbl}</span><input name="${name}" type="text" value="${esc(val ?? "")}" placeholder="${esc(ph)}"></label>`;
+    const grp = (t, inner, cls = "") => `<div class="sgrp ${cls}">${t ? `<h4>${t}</h4>` : ""}<div class="sflds">${inner}</div></div>`;
+    const W = this._wartData(), p = F.id != null ? W.punkte.find((x) => String(x.id) === String(F.id)) : null;
+    const L = (this._ea("ladekarten_kosten")?.attributes?.karten || []), lk = F.id != null ? L.find((x) => String(x.id) === String(F.id)) : null;
+    let title = "", sub = "", body = "", save = "Speichern", danger = false;
+    if (k === "wt-add" || k === "wt-edit") {
+      const e = k === "wt-edit", hu = e ? p?.typ === "tuev" : false;
+      title = e ? "Wartungspunkt bearbeiten" : "Wartungspunkt anlegen"; sub = e ? esc(p?.name || "") : "Vorlage füllt die Felder vor – danach frei änderbar";
+      const rm = p?.reminder_tage != null ? Math.round((p.reminder_tage / 30.44) * 10) / 10 : "";
+      body = grp("", (e ? "" : `<label class="sfld" data-f="preset"><span>Vorlage</span><select name="preset" class="fpreset"><option value="">– eigene –</option>${W.presets.map((x) => `<option value="${esc(x.key)}">${esc(x.name)}</option>`).join("")}</select></label>`)
+          + txt("Name", "name", p?.name, "z. B. Inspektion") + (e ? `<label class="sfld chk"><input type="checkbox" name="aktiv" ${p?.aktiv !== false ? "checked" : ""}><span>Aktiv</span></label>` : ""))
+        + grp("Fälligkeit", (hu ? "" : fld("Kilometer-Intervall", "km_intervall", p?.km_intervall, "text", 'placeholder="z. B. 30000"')) + fld("Intervall (Monate)", "zeit_intervall_monate", p?.zeit_intervall_monate, "text", 'placeholder="z. B. 24"') + fld("Festes Datum (Monat)", "festes_datum", p?.festes_datum ? p.festes_datum.slice(0, 7) : "", "month"), "ffaell")
+        + `<div class="pnote fhint">Mindestens ein Kriterium angeben. Bei mehreren gilt, was zuerst eintritt.</div>`
+        + grp("Letzter Service", fld("Kilometerstand", "last_done_km", p?.last_done?.km) + fld("Datum", "last_done_datum", p?.last_done?.datum, "date"), "flast")
+        + grp("Erinnerung (leer = Standard)", fld("Vorwarnzeit (Monate)", "reminder_monate", rm) + fld("Vorwarnzeit (km)", "reminder_km", p?.reminder_km), "frem")
+        + grp("", fld("Kosten €", "kosten", p?.kosten), "fkost");
+    } else if (k === "wt-done") {
+      title = "Als erledigt markieren"; sub = esc(p?.name || ""); save = "Erledigt";
+      body = `<div class="pnote">Leer lassen = aktueller Kilometerstand und heute. Für einen Termin, der schon ein paar Tage her ist, Werte nachtragen.</div>` + grp("", fld("Kilometerstand", "km", "", "text", 'placeholder="aktuell"') + fld("Datum", "datum", "", "date"));
+    } else if (k === "lk-add" || k === "lk-edit") {
+      const e = k === "lk-edit", st = [...(lk?.gebuehren || [])].sort((a, b) => (a.ab_datum < b.ab_datum ? -1 : 1));
+      title = e ? "Ladekarte bearbeiten" : "Ladekarte anlegen"; sub = e ? esc(lk?.name || "") : "Monatliche Grundgebühr einer Abo-Karte";
+      body = grp("", txt("Name", "name", lk?.name, "z. B. ADAC e-Charge") + fld(e ? "Startgebühr € (früheste Stufe)" : "Monatliche Gebühr €", "monatliche_gebuehr", e ? st[0]?.gebuehr : "", "text", 'placeholder="0,00"')
+        + fld("Startdatum", "start_datum", e ? lk?.start_datum : new Date().toISOString().slice(0, 10), "date") + fld("Enddatum (optional)", "end_datum", lk?.end_datum, "date"));
+    } else if (k === "lk-stufe") {
+      title = "Preisänderung"; sub = esc(lk?.name || ""); save = "Preisstufe speichern";
+      body = `<div class="pnote">Neue Gebühr ab einem Datum, z. B. wenn ein Einführungspreis endet.</div>` + grp("", fld("Gültig ab", "ab_datum", "", "date") + fld("Monatliche Gebühr €", "gebuehr", "", "text", 'placeholder="0,00"'));
+    } else if (k === "wt-del" || k === "lk-del") {
+      title = k === "wt-del" ? "Wartungspunkt löschen" : "Ladekarte löschen"; sub = esc((k === "wt-del" ? p?.name : lk?.name) || ""); save = "Löschen"; danger = true;
+      body = `<div class="pnote">Dauerhaft löschen? Das lässt sich nicht rückgängig machen.</div>`;
+    } else if (k === "reset") {
+      title = "Kennzahlen zurücksetzen"; sub = "Neuer Startpunkt für Verbrauch und Ersparnis"; save = "Zurücksetzen"; danger = true;
+      body = grp("", fld("kWh seit Einrichtung", "home_kwh_since_setup", "", "text", 'placeholder="leer = 0"') + fld("Kosten € seit Einrichtung", "home_cost_since_setup", "", "text", 'placeholder="leer = 0"') + fld("km seit Einrichtung", "km_driven", "", "text", 'placeholder="leer = 0"'))
+        + `<div class="pnote">Fahrtenbuch und Ladehistorie bleiben unverändert. Nicht rückgängig machbar.</div>`;
+    } else if (k === "restore") {
+      const R = this._restore || {};
+      title = "Backup wiederherstellen"; sub = `${esc(R.name || "")} (${R.kb ?? "?"} KB)`; save = "Wiederherstellen"; danger = true;
+      body = `<div class="pnote">ALLE aktuellen Daten (Fahrtenbuch, Ladehistorie, Ladekarten, Wartungsplan, Kennzahlen) werden ersetzt. ev_assistant legt vorher automatisch ein Sicherheits-Backup des jetzigen Stands an.</div>`
+        + grp("", txt("Zum Bestätigen WIEDERHERSTELLEN eintippen", "confirm", "", "WIEDERHERSTELLEN"));
+    }
+    d.innerHTML = `<div class="dpan sdlg"><div class="dhd"><span class="dico">${icon(k.startsWith("wt") ? "mdi:wrench-clock" : k.startsWith("lk") ? "mdi:credit-card-multiple-outline" : "mdi:cog-outline")}</span>
+      <span class="rtx"><span class="rname">${title}</span><span class="rsub">${sub}</span></span>
+      <button class="dx" data-act="cardclose" aria-label="Schließen">${icon("mdi:close")}</button></div>
+      <form class="dbody sform" onsubmit="return false">${body}<div class="ferr"></div>
+      <div class="srow end"><button type="button" class="sbt" data-act="cardclose">Abbrechen</button><button type="button" class="sbt pri${danger ? " red" : ""}" data-act="set" data-k="save">${save}</button></div></form></div>`;
+    if (k === "wt-add") this._wtPreset("");
+  }
+  // Vorlage im Formular: Felder ein-/ausblenden (HU braucht kein km-Intervall) und leere Felder vorbelegen
+  _wtPreset(key, fill) {
+    const f = this.shadowRoot.querySelector("#cardlg .sform");
+    if (!f) return;
+    const hu = key === "tuev", insp = key === "inspektion";
+    const hide = hu ? ["km_intervall", "last_done_km", "last_done_datum", "reminder_km", "kosten"] : insp ? ["festes_datum"] : [];
+    f.querySelectorAll("[data-f]").forEach((x) => { const h = hide.includes(x.dataset.f); x.hidden = h; if (h) x.querySelector("input").value = ""; });
+    f.querySelector(".flast").hidden = hu; f.querySelector(".fkost").hidden = hu;
+    f.querySelector(".fhint").textContent = hu ? "Für die HU sind festes Datum und Intervall beide Pflicht." : "Mindestens ein Kriterium angeben. Bei mehreren gilt, was zuerst eintritt.";
+    const P = fill && this._wartData().presets.find((x) => x.key === key);
+    if (P) {
+      const set = (n, v) => { const i = f.elements[n]; if (i && !i.value.trim() && v != null) i.value = v; };
+      set("name", P.name); set("km_intervall", P.km_intervall); set("zeit_intervall_monate", P.zeit_intervall_monate);
+    }
+  }
+  _saveForm() {
+    const f = this.shadowRoot.querySelector("#cardlg .sform"), F = this._form, k = F?.kind;
+    if (!f || !k) return;
+    const v = (n) => (f.elements[n] ? String(f.elements[n].value ?? "").trim() : null);
+    const n = (x) => { x = v(x); if (x == null || x === "") return x; const r = parseFloat(x.replace(",", ".")); return isNaN(r) ? NaN : r; };
+    const err = (m) => { f.querySelector(".ferr").textContent = m; };
+    const monthEnd = (m) => { const [y, mo] = m.split("-").map(Number); return `${m}-${String(new Date(y, mo, 0).getDate()).padStart(2, "0")}`; };
+    const id = F.id != null ? Number(F.id) : null;
+    let svc = null, data = {};
+    if (k === "wt-add" || k === "wt-edit") {
+      const e = k === "wt-edit", name = v("name"), km = n("km_intervall"), zeit = n("zeit_intervall_monate"), fest = v("festes_datum") || "";
+      if (!name && !e) return err("Bitte einen Namen angeben.");
+      for (const [x, l] of [[km, "Kilometer-Intervall"], [zeit, "Intervall"], [n("kosten"), "Kosten"], [n("last_done_km"), "Kilometerstand"], [n("reminder_monate"), "Vorwarnzeit"], [n("reminder_km"), "Vorwarnzeit (km)"]]) if (Number.isNaN(x)) return err(`${l}: bitte eine Zahl eingeben.`);
+      const hasKm = km != null && km !== "", hasZ = zeit != null && zeit !== "";
+      const hu = e ? this._wartData().punkte.find((x) => x.id === id)?.typ === "tuev" : v("preset") === "tuev";
+      if (hu ? !(fest && hasZ) : !(hasKm || hasZ || fest)) return err(hu ? "Für die HU sind festes Datum und Intervall beide Pflicht." : "Mindestens ein Kriterium angeben (km, Monate oder festes Datum).");
+      if (e) {
+        svc = "edit_maintenance"; data = { wartung_id: id, aktiv: !!f.elements.aktiv?.checked };
+        if (name) data.name = name;
+        // leer = Kriterium/Wert löschen (wie im ev_assistant-Panel), fehlendes Feld = unverändert
+        if (f.elements.km_intervall) data.km_intervall = hasKm ? km : "";
+        data.zeit_intervall_monate = hasZ ? Math.round(zeit) : "";
+        data.festes_datum = fest ? monthEnd(fest) : "";
+        const ko = n("kosten"); data.kosten = ko === "" ? "" : ko;
+        const rm = n("reminder_monate"); data.reminder_monate = rm === "" ? "" : rm;
+        const rk = n("reminder_km"); data.reminder_km = rk === "" ? "" : rk;
+      } else {
+        svc = "add_maintenance"; data = { name };
+        if (v("preset")) data.preset = v("preset");
+        if (hasKm) data.km_intervall = km;
+        if (hasZ) data.zeit_intervall_monate = Math.round(zeit);
+        if (fest) data.festes_datum = monthEnd(fest);
+        for (const x of ["kosten", "reminder_monate", "reminder_km"]) { const y = n(x); if (y !== "" && y != null) data[x] = y; }
+      }
+      const lk = n("last_done_km"); if (lk !== "" && lk != null) data.last_done_km = lk;
+      if (v("last_done_datum")) data.last_done_datum = v("last_done_datum");
+    } else if (k === "wt-done") {
+      const km = n("km"); if (Number.isNaN(km)) return err("Kilometerstand: bitte eine Zahl eingeben.");
+      svc = "mark_maintenance_done"; data = { wartung_id: id };
+      if (km !== "") data.km = km;
+      if (v("datum")) data.datum = v("datum");
+    } else if (k === "lk-add" || k === "lk-edit") {
+      const e = k === "lk-edit", name = v("name"), g = n("monatliche_gebuehr"), start = v("start_datum"), end = v("end_datum");
+      if (Number.isNaN(g)) return err("Gebühr: bitte eine Zahl eingeben.");
+      if (!e && (!name || g === "" || !start)) return err("Name, Gebühr und Startdatum sind nötig.");
+      if (e) { svc = "edit_ladekarte"; data = { karte_id: id, end_datum: end || "" }; if (name) data.name = name; if (g !== "") data.monatliche_gebuehr = g; if (start) data.start_datum = start; }
+      else { svc = "add_ladekarte"; data = { name, monatliche_gebuehr: g, start_datum: start }; if (end) data.end_datum = end; }
+    } else if (k === "lk-stufe") {
+      const g = n("gebuehr"), ab = v("ab_datum");
+      if (!ab || g === "" || Number.isNaN(g)) return err("Datum und Gebühr sind nötig.");
+      svc = "add_ladekarte_preisstufe"; data = { karte_id: id, gebuehr: g, ab_datum: ab };
+    } else if (k === "wt-del") { svc = "delete_maintenance"; data = { wartung_id: id }; }
+    else if (k === "lk-del") { svc = "delete_ladekarte"; data = { karte_id: id }; }
+    else if (k === "reset") {
+      for (const x of ["home_kwh_since_setup", "home_cost_since_setup", "km_driven"]) { const y = n(x); if (Number.isNaN(y)) return err("Bitte nur Zahlen eingeben."); if (y !== "") data[x] = y; }
+      svc = "reset_lifetime_kpis";
+    } else if (k === "restore") {
+      if (v("confirm") !== "WIEDERHERSTELLEN") return err("Bitte WIEDERHERSTELLEN eintippen.");
+      svc = "restore_backup"; data = { backup_data: this._restore?.text };
+    }
+    if (!svc) return;
+    const btn = f.querySelector('[data-k="save"]'); btn.disabled = true; err("");
+    this._evaCall(svc, data).then(() => {
+      if (k === "restore") this._restore = null;
+      this.shadowRoot.getElementById("cardlg")?.close();
+      if (k === "reset" || k === "restore") this._toast(k === "reset" ? "Kennzahlen zurückgesetzt." : "Backup wiederhergestellt.");
+    }).catch(() => { btn.disabled = false; });
+  }
+  _setAct(k, ds) {
+    if (["wt-add", "wt-edit", "wt-done", "wt-del", "lk-add", "lk-edit", "lk-del", "lk-stufe", "reset"].includes(k)) return this._openForm(k, ds.id);
+    if (k === "save") return this._saveForm();
+    if (k === "lk-sdel") return this._evaCall("delete_ladekarte_preisstufe", { karte_id: Number(ds.id), ab_datum: ds.ab }).catch(() => {});
+    if (k === "img-clear") { this._imgBusy = true; this._render_img(); return this._evaCall("clear_vehicle_image").then(() => { this._imgStatus = "Bild entfernt."; }, (x) => { this._imgStatus = x?.message || String(x); }).finally(() => { this._imgBusy = false; this._render_img(); }); }
+    const id = this._evaEntryId();
+    if (k === "backup") { this._dataBusy = "backup"; this._render_data(); return this._evaCall("export_backup").then(() => this._download(`ev_assistant_backup_${id}.json`), () => {}).finally(() => { this._dataBusy = null; this._render_data(); }); }
+    if (k === "log-dl") return this._evaCall("export_event_log").then(() => this._download(`ev_assistant_event_log_${id}.txt`), () => {});
+  }
 
   /* ---------- Werte ---------- */
   _log(...a) { if (this._config?.debug) console.info("mg-car:", ...a); }
@@ -2011,6 +2562,9 @@ class MgCarDashboard extends HTMLElement {
       const id = this._real(this._config.car.soc) || this._eva().home_kwh; if (!id) return;
       const ev = new Event("hass-more-info", { bubbles: true, composed: true }); ev.detail = { entityId: id }; this.dispatchEvent(ev); return;
     }
+    if (act === "page") { this._pg = el.dataset.p; try { localStorage.setItem("mg-car-page", this._pg); } catch (x) {} this._showPage(); this._update(true); requestAnimationFrame(() => { this._fit(); this._render_trips(); }); return; }
+    if (act === "ana") { this._openAna(el.dataset.k); return; }
+    if (act === "set") { this._setAct(el.dataset.k, el.dataset); return; }
     if (act === "cardclose") { this.shadowRoot.getElementById("cardlg")?.close(); return; }
     if (!entity) return;
     if (act === "more") {
@@ -2295,7 +2849,7 @@ const CAR_STYLE = `
 .mbottom.m3 .mbtn span{overflow:hidden;text-overflow:ellipsis}
 .mpb{display:flex;gap:6px;align-items:center}
 .merr{margin:0 0 10px;padding:8px 12px;border-radius:12px;background:rgba(248,113,113,.08);border:1px solid rgba(248,113,113,.3)}
-@container (max-width:420px){.mstats,.mbottom.m3,#mgmt .mmodes{display:grid;grid-template-columns:1fr 1fr}.mbottom.m3 .mbtn:first-child,.mst:last-child{grid-column:1 / -1}}
+@container (max-width:420px){.mstats,.mbottom.m3,#mgmt .mmodes:not(.m3){display:grid;grid-template-columns:1fr 1fr}.mbottom.m3 .mbtn:first-child,.mst:last-child{grid-column:1 / -1}}
 .limm{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}
 /* Laden */
 .lclick{cursor:pointer;border-radius:22px}
@@ -2313,7 +2867,7 @@ const CAR_STYLE = `
 .chlist{display:flex;flex-direction:column;gap:6px}
 .chm{font-size:12px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--dim);margin:10px 4px 2px}
 .chm:first-child{margin-top:0}
-.chr{display:grid;grid-template-columns:40px minmax(0,1.4fr) minmax(0,1fr) 80px 96px;align-items:center;gap:12px;padding:9px 14px 9px 10px;border-radius:16px;background:var(--tile);border:1px solid var(--tileb)}
+.chr{display:grid;grid-template-columns:40px minmax(0,1.4fr) minmax(0,1fr) 100px 80px 96px;align-items:center;gap:12px;padding:9px 14px 9px 10px;border-radius:16px;background:var(--tile);border:1px solid var(--tileb)}
 .chi{width:40px;height:40px;border-radius:13px;display:grid;place-items:center;background:rgba(52,211,153,.12);color:var(--green)}
 .chr.ext .chi{background:color-mix(in srgb,var(--e-grid-in) 16%,transparent);color:var(--e-grid-in)}
 .chi ha-icon{--mdc-icon-size:20px}
@@ -2324,11 +2878,13 @@ const CAR_STYLE = `
 .chpv .pvbar{display:block;height:6px;border-radius:4px;background:var(--e-grid-in);overflow:hidden}
 .chpv .pvbar i{display:block;height:100%;background:var(--e-solar)}
 .chpv small{font-size:12px;color:var(--muted)}
+.chs{display:flex;flex-direction:column;align-items:flex-end;font-variant-numeric:tabular-nums;white-space:nowrap}.chs b{font-size:14px;font-weight:600}.chs small{font-size:11.5px;color:var(--muted)}
 .chk,.chc{display:flex;flex-direction:column;align-items:flex-end;font-variant-numeric:tabular-nums}
 .chk b{font-size:17px;font-weight:700;color:var(--cyan)}
 .chc b{font-size:15px;font-weight:700}
 .chk small,.chc small{font-size:11.5px;color:var(--muted);white-space:nowrap}
-@media (max-width:760px){.chr{grid-template-columns:36px minmax(0,1fr) 64px 78px}.chpv{display:none}.chsum .hsegs{width:100%;margin-left:0}}
+.chsm{display:none}
+@media (max-width:760px){.chr{grid-template-columns:36px minmax(0,1fr) 64px 78px}.chpv,.chs{display:none}.chd .chsm{display:block}.chsum .hsegs{width:100%;margin-left:0}}
 .lst{margin-left:auto;display:inline-flex;align-items:center;gap:6px;padding:5px 11px;border-radius:12px;font-size:13.5px;font-weight:600;background:rgba(255,255,255,.05);color:var(--muted)}
 .lst ha-icon{--mdc-icon-size:16px}
 .lst.on{background:rgba(52,211,153,.14);color:var(--green)}
@@ -2339,10 +2895,14 @@ const CAR_STYLE = `
 .lhero.chg{background:radial-gradient(120% 120% at 0% 0%,rgba(52,211,153,.16),transparent 60%),var(--tile);border-color:rgba(52,211,153,.4)}
 .lhl{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .lkick{font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lkick .lend{color:var(--text)}
+.lkick .lend i{font-style:normal;color:var(--muted)}
+@container (max-width:460px){.lkick{white-space:normal}.lkick .lend{display:block}.lkick .lend i{display:none}}
 .lbig{display:flex;align-items:baseline;gap:6px}
 .lbig b{font-size:46px;font-weight:800;line-height:1.05;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .lhero.chg .lbig b{color:var(--green)}
 .lbig small{font-size:16px;color:var(--muted);font-weight:600}
+.lbig .lavg{margin-left:8px;font-size:14px;color:var(--muted);white-space:nowrap}
 .lwhen{display:flex;align-items:center;gap:6px;font-size:14px;color:var(--muted);flex-wrap:wrap}
 .lwhen ha-icon{--mdc-icon-size:16px;color:var(--dim)}
 .lwhen b{color:var(--text)}
@@ -2367,7 +2927,7 @@ const CAR_STYLE = `
 .lsplitl ha-icon{--mdc-icon-size:15px}
 .lsplitl .pv ha-icon{color:var(--e-solar)}.lsplitl .gr ha-icon{color:var(--e-grid-in)}
 .lsplitl b{color:var(--text);font-variant-numeric:tabular-nums}
-.lfacts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.lfacts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:12px}
 .lfact{display:flex;flex-direction:column;gap:2px;padding:9px 11px;border-radius:14px;background:var(--tile);border:1px solid var(--tileb);min-width:0}
 .lfact span{font-size:11.5px;color:var(--muted);font-weight:600;white-space:nowrap}
 .lfact b{font-size:15.5px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -2378,7 +2938,7 @@ const CAR_STYLE = `
 .lrow b{margin-left:auto;color:var(--text);font-weight:600;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .lrow.warn ha-icon,.lrow.warn b{color:var(--orange)}
 .wrap.compact .lbig b{font-size:36px}.wrap.compact .lringw{width:80px;height:80px}.wrap.compact .lhero{padding:12px 14px}
-@container (max-width:720px){.lfacts{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
 .carpage .cstats{grid-template-columns:repeat(2,minmax(0,1fr))}
 #trips{display:flex;flex-direction:column}
 .tlist{display:flex;flex-direction:column;gap:6px}
@@ -2458,6 +3018,117 @@ const CAR_STYLE = `
 #trips .tlist:hover .trip{border-color:rgba(255,255,255,.12)}
 @container (max-width:1180px){.wrap.carpage .grid{grid-template-columns:1fr 1fr}.wrap.carpage .col:nth-child(2){grid-column:1 / -1;order:1}}
 @container (max-width:720px){.wrap.carpage .grid{grid-template-columns:1fr}.carpage .soc{font-size:60px}.trip{grid-template-columns:44px 1fr auto;}.tkwh{display:none}.cstats{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Unterseite Profil & Analyse */
+[hidden]{display:none!important}
+.pages{display:flex;margin:0 0 14px}
+.wrap.fit .pgrid{grid-template-rows:none}
+.wrap.fit .pages{flex:none}
+.pgrid{grid-template-columns:2.1fr 1fr!important;align-content:start}
+.wrap.fit .pgrid{overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}
+.pchip{display:inline-flex;padding:4px 10px;border-radius:10px;font-size:12.5px;font-weight:600;background:rgba(251,146,60,.12);color:var(--orange)}
+.pdays{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}
+.pday{padding:12px 12px 14px;border-radius:20px;background:var(--tile);border:1px solid var(--tileb);display:flex;flex-direction:column;gap:9px;min-width:0}
+.pday.tm{border-color:rgba(52,211,153,.55);background:radial-gradient(120% 90% at 50% 0%,rgba(52,211,153,.14),transparent 70%),var(--tile)}
+.pday.td{border-color:rgba(255,255,255,.18)}
+.pdn{display:flex;align-items:baseline;justify-content:space-between;gap:4px}.pdn b{font-size:16px}.pdn span{font-size:10.5px;font-weight:700;letter-spacing:.08em;color:var(--green)}
+.pday.td .pdn span{color:var(--muted)}
+.pmt{display:flex;flex-direction:column;gap:3px}
+.pmt small{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;white-space:nowrap}
+.pmt b{font-size:17px;font-variant-numeric:tabular-nums;white-space:nowrap}.pmt b em{font-style:normal;font-size:11px;color:var(--muted);margin-left:2px}
+.pbar{height:5px;border-radius:4px;background:rgba(255,255,255,.06);overflow:hidden;display:flex}.pbar i{display:block;height:100%}
+.pmt.ev b{color:var(--cyan)}.pmt.ev .pbar i{background:var(--cyan)}.pday.tm .pmt.ev .pbar i{background:var(--green)}
+.pmt.hs b{color:#c4b5fd}.pmt.hs .pbar i{background:var(--violet)}.pmt.dp b{color:var(--gold)}
+.phero{padding:15px 17px;border-radius:22px;background:var(--tile);border:1px solid var(--tileb);margin-bottom:12px}
+.phero.no{background:radial-gradient(120% 120% at 0% 0%,rgba(52,211,153,.14),transparent 60%),var(--tile);border-color:rgba(52,211,153,.35)}
+.phero.yes{background:radial-gradient(120% 120% at 0% 0%,rgba(251,146,60,.14),transparent 60%),var(--tile);border-color:rgba(251,146,60,.4)}
+.phero .kick{font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.pbig{font-size:22px;font-weight:700;margin:3px 0}.psub{font-size:13.5px;color:var(--muted)}
+.pstats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px}
+.pst{padding:9px 11px;border-radius:15px;background:var(--tile);border:1px solid var(--tileb);min-width:0}
+.pst span{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;white-space:nowrap}
+.pst b{font-size:19px;font-weight:700;font-variant-numeric:tabular-nums}.pst b small{font-size:11.5px;color:var(--muted);margin-left:3px;font-weight:500}
+.pst em{display:block;font-style:normal;font-size:11.5px;color:var(--muted)}.pst.pv b{color:var(--e-solar)}
+.pst .pbufsel{display:block;margin-top:1px;max-width:100%;font:inherit;font-size:17px;font-weight:700;font-variant-numeric:tabular-nums;color:inherit;background:transparent;border:0;border-bottom:1px dashed var(--muted);padding:0 2px 1px 0;cursor:pointer;outline:none}
+.pst .pbufsel:focus-visible{border-bottom-color:currentColor}.pst .pbufsel option{color:#111;background:#fff}
+.sl2{font-size:13px;color:var(--muted);margin:2px 2px 7px}.sl2 b{color:var(--text)}
+.preach{display:flex;gap:3px}
+.preach span{flex:1;position:relative;display:flex;flex-direction:column;gap:4px}
+.preach span::after{content:"";position:absolute;left:0;right:0;top:0;height:8px;border-radius:4px;background:rgba(255,255,255,.07)}
+.preach span i{position:relative;z-index:1;display:block;height:8px;border-radius:4px;background:var(--green)}
+.preach small{font-size:11px;color:var(--dim);text-align:center}
+.ptiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.ptile{position:relative;padding:13px 14px;border-radius:20px;background:var(--tile);border:1px solid var(--tileb);min-width:0;transition:border-color .2s}
+.ptile:hover{border-color:rgba(56,189,248,.45)}
+.ptile > span{display:block;font-size:11px;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:12px}
+.ptile b{display:block;font-size:25px;font-weight:800;margin:4px 0 2px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ptile b small{font-size:13px;color:var(--muted);font-weight:600;margin-left:3px}
+.ptile p{margin:0;font-size:12.5px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ptile .pbar{margin:6px 0}.pbar.two i{background:var(--green)}.pbar.two i.o{background:var(--orange)}
+.pchev{position:absolute;top:10px;right:13px;font-style:normal;color:var(--dim);font-size:18px}
+.mscale{position:relative;height:12px;border-radius:7px;background:linear-gradient(90deg,var(--e-solar),var(--e-grid-in));margin:10px 2px 6px}
+.mscale .ms,.mscale .mc{position:absolute;top:-5px;width:4px;height:22px;border-radius:2px;transform:translateX(-2px)}
+.mscale .ms{background:var(--orange)}.mscale .mc{background:#fff}
+.mlab{display:flex;justify-content:space-between;font-size:12px;color:var(--dim);margin-bottom:12px}
+.pstats.two{margin-bottom:8px}
+.pnote{font-size:12.5px;color:var(--dim);line-height:1.45}
+.pdlg{max-width:720px}
+.pcols{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.pcol{padding:12px 14px;border-radius:16px;background:var(--tile);border:1px solid var(--tileb)}
+.pcol h4{margin:0 0 6px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.pcol p{margin:3px 0;display:flex;gap:10px;font-size:13.5px;color:var(--muted)}.pcol p b{margin-left:auto;color:var(--text);font-variant-numeric:tabular-nums;text-align:right}
+.pbands{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;height:220px;align-items:end}
+.pbands div{display:flex;flex-direction:column;justify-content:flex-end;align-items:center;gap:6px;height:100%}
+.pbands i{display:block;width:100%;border-radius:10px 10px 4px 4px;background:rgba(56,189,248,.55)}
+.pbands .cur i{background:var(--green);box-shadow:0 0 14px rgba(52,211,153,.45)}.pbands .cur small{color:var(--green)}
+.pbands em{font-style:normal;font-weight:700}.pbands small{font-size:12px;color:var(--dim);font-weight:600}
+.panb{display:flex;flex-direction:column;gap:8px}.panb > div{padding:10px 14px;border-radius:14px;background:var(--tile);border:1px solid var(--tileb)}
+.panb p{margin:0 0 6px;display:flex;gap:10px;font-size:14px}.panb p span{margin-left:auto;color:var(--muted);font-size:12.5px}
+.panb i{display:block;height:5px;border-radius:3px;background:rgba(255,255,255,.06);overflow:hidden}.panb em{display:block;height:100%;background:var(--cyan)}
+@container (max-width:1180px){.pgrid{grid-template-columns:1fr!important}.ptiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@container (max-width:720px){.pdays{grid-template-columns:repeat(4,minmax(0,1fr))}.pcols{grid-template-columns:1fr}}
+.sgrid{grid-template-columns:1.5fr 1fr!important;align-content:start}
+.wrap.fit .sgrid{grid-template-rows:none;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}
+.sbt{display:inline-flex;align-items:center;gap:6px;padding:7px 12px;border-radius:12px;background:var(--tile);border:1px solid var(--tileb);color:inherit;font:inherit;font-size:13.5px;font-weight:600;cursor:pointer;white-space:nowrap;transition:border-color .2s}
+.sbt:hover{border-color:rgba(255,255,255,.22)}.sbt ha-icon{--mdc-icon-size:16px}.sbt[disabled],.sbt.dis{opacity:.5;pointer-events:none}
+.sbt.pri{background:rgba(52,211,153,.16);border-color:rgba(52,211,153,.45);color:var(--green)}.sbt.pri.red{background:rgba(239,68,68,.14);border-color:rgba(239,68,68,.45);color:#f87171}
+.hd .lbl .sbt{font-size:13px;padding:6px 11px}
+.srow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:10px}.srow.end{justify-content:flex-end;margin-top:4px}
+.slist{display:flex;flex-direction:column;gap:8px}
+.sitem{--sc:var(--dim);padding:11px 14px;border-radius:16px;background:var(--tile);border:1px solid var(--tileb);display:flex;flex-direction:column;gap:4px;min-width:0}
+.sitem.ok{--sc:var(--green)}.sitem.soon{--sc:var(--orange)}.sitem.over{--sc:#f87171;border-color:rgba(239,68,68,.35)}.sitem.off{opacity:.62}
+.stop{display:flex;align-items:center;gap:8px;min-width:0}.stop b{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sdot{width:9px;height:9px;border-radius:50%;background:var(--sc);flex:none;box-shadow:0 0 10px var(--sc)}
+.stag{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+.scost{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums}.stop .scost + .sacts{margin-left:6px}
+.sacts{margin-left:auto;display:flex;gap:4px;flex:none}
+.sic{width:30px;height:30px;display:grid;place-items:center;border-radius:10px;background:transparent;border:1px solid transparent;color:var(--muted);cursor:pointer}
+.sic:hover{background:rgba(255,255,255,.06);border-color:var(--tileb);color:inherit}.sic ha-icon{--mdc-icon-size:17px}
+.sstat{font-size:13.5px;color:var(--sc)}.sstat b{font-weight:700}
+.smeta{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12.5px;color:var(--muted)}
+.snote{display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:10px;padding:8px 12px;border-radius:12px}.snote ha-icon{--mdc-icon-size:17px}
+.snote.warn{color:var(--orange);background:rgba(249,115,22,.1);border:1px solid rgba(249,115,22,.3)}
+.skpi{display:flex;align-items:baseline;gap:10px;margin-bottom:10px}.skpi b{font-size:24px;font-variant-numeric:tabular-nums}.skpi b small{font-size:13px;color:var(--muted);margin-left:3px}.skpi span{font-size:13px;color:var(--muted)}
+.schips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.schip{display:inline-flex;align-items:center;gap:4px;padding:3px 6px 3px 10px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid var(--tileb);font-size:12px;color:var(--muted)}.schip b{color:var(--text,inherit)}
+.schip.add{padding:3px 10px;cursor:pointer;font:inherit;font-size:12px;color:var(--muted);border-style:dashed}.schip.add:hover{color:inherit}.schip ha-icon{--mdc-icon-size:14px}
+.sx{display:grid;place-items:center;width:20px;height:20px;border-radius:6px;border:0;background:transparent;color:var(--muted);cursor:pointer}.sx:hover{background:rgba(255,255,255,.08);color:inherit}
+.simgbox{display:grid;place-items:center;min-height:110px;border-radius:16px;background:var(--tile);border:1px solid var(--tileb);padding:10px;margin-bottom:10px}
+.simgbox img{max-width:100%;max-height:180px;object-fit:contain}
+.sblk + .sblk{margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}.sblk h4{margin:0 0 4px;font-size:14px}
+#slog .srow{margin:8px 0 10px}#slog select,#slog input,.sfld input,.sfld select{font:inherit;font-size:14px;color:inherit;background:var(--tile);border:1px solid var(--tileb);border-radius:11px;padding:7px 10px;outline:none;color-scheme:dark;min-width:0}
+#slog input{flex:1}#slog select:focus,#slog input:focus,.sfld input:focus,.sfld select:focus{border-color:rgba(255,255,255,.3)}
+.sloglist{max-height:340px;overflow:auto;display:flex;flex-direction:column;gap:2px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}
+.sline{display:grid;grid-template-columns:auto auto 1fr;gap:4px 10px;padding:5px 2px;border-bottom:1px solid var(--line);font-size:12.5px;align-items:baseline}
+.sline span{color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}.sline em{font-style:normal;color:var(--cyan);font-weight:600;white-space:nowrap}.sline p{margin:0;min-width:0;overflow-wrap:anywhere}
+.sdlg{max-width:620px;margin:0 auto;width:100%}.sform{gap:12px}
+.sgrp h4{margin:0 0 8px;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.sflds{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.sfld{display:flex;flex-direction:column;gap:5px;font-size:12.5px;color:var(--muted)}.sfld.chk{flex-direction:row;align-items:center;gap:8px;font-size:14px;color:inherit}
+.sfld.chk input{width:18px;height:18px;accent-color:var(--green)}
+.ferr{color:#f87171;font-size:13px;min-height:1px}.ferr:empty{display:none}
+@container (max-width:1180px){.sgrid{grid-template-columns:1fr!important}}
+@container (max-width:720px){.sline{grid-template-columns:auto 1fr}.sline p{grid-column:1 / -1}}
 `;
 
 if (!customElements.get("mg-car-dashboard")) customElements.define("mg-car-dashboard", MgCarDashboard);
