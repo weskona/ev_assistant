@@ -213,3 +213,78 @@ async def test_wartung_sensor_native_value_und_presets_attribut(hass, coordinato
     assert attrs["punkte"][0]["status"] == "ueberfaellig"
     preset_keys = {p["key"] for p in attrs["presets"]}
     assert "tuev" in preset_keys and "inspektion" in preset_keys
+
+
+# ----- Erstintervall (Issue #48) ---------------------------------------------
+
+async def test_erstintervall_add_mark_done_wechselt_auf_regulaer(hass, coordinators):
+    coordinator = await _make_coordinator(hass, coordinators, "wart_erst1")
+    wid = await coordinator.async_add_maintenance(
+        name="Inspektion", km_intervall=25000.0, zeit_intervall_monate=24,
+        erst_km_intervall=12500.0, erst_zeit_intervall_monate=12, last_done_km=0.0, last_done_datum="2026-01-01",
+    )
+    punkt = coordinator.data["wartung"][0]
+    assert punkt["erst_km_intervall"] == 12500.0 and punkt["erledigt_anzahl"] == 0
+    p = coordinator.wartung_stats()["punkte"][0]
+    assert p["intervall_phase"] == "erst" and p["km_intervall_wirksam"] == 12500.0
+
+    assert await coordinator.async_mark_maintenance_done(wid, km=12500.0, datum="2027-01-01")
+    assert coordinator.data["wartung"][0]["erledigt_anzahl"] == 1
+    p = coordinator.wartung_stats()["punkte"][0]
+    assert p["intervall_phase"] == "regulaer" and p["km_intervall_wirksam"] == 25000.0
+    assert p["rest_km"] == 12500.0 + 25000.0 - 10000.0  # last_done.km + regulaeres Intervall - odo
+
+    assert await coordinator.async_mark_maintenance_done(wid)
+    assert coordinator.data["wartung"][0]["erledigt_anzahl"] == 2
+
+
+async def test_erstintervall_edit_setzen_loeschen_und_zaehler_korrigieren(hass, coordinators):
+    coordinator = await _make_coordinator(hass, coordinators, "wart_erst2")
+    wid = await coordinator.async_add_maintenance(name="Inspektion", km_intervall=25000.0)
+    assert coordinator.data["wartung"][0]["erst_km_intervall"] is None
+    assert await coordinator.async_edit_maintenance(wid, erst_km_intervall=12500.0, erst_zeit_intervall_monate=12)
+    punkt = coordinator.data["wartung"][0]
+    assert punkt["erst_km_intervall"] == 12500.0 and punkt["erst_zeit_intervall_monate"] == 12
+    await coordinator.async_mark_maintenance_done(wid)
+    assert await coordinator.async_edit_maintenance(wid, erledigt_anzahl=0)
+    assert coordinator.data["wartung"][0]["erledigt_anzahl"] == 0
+    assert await coordinator.async_edit_maintenance(wid, erst_km_intervall="", erst_zeit_intervall_monate="")
+    punkt = coordinator.data["wartung"][0]
+    assert punkt["erst_km_intervall"] is None and punkt["erst_zeit_intervall_monate"] is None
+    assert "intervall_phase" not in coordinator.wartung_stats()["punkte"][0]  # ohne Erstwerte unveraendert
+
+
+async def test_erstintervall_ist_kein_eigenes_faelligkeitskriterium(hass, coordinators):
+    coordinator = await _make_coordinator(hass, coordinators, "wart_erst3")
+    assert await coordinator.async_add_maintenance(name="Nur Erst", erst_km_intervall=12500.0) is None
+    assert coordinator.data["wartung"] == []
+
+
+async def test_migration_erledigt_anzahl_fuer_bestandspunkte(hass, coordinators):
+    coordinator = await _make_coordinator(hass, coordinators, "wart_erst4")
+    coordinator.data["wartung"] = [
+        {"id": 1, "name": "mit", "km_intervall": 1.0, "last_done": {"km": 1.0, "datum": "2026-01-01"}},
+        {"id": 2, "name": "ohne", "km_intervall": 1.0, "last_done": None},
+        {"id": 3, "name": "schon", "km_intervall": 1.0, "last_done": None, "erledigt_anzahl": 5},
+    ]
+    assert coordinator._migrate_wartung_erledigt_anzahl() is True
+    assert [p["erledigt_anzahl"] for p in coordinator.data["wartung"]] == [1, 0, 5]
+    assert coordinator._migrate_wartung_erledigt_anzahl() is False  # idempotent
+
+
+def test_erstintervall_schemas_akzeptieren_felder():
+    import voluptuous as vol
+
+    from custom_components.ev_assistant import ADD_MAINTENANCE_SCHEMA as A
+    from custom_components.ev_assistant import EDIT_MAINTENANCE_SCHEMA as E
+
+    assert A({"config_entry_id": "x", "erst_km_intervall": "12500", "erst_zeit_intervall_monate": "12"})[
+        "erst_km_intervall"] == 12500.0
+    e = E({"config_entry_id": "x", "wartung_id": "1", "erst_km_intervall": "", "erledigt_anzahl": "0"})
+    assert e["erst_km_intervall"] == "" and e["erledigt_anzahl"] == 0
+    try:
+        E({"config_entry_id": "x", "wartung_id": "1", "erledigt_anzahl": -1})
+    except vol.Invalid:
+        pass
+    else:
+        raise AssertionError("negative erledigt_anzahl muss abgelehnt werden")

@@ -1096,6 +1096,33 @@ add_maintenance:
           max: 10000
           step: 50
           unit_of_measurement: km
+    erst_km_intervall:
+      name: Erstes Intervall (km, optional)
+      description: >
+        Abweichendes Intervall für die ERSTE Fälligkeit (z.B. erste Inspektion
+        nach 12.500 km); danach gelten die normalen Intervalle. Ohne Angabe
+        gilt das normale km-Intervall auch beim ersten Mal.
+      required: false
+      example: 12500
+      selector:
+        number:
+          min: 0
+          max: 1000000
+          step: 500
+          unit_of_measurement: km
+    erst_zeit_intervall_monate:
+      name: Erstes Intervall (Monate, optional)
+      description: >
+        Abweichendes Zeit-Intervall für die ERSTE Fälligkeit (z.B. 12 Monate);
+        danach gilt das normale Zeit-Intervall.
+      required: false
+      example: 12
+      selector:
+        number:
+          min: 0
+          max: 240
+          step: 1
+          unit_of_measurement: Monate
           mode: box
 
 edit_maintenance:
@@ -1211,6 +1238,46 @@ edit_maintenance:
           max: 10000
           step: 50
           unit_of_measurement: km
+    erst_km_intervall:
+      name: Erstes Intervall (km, optional)
+      description: >
+        Abweichendes Intervall für die ERSTE Fälligkeit (z.B. erste Inspektion
+        nach 12.500 km); danach gelten die normalen Intervalle. Ohne Angabe
+        gilt das normale km-Intervall auch beim ersten Mal.
+      required: false
+      example: 12500
+      selector:
+        number:
+          min: 0
+          max: 1000000
+          step: 500
+          unit_of_measurement: km
+    erst_zeit_intervall_monate:
+      name: Erstes Intervall (Monate, optional)
+      description: >
+        Abweichendes Zeit-Intervall für die ERSTE Fälligkeit (z.B. 12 Monate);
+        danach gilt das normale Zeit-Intervall.
+      required: false
+      example: 12
+      selector:
+        number:
+          min: 0
+          max: 240
+          step: 1
+          unit_of_measurement: Monate
+    erledigt_anzahl:
+      name: Anzahl erledigt (optional)
+      description: >
+        Korrigiert den Erledigt-Zähler. 0 = das Erstintervall gilt (wieder),
+        ab 1 gelten die normalen Intervalle. Nützlich, wenn der letzte Stand
+        nur ein Startwert war und der Punkt noch nie wirklich erledigt wurde.
+      required: false
+      example: 0
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
           mode: box
 
 delete_maintenance:

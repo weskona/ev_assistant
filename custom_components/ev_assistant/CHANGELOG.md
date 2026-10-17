@@ -8,10 +8,12 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 
 - **Service `set_evcc_realtime_override_min_solar_share` (Issue #49).** Sets the minimum solar share of the economic cap (`evcc_realtime_override_min_solar_share`, 0 to 100 %) without the options flow, e.g. from a dashboard card. Like `set_evcc_mode_control_target_soc_max` it writes the value permanently to the config entry (short reload), so the options flow shows the same value afterwards. Without `min_solar_share` (or `null`) the option is removed: every PV surplus below the minimum charge power is then topped up with grid power. Values are clamped to 0..100; each change is logged as `evcc_min_solar_anteil_geaendert`.
 - New attribute `pv_override_min_solar_share_pct` on the evcc mode control sensor: the configured percentage itself, `null` if not set (until now only the derived price ceiling `pv_override_max_mischpreis_kwh` existed). Like the other attributes it is only present while the evcc control is active.
+- **Maintenance: different first interval (Issue #48).** New optional fields per maintenance point, `erst_km_intervall` and `erst_zeit_intervall_monate` (services `add_maintenance`/`edit_maintenance`, panel add/edit form): they replace the regular interval until the point has been marked done for the first time, e.g. first inspection after 12,500 km / 12 months, then every 25,000 km / 24 months. Each criterion is replaced on its own (only a first km interval: time stays regular). A new counter `erledigt_anzahl` is incremented by `mark_maintenance_done`; `edit_maintenance` can correct it (0 = first interval applies again). The result of the maintenance sensor shows `intervall_phase` (`erst`/`regulaer`) and the effective `km_intervall_wirksam`/`zeit_intervall_wirksam` (only for points with a first interval); the panel shows the effective interval and target km. A first interval is not a due criterion of its own. Points without first-interval values behave exactly as before.
 
 ### Honest limits
 
-- This is unrelated to the fixed minimum share of the surplus (15 % of the wallbox minimum power, since 0.99.55), which is not configurable.
+- The minimum solar share service is unrelated to the fixed minimum share of the surplus (15 % of the wallbox minimum power, since 0.99.55), which is not configurable.
+- Maintenance: existing points are migrated to `erledigt_anzahl` 1 if they have a `last_done`, otherwise 0 -- a `last_done` that was only a start value counts as done there (correct it with `edit_maintenance`). Due dates still roll from the actual completion, so a first inspection done at 13,000 km makes the next one due at 38,000 km, not at 37,500 km. The "Inspektion" template is unchanged.
 
 ## [0.99.56] - 2026-10-17
 

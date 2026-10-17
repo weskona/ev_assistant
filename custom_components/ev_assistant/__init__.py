@@ -440,6 +440,8 @@ ADD_MAINTENANCE_SCHEMA = vol.Schema({
     vol.Optional("last_done_datum"): str,
     vol.Optional("reminder_monate"): vol.Coerce(float),
     vol.Optional("reminder_km"): vol.Coerce(float),
+    vol.Optional("erst_km_intervall"): vol.Coerce(float),
+    vol.Optional("erst_zeit_intervall_monate"): vol.Coerce(int),
 })
 
 EDIT_MAINTENANCE_SCHEMA = vol.Schema({
@@ -457,6 +459,9 @@ EDIT_MAINTENANCE_SCHEMA = vol.Schema({
     vol.Optional("aktiv"): bool,
     vol.Optional("reminder_monate"): vol.Any("", vol.Coerce(float)),
     vol.Optional("reminder_km"): vol.Any("", vol.Coerce(float)),
+    vol.Optional("erst_km_intervall"): vol.Any("", vol.Coerce(float)),
+    vol.Optional("erst_zeit_intervall_monate"): vol.Any("", vol.Coerce(int)),
+    vol.Optional("erledigt_anzahl"): vol.All(vol.Coerce(int), vol.Range(min=0)),
 })
 
 DELETE_MAINTENANCE_SCHEMA = vol.Schema({
@@ -815,6 +820,8 @@ def _register_services(hass: HomeAssistant) -> None:
                 last_done_datum=call.data.get("last_done_datum"),
                 reminder_monate=call.data.get("reminder_monate"),
                 reminder_km=call.data.get("reminder_km"),
+                erst_km_intervall=call.data.get("erst_km_intervall"),
+                erst_zeit_intervall_monate=call.data.get("erst_zeit_intervall_monate"),
             )
 
     async def _handle_edit_maintenance(call: ServiceCall) -> None:
@@ -832,6 +839,9 @@ def _register_services(hass: HomeAssistant) -> None:
                 aktiv=call.data.get("aktiv"),
                 reminder_monate=call.data.get("reminder_monate"),
                 reminder_km=call.data.get("reminder_km"),
+                erst_km_intervall=call.data.get("erst_km_intervall"),
+                erst_zeit_intervall_monate=call.data.get("erst_zeit_intervall_monate"),
+                erledigt_anzahl=call.data.get("erledigt_anzahl"),
             )
 
     async def _handle_delete_maintenance(call: ServiceCall) -> None:

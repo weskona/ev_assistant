@@ -3900,6 +3900,9 @@ def wartung_status(
     heute: str,
     bald_faellig_tage: float = 30.0,
     bald_faellig_km: float = 1000.0,
+    erst_km_intervall: Optional[float] = None,
+    erst_zeit_intervall_monate: Optional[float] = None,
+    erledigt_anzahl: int = 0,
 ) -> dict:
     """Faelligkeit EINES Wartungspunkts (siehe coordinator.py::
     async_add_maintenance()) aus bis zu drei unabhaengig optionalen
@@ -3934,7 +3937,27 @@ def wartung_status(
     Zeitachse" gilt hier umgekehrt: ohne Zeitachse bleibt nur die
     km-Aussage). Ist ueberhaupt nichts berechenbar (z.B. km_intervall
     gesetzt, aber last_done fehlt komplett und kein festes_datum vorhanden),
-    lautet der Status "unbekannt" -- niemals ein fingierter 0-Wert."""
+    lautet der Status "unbekannt" -- niemals ein fingierter 0-Wert.
+
+    Abweichendes Erstintervall (Issue #48, z.B. erste Inspektion nach
+    12.500 km / 12 Monaten, danach 25.000 km / 24 Monate): solange
+    `erledigt_anzahl` 0 ist, ersetzen `erst_km_intervall`/`erst_zeit_
+    intervall_monate` das jeweilige regulaere Intervall -- jedes Kriterium
+    einzeln (fehlt der Erstwert, gilt das regulaere). Danach gelten die
+    regulaeren Intervalle. Das Ergebnis nennt die wirksamen Werte
+    ("km_intervall_wirksam"/"zeit_intervall_wirksam") und die Phase
+    ("intervall_phase": "erst"/"regulaer"). Ohne Erstwerte unveraendert."""
+    erst_phase = not erledigt_anzahl and bool(erst_km_intervall or erst_zeit_intervall_monate)
+    if erst_phase:
+        km_intervall = erst_km_intervall or km_intervall
+        zeit_intervall_monate = erst_zeit_intervall_monate or zeit_intervall_monate
+    # Zusatzfelder nur bei konfiguriertem Erstintervall -- ohne bleibt die
+    # Rueckgabe exakt wie zuvor.
+    extra = {
+        "intervall_phase": "erst" if erst_phase else "regulaer",
+        "km_intervall_wirksam": km_intervall,
+        "zeit_intervall_wirksam": zeit_intervall_monate,
+    } if (erst_km_intervall or erst_zeit_intervall_monate) else {}
     heute_date = date.fromisoformat(heute)
     last_done = last_done or {}
     last_done_km = last_done.get("km")
@@ -3986,7 +4009,7 @@ def wartung_status(
         }
         if rest_km is not None:
             result["rest_km"] = rest_km
-        return result
+        return {**result, **extra}
 
     if rest_km is not None:
         if rest_km <= 0:
@@ -3995,9 +4018,9 @@ def wartung_status(
             status = "bald_faellig"
         else:
             status = "ok"
-        return {"status": status, "naechste_quelle": "km", "rest_km": rest_km}
+        return {"status": status, "naechste_quelle": "km", "rest_km": rest_km, **extra}
 
-    return {"status": "unbekannt"}
+    return {"status": "unbekannt", **extra}
 
 
 def wartung_uebersicht(
@@ -4044,6 +4067,8 @@ def wartung_uebersicht(
             aktueller_km, km_pro_tag, punkt.get("last_done"),
             punkt.get("km_intervall"), punkt.get("zeit_intervall_monate"), punkt.get("festes_datum"),
             heute, effektiv_bald_faellig_tage, effektiv_bald_faellig_km,
+            punkt.get("erst_km_intervall"), punkt.get("erst_zeit_intervall_monate"),
+            punkt.get("erledigt_anzahl") or 0,
         )
         merged = {**punkt, **status}
         result_punkte.append(merged)
