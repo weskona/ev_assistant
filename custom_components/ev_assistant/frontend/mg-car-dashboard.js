@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=43  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=45  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.5.18";
+const VERSION = "3.6.0";
 // Version der Datenschnittstelle zu ev_assistant (Panel-Konfiguration, Websocket-Befehle, evcc_live),
 // die diese Karte erwartet. Meldet ev_assistant in der Panel-Konfiguration eine andere "api_version",
 // warnt die Karte (Konsole + Hinweis). Ohne "api_version" (ältere ev_assistant-Versionen) keine Warnung.
@@ -257,7 +257,7 @@ class MgCarDashboard extends HTMLElement {
     this.shadowRoot.innerHTML = `<style>${STYLE}${CAR_STYLE}</style>
       <div class="wrap carpage">
         <div class="apiwarn" id="apiwarn" hidden></div>
-        <div class="pages"><div class="hsegs"><button class="hseg" data-act="page" data-p="main">Übersicht</button><button class="hseg" data-act="page" data-p="prof">Profil &amp; Analyse</button><button class="hseg" data-act="page" data-p="set">Einstellungen</button></div></div>
+        <div class="pages"><div class="hsegs"><button class="hseg" data-act="page" data-p="main">Übersicht</button><button class="hseg" data-act="page" data-p="prof">Profil &amp; Analyse</button><button class="hseg" data-act="page" data-p="cost">Laden &amp; Kosten</button><button class="hseg" data-act="page" data-p="set">Einstellungen</button></div><div class="kper" id="kper" hidden></div></div>
         <div class="grid" id="pmain">
           <div class="col"><section class="panel car" id="car"></section><section class="panel grow" id="trips"></section></div>
           <div class="col"><section class="panel" id="live"></section><section class="panel" id="mgmt"></section></div>
@@ -267,6 +267,10 @@ class MgCarDashboard extends HTMLElement {
           <section class="panel" id="pweek"></section><section class="panel" id="pmorrow"></section>
           <section class="panel" id="pana"></section><section class="panel" id="pmisch"></section>
         </div>
+        <div class="grid kgrid" id="pcost" hidden>
+          <div class="col"><section class="panel" id="kgel"></section><section class="panel" id="klist"></section></div>
+          <div class="col"><section class="panel" id="kauf"></section><section class="panel" id="kcmp"></section></div>
+        </div>
         <div class="grid sgrid" id="pset" hidden>
           <div class="col"><section class="panel" id="swart"></section><section class="panel" id="slk"></section><section class="panel" id="slog"></section></div>
           <div class="col"><section class="panel" id="simg"></section><section class="panel" id="sdata"></section></div>
@@ -274,7 +278,7 @@ class MgCarDashboard extends HTMLElement {
       </div><dialog class="dlg" id="cardlg"></dialog>`;
     this._built = true;
     // nur bei geändertem HTML neu schreiben – sonst springt iOS (Companion-App) beim Scrollen alle paar Sekunden nach oben (#20)
-    for (const id of ["live", "mgmt", "hist", "pweek", "pmorrow", "pana", "pmisch"]) this._guardHtml(this.shadowRoot.getElementById(id));
+    for (const id of ["live", "mgmt", "hist", "pweek", "pmorrow", "pana", "pmisch", "kper", "kgel", "klist", "kauf", "kcmp"]) this._guardHtml(this.shadowRoot.getElementById(id));
     this._showPage();
     requestAnimationFrame(() => { this._fit(); this._render_trips(); });
   }
@@ -319,6 +323,7 @@ class MgCarDashboard extends HTMLElement {
     this._render_usage();
     if (this._subPage() === "prof") this._render_prof();
     if (this._subPage() === "set") this._render_set();
+    if (this._subPage() === "cost") this._render_cost();
     if (this._dlg === "ana") this._renderAnaDlg();
     if (this._dlg === "pend") this._renderPend();
   }
@@ -442,6 +447,7 @@ class MgCarDashboard extends HTMLElement {
     if (home?.error && ext?.error) out.err = "Abruf bei ev_assistant fehlgeschlagen";
     this._charges = out;
     this._renderCharges();
+    if (this._subPage() === "cost") this._render_cost();
   }
 
   _openCharges() {
@@ -562,7 +568,7 @@ class MgCarDashboard extends HTMLElement {
     })();
 
     // ev_assistant: Ladeplan, Vollladung, Pause
-    const plan = this._st(E.evcc_charge_plan), pa = plan?.attributes || {}, mc = this._st(E.evcc_mode_control), ma = mc?.attributes || {};
+    const plan = this._planSt(), pa = plan?.attributes || {}, mc = this._st(E.evcc_mode_control), ma = mc?.attributes || {};
     const pi = this._planInfo(plan), hasPlan = !!pi;
     const fmtD = (d) => `${WD[d.getDay()]} ${d.getDate()}. ${MON[d.getMonth()]}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
     const entry = this._evaEntryId();
@@ -622,7 +628,7 @@ class MgCarDashboard extends HTMLElement {
     const mInfo = evM === "now" ? { t: "Schnell", i: icon(EVA_NOW.icon), c: EVA_NOW.color }
       : evM === "off" ? { t: "Aus", i: icon("mdi:power-off"), c: "#8b91a1" }
       : so ? { t: `Smart · ${so.label === "aus" ? "PV" : so.label}`, i: so.glyph ? "" : ico(so), c: EVA_SMART.color } : { t: "–", i: icon("mdi:help"), c: "var(--muted)" };
-    const plan = this._st(E.evcc_charge_plan), pi = this._planInfo(plan);
+    const plan = this._planSt(), pi = this._planInfo(plan);
     // Kopf: aktueller evcc-Lademodus oben rechts
     const head = `<div class="hd"><span class="ttl">Lademanagement</span>
       <span class="lbl mnow" style="--cc:${mInfo.c}" title="Lademodus in evcc">${mInfo.i}${esc(mInfo.t)}</span></div>`;
@@ -711,6 +717,12 @@ class MgCarDashboard extends HTMLElement {
     this._render_mgmt(); if (this._subPage() === "prof") this._render_misch();
   }
 
+  /* Ladeplan-Sensor ohne Überbrückung: „unbekannt“ heißt hier „kein Plan“ (z. B. direkt nach dem Löschen) */
+  _planSt() {
+    const id = this._eva().evcc_charge_plan, s = id ? this._hass?.states[id] : null, c = this._planCleared;
+    if (c && (Date.now() - c.t > 60000 || (s && s.state !== c.was))) this._planCleared = null;
+    return this._planCleared ? undefined : s || undefined;
+  }
   _planUnitGet() {
     if (this._planUnit) return this._planUnit;
     let v = null; try { v = localStorage.getItem("mg-car-plan-unit"); } catch (x) {}
@@ -950,7 +962,7 @@ class MgCarDashboard extends HTMLElement {
     ].join("");
 
     // Plan, Modus, Hinweise als schmale Zeilen
-    const plan = this._st(E.evcc_charge_plan), mode = this._st(E.evcc_mode_control), rec = this._st(E.charge_before_pv_recommended), tot = this._fmt(ev.solar_total, 0);
+    const plan = this._planSt(), mode = this._st(E.evcc_mode_control), rec = this._st(E.charge_before_pv_recommended), tot = this._fmt(ev.solar_total, 0);
     const row = (ic, lbl, v, id, cls = "") => `<button class="lrow ${cls}" data-act="more" data-entity="${esc(id)}">${icon(ic)}<span>${lbl}</span><b>${esc(v)}</b></button>`;
     const rows = [
       plan && !OFFLINE_HD.includes(plan.state) ? row("mdi:calendar-clock", "Ladeplan", plan.state, E.evcc_charge_plan) : "",
@@ -1537,13 +1549,14 @@ class MgCarDashboard extends HTMLElement {
   _subPage() {
     if (this._pg) return this._pg;
     let v = null; try { v = localStorage.getItem("mg-car-page"); } catch (e) {}
-    return (this._pg = v === "prof" || v === "set" ? v : "main");
+    return (this._pg = ["prof", "set", "cost"].includes(v) ? v : "main");
   }
   _showPage() {
     const p = this._subPage(), sr = this.shadowRoot;
     sr.getElementById("pmain").hidden = p !== "main";
     sr.getElementById("pprof").hidden = p !== "prof";
     sr.getElementById("pset").hidden = p !== "set";
+    sr.getElementById("pcost").hidden = p !== "cost"; sr.getElementById("kper").hidden = p !== "cost";
     sr.querySelectorAll('[data-act="page"]').forEach((b) => b.classList.toggle("sel", b.dataset.p === p));
   }
   _ea(key) { const id = this._eva()[key]; return id ? this._hass?.states[id] : null; }
@@ -1723,6 +1736,160 @@ class MgCarDashboard extends HTMLElement {
     d.innerHTML = `<div class="dpan pdlg"><div class="dhd"><span class="dico">${icon("mdi:chart-box-outline")}</span>
       <span class="rtx"><span class="rname">${title}</span><span class="rsub">${sub}</span></span>
       <button class="dx" data-act="cardclose" aria-label="Schließen">${icon("mdi:close")}</button></div><div class="dbody">${body}</div></div>`;
+  }
+
+  /* ---------- Unterseite „Laden & Kosten“ (Ladungen, Fahrten und Verbrenner-Vergleich aus ev_assistant) ---------- */
+  // Zeitraum: Tag / Woche / Monat / Jahr / Gesamt, mit Blättern (off = 0 aktuell, -1 davor …)
+  _cpGet() {
+    if (this._cp) return this._cp;
+    let p = null; try { p = localStorage.getItem("mg-car-cost-period"); } catch (x) {}
+    return (this._cp = { p: ["day", "week", "month", "year", "all"].includes(p) ? p : "month", off: 0 });
+  }
+  _cpRange(p = this._cpGet().p, off = this._cpGet().off) {
+    const n = new Date();
+    let a, b, unit, label;
+    if (p === "day") { a = new Date(n.getFullYear(), n.getMonth(), n.getDate() + off); b = new Date(a); b.setDate(b.getDate() + 1); unit = "hour";
+      label = off === 0 ? "Heute" : off === -1 ? "Gestern" : `${WD[a.getDay()]} ${a.getDate()}. ${MON[a.getMonth()]}${a.getFullYear() !== n.getFullYear() ? ` ${a.getFullYear()}` : ""}`; }
+    else if (p === "week") { const d = (n.getDay() + 6) % 7; a = new Date(n.getFullYear(), n.getMonth(), n.getDate() - d + off * 7); b = new Date(a); b.setDate(b.getDate() + 7); unit = "day";
+      const e = new Date(b - 86400000); label = `${a.getDate()}. ${MON[a.getMonth()]} – ${e.getDate()}. ${MON[e.getMonth()]}${e.getFullYear() !== n.getFullYear() ? ` ${e.getFullYear()}` : ""}`; }
+    else if (p === "month") { a = new Date(n.getFullYear(), n.getMonth() + off, 1); b = new Date(a.getFullYear(), a.getMonth() + 1, 1); unit = "day"; label = `${MON_LONG[a.getMonth()]} ${a.getFullYear()}`; }
+    else if (p === "year") { a = new Date(n.getFullYear() + off, 0, 1); b = new Date(a.getFullYear() + 1, 0, 1); unit = "month"; label = String(a.getFullYear()); }
+    else {
+      const first = Math.min(...[...(this._charges?.list || []).map((x) => x.ts), ...(this._evaTrips?.list || []).map((t) => new Date(t.start).getTime())].filter((x) => x > 0), n.getTime());
+      const f = new Date(first); a = new Date(f.getFullYear(), f.getMonth(), 1); b = new Date(n.getFullYear(), n.getMonth() + 1, 1); unit = "month"; label = "Seit Beginn";
+    }
+    return { a: a.getTime(), b: b.getTime(), unit, label };
+  }
+  _cpBuckets(R) {
+    const out = [], d = new Date(R.a);
+    while (d.getTime() < R.b && out.length < 400) {
+      const s = d.getTime();
+      if (R.unit === "hour") d.setHours(d.getHours() + 1); else if (R.unit === "day") d.setDate(d.getDate() + 1); else d.setMonth(d.getMonth() + 1);
+      out.push([s, d.getTime()]);
+    }
+    return out;
+  }
+  // Ladekarten-Grundgebühren im Zeitraum (je Tag anteilig aus der jeweils gültigen Preisstufe)
+  _cpFees(a, b) {
+    const karten = this._ea("ladekarten_kosten")?.attributes?.karten || [];
+    let sum = 0;
+    const day = 86400000, end = Math.min(b, Date.now());
+    for (const k of karten) {
+      const st = [...(k.gebuehren || [])].sort((x, y) => (x.ab_datum < y.ab_datum ? -1 : 1));
+      const k0 = k.start_datum ? new Date(k.start_datum).getTime() : -Infinity, k1 = k.end_datum ? new Date(k.end_datum).getTime() + day : Infinity;
+      for (let t = Math.max(a, k0); t < Math.min(end, k1); t += day) {
+        const iso = new Date(t).toISOString().slice(0, 10);
+        const g = st.filter((s) => s.ab_datum <= iso).pop() || st[0];
+        if (g) sum += (Number(g.gebuehr) || 0) * 12 / 365.25 * Math.min(1, (Math.min(end, k1, t + day) - t) / day);
+      }
+    }
+    return sum;
+  }
+  // Ladung → Quelle: Heim PV/Netz (nach PV-Anteil) oder Fremd AC/DC
+  _cpSplit(x, feedin) {
+    if (x.type === "home") {
+      const k = x.kwh || 0, pv = x.pv != null ? Math.max(0, Math.min(100, x.pv)) / 100 : 0, pvK = k * pv, grK = k - pvK;
+      const pvC = x.cost != null && feedin != null ? Math.min(x.cost, pvK * feedin) : null;   // PV mit der entgangenen Einspeisevergütung bewertet
+      return { pv: [pvK, pvC ?? 0], gr: [grK, x.cost != null ? x.cost - (pvC ?? 0) : 0] };
+    }
+    const dc = /dc/i.test(x.ac || "") || (!/ac/i.test(x.ac || "") && x.kwh > 0 && x.dur > 0 && x.kwh / (x.dur / 60) > 22);
+    return { [dc ? "dc" : "ac"]: [x.kwh || 0, x.cost || 0] };
+  }
+  _cpSum(a, b) {
+    const feedin = parseFloat(this._live().tariff_feedin), fi = isNaN(feedin) ? null : feedin;
+    const S = { pv: [0, 0], gr: [0, 0], ac: [0, 0], dc: [0, 0], n: 0, km: 0, tk: 0, list: [] };
+    for (const x of this._charges?.list || []) {
+      if (!(x.ts >= a && x.ts < b)) continue;
+      S.n++; S.list.push(x);
+      for (const [k, v] of Object.entries(this._cpSplit(x, fi))) { S[k][0] += v[0]; S[k][1] += v[1]; }
+    }
+    for (const t of this._evaTrips?.list || []) {
+      const ts = new Date(t.start).getTime();
+      if (!(ts >= a && ts < b)) continue;
+      S.km += parseFloat(t.strecke) || 0; if (parseFloat(t.verbrauch_kwh) > 0 && parseFloat(t.strecke) > 0) { S.tk += parseFloat(t.verbrauch_kwh); S.tkm = (S.tkm || 0) + parseFloat(t.strecke); }
+    }
+    S.kwh = S.pv[0] + S.gr[0] + S.ac[0] + S.dc[0];
+    S.cost = S.pv[1] + S.gr[1] + S.ac[1] + S.dc[1];
+    S.fees = this._cpFees(a, b);
+    S.total = S.cost + S.fees;
+    return S;
+  }
+
+  _render_cost() {
+    const sr = this.shadowRoot;
+    if (!this._charges || Date.now() - this._charges.t > 5 * 60000) this._loadCharges();
+    if (!this._evaTrips) this._loadTrips();
+    const cp = this._cpGet(), R = this._cpRange(), S = this._cpSum(R.a, R.b);
+    const P = this._cpRange(cp.p, cp.off - 1), SP = cp.p === "all" ? null : this._cpSum(P.a, P.b);
+    const loading = !this._charges;
+    // Zeitraum-Leiste neben den Seiten-Tabs
+    const per = [["day", "Tag"], ["week", "Woche"], ["month", "Monat"], ["year", "Jahr"], ["all", "Gesamt"]];
+    sr.getElementById("kper").innerHTML = `<div class="hsegs">${per.map(([k, l]) => `<button class="hseg ${cp.p === k ? "sel" : ""}" data-act="cper" data-v="${k}">${l}</button>`).join("")}</div>
+      <div class="knav">${cp.p !== "all" ? `<button class="sic" data-act="cnav" data-d="-1" aria-label="Zurück">${icon("mdi:chevron-left")}</button>` : ""}<b>${esc(R.label)}</b>${cp.p !== "all" ? `<button class="sic" data-act="cnav" data-d="1" aria-label="Weiter"${cp.off >= 0 ? " disabled" : ""}>${icon("mdi:chevron-right")}</button>` : ""}</div>`;
+
+    // --- Geladen: Balken je Stunde/Tag/Monat, gestapelt nach Quelle ---
+    const feedin = parseFloat(this._live().tariff_feedin), fi = isNaN(feedin) ? null : feedin;
+    const B = this._cpBuckets(R).map(([s, e]) => {
+      const v = { pv: 0, gr: 0, ac: 0, dc: 0, s, e };
+      for (const x of S.list) if (x.ts >= s && x.ts < e) for (const [k, w] of Object.entries(this._cpSplit(x, fi))) v[k] += w[0];
+      return v;
+    });
+    const mx = Math.max(0.1, ...B.map((v) => v.pv + v.gr + v.ac + v.dc));
+    const lab = (s) => { const d = new Date(s); return R.unit === "hour" ? `${d.getHours()}` : R.unit === "day" ? (cp.p === "week" ? WD[d.getDay()] : `${d.getDate()}`) : cp.p === "all" ? `${MON[d.getMonth()]} ${String(d.getFullYear()).slice(2)}` : MON[d.getMonth()]; };
+    const every = B.length > 24 ? Math.ceil(B.length / 12) : B.length > 14 ? 3 : 1;
+    const tip = (v) => { const d = new Date(v.s), t = v.pv + v.gr + v.ac + v.dc;
+      const when = R.unit === "hour" ? `${pad(d.getHours())}:00` : R.unit === "day" ? `${WD[d.getDay()]} ${d.getDate()}. ${MON[d.getMonth()]}` : `${MON_LONG[d.getMonth()]} ${d.getFullYear()}`;
+      return `${when}: ${de(t, 1)} kWh${v.pv ? ` · PV ${de(v.pv, 1)}` : ""}${v.gr ? ` · Netz ${de(v.gr, 1)}` : ""}${v.ac ? ` · AC ${de(v.ac, 1)}` : ""}${v.dc ? ` · DC ${de(v.dc, 1)}` : ""}`; };
+    const bars = B.map((v) => { const t = v.pv + v.gr + v.ac + v.dc;
+      return `<div class="kc" style="height:${(t / mx) * 100}%" title="${esc(tip(v))}">${[["pv", "kpv"], ["gr", "kgr"], ["ac", "kac"], ["dc", "kdc"]].filter(([k]) => v[k] > 0).map(([k, c]) => `<i class="${c}" style="height:${(v[k] / t) * 100}%"></i>`).join("")}</div>`; }).join("");
+    const ax = B.map((v, i) => `<span>${i % every === 0 ? lab(v.s) : ""}</span>`).join("");
+    const pvPct = S.pv[0] + S.gr[0] > 0.05 ? Math.round((S.pv[0] / S.kwh) * 100) : null;
+    const delta = (cur, prev) => { if (!SP || !(prev > 0.05)) return ""; const d = Math.round(((cur - prev) / prev) * 100); return `<em class="${d > 0 ? "up" : ""}">${d > 0 ? "+" : ""}${d} % ggü. ${cp.p === "month" ? MON[new Date(P.a).getMonth()] : cp.p === "year" ? P.label : cp.p === "week" ? "Vorwoche" : "Vortag"}</em>`; };
+    const cons = S.tkm > 1 ? (S.tk / S.tkm) * 100 : null, per100 = S.km > 1 ? (S.total / S.km) * 100 : null;
+    const kp = (l, v, u, ex = "") => `<div><span>${l}</span><b>${v}</b><small>${u}</small>${ex}</div>`;
+    sr.getElementById("kgel").innerHTML = this._hd("Geladen", loading ? "Lädt …" : `<b>${de(S.kwh, 1)} kWh</b>${pvPct != null ? ` · ${pvPct} % PV` : ""}`)
+      + `<div class="kchart">${bars}</div><div class="kax">${ax}</div>
+      <div class="klg"><span><i class="kpv"></i>Heim PV</span><span><i class="kgr"></i>Heim Netz</span><span><i class="kac"></i>Fremd AC</span><span><i class="kdc"></i>Fremd DC</span></div>
+      <div class="kkp">${kp("Energie", de(S.kwh, 1), "kWh", delta(S.kwh, SP?.kwh))}${kp("Kosten", de(S.total, 2), "€", delta(S.total, SP?.total))}${kp("Ø Preis", S.kwh > 0.1 ? de((S.cost / S.kwh) * 100, 1) : "–", "ct/kWh")}
+        ${kp("Strecke", de(S.km, 0), "km")}${kp("Verbrauch", cons != null ? de(cons, 1) : "–", "kWh/100")}${kp("€ / 100 km", per100 != null ? de(per100, 2) : "–", "€")}</div>`;
+
+    // --- Ladungen im Zeitraum ---
+    const rows = [...S.list].sort((x, y) => y.ts - x.ts).slice(0, 6).map((x) => {
+      const d = new Date(x.ts), ed = x.type === "ext" && x.raw?.erfasst_ts != null;
+      const sp = this._cpSplit(x, fi), what = x.type === "home" ? `Zuhause${x.pv != null ? ` · ${Math.round(x.pv)} % PV` : ""}` : `${esc(x.who)} · ${sp.dc ? "DC" : "AC"}`;
+      return `<div class="krow${ed ? " ted" : ""}"${ed ? ` data-act="set" data-k="ch-edit" data-id="${esc(x.raw.erfasst_ts)}"` : ` data-act="charges"`}>
+        <span class="kri ${x.type}">${icon(x.type === "home" ? "mdi:home-lightning-bolt" : "mdi:ev-station")}</span>
+        <span class="krt"><b>${WD[d.getDay()]} ${d.getDate()}. ${MON[d.getMonth()]}</b><small>${what}${x.s0 != null && x.s1 != null ? ` · ${Math.round(x.s0)} → ${Math.round(x.s1)} %` : ""}</small></span>
+        <span class="krv"><b>${x.kwh != null ? de(x.kwh, 1) : "–"} kWh</b><small>${x.cost != null ? `${de(x.cost, 2)} €` : ""}</small></span></div>`;
+    }).join("");
+    sr.getElementById("klist").innerHTML = this._hd("Ladungen im Zeitraum", `${S.n} Ladung${S.n === 1 ? "" : "en"}`)
+      + (rows ? `<div class="klist">${rows}</div>${S.n > 6 ? `<button class="sbt kall" data-act="charges">Alle Ladungen</button>` : ""}` : `<div class="empty">${loading ? "Lädt …" : "Keine Ladungen in diesem Zeitraum."}</div>`);
+
+    // --- Aufschlüsselung ---
+    const src = [["kpv", "Heim PV", S.pv], ["kgr", "Heim Netz", S.gr], ["kac", "Fremd AC", S.ac], ["kdc", "Fremd DC", S.dc]];
+    const tot = Math.max(0.01, S.kwh);
+    sr.getElementById("kauf").innerHTML = this._hd("Aufschlüsselung", esc(R.label))
+      + `<div class="kbar">${src.map(([c, , v]) => (v[0] > 0 ? `<i class="${c}" style="width:${(v[0] / tot) * 100}%"></i>` : "")).join("")}</div>
+      <div class="ksrc">${src.map(([c, l, v]) => `<div class="${v[0] > 0 ? "" : "z"}"><i class="${c}"></i><span>${l}</span><b>${de(v[0], 1)} kWh</b><small>${de(v[1], 2)} €${v[0] > 0.05 ? ` · ${de((v[1] / v[0]) * 100, 0)} ct` : ""}</small></div>`).join("")}
+        ${S.fees > 0.005 ? `<div><i class="kfee"></i><span>Ladekarten-Gebühren</span><b></b><small>${de(S.fees, 2)} €</small></div>` : ""}</div>
+      ${fi != null && S.pv[0] > 0 ? `<div class="pnote">Heim-PV ist mit der Einspeisevergütung (${de(fi * 100, 1)} ct) bewertet, der Rest der Heimkosten zählt als Netz.</div>` : ""}`;
+
+    // --- Vergleich Verbrenner ---
+    const sv = this._ea("savings"), sa = sv?.attributes || {}, vK = parseFloat(sa.kosten_verbrenner_geschaetzt), gk = parseFloat(sa.gefahrene_km);
+    const rate = vK > 0 && gk > 0 ? vK / gk : null, fuel = parseFloat(this._ea("verbrenner_price_selected")?.state);
+    const el = sr.getElementById("kcmp");
+    if (rate == null) { el.innerHTML = this._hd("Vergleich Verbrenner") + `<div class="empty">ev_assistant hat noch keinen Verbrenner-Vergleich – dafür in den ev_assistant-Optionen (Schritt „Vergleich“) Verbrauch und Spritpreis des Verbrenners eintragen.</div>`; return; }
+    const vC = S.km * rate, saved = vC - S.total, mxc = Math.max(0.01, vC, S.total);
+    const lPer100 = !isNaN(fuel) && fuel > 0 ? (rate * 100) / fuel : null, liters = lPer100 != null ? (S.km * lPer100) / 100 : null;
+    const co2 = parseFloat(this._ea("co2_savings")?.state), co2P = !isNaN(co2) && gk > 0 ? (co2 / gk) * S.km : null;
+    const sinceAll = parseFloat(sv?.state);
+    el.innerHTML = this._hd("Vergleich Verbrenner", lPer100 != null ? `${de(lPer100, 1)} l/100 · ${de(fuel, 2)} €/l` : "")
+      + `<div class="ksave ${saved < 0 ? "neg" : ""}"><span>${saved >= 0 ? "Gespart" : "Mehrkosten"} · ${esc(R.label)}</span><div><b>${de(Math.abs(saved), 2)} €</b>${!isNaN(sinceAll) && cp.p !== "all" ? `<small> · seit Einrichtung ${de(sinceAll, 0)} €</small>` : ""}</div></div>
+      <div class="kcb"><p>Elektro<b>${de(S.total, 2)} €</b></p><div class="kbar2"><i style="width:${(S.total / mxc) * 100}%;background:var(--green)"></i></div></div>
+      <div class="kcb"><p>Verbrenner (geschätzt)<b>${de(vC, 2)} €</b></p><div class="kbar2"><i style="width:${(vC / mxc) * 100}%;background:#94a3b8"></i></div></div>
+      <div class="kmini"><div><span>€ / 100 km</span><b>${per100 != null ? de(per100, 2) : "–"}</b><small>vs ${de(rate * 100, 2)}</small></div>
+        <div><span>Liter</span><b>${liters != null ? de(liters, 0) : "–"}</b><small>gespart</small></div><div><span>CO₂</span><b>${co2P != null ? de(co2P, 0) : "–"}</b><small>kg weniger</small></div></div>
+      <div class="pnote">Verbrenner: Kosten je km aus dem ev_assistant-Vergleich seit Einrichtung, mal den gefahrenen km im Zeitraum.</div>`;
   }
 
   /* ---------- Unterseite „Einstellungen“ (Wartung, Ladekarten, Einstellungen aus ev_assistant) ---------- */
@@ -2621,6 +2788,8 @@ class MgCarDashboard extends HTMLElement {
     if (act === "charges") { this._openCharges(); return; }
     if (act === "trips") { this._openTrips(); return; }
     if (act === "pendopen") { this._openPend(); return; }
+    if (act === "cper") { const cp = this._cpGet(); cp.p = el.dataset.v; cp.off = 0; try { localStorage.setItem("mg-car-cost-period", cp.p); } catch (x) {} this._render_cost(); return; }
+    if (act === "cnav") { const cp = this._cpGet(); cp.off = Math.min(0, cp.off + Number(el.dataset.d)); this._render_cost(); return; }
     if (act === "mset") {
       this._closeMenu();
       const id = el.dataset.entity;
@@ -2788,7 +2957,14 @@ class MgCarDashboard extends HTMLElement {
       this._render_mgmt(); setTimeout(() => this._render_mgmt(), 30500);
       return;
     }
-    if (act === "mplanclear") { if (window.confirm("Ladeplan löschen?")) this._evaCall("clear_evcc_charge_plan", {}).catch((x) => window.alert(`Ladeplan konnte nicht gelöscht werden: ${x?.message || x}`)); return; }
+    if (act === "mplanclear") {
+      if (!window.confirm("Ladeplan löschen?")) return;
+      // sofort als gelöscht anzeigen, bis ev_assistant das bestätigt (oder nach 60 s wieder den echten Stand)
+      this._planCleared = { t: Date.now(), was: this._hass?.states[this._eva().evcc_charge_plan]?.state };
+      this._planTime = null; this._render_mgmt(); this._render_live();
+      this._evaCall("clear_evcc_charge_plan", {}).catch((x) => { this._planCleared = null; this._render_mgmt(); this._render_live(); window.alert(`Ladeplan konnte nicht gelöscht werden: ${x?.message || x}`); });
+      return;
+    }
     if (act === "planunit") { this._planUnit = el.dataset.v; try { localStorage.setItem("mg-car-plan-unit", this._planUnit); } catch (x) {} this._planTime = this.shadowRoot.querySelector("#mgmt .pin")?.value; this._render_mgmt(); return; }
     if (act === "mplankm") { const kp = this._kmPerPct(), base = this._planKm ?? (kp ? Math.round(((this._planSoc ?? 80) * kp) / 10) * 10 : 200); this._planKm = Math.max(10, Math.min(1000, base + Number(el.dataset.d))); this._planTime = this.shadowRoot.querySelector("#mgmt .pin")?.value; this._render_mgmt(); return; }
     if (act === "mplansoc") { this._planSoc = Math.max(10, Math.min(100, (this._planSoc ?? 80) + Number(el.dataset.d))); this._planTime = this.shadowRoot.querySelector("#mgmt .pin")?.value; this._render_mgmt(); return; }
@@ -3361,6 +3537,37 @@ const CAR_STYLE = `
 @container (max-width:1180px){.pgrid{grid-template-columns:1fr!important}.ptiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @container (max-width:720px){.pdays{grid-template-columns:repeat(4,minmax(0,1fr))}.pcols{grid-template-columns:1fr}}
 .sgrid{grid-template-columns:1.5fr 1fr!important;align-content:start}
+.pages{align-items:center;gap:10px;flex-wrap:wrap}.kper{display:flex;align-items:center;gap:10px;margin-left:auto;flex-wrap:wrap}
+.knav{display:flex;align-items:center;gap:4px}.knav b{min-width:120px;text-align:center;font-size:15px}.knav .sic[disabled]{opacity:.3;pointer-events:none}
+.kgrid{grid-template-columns:2fr 1fr!important;align-content:start}.wrap.fit .kgrid{grid-template-rows:none;overflow-y:auto;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.15) transparent}
+.kpv{background:var(--e-solar,#ff9800)}.kgr{background:var(--e-grid-in,#488fc2)}.kac{background:#a78bfa}.kdc{background:#f472b6}.kfee{background:#64748b}
+.kchart{display:flex;align-items:flex-end;gap:4px;height:190px;border-bottom:1px solid var(--line)}
+.kc{flex:1;min-width:0;display:flex;flex-direction:column-reverse;border-radius:5px 5px 2px 2px;overflow:hidden;transition:filter .15s}.kc:hover{filter:brightness(1.25)}.kc i{display:block;width:100%}
+.kax{display:flex;gap:4px;font-size:11px;color:var(--dim);margin-top:5px}.kax span{flex:1;min-width:0;text-align:center;white-space:nowrap;overflow:visible}
+.klg{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12.5px;color:var(--muted);margin-top:10px}.klg span{display:inline-flex;align-items:center;gap:6px}.klg i,.ksrc i{width:10px;height:10px;border-radius:3px;display:inline-block;flex:none}
+.kkp{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-top:14px}
+.kkp div{padding:9px 11px;border-radius:15px;background:var(--tile);border:1px solid var(--tileb);min-width:0}
+.kkp span{display:block;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;white-space:nowrap}
+.kkp b{font-size:19px;font-variant-numeric:tabular-nums}.kkp small{font-size:11.5px;color:var(--muted);margin-left:3px}.kkp em{display:block;font-style:normal;font-size:11.5px;color:var(--green);white-space:nowrap}.kkp em.up{color:var(--orange)}
+.klist{display:flex;flex-direction:column;gap:6px}
+.krow{display:grid;grid-template-columns:34px 1fr auto;gap:10px;align-items:center;padding:8px 12px 8px 8px;border-radius:14px;background:var(--tile);border:1px solid var(--tileb);cursor:pointer}.krow:hover{border-color:rgba(255,255,255,.2)}
+.kri{width:34px;height:34px;border-radius:11px;display:grid;place-items:center;background:color-mix(in srgb,var(--e-solar,#ff9800) 16%,transparent);color:var(--e-solar,#ff9800)}.kri.ext{background:rgba(244,114,182,.14);color:#f472b6}.kri ha-icon{--mdc-icon-size:18px}
+.krt,.krv{display:flex;flex-direction:column;min-width:0}.krt small,.krv small{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.krv{align-items:flex-end;font-variant-numeric:tabular-nums}
+.kall{margin-top:10px}
+.kbar{display:flex;height:12px;border-radius:7px;overflow:hidden;background:rgba(255,255,255,.06);margin-bottom:12px}.kbar i{display:block;height:100%}
+.ksrc{display:flex;flex-direction:column;gap:7px;margin-bottom:8px}
+.ksrc div{display:grid;grid-template-columns:12px 1fr auto auto;gap:4px 12px;align-items:center;padding:9px 12px;border-radius:14px;background:var(--tile);border:1px solid var(--tileb);font-size:14px}.ksrc div.z{opacity:.5}
+.ksrc b{font-variant-numeric:tabular-nums;text-align:right}.ksrc small{color:var(--muted);font-size:12px;text-align:right;min-width:84px}
+.ksave{padding:14px 16px;border-radius:20px;background:radial-gradient(120% 120% at 0% 0%,rgba(52,211,153,.16),transparent 60%),var(--tile);border:1px solid rgba(52,211,153,.35);margin-bottom:12px}
+.ksave span{font-size:12px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}.ksave b{font-size:28px;color:var(--green);font-variant-numeric:tabular-nums}.ksave small{font-size:13.5px;color:var(--muted)}
+.ksave.neg{border-color:rgba(251,146,60,.4);background:var(--tile)}.ksave.neg b{color:var(--orange)}
+.kcb{display:flex;flex-direction:column;gap:5px;margin-bottom:10px}.kcb p{margin:0;display:flex;font-size:14px}.kcb p b{margin-left:auto;font-variant-numeric:tabular-nums}
+.kbar2{height:12px;border-radius:7px;background:rgba(255,255,255,.06);overflow:hidden}.kbar2 i{display:block;height:100%;border-radius:7px}
+.kmini{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:4px 0 10px}
+.kmini div{padding:8px 10px;border-radius:13px;background:var(--tile);border:1px solid var(--tileb);min-width:0}.kmini span{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);font-weight:600;white-space:nowrap}.kmini b{font-size:16px}.kmini small{font-size:11px;color:var(--muted);margin-left:3px}
+@container (max-width:1180px){.kgrid{grid-template-columns:1fr!important}.kkp{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@container (max-width:520px){.pages > .hsegs{width:100%;overflow-x:auto;scrollbar-width:none}.pages > .hsegs .hseg{flex:1 0 auto;padding:0 9px;font-size:12.5px}}
+@container (max-width:720px){.kper{width:100%;margin-left:0;justify-content:space-between}.knav b{min-width:0}.kchart{height:150px;gap:2px}.kax{gap:2px}}
 .cpend{display:inline-flex;align-items:center;gap:6px;flex:none;padding:7px 12px;border-radius:14px;background:rgba(249,115,22,.14);border:1px solid rgba(249,115,22,.45);color:var(--orange);font:inherit;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
 .cpend ha-icon{--mdc-icon-size:17px}.cpend b{font-size:14px}.cpend:hover{background:rgba(249,115,22,.22)}
 @container (max-width:420px){.cpend span{display:none}}
