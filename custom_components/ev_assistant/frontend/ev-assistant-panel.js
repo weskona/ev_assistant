@@ -4500,7 +4500,8 @@ class EVAssistantPanel extends HTMLElement {
   // Urspruenglich als paralleles Layout-Experiment ("Konzept A") neben dem
   // klassischen Übersicht-Tab eingefuehrt, zum Vergleich, bevor die alte
   // Seite abgeloest wird -- der klassische Tab wurde 2026-09-24 entfernt
-  // (Code archiviert in dev/archive/legacy-overview-panel.js), dies ist
+  // (Code lag bis 0.99.58 als archive/legacy-overview-panel.js im Repo, jetzt
+  // nur noch in der Git-Historie -- Commit 299ea81), dies ist
   // seitdem der einzige Übersicht-Tab. Verwendet ausschliesslich bereits
   // vorhandene Sensoren/Attribute, keine neue Rechenlogik. Status-/Ladeort-
   // Karten sind eigene, bewusst duplizierte Implementierungen statt aus

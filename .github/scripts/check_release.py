@@ -16,6 +16,11 @@ Checkout gelesen, mit --zip die manifest.json im Wurzelverzeichnis der Zip
   - hacs.json ist valides JSON
   - CHANGELOG.md hat einen Abschnitt "## [<version>]": bei stabilen Tags ein
     Fehler, bei Pre-Releases (Tag mit "-") nur eine Warnung
+  - custom_components/ev_assistant/CHANGELOG.md (liegt in der Zip und wird
+    im README verlinkt) ist identisch zum CHANGELOG.md im Root (das die
+    Workflows fuer die Release-Notes lesen): bei stabilen Tags ein Fehler,
+    bei Pre-Releases nur eine Warnung (auf glow-panel koennen beide per
+    merge=union auseinanderlaufen). Fehlt die Kopie, wird nichts geprueft.
 
 Exit-Code 0 = alles in Ordnung, 1 = mindestens ein Verstoss (alle werden
 gemeldet), 2 = falscher Aufruf.
@@ -102,6 +107,26 @@ def check_changelog(root: Path, tag: str) -> tuple[list[str], list[str]]:
     return ([], [message]) if "-" in version else ([message], [])
 
 
+def check_changelog_copies(root: Path, tag: str) -> tuple[list[str], list[str]]:
+    """Liefert (Fehler, Warnungen): CHANGELOG.md im Root und die Kopie unter
+    custom_components/ev_assistant/ muessen identisch sein. Beide werden von
+    Hand synchron gehalten (siehe merge-main-into-glow.yml, das beide per
+    merge=union vereinigt) -- ohne Pruefung faellt eine vergessene Kopie erst
+    auf, wenn jemand die Zip-Version liest."""
+    version = tag[1:] if tag.startswith("v") else tag
+    root_path = root / "CHANGELOG.md"
+    copy_path = root / "custom_components" / DOMAIN / "CHANGELOG.md"
+    try:
+        root_text = root_path.read_bytes()
+        copy_text = copy_path.read_bytes()
+    except OSError:
+        return [], []  # eine der beiden fehlt -- check_changelog() meldet das ggf. selbst
+    if root_text == copy_text:
+        return [], []
+    message = f"{copy_path} weicht von {root_path} ab (beide muessen identisch sein)"
+    return ([], [message]) if "-" in version else ([message], [])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("tag", help="Release-Tag, z. B. v0.99.42 oder v0.99.42-glow.2")
@@ -118,6 +143,9 @@ def main(argv: list[str] | None = None) -> int:
     errors += check_hacs(args.root)
     changelog_errors, warnings = check_changelog(args.root, args.tag)
     errors += changelog_errors
+    copy_errors, copy_warnings = check_changelog_copies(args.root, args.tag)
+    errors += copy_errors
+    warnings += copy_warnings
 
     for warning in warnings:
         print(f"::warning::{warning}")

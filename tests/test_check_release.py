@@ -139,3 +139,33 @@ def test_alle_verstoesse_werden_gemeldet(tmp_path, capsys):
 @pytest.mark.parametrize("tag", ["v0.99.42", "0.99.42"])
 def test_tag_mit_und_ohne_v(tmp_path, tag):
     assert _run(_repo(tmp_path, json.dumps(GOOD)), tag) == 0
+
+
+def _write_copy(root, text):
+    path = root / "custom_components" / "ev_assistant" / "CHANGELOG.md"
+    path.write_text(text, encoding="utf-8")
+
+
+def test_changelog_kopie_identisch_besteht(tmp_path):
+    root = _repo(tmp_path, json.dumps(GOOD))
+    _write_copy(root, "## [0.99.42]\n- x\n")
+    assert _run(root, "v0.99.42") == 0
+
+
+def test_changelog_kopie_abweichend_faellt_durch(tmp_path, capsys):
+    root = _repo(tmp_path, json.dumps(GOOD))
+    _write_copy(root, "## [0.99.42]\n- y\n")
+    assert _run(root, "v0.99.42") == 1
+    assert "weicht von" in capsys.readouterr().out
+
+
+def test_changelog_kopie_abweichend_bei_prerelease_nur_warnung(tmp_path, capsys):
+    root = _repo(tmp_path, json.dumps({**GOOD, "version": "0.99.42-glow.1"}), changelog="## [0.99.42-glow.1]\n- x\n")
+    _write_copy(root, "## [0.99.42-glow.1]\n- y\n")
+    assert _run(root, "v0.99.42-glow.1") == 0
+    assert "::warning::" in capsys.readouterr().out
+
+
+def test_changelog_kopie_fehlt_ist_kein_fehler(tmp_path):
+    # Kopie fehlt: nichts zu vergleichen (die Root-Datei prueft check_changelog()).
+    assert _run(_repo(tmp_path, json.dumps(GOOD)), "v0.99.42") == 0
