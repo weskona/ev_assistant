@@ -8,6 +8,7 @@ from engine import (
     ChargeDetector,
     ChargeSample,
     EfficiencyCalibrator,
+    RejectionThrottle,
     SignalDebouncer,
     TripDetector,
     TripSample,
@@ -46,6 +47,7 @@ from engine import (
     equivalent_full_cycles,
     equivalent_full_cycles_from_totals,
     estimate_battery_capacity_kwh,
+    format_rejection,
     home_capacity_sample,
     home_charging_tick_split,
     home_session_solar_and_cost,
@@ -4296,6 +4298,132 @@ def test_echte_ladung_nach_dip_wird_weiter_erkannt():
     det = ChargeDetector(usable_kwh=50, start_delta=2.0, idle_timeout_s=9999)
     ev = run(det, stream([60, 62, 70, 80, 78], start_ts=0, step=600))
     assert ev and (ev[0].soc_start, ev[0].soc_end) == (60, 80)
+
+
+def _grobe_meldungen(start_soc, stufen, abstaende_s, ticks_s=60):
+    """Echte Meldungen (fresh=True) in Stufen, dazwischen 60-s-Ticks mit
+    unveraendertem SoC (fresh=False) -- wie coordinator._periodic_check()."""
+    out = [ChargeSample(ts=0.0, soc=start_soc, home_charging=False)]
+    ts, soc = 0.0, start_soc
+    for delta, gap in zip(stufen, abstaende_s, strict=True):
+        t = ts + ticks_s
+        while t < ts + gap:
+            out.append(ChargeSample(ts=t, soc=soc, home_charging=False, fresh=False))
+            t += ticks_s
+        ts += gap
+        soc += delta
+        out.append(ChargeSample(ts=ts, soc=soc, home_charging=False))
+    return out, ts, soc
+
+
+def test_grob_meldender_cloud_soc_in_stufen_wird_trotz_ticks_erkannt():
+    # Issue #56: DC-Schnellladung, SoC in Stufen +14..+4 pp alle 3-5 min, dazwischen
+    # 60-s-Ticks mit unveraendertem Wert. Ohne ChargeSample.fresh zog jeder Tick den
+    # Zeit-Anker nach, jede Stufe sah wie ein Sprung in <= 60 s aus.
+    det = ChargeDetector(usable_kwh=58, charge_efficiency=0.88, start_delta=3.0, noise=0.5,
+                         drop_ends=1.0, idle_timeout_s=600)
+    samples, ts, soc = _grobe_meldungen(
+        34.0, [14, 5, 7, 5, 5, 6, 4], [240, 180, 240, 300, 180, 240, 300])
+    # Ladeende: nur noch Ticks, bis idle_timeout_s greift
+    samples += [ChargeSample(ts=ts + 60 * i, soc=soc, home_charging=False, fresh=False)
+                for i in range(1, 12)]
+    ev = run(det, samples)
+    assert len(ev) == 1
+    assert (ev[0].soc_start, ev[0].soc_end) == (34.0, 80.0)
+
+
+def test_tick_ohne_neue_meldung_aendert_anker_ts_nicht():
+    det = ChargeDetector(usable_kwh=58)
+    det.update(ChargeSample(ts=0.0, soc=50.0, home_charging=False))
+    det.update(ChargeSample(ts=60.0, soc=50.0, home_charging=False, fresh=False))
+    assert det.get_state()["anchor_ts"] == 0.0
+    det.update(ChargeSample(ts=120.0, soc=50.0, home_charging=False))
+    assert det.get_state()["anchor_ts"] == 120.0
+
+
+def test_glitch_nach_dip_bleibt_mit_fresh_ticks_abgewiesen():
+    # Vorfall 2026-09-29 mit zwischengeschalteten Ticks: Dip und Rueckkehr sind
+    # echte Meldungen im Abstand von 2.5 s -> weiterhin Sensor-Glitch.
+    det = ChargeDetector(usable_kwh=50, start_delta=2.0, idle_timeout_s=600)
+    samples = [
+        ChargeSample(ts=0.0, soc=79.0, home_charging=False),
+        ChargeSample(ts=6000.0, soc=74.0, home_charging=False),
+        ChargeSample(ts=6002.5, soc=78.0, home_charging=False),
+        ChargeSample(ts=6060.0, soc=78.0, home_charging=False, fresh=False),
+        ChargeSample(ts=6120.0, soc=78.0, home_charging=False, fresh=False),
+    ]
+    assert run(det, samples) == []
+    assert not det.active
+
+
+def test_feine_soc_quelle_unveraendert_mit_ticks():
+    det = ChargeDetector(usable_kwh=58, start_delta=3.0, idle_timeout_s=600)
+    samples = []
+    ts = 0.0
+    for soc in [60, 61, 62, 63, 64, 65, 66, 67, 68]:
+        samples.append(ChargeSample(ts=ts, soc=float(soc), home_charging=False))
+        samples.append(ChargeSample(ts=ts + 60, soc=float(soc), home_charging=False, fresh=False))
+        ts += 120
+    samples += [ChargeSample(ts=ts + 60 * i, soc=68.0, home_charging=False, fresh=False)
+                for i in range(1, 12)]
+    ev = run(det, samples)
+    assert len(ev) == 1 and (ev[0].soc_start, ev[0].soc_end) == (60.0, 68.0)
+
+
+def test_verwerfung_startschritt_wird_gemeldet_und_geleert():
+    det = ChargeDetector(usable_kwh=50, start_delta=2.0, idle_timeout_s=600)
+    run(det, [
+        ChargeSample(ts=0.0, soc=79.0, home_charging=False),
+        ChargeSample(ts=6000.0, soc=74.0, home_charging=False),
+        ChargeSample(ts=6002.5, soc=78.0, home_charging=False),
+    ])
+    rej = det.pop_rejections()
+    assert len(rej) == 1
+    assert (rej[0]["stelle"], rej[0]["soc_von"], rej[0]["soc_bis"]) == ("start", 74.0, 78.0)
+    assert rej[0]["kw"] > rej[0]["limit_kw"]
+    assert det.pop_rejections() == []
+
+
+def test_verwerfung_schrittcheck_wird_gemeldet():
+    det = ChargeDetector(usable_kwh=50, start_delta=2.0, idle_timeout_s=9999)
+    run(det, stream([60, 62, 64], start_ts=0, step=600))
+    assert det.active and det.pop_rejections() == []
+    det.update(ChargeSample(ts=1202.0, soc=90.0, home_charging=False))
+    rej = det.pop_rejections()
+    assert [(r["stelle"], r["soc_von"], r["soc_bis"]) for r in rej] == [("schritt", 64.0, 90.0)]
+
+
+def test_verwerfung_session_rate_wird_gemeldet():
+    # Einzelschritte plausibel (60->63 ueber 1 h), aber die integrierte Leistung
+    # (100 kW) ergibt eine unmoegliche Gesamtrate -> Verwerfung in _finalize().
+    det = ChargeDetector(usable_kwh=50, start_delta=2.0, idle_timeout_s=9999, max_plausible_charge_kw=20.0)
+    det.update(ChargeSample(ts=0.0, soc=60.0, home_charging=False, power_kw=100.0))
+    det.update(ChargeSample(ts=3600.0, soc=63.0, home_charging=False, power_kw=100.0))
+    assert det.active
+    det.update(ChargeSample(ts=7000.0, soc=63.0, home_charging=False, power_kw=100.0))
+    assert det.update(ChargeSample(ts=7100.0, soc=60.0, home_charging=False, power_kw=0.0)) is None
+    rej = det.pop_rejections()
+    assert [(r["stelle"], r["soc_von"], r["soc_bis"]) for r in rej] == [("session", 60.0, 63.0)]
+
+
+def test_rejection_throttle_dedupe_und_intervall():
+    th = RejectionThrottle(min_interval_s=600.0)
+    r = {"stelle": "schritt", "soc_von": 64.0, "soc_bis": 90.0}
+    assert th.allow(r, 0.0)
+    assert not th.allow(r, 60.0)  # gleiche Verwerfung (Tick-Wiederholung)
+    r2 = {"stelle": "schritt", "soc_von": 64.0, "soc_bis": 91.0}
+    assert not th.allow(r2, 120.0)  # andere Werte, aber < 600 s je Stelle
+    assert th.allow(r2, 700.0)
+    assert th.allow({"stelle": "start", "soc_von": 1.0, "soc_bis": 9.0}, 710.0)  # andere Stelle
+
+
+def test_format_rejection_text():
+    txt = format_rejection({"stelle": "start", "soc_von": 34.0, "soc_bis": 48.0,
+                            "dt_s": 60.0, "kw": 553.7, "limit_kw": 150.0})
+    assert txt == "Start: SoC 34->48%, 60 s, ~554 kW > 150 kW, verworfen"
+    inf = format_rejection({"stelle": "session", "soc_von": 10.0, "soc_bis": 50.0,
+                            "dt_s": 0.0, "kw": float("inf"), "limit_kw": 150.0})
+    assert "unendlich kW" in inf
 
 
 def test_tankerkoenig_meldung_erst_nach_karenzzeit():
