@@ -110,3 +110,22 @@ async def test_export_event_log_schreibt_lesbare_datei(hass, coordinators, tmp_p
     )
     assert "fremdladung_erkannt: SoC 32.0->74.0%, ~18.9 kWh, Quelle: soc" in content
     assert path.endswith(f"ev_assistant_event_log_{coordinator.entry.entry_id}.txt")
+
+
+async def test_verworfene_ladung_wird_geloggt_und_gedrosselt(hass, coordinators):
+    """Issue #56: Plausibilitaets-Verwerfungen des ChargeDetector duerfen nicht
+    mehr still bleiben -- ein Eintrag `fremdladung_unplausibel`, und der
+    60-s-Tick mit gleichem SoC erzeugt keinen zweiten."""
+    from unittest.mock import patch
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, "evlog_rej")
+    ts = {"now": 1000.0}
+    with patch("custom_components.ev_assistant.coordinator.time.time", lambda: ts["now"]):
+        for now, soc, fresh in [(1000.0, 79.0, True), (7000.0, 74.0, True), (7002.5, 78.0, True),
+                                (7062.5, 78.0, False), (7122.5, 78.0, False)]:
+            ts["now"] = now
+            coordinator._soc = soc
+            await coordinator._run_detection(fresh=fresh)
+    eintraege = [e for e in coordinator.data["event_log"] if e["kategorie"] == "fremdladung_unplausibel"]
+    assert len(eintraege) == 1
+    assert "Start: SoC 74->78%" in eintraege[0]["text"]

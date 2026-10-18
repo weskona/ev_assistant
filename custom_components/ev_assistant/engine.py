@@ -46,6 +46,15 @@ class ChargeSample:
     # _home_connected()), None wenn keiner von beiden vorliegt -- dann
     # unveraendertes Verhalten.
     home_connected: Optional[bool] = None
+    # True = echte, neue SoC-Meldung der Quelle (State-Listener), False =
+    # periodischer Re-Feed des zuletzt bekannten, gecachten SoC (60-s-Tick
+    # in coordinator.py::_periodic_check(), damit idle_timeout_s greift).
+    # Nur eine echte Meldung darf den Zeit-Anker des Start-Plausibilitaets-
+    # Checks nachfuehren: sonst misst der Check bei grob meldenden Quellen
+    # (Cloud-SoC in Stufen von +4..+14 pp alle paar Minuten) die Zeit seit
+    # dem letzten TICK statt seit der letzten Meldung und haelt jede
+    # Schnellladestufe fuer einen Sensor-Glitch (Issue #56).
+    fresh: bool = True
 
 
 @dataclass
@@ -85,6 +94,49 @@ class ChargeEvent:
             "duration_min": round(self.duration_s / 60.0, 1),
             "kind": self.kind,
         }
+
+
+# Obergrenze fuer ChargeDetector._rejections, falls der Aufrufer nie
+# pop_rejections() ruft (Detektor allein, z.B. in Tests) -- aelteste fliegen raus.
+_MAX_PENDING_REJECTIONS = 20
+
+
+def format_rejection(r: dict) -> str:
+    """Text fuer den Ereignisprotokoll-Eintrag `fremdladung_unplausibel`
+    aus einem Eintrag von ChargeDetector.pop_rejections()."""
+    kw = r["kw"]
+    kw_txt = "unendlich" if kw == float("inf") else f"~{kw:.0f}"
+    label = {"start": "Start", "schritt": "Schritt", "session": "Session"}.get(r["stelle"], r["stelle"])
+    return (
+        f"{label}: SoC {r['soc_von']:g}->{r['soc_bis']:g}%, {r['dt_s']:.0f} s, "
+        f"{kw_txt} kW > {r['limit_kw']:g} kW, verworfen"
+    )
+
+
+class RejectionThrottle:
+    """Drosselt Ereignisprotokoll-Eintraege fuer verworfene Ladungen: dieselbe
+    Verwerfung (Stelle + SoC von/bis) wird nur einmal gemeldet -- der
+    Schrittcheck in _update_charging() wiederholt sich sonst mit dem
+    gecachten SoC bei jedem 60-s-Tick -- und pro Stelle hoechstens alle
+    min_interval_s. Rein im Speicher (nicht persistiert)."""
+
+    def __init__(self, min_interval_s: float = 600.0):
+        self.min_interval_s = min_interval_s
+        self._seen: set = set()
+        self._last_by_stelle: dict = {}
+
+    def allow(self, r: dict, now: float) -> bool:
+        key = (r["stelle"], round(r["soc_von"], 1), round(r["soc_bis"], 1))
+        if key in self._seen:
+            return False
+        last = self._last_by_stelle.get(r["stelle"])
+        if last is not None and now - last < self.min_interval_s:
+            return False
+        if len(self._seen) >= 200:
+            self._seen.clear()
+        self._seen.add(key)
+        self._last_by_stelle[r["stelle"]] = now
+        return True
 
 
 class ChargeDetector:
@@ -137,6 +189,12 @@ class ChargeDetector:
         # genug, dass die implizite Rate klein bleibt.
         self.max_plausible_charge_kw = max_plausible_charge_kw
 
+        # Verworfene Ladungen/Spruenge der drei Plausibilitaets-Checks, vom
+        # Aufrufer per pop_rejections() abgeholt und ins Ereignisprotokoll
+        # geschrieben (der Detektor selbst bleibt rein, kein Logger/Callback).
+        # Bewusst NICHT in get_state() -- fluechtig.
+        self._rejections: list = []
+
         self._active = False
         self._anchor_soc: Optional[float] = None
         self._anchor_ts: Optional[float] = None
@@ -156,6 +214,22 @@ class ChargeDetector:
         if not self._active:
             return self._update_idle(s)
         return self._update_charging(s)
+
+    def pop_rejections(self) -> list:
+        """Holt (und leert) die seit dem letzten Aufruf verworfenen Ladungen.
+        Jeder Eintrag: stelle ("start" = Startschritt in _update_idle(),
+        "schritt" = Einzelschritt in _update_charging(), "session" = Gesamt-
+        rate in _finalize()), soc_von, soc_bis, dt_s, kw (implizite
+        AC-Leistung, ggf. inf), limit_kw."""
+        out, self._rejections = self._rejections, []
+        return out
+
+    def _reject(self, stelle: str, soc_von: float, soc_bis: float, dt_s: float, kw: float) -> None:
+        self._rejections.append({
+            "stelle": stelle, "soc_von": soc_von, "soc_bis": soc_bis,
+            "dt_s": dt_s, "kw": kw, "limit_kw": self.max_plausible_charge_kw,
+        })
+        del self._rejections[:-_MAX_PENDING_REJECTIONS]
 
     @property
     def active(self) -> bool:
@@ -223,7 +297,11 @@ class ChargeDetector:
             return None
         if s.soc <= self._anchor_soc:
             self._anchor_soc = s.soc
-            self._anchor_ts = s.ts
+            # Zeit-Anker nur bei echter Meldung (ChargeSample.fresh), nicht bei
+            # den 60-s-Wiederholungen eines unveraenderten Werts -- siehe dort
+            # und den Start-Plausibilitaets-Check weiter unten.
+            if s.fresh:
+                self._anchor_ts = s.ts
             return None
         if s.soc - self._anchor_soc >= self.start_delta:
             delta = s.soc - self._anchor_soc
@@ -258,8 +336,12 @@ class ChargeDetector:
             # ueber die seit dem Anker vergangene Zeit ist ein Sensor-Glitch.
             # Anker nachfuehren, keine Ladung starten. Echte, ueber lange
             # Telemetrie-Luecken verpasste Ladungen bleiben unberuehrt (grosse
-            # Zeitspanne -> kleine Rate).
-            if self._implied_soc_kw(delta, (s.ts - self._anchor_ts) / 3600.0) > self.max_plausible_charge_kw:
+            # Zeitspanne -> kleine Rate). Die Zeit ist die seit der letzten
+            # ECHTEN SoC-Meldung (_anchor_ts wird nur bei fresh nachgefuehrt),
+            # nicht seit dem letzten Tick.
+            start_kw = self._implied_soc_kw(delta, (s.ts - self._anchor_ts) / 3600.0)
+            if start_kw > self.max_plausible_charge_kw:
+                self._reject("start", self._anchor_soc, s.soc, s.ts - self._anchor_ts, start_kw)
                 self._anchor_soc = s.soc
                 self._anchor_ts = s.ts
                 return None
@@ -328,6 +410,7 @@ class ChargeDetector:
             # auszusehen.
             step_kw = self._implied_soc_kw(s.soc - self._peak_soc, (s.ts - self._last_rise_ts) / 3600.0)
             if step_kw > self.max_plausible_charge_kw:
+                self._reject("schritt", self._peak_soc, s.soc, s.ts - self._last_rise_ts, step_kw)
                 return None
             self._peak_soc = s.soc
             self._last_rise_ts = s.ts
@@ -413,6 +496,7 @@ class ChargeDetector:
         duration_h = (self._last_rise_ts - self._start_ts) / 3600.0
         implied_kw = e_ac / duration_h if duration_h > 0 else float("inf")
         if implied_kw > self.max_plausible_charge_kw:
+            self._reject("session", self._start_soc, self._peak_soc, duration_h * 3600.0, implied_kw)
             return None
         return ev
 

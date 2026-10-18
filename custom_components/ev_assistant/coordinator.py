@@ -220,6 +220,7 @@ from .engine import (
     ChargeSample,
     EfficiencyCalibrator,
     EvccVehicleMatch,
+    RejectionThrottle,
     SignalDebouncer,
     TripDetector,
     TripSample,
@@ -254,6 +255,7 @@ from .engine import (
     equivalent_full_cycles_from_totals,
     estimate_battery_capacity_kwh,
     evcc_now_entschaerfen,
+    format_rejection,
     home_capacity_sample,
     home_charging_tick_split,
     home_session_solar_and_cost,
@@ -1103,6 +1105,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Neustart den Anker-/Peak-Zustand stillschweigend verwerfen und
         # eine echte, aber noch nicht fertige Erkennung verlieren.
         self._detector.load_state(self.data.get("detector_state"))
+        self._reject_throttle = RejectionThrottle()
         self._calibrator = EfficiencyCalibrator(
             usable_kwh=usable_kwh,
             min_soc_delta=EFF_MIN_SOC_DELTA,
@@ -2291,7 +2294,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._update_vehicle_discharge(self._soc)
         self._maybe_correct_last_trip_end_soc(self._soc, dt_util.utcnow().timestamp())
         self._maybe_mark_vollladung_erreicht(self._soc, dt_util.utcnow().timestamp())
-        self.hass.async_create_task(self._run_detection())
+        self.hass.async_create_task(self._run_detection(fresh=True))
 
     def _maybe_mark_vollladung_erreicht(self, soc: float, ts: float) -> None:
         """Schreibt den Zeitstempel der letzten erreichten Vollladung fort,
@@ -3478,14 +3481,24 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 return None
         return connected
 
-    async def _run_detection(self) -> None:
+    async def _run_detection(self, fresh: bool = True) -> None:
+        """`fresh`: True bei echter SoC-Meldung (_set_soc()), False beim
+        periodischen Re-Feed des gecachten Werts (_periodic_check()), siehe
+        ChargeSample.fresh."""
         if self._soc is None or self._detector is None:
             return
         sample = ChargeSample(
             ts=time.time(), soc=self._soc, home_charging=self._home, power_kw=self._power,
             plugged_in=self._plugged_in, home_connected=self._home_connected(),
+            fresh=fresh,
         )
         event = self._detector.update(sample)
+        # Verworfene Ladungen/Spruenge (Plausibilitaets-Checks) ins Ereignis-
+        # protokoll -- sonst faellt eine echte Ladung bei einem zu grob
+        # meldenden SoC komplett still durch (Issue #56).
+        for rej in self._detector.pop_rejections():
+            if self._reject_throttle.allow(rej, sample.ts):
+                self._log_event("fremdladung_unplausibel", format_rejection(rej))
         self.data["detector_state"] = self._detector.get_state()
         self._check_soc_thresholds()
         # Push bei JEDEM SoC-Sample, nicht nur wenn dabei eine Fremdladung
@@ -3555,7 +3568,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Aufruf ein reines No-op (reference_soc bleibt exakt gleich)."""
         self._recheck_plug()
         self._recheck_motor()
-        await self._run_detection()
+        await self._run_detection(fresh=False)
         await self._run_trip_detection()
         self._check_entity_health()
         self._check_urlaub_transition()
