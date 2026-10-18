@@ -145,7 +145,7 @@ body:
       options:
         - label: >
             I've attached the event log — the "Ereignisprotokoll" card on the panel's
-            Analyse tab (Download button), or the `ev_assistant.export_event_log` service.
+            Einstellungen tab (Herunterladen button), or the `ev_assistant.export_event_log` service.
             It's the last ~14 days of mode changes (with the reasoning behind each), detected/
             confirmed/discarded external charges and trips, vacation/evcc-connectivity
             transitions, and repair-issue transitions — usually the fastest way to see what

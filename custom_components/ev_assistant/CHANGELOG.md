@@ -13,6 +13,21 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Pre-release (branch `glow-panel`): second sidebar panel "EV Assistant Glow"** with the Glow card from [glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, state in `frontend/GLOW_VERSION`), embedded by the wrapper `ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; the new panel only appears next to it. **Placeholder:** the card still carries MG-specific defaults until it is decoupled (see #12). Only for testers with "Show beta versions" enabled in HACS.
+## [0.99.58] - 2026-10-18
+
+### Fixed
+
+- **Fast charges with a coarsely reporting cloud SoC were not detected (Issue #56).** Since the plausibility check on the start step (0.99.25) the detector measured the time since the last 60-second *tick* instead of since the last real SoC report. A source reporting the SoC in steps (e.g. +4 to +14 pp every 3-5 minutes during DC fast charging) made every step look like a jump within at most 60 s (+5 pp = about 198 kW, +14 pp = about 554 kW, above the 150 kW limit), so it was dropped as a "sensor glitch" -- without any log entry, so neither `fremdladung_erkannt` nor `fremdladung_verworfen` appeared. Now only a real SoC report moves the time anchor; the periodic re-feed of the unchanged value no longer does (`ChargeSample.fresh`). Fine SoC sources and AC charging were not affected. The protection from the 2026-09-29 incident (SoC 79 -> 74 for 2.5 s -> back, no charge) is unchanged.
+
+### Added
+
+- **Event log entry `fremdladung_unplausibel` for dropped charges.** The three plausibility checks (start step, single step during a charge, overall rate of a finished session) used to drop silently. Each drop is now written to the event log with the SoC from/to, the time span and the implied kW, e.g. `Start: SoC 34->48%, 60 s, ~554 kW > 150 kW, verworfen`. The same drop is logged only once (the single-step check would otherwise repeat on every 60-second tick), and at most one entry per check every 10 minutes. The throttle lives in memory only.
+
+### Honest limits
+
+- Charges that were missed since 0.99.25 are not detected retroactively. They can be added manually with the service `log_charge` (start/end time, kWh, price).
+- The very first step can still be dropped if the last real report of the starting value is less than about 3.7 minutes old (e.g. +14 pp = 9.2 kWh AC within under 3.7 minutes exceeds 150 kW). If the source only reports on change, that report is usually much older, so this rarely applies.
+
 ## [0.99.57] - 2026-10-17
 
 ### Added
