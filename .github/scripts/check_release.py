@@ -14,6 +14,8 @@ Checkout gelesen, mit --zip die manifest.json im Wurzelverzeichnis der Zip
   - version == Tag ohne fuehrendes "v" -- auch bei Suffix-Tags komplett
     (v0.99.42-glow.2 <-> 0.99.42-glow.2)
   - hacs.json ist valides JSON
+  - mit --zip: beide Panel-Module, die Glow-Karte und GLOW_VERSION liegen in
+    der Zip (REQUIRED_ZIP_FILES)
   - CHANGELOG.md hat einen Abschnitt "## [<version>]": bei stabilen Tags ein
     Fehler, bei Pre-Releases (Tag mit "-") nur eine Warnung
   - custom_components/ev_assistant/CHANGELOG.md (liegt in der Zip und wird
@@ -36,6 +38,15 @@ from pathlib import Path
 DOMAIN = "ev_assistant"
 REQUIRED_KEYS = ("domain", "name", "version")
 MANIFEST_IN_REPO = Path("custom_components") / DOMAIN / "manifest.json"
+# Dateien, die in der fertigen Zip liegen muessen (Pfade relativ zur Zip-Wurzel):
+# beide Panels samt Glow-Karte (siehe Issue #12) -- fehlt eine, registriert die
+# Integration ein Panel, dessen Modul HACS nie ausgeliefert hat.
+REQUIRED_ZIP_FILES = (
+    "frontend/ev-assistant-panel.js",
+    "frontend/ev-assistant-glow-panel.js",
+    "frontend/mg-car-dashboard.js",
+    "frontend/GLOW_VERSION",
+)
 
 
 def _load_manifest_text(root: Path, zip_path: Path | None) -> tuple[str | None, str, str]:
@@ -77,6 +88,17 @@ def check_manifest(text: str, source: str, tag: str) -> list[str]:
     if version and version != expected:
         errors.append(f"{source}: version '{version}' passt nicht zum Tag '{tag}' (erwartet '{expected}')")
     return errors
+
+
+def check_zip_contents(zip_path: Path) -> list[str]:
+    """Fehlermeldungen fuer fehlende Pflichtdateien in der fertigen Zip. Eine
+    nicht lesbare Zip meldet _load_manifest_text() bereits."""
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            names = set(zf.namelist())
+    except (OSError, zipfile.BadZipFile):
+        return []
+    return [f"{zip_path}: {name} fehlt in der Zip" for name in REQUIRED_ZIP_FILES if name not in names]
 
 
 def check_hacs(root: Path) -> list[str]:
@@ -140,6 +162,8 @@ def main(argv: list[str] | None = None) -> int:
         errors.append(load_error)
     else:
         errors += check_manifest(text, source, args.tag)
+    if args.zip_path is not None:
+        errors += check_zip_contents(args.zip_path)
     errors += check_hacs(args.root)
     changelog_errors, warnings = check_changelog(args.root, args.tag)
     errors += changelog_errors

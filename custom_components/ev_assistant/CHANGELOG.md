@@ -2,6 +2,25 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.59] - 2026-10-19
+
+### Added
+
+- **Second sidebar panel "EV Assistant Glow" (stable, preview).** It embeds the Glow card from [deepblue120/glow-dashboard](https://github.com/deepblue120/glow-dashboard) (copy in `frontend/mg-car-dashboard.js`, pinned in `frontend/GLOW_VERSION`, currently v3.5.27) through the wrapper `frontend/ev-assistant-glow-panel.js`. The classic panel is unchanged and stays the default; Glow appears next to it. As planned in #12 this is step 2 for stable releases; the classic panel is only removed after the remaining gaps are closed (phase 4) and Glow has run as a second panel for a release.
+- The panel configuration now carries `api_version: 1`. The Glow card compares it with the version it expects and warns on a mismatch; a test keeps both in sync (`_PANEL_API_VERSION` vs. `EVA_API_VERSION` in the card).
+- Release check (`check_release.py --zip`) fails when the zip lacks one of the panel modules, the Glow card or `GLOW_VERSION`.
+- CI check `glow-sync-check.yml`: the card copy must equal `deepblue120/glow-dashboard` at the tag in `GLOW_VERSION` (never edit it by hand).
+
+### Changed
+
+- **Glow sync moved to `main`.** `sync-glow.yml` now opens its pull requests against `main` (it no longer touches the manifest version; releases still come from a `v*` tag). The separate pre-release channel is retired: the workflows `glow-prerelease.yml` and `merge-main-into-glow.yml` and the `-glow.N` pre-releases of the branch `glow-panel` are no longer used, testers get Glow through the normal stable releases.
+
+### Honest limits
+
+- The Glow card does not cover everything the classic panel does yet: no "visible tabs" / "panel layout" (the services `set_hidden_tabs` / `set_panel_layout` only affect the classic panel), the outlier details of the plug profile (0.99.48/0.99.49) and the house usage profile are missing or reduced. Use the classic panel for those until phase 4 of #12 is done.
+- The card loads its font from `fonts.googleapis.com`; without internet access it falls back to a system font.
+- The card is third-party code that runs in the Home Assistant frontend with access to `hass`. Updates arrive as pull requests that need a manual merge.
+
 ## [0.99.58] - 2026-10-18
 
 ### Fixed
