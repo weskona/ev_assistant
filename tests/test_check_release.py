@@ -97,12 +97,15 @@ def test_prerelease_ohne_changelog_abschnitt_warnt_nur(tmp_path, capsys):
     assert "::warning::" in capsys.readouterr().out
 
 
-def _zip(tmp_path, manifest_text):
+def _zip(tmp_path, manifest_text, omit=None):
     path = tmp_path / "ev_assistant.zip"
     with zipfile.ZipFile(path, "w") as zf:
         if manifest_text is not None:
             zf.writestr("manifest.json", manifest_text)
         zf.writestr("__init__.py", "")
+        for name in check_release.REQUIRED_ZIP_FILES:
+            if name not in (omit or ()):
+                zf.writestr(name, "x")
     return path
 
 
@@ -169,3 +172,16 @@ def test_changelog_kopie_abweichend_bei_prerelease_nur_warnung(tmp_path, capsys)
 def test_changelog_kopie_fehlt_ist_kein_fehler(tmp_path):
     # Kopie fehlt: nichts zu vergleichen (die Root-Datei prueft check_changelog()).
     assert _run(_repo(tmp_path, json.dumps(GOOD)), "v0.99.42") == 0
+
+
+def test_zip_ohne_glow_karte_faellt_durch(tmp_path, capsys):
+    root = _repo(tmp_path, json.dumps(GOOD))
+    zip_path = _zip(tmp_path, json.dumps(GOOD), omit=["frontend/mg-car-dashboard.js"])
+    assert _run(root, "v0.99.42", "--zip", str(zip_path)) == 1
+    assert "frontend/mg-car-dashboard.js fehlt in der Zip" in capsys.readouterr().out
+
+
+def test_zip_ohne_klassisches_panel_faellt_durch(tmp_path):
+    root = _repo(tmp_path, json.dumps(GOOD))
+    zip_path = _zip(tmp_path, json.dumps(GOOD), omit=["frontend/ev-assistant-panel.js"])
+    assert _run(root, "v0.99.42", "--zip", str(zip_path)) == 1

@@ -41,6 +41,7 @@ A few known limitations, stated plainly:
 - **Automatic evcc mode/SoC control** — optionally steers evcc's charge mode from your own usage profile, including a real-time PV-surplus override, an economic cap on grid top-ups, and home-battery priority.
 - **Trip import** — bulk-import historical trips from another trip-log app/export.
 - **Full sidebar panel** — a built-in, customizable EV dashboard; no Lovelace card setup needed.
+- **Glow panel (preview)** — a second sidebar entry "EV Assistant Glow" with the [Glow card](https://github.com/deepblue120/glow-dashboard), kept in sync from its own repository. The classic panel stays the default for now; the Glow card still lacks a few classic features (e.g. hidden tabs, panel layout, outlier details of the plug profile) and loads its font from Google Fonts.
 - **Multi-vehicle support** — one integration entry per vehicle, with a panel tab switcher.
 - **Diagnostics & repair issues** — a downloadable redacted state snapshot, plus Repair issues when a source entity goes stale.
 - **Leasing mileage budget, charging cards, and vehicle maintenance tracking** — all fully optional, panel-managed.
@@ -116,6 +117,7 @@ Ein paar bekannte Grenzen, unverblümt:
 - **Automatische evcc-Modus-/SoC-Steuerung** — steuert optional evccs Lademodus aus eurem eigenen Nutzungsprofil, inklusive Echtzeit-PV-Überschuss-Übersteuerung, wirtschaftlicher Kappung des Netz-Zuschusses und Speicher-Priorität.
 - **Fahrten-Import** — historische Fahrten aus einer anderen Fahrtenbuch-App/einem Export bulk-importieren.
 - **Vollständiges Seitenleisten-Panel** — ein eingebautes, anpassbares EV-Dashboard; keine Lovelace-Karten-Einrichtung nötig.
+- **Glow-Panel (Vorschau)** — ein zweiter Seitenleisten-Eintrag „EV Assistant Glow“ mit der [Glow-Karte](https://github.com/deepblue120/glow-dashboard), die aus deren eigenem Repository nachgezogen wird. Das klassische Panel bleibt vorerst der Standard; der Glow-Karte fehlen noch einige klassische Funktionen (z. B. ausblendbare Tabs, Panel-Layout, Ausreißer-Details des Steckerprofils), und sie lädt ihre Schrift von Google Fonts.
 - **Multi-Fahrzeug-Unterstützung** — ein Integrations-Eintrag je Fahrzeug, mit Panel-Tab-Umschalter.
 - **Diagnose & Repair-Issues** — ein herunterladbarer, geschwärzter Zustands-Snapshot, sowie Repair-Issues, wenn eine Quell-Entität veraltet.
 - **Leasing-Kilometerbudget, Ladekarten und Fahrzeugwartung** — alles vollständig optional, panel-verwaltet.
