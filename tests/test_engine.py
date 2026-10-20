@@ -5644,3 +5644,62 @@ def test_nachgerechnete_tage_zaehlen_nicht_in_der_steckdauer():
         {"date": "2026-10-12", "stunden": 10.0},
     ]}
     assert weekday_plug_window_profile_from_recent_days(tage) == {0: 10.0}
+
+
+def test_folge_abfahrt_uneinheitlich_setzt_keine_harte_frist():
+    # Bericht: nach 12 Uhr ging die Steuerung auf "now" (11 kW) statt sanft zu laden. Ursache: die
+    # fruehste Zeit (frueh_roh, inkl. Ausreisser) einer UNEINHEITLICHEN 2. Abfahrt wurde als Frist
+    # genommen -- eine seltene Besorgung um 12:10 machte aus 12:00 eine Frist in 10 Minuten.
+    zweite = ["12:10", "14:30", "15:00", "16:45", "13:20", "17:30"]
+    tage = {"0": [], "1": []}
+    for i, t in enumerate(zweite):
+        tage["0"].append({
+            "date": f"2026-0{1 + i}-05", "stunden": 8.0, "erste_abfahrt": "07:30",
+            "abfahrt_unsicher": False, "urlaub": False,
+            "abfahrten": [{"hhmm": "07:30", "unsicher": False}, {"hhmm": t, "unsicher": False}],
+        })
+        tage["1"].append({
+            "date": f"2026-0{1 + i}-06", "stunden": 8.0, "erste_abfahrt": "07:30",
+            "abfahrt_unsicher": False, "urlaub": False,
+            "abfahrten": [{"hhmm": "07:30", "unsicher": False}],
+        })
+    profil = plug_departure_profile(tage, 0, 1440, 3.0, 45, 4, 0.6, 10, 0.25)["wochentage"]
+    assert profil[0]["folge"][0]["status"] == "uneinheitlich"  # Voraussetzung des Falls
+    dl, quelle = _dl(_MO.replace(hour=12), profil)
+    assert (_hhmm(dl), quelle) == ("Tue 07:30", "profil")  # keine Frist um 12:10
+
+
+def test_folge_abfahrt_konsistent_zaehlt_als_frist():
+    tage = {"0": []}
+    for i, t in enumerate(["12:30", "12:35", "12:28", "12:32", "12:30"]):
+        tage["0"].append({
+            "date": f"2026-0{1 + i}-05", "stunden": 8.0, "erste_abfahrt": "07:30",
+            "abfahrt_unsicher": False, "urlaub": False,
+            "abfahrten": [{"hhmm": "07:30", "unsicher": False}, {"hhmm": t, "unsicher": False}],
+        })
+    profil = plug_departure_profile(tage, 0, 1440, 3.0, 45, 4, 0.6, 10, 0.25)["wochentage"]
+    assert profil[0]["folge"][0]["status"] == "ok"
+    assert _hhmm(_dl(_MO.replace(hour=10), profil)[0]) == "Mon 12:28"  # fruehester Nicht-Ausreisser
+
+
+def test_entschaerfen_nach_mitternacht_abfahrt_heute_in_stunden_bleibt_sanft():
+    # Bericht: nach 0:00 ging die Steuerung auf "now" (11 kW) statt sanft zu laden. Um 0:00 springt der
+    # Rest-Bedarf heute auf den vollen Tagesschnitt; die Abfahrt (07:30) liegt aber 7,4 h entfernt.
+    r = _ent(available=10.0, stunden=7.4, abfahrt_heute=True)  # Defizit 6 kWh -> 4,3 h + 0,5 < 7,4 h
+    assert (r["modus"], r["grund"], r["halt"]) == ("minpv", "sofort_sanft", None)
+
+
+def test_entschaerfen_nach_mitternacht_zu_grosses_defizit_oder_knappe_zeit_bleibt_now():
+    # Auch mit Abfahrt heute: reicht der Mindeststrom bis dahin nicht, bleibt es bei "now"
+    r = _ent(available=10.0, stunden=3.0, abfahrt_heute=True)  # Horizont max(2, 3) = 3 h < 4,8 h
+    assert (r["modus"], r["grund"]) == ("now", "sofort_zu_langsam")
+    r = _ent(available=-10.0, sofort=40.0, stunden=7.4, abfahrt_heute=True)  # 50 kWh = 36 h > 8 h Deckel
+    assert (r["modus"], r["grund"]) == ("now", "sofort_zu_langsam")
+
+
+def test_entschaerfen_tagsueber_abfahrt_erst_morgen_behaelt_kurzen_horizont():
+    # Mittags mit Abfahrt morgen 06:00 (18 h): heute kann das Auto noch gebraucht werden -> weiter "now"
+    r = _ent(available=10.0, stunden=18.0, abfahrt_heute=False)
+    assert (r["modus"], r["grund"]) == ("now", "sofort_zu_langsam")
+    r = _ent(available=10.0, stunden=None)  # unbekannte Frist wie bisher
+    assert (r["modus"], r["grund"]) == ("now", "sofort_zu_langsam")

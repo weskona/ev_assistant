@@ -689,6 +689,10 @@ EVCC_DEPARTURE_FALLBACK_TIME = "06:00"
 # Horizont fuer den "sofort"-Teil (Rest-Bedarf heute): reicht der Mindeststrom
 # dafuer nicht innerhalb dieser Stunden, bleibt es bei "now".
 EVCC_SOFORT_HORIZON_H = 2.0
+# Liegt die naechste Abfahrt noch heute vor uns, darf der Horizont bis zu so viele
+# Stunden reichen (siehe engine.evcc_now_entschaerfen()): nach 0:00 liegt die
+# Abfahrt Stunden entfernt.
+EVCC_SOFORT_HORIZON_MAX_H = 8.0
 # Reserve (h) auf die Mindestleistungs-Ladedauer in zu_langsam().
 EVCC_NACHLADEN_RESERVE_H = 0.5
 # Spannungsannahme wie DEFAULT_WALLBOX_MIN_POWER_W (kW je A und Phase).

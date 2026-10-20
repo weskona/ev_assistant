@@ -145,6 +145,7 @@ from .const import (
     EVCC_PHASE_KW_PER_A,
     EVCC_REALTIME_OVERRIDE_MIN_SURPLUS_PCT_DEFAULT,
     EVCC_SOFORT_HORIZON_H,
+    EVCC_SOFORT_HORIZON_MAX_H,
     EVCC_UEBERSCHUSS_ZIEL_HEARTBEAT_SAVE_S,
     EVCC_UEBERSCHUSS_ZIEL_HOLD_S,
     EVCC_UEBERSCHUSS_ZIEL_RESTORE_MAX_AGE_S,
@@ -8195,6 +8196,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             (deadline - now).total_seconds() / 3600.0 if deadline is not None else None,
             self._evcc_min_charge_power_kw(),
             reserve_h=EVCC_NACHLADEN_RESERVE_H, sofort_horizont_h=EVCC_SOFORT_HORIZON_H,
+            sofort_horizont_max_h=EVCC_SOFORT_HORIZON_MAX_H,
+            abfahrt_heute=deadline is not None and deadline.date() == now.date(),
             halt=(self.data.get("evcc_now_halt") or {}).get("grund"),
         )
         res.update(modus=out["modus"], grund=out["grund"], halt=out["halt"])

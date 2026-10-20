@@ -2321,10 +2321,19 @@ def departures_from_trips(
 
 
 def departure_candidates_min(stats: Optional[dict]) -> list:
-    """Fruehste belastbare Abfahrtszeiten (Minuten seit Mitternacht, aufsteigend)
-    eines Wochentags: 1. Abfahrt (`frueh_roh_min`) plus Folge-Abfahrten."""
+    """Belastbare Abfahrtszeiten (Minuten seit Mitternacht, aufsteigend) eines
+    Wochentags fuer die Frist. 1. Abfahrt: der FRUEHESTE gueltige Wert
+    (`frueh_roh`, auch bei "uneinheitlich" -- vorsichtig). Folge-Abfahrten
+    (2./3. des Tages) nur bei Status "ok" und mit dem fruehesten
+    Nicht-Ausreisser (`frueh_min`): eine seltene, uneinheitliche Zweitfahrt
+    (Besorgung um 12:10) darf keine harte Frist setzen -- sonst laedt das
+    sanfte Nachladen ploetzlich mit voller Leistung ("now"), weil die Frist
+    in Minuten ablaeuft (Bericht nach 0.99.61)."""
     stats = stats or {}
-    values = [stats.get("frueh_roh_min")] + [f.get("frueh_roh_min") for f in stats.get("folge") or []]
+    values = [stats.get("frueh_roh_min")]
+    for follow in stats.get("folge") or []:
+        if follow.get("status") == "ok":
+            values.append(follow.get("frueh_min"))
     return sorted({int(v) for v in values if v is not None})
 
 
@@ -2759,14 +2768,23 @@ def evcc_now_entschaerfen(
     reserve_h: float = 0.5,
     sofort_horizont_h: float = 2.0,
     halt: Optional[str] = None,
+    sofort_horizont_max_h: float = 8.0,
+    abfahrt_heute: bool = False,
 ) -> dict:
     """Entschaerft ein "now" aus determine_evcc_mode(): nur wenn das Ziel
     sonst nicht erreichbar waere, bleibt es "now". Jeder andere Basismodus
     kommt unveraendert zurueck (grund None, halt None).
 
     a) available < sofort_kwh (Rest heute + Puffer, ohne morgen): zu_langsam
-       innerhalb sofort_horizont_h -> "now" (sofort_zu_langsam), sonst
-       "minpv" (sofort_sanft).
+       innerhalb des Horizonts -> "now" (sofort_zu_langsam), sonst "minpv"
+       (sofort_sanft). Horizont = sofort_horizont_h; liegt die naechste
+       Abfahrt noch HEUTE vor uns (`abfahrt_heute`) und weiter weg, gilt sie
+       (hoechstens sofort_horizont_max_h): um 0:00 springt der Rest-Bedarf
+       heute auf den vollen Tagesschnitt (remaining_today_kwh() faengt neu
+       an), die Abfahrt liegt aber noch Stunden entfernt -- dann reicht
+       sanftes Laden, "now" mit voller Leistung (z.B. 11 kW) waere unnoetig
+       (Bericht nach 0.99.61). Tagsueber (Abfahrt erst morgen) bleibt es beim
+       kurzen Horizont: das Auto kann heute noch gebraucht werden.
     b) sonst (available < min_kwh): frist_druck = zu_langsam bis zur
        Abfahrt; Tor offen = Sonne unten ODER unbekannt (None) ODER
        frist_druck. Tor zu -> "pv" (wartet_auf_sonnenuntergang); Tor offen
@@ -2785,7 +2803,10 @@ def evcc_now_entschaerfen(
     if halt == "frist" and available < min_kwh:
         return {"modus": "now", "grund": "frist", "halt": "frist"}
     if available < sofort:
-        if zu_langsam(sofort - available, sofort_horizont_h, p_min_kw, reserve_h):
+        horizont = sofort_horizont_h
+        if abfahrt_heute and stunden_bis_abfahrt is not None:
+            horizont = max(sofort_horizont_h, min(stunden_bis_abfahrt, sofort_horizont_max_h))
+        if zu_langsam(sofort - available, horizont, p_min_kw, reserve_h):
             return {"modus": "now", "grund": "sofort_zu_langsam", "halt": "sofort_zu_langsam"}
         return {"modus": "minpv", "grund": "sofort_sanft", "halt": None}
     frist_druck = (

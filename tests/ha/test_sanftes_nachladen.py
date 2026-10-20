@@ -218,3 +218,15 @@ async def test_quellenwechsel_der_frist_steht_im_ereignisprotokoll(hass, coordin
     c._nachladen_festschreiben({"frist_quelle": "profil", "abfahrt_frist": "2026-10-15T13:00:00+02:00"})
     eintraege = [e["text"] for e in c.data["event_log"] if e["kategorie"] == "abfahrt_frist_quelle_geaendert"]
     assert len(eintraege) == 2 and eintraege[0].startswith("None->fallback") and eintraege[1].startswith("fallback->profil")
+
+
+async def test_nach_mitternacht_mit_abfahrt_heute_laedt_sanft_statt_now(hass, coordinators):
+    # Bericht nach 0.99.61: um 0:00 springt der Rest-Bedarf heute auf den vollen Tagesschnitt; mit 11 kW "now"
+    # statt sanft. Frist 06:00 liegt 5,9 h voraus -> minpv statt now.
+    c, _ = await _coord(hass, coordinators, "sn17", soc=20.0, sun="below_horizon")  # 10 kWh, Defizit 6 kWh
+    t = _targets(c, _at(0, 5))
+    assert (t["modus"], t["nachladen_status"]) == ("minpv", "sofort_sanft")
+    assert t["frist_quelle"] == "fallback"
+    # mittags (Abfahrt erst morgen) bleibt der Tagesschutz: weiter "now"
+    t = _targets(c, _at(12))
+    assert (t["modus"], t["nachladen_status"]) == ("now", "sofort_zu_langsam")

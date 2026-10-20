@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.62] - 2026-10-20
+
+### Fixed
+
+- **After midnight the soft recharge jumped to `now` and charged at full power (e.g. 11 kW) instead of softly.** At 0:00 the remaining need of the day (`rest_heute`) starts again with the full weekday average, so the car suddenly lacked "today's need plus buffer" and the check only allowed 2 hours for it at minimum power (`sofort_zu_langsam`). The next departure was still hours away (e.g. 07:30). If the next departure is still ahead **today**, the time until then (at most 8 hours) is now used instead of the 2 hours; the car charges softly (`minpv`, `sofort_sanft`) as long as the minimum power reaches the need in time. Only if it does not, it stays at `now`. During the day (next departure only tomorrow) nothing changes: the car may still be needed today, so the short horizon stays.
+- **A rare, inconsistent second departure could set a hard deadline (since 0.99.61).** The 2nd and 3rd departure of a weekday are only used for the deadline when their statistics are `ok`, and with the earliest non-outlier time instead of the earliest value including outliers. Before, a single errand at 12:10 on a weekday with scattered second trips made "now" a deadline in 10 minutes and the control switched to `now`. The first departure keeps the cautious earliest value.
+
+### Honest limits
+
+- The unknown number of phases is still assumed as 1 phase for the minimum power (lowest assumption), so the "can it be done softly" estimate stays pessimistic on a wallbox with automatic phase switching. Setting the phases in evcc makes it accurate.
+- The cause after midnight was derived from the code and reproduced with a test, not observed on a real system.
+
 ## [0.99.61] - 2026-10-20
 
 ### Added
