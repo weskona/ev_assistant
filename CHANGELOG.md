@@ -2,6 +2,30 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.61] - 2026-10-20
+
+### Added
+
+- **Departure time for every usage pattern (soft recharge deadline).** Until now only the first departure between 04:00 and 12:00 was measured, so midday, late and night shifts always stayed on the 06:00 fallback. The deadline is now determined in this order:
+  1. **Entity or calendar (new, optional, `evcc_departure_entity`):** an `input_datetime`, a timestamp sensor, a calendar (start of the next event) or the phone's "next alarm". A time within the next 36 hours is used as the deadline and takes precedence. Good for shift work.
+  2. **Statistics of the weekday:** the whole day is measured now (04-12 before). All confirmed departures of a day are stored (up to 6) and the 1st, 2nd and 3rd departure of each weekday get their own statistics. The deadline is the next departure from now on, so a second trip the same day (home at noon, leaving at 12:30) is taken into account. The earliest valid value of a departure counts, so an additional late departure never makes the deadline later.
+  3. **Fallback time per weekday (new options `evcc_departure_fallback_mon` ... `_sun`):** an empty field uses the general fallback time (default 06:00).
+  4. **No deadline (new option `evcc_departure_fallback_enabled`, off):** without statistics and without an entity there is no deadline and thus no time pressure; only the PV surplus decides (irregular departures, second car).
+- **Service `rebuild_departure_profile`: recalculate departures retroactively.** The recorder only keeps a few days, but the trip log holds months. The service takes every trip that starts at the home place (zone `home`, optional field `home_ort` for another name) and books its start time as a departure in the plug profile; a trip starts a few minutes after unplugging (checked against the wallbox: within 2 minutes). Skipped are days that already have a measured departure, today, vacation days and trips that were recorded late (more than 30 minutes after the end, e.g. after an odometer outage, their start time is unreliable). Departures less than 45 minutes apart count as one. Days booked this way are marked `quelle: fahrtenbuch`, have no plug duration (they are ignored in the average plug duration) and are rewritten on every run; the service can be run as often as you like and returns the number of booked days. The event log gets `abfahrtsprofil_nachgerechnet`.
+- `frist_quelle` of the evcc mode control sensor now shows `entitaet`, `profil`, `fallback` or `keine`; every change is written to the event log as `abfahrt_frist_quelle_geaendert`. Every confirmed departure after the first is logged as `steck_abfahrt` with its number. The sensor "Typische Morgen-Abfahrt" shows the 2nd and 3rd departure per weekday under `folge`.
+
+### Fixed
+
+- A departure shortly before midnight that was only confirmed after midnight was dropped. It is now booked on the day it happened.
+
+### Honest limits
+
+- The statistics need about 4 valid measurements per weekday (and per departure number) before they are used; until then the fallback time applies. Existing data only contains first departures between 04:00 and 12:00 and is kept; later departures are collected from now on, or can be filled from the trip log with the service `rebuild_departure_profile`.
+- With changing shifts (early/late week) a weekday is "uneinheitlich"; the earliest value is used as deadline, which is cautious. For exact times use the entity or calendar option.
+- The 2nd/3rd departure statistics assume a similar number of trips per day; with 2 trips on one day and 3 on another the numbering is blurred (also flagged "uneinheitlich").
+- The sensor name "Typische Morgen-Abfahrt" is unchanged although it covers the whole day now. It still shows the typical first departure of tomorrow.
+- Only the Glow card is translated; the classic panel stays German.
+
 ## [0.99.60] - 2026-10-20
 
 ### Changed

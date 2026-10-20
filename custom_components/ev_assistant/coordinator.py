@@ -36,7 +36,10 @@ from .const import (
     CONF_DROP_ENDS,
     CONF_EFFICIENCY,
     CONF_EVCC_BATTERY_PRIORITY_ENABLED,
+    CONF_EVCC_DEPARTURE_ENTITY,
+    CONF_EVCC_DEPARTURE_FALLBACK_ENABLED,
     CONF_EVCC_DEPARTURE_FALLBACK_TIME,
+    CONF_EVCC_DEPARTURE_FALLBACK_WEEKDAY,
     CONF_EVCC_HOST,
     CONF_EVCC_LOADPOINT_TITLE,
     CONF_EVCC_MODE_CONTROL_ENABLED,
@@ -106,6 +109,7 @@ from .const import (
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY,
     DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED,
+    DEFAULT_EVCC_DEPARTURE_FALLBACK_ENABLED,
     DEFAULT_EVCC_MODE_CONTROL_ENABLED,
     DEFAULT_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
     DEFAULT_EVCC_SOFT_RECHARGE_ENABLED,
@@ -216,6 +220,7 @@ from .const import (
     resolve_lade_modus,
 )
 from .engine import (
+    PLUG_MAX_DEPARTURES_PER_DAY,
     ChargeDetector,
     ChargeSample,
     EfficiencyCalibrator,
@@ -251,6 +256,8 @@ from .engine import (
     charging_location_breakdown,
     clamp_weekday_contribution,
     consumption_by_temp_bucket_from_totals,
+    departure_from_state,
+    departures_from_trips,
     determine_evcc_mode,
     drop_negative_weekday_days,
     equivalent_full_cycles_from_totals,
@@ -273,6 +280,7 @@ from .engine import (
     merge_pending,
     min_solar_share_price_ceiling,
     net_need_after_pv_kwh,
+    next_departure_deadline,
     normalize_evcc_mode,
     normalize_vehicle_label,
     open_session_sums,
@@ -1268,6 +1276,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             today = {
                 "date": today_key, "connected_seconds": 0.0, "erster_connect": None, "letzter_disconnect": None,
                 "erste_abfahrt": None, "abfahrt_unsicher": False, "abfahrten_bestaetigt": 0, "urlaub": False,
+                "abfahrten": [],
             }
         now_hhmm = now.strftime("%H:%M")
         if connected:
@@ -1338,11 +1347,30 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.data["plug_last_tick_ts"] = ts
 
     def _confirm_plug_departure(self, candidate: dict, today: dict) -> None:
+        """Bucht eine bestaetigte Abfahrt. Seit 0.99.61 zaehlen ALLE Abfahrten des
+        Tages (Liste "abfahrten", fuer die 1./2./3. Abfahrt je Wochentag), nicht
+        nur die erste im Morgenfenster; `erste_abfahrt` bleibt die erste. Eine
+        Abfahrt kurz vor Mitternacht, die erst nach dem Tageswechsel bestaetigt
+        wird, geht in den Eintrag ihres eigenen Tages (bereits abgeschlossen)."""
+        item = {"hhmm": candidate["hhmm"], "unsicher": bool(candidate.get("unsicher"))}
         if candidate.get("date") != today.get("date"):
-            return  # Tageswechsel zwischen Flanke und Bestaetigung: nie im Morgenfenster
+            try:
+                day = date.fromisoformat(candidate["date"])
+            except (TypeError, ValueError):
+                return
+            self.data["plug_window_weekday_days"] = append_recent_weekday_plug_window(
+                self.data.get("plug_window_weekday_days") or {}, day.weekday(), candidate["date"], 0.0,
+                None, None, PLUG_WINDOW_ENTRIES, abfahrten=[item],
+            )
+            self._log_event("steck_abfahrt", f"zeit={item['hhmm']} unsicher={item['unsicher']} tag={candidate['date']}")
+            return
         first = not today.get("abfahrten_bestaetigt")
         today["abfahrten_bestaetigt"] = int(today.get("abfahrten_bestaetigt") or 0) + 1
+        today["abfahrten"] = (list(today.get("abfahrten") or []) + [item])[:PLUG_MAX_DEPARTURES_PER_DAY]
         if not first:
+            self._log_event(
+                "steck_abfahrt", f"zeit={item['hhmm']} unsicher={item['unsicher']} nr={today['abfahrten_bestaetigt']}",
+            )
             return
         minutes = parse_hhmm_minutes(candidate.get("hhmm"))
         if minutes is None or not PLUG_DEPARTURE_WINDOW_START_H * 60 <= minutes < PLUG_DEPARTURE_WINDOW_END_H * 60:
@@ -1371,6 +1399,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             erste_abfahrt=day_entry.get("erste_abfahrt"),
             abfahrt_unsicher=bool(day_entry.get("abfahrt_unsicher")),
             urlaub=bool(day_entry.get("urlaub")),
+            abfahrten=day_entry.get("abfahrten"),
         )
 
     def plug_window_profile(self) -> Optional[dict]:
@@ -1395,6 +1424,65 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             PLUG_DEPARTURE_P10_MIN_N,
             PLUG_DEPARTURE_MAX_OUTLIER_SHARE,
         )
+
+    async def async_rebuild_departure_profile(self, home_ort: Optional[str] = None) -> dict:
+        """Rechnet die Abfahrten von zu Hause rueckwirkend aus dem Fahrtenbuch nach
+        und traegt sie ins Steckprofil ein (Service rebuild_departure_profile).
+        Hintergrund: Der Recorder haelt nur wenige Tage, das Fahrtenbuch dagegen
+        Monate; eine Fahrt, die an "Home" startet, beginnt wenige Minuten nach dem
+        Abstecken (geprueft gegen die Wallbox: +-2 Minuten). Tage mit einer
+        gemessenen Abfahrt (Wallbox) bleiben unberuehrt, heute zaehlt nicht,
+        verspaetet erfasste Fahrten und Urlaub werden uebersprungen. Wiederholbar
+        (aus dem Fahrtenbuch angelegte Tage werden neu geschrieben). Rueckgabe:
+        Zahl der gebuchten und der uebersprungenen Tage."""
+        zone = self.hass.states.get("zone.home")
+        home_names = {"home"}
+        if zone is not None:
+            home_names.add(str(zone.attributes.get("friendly_name") or zone.name or "").strip().lower())
+        if home_ort:
+            home_names.add(home_ort.strip().lower())
+        home_names.discard("")
+        weekday_days = {k: [dict(e) for e in v] for k, v in (self.data.get("plug_window_weekday_days") or {}).items()}
+        measured = {
+            e["date"] for entries in weekday_days.values() for e in entries
+            if e.get("quelle") != "fahrtenbuch" and (e.get("abfahrten") or e.get("erste_abfahrt"))
+        }
+        today_iso = dt_util.now().date().isoformat()
+        trips = self.data.get("fahrten") or []
+        found = departures_from_trips(
+            trips, home_names, today_iso, tz=dt_util.DEFAULT_TIME_ZONE, skip_dates=measured,
+        )
+        skipped = len(
+            set(departures_from_trips(trips, home_names, today_iso, tz=dt_util.DEFAULT_TIME_ZONE)) & measured
+        )
+        booked = 0
+        for date_iso, times in sorted(found.items()):
+            weekday = date.fromisoformat(date_iso).weekday()
+            items = [{"hhmm": h, "unsicher": False} for h in times]
+            entries = weekday_days.get(str(weekday)) or []
+            existing = next((e for e in entries if e["date"] == date_iso), None)
+            if existing is not None and existing.get("quelle") == "fahrtenbuch":
+                existing["abfahrten"] = items  # erneuter Lauf: neu schreiben statt vereinigen
+                existing["erste_abfahrt"] = times[0]
+                booked += 1
+                continue
+            weekday_days = append_recent_weekday_plug_window(
+                weekday_days, weekday, date_iso, 0.0, None, None, PLUG_WINDOW_ENTRIES,
+                erste_abfahrt=times[0], abfahrten=items,
+            )
+            created = next((e for e in weekday_days[str(weekday)] if e["date"] == date_iso), None)
+            if created is not None and not created.get("erster_connect") and not created.get("stunden"):
+                created["quelle"] = "fahrtenbuch"  # kennt keine Steckdauer
+            booked += 1
+        self.data["plug_window_weekday_days"] = weekday_days
+        result = {"tage_gebucht": booked, "tage_mit_messung_uebersprungen": skipped}
+        self._log_event(
+            "abfahrtsprofil_nachgerechnet",
+            f"gebucht={booked}, mit_messung_uebersprungen={skipped}, home={sorted(home_names)}",
+        )
+        await self._save()
+        self.async_set_updated_data(self.data)
+        return result
 
     def _mark_plug_urlaub_since(self, since_date: date) -> int:
         """Markiert alle Steckeintraege (und den noch offenen Tag) ab
@@ -8006,26 +8094,43 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return False
         return None
 
+    def _evcc_departure_fallback_minutes(self) -> list:
+        """Rueckfall-Abfahrtszeit je Wochentag (Index 0=Montag) in Minuten seit
+        Mitternacht: Wochentags-Option, sonst die globale Rueckfallzeit; None
+        fuer "keine Frist" (Option CONF_EVCC_DEPARTURE_FALLBACK_ENABLED aus)."""
+        if not self._opt(CONF_EVCC_DEPARTURE_FALLBACK_ENABLED, DEFAULT_EVCC_DEPARTURE_FALLBACK_ENABLED):
+            return [None] * 7
+        global_min = parse_hhmm_minutes(self._opt(CONF_EVCC_DEPARTURE_FALLBACK_TIME, EVCC_DEPARTURE_FALLBACK_TIME))
+        if global_min is None:
+            global_min = parse_hhmm_minutes(EVCC_DEPARTURE_FALLBACK_TIME)
+        result = []
+        for key in CONF_EVCC_DEPARTURE_FALLBACK_WEEKDAY:
+            own = parse_hhmm_minutes(self._opt(key, ""))
+            result.append(own if own is not None else global_min)
+        return result
+
+    def _evcc_departure_entity_deadline(self, now: datetime) -> Optional[datetime]:
+        """Naechste Abfahrt aus der optional gewaehlten Entitaet (siehe
+        engine.departure_from_state()); None ohne Entitaet/ohne brauchbaren
+        Zeitpunkt -- dann gilt die Statistik."""
+        entity_id = self._opt(CONF_EVCC_DEPARTURE_ENTITY)
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            return None
+        return departure_from_state(state.state, dict(state.attributes), now)
+
     def _evcc_departure_deadline(self, now: datetime) -> tuple:
-        """(Frist-Zeitpunkt, Quelle) = naechste Abfahrt: frueh_roh des
-        Wochentags, der noch bevorsteht (heute, wenn die Zeit noch nicht
-        erreicht ist, sonst morgen); ohne belastbaren Wert die Rueckfallzeit
-        (Option, Standard EVCC_DEPARTURE_FALLBACK_TIME)."""
+        """(Frist-Zeitpunkt oder None, Quelle) = naechste Abfahrt. Reihenfolge:
+        gewaehlte Entitaet/Kalender ("entitaet"), Statistik des Wochentags
+        ("profil": die 1./2./3. Abfahrt, deren fruehester gueltiger Wert noch
+        bevorsteht), Rueckfallzeit je Wochentag ("fallback"), sonst
+        (None, "keine"). Siehe engine.next_departure_deadline()."""
         wochentage = (self.plug_departure_profile() or {}).get("wochentage") or {}
-        fb_min = parse_hhmm_minutes(self._opt(CONF_EVCC_DEPARTURE_FALLBACK_TIME, EVCC_DEPARTURE_FALLBACK_TIME))
-        if fb_min is None:
-            fb_min = parse_hhmm_minutes(EVCC_DEPARTURE_FALLBACK_TIME)
-        for offset in (0, 1):
-            day = now + timedelta(days=offset)
-            stats = wochentage.get(day.weekday()) or wochentage.get(str(day.weekday())) or {}
-            minutes = stats.get("frueh_roh_min")
-            quelle = "profil"
-            if minutes is None:
-                minutes, quelle = fb_min, "fallback"
-            deadline = day.replace(hour=minutes // 60, minute=minutes % 60, second=0, microsecond=0)
-            if deadline > now:
-                return deadline, quelle
-        return deadline, quelle
+        return next_departure_deadline(
+            now, wochentage, self._evcc_departure_entity_deadline(now), self._evcc_departure_fallback_minutes(),
+        )
 
     def _nachladen_festschreiben(self, targets: dict) -> None:
         """Schreibpfad-only: Haltezeit festschreiben und Statuswechsel des
@@ -8034,6 +8139,14 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         alt_halt = (self.data.get("evcc_now_halt") or {}).get("grund")
         if halt != alt_halt:
             self.data["evcc_now_halt"] = {"grund": halt, "ts": dt_util.utcnow().timestamp()} if halt else None
+            self._save_soon()
+        quelle = targets.get("frist_quelle")
+        if quelle is not None and quelle != self.data.get("abfahrt_frist_quelle"):
+            self._log_event(
+                "abfahrt_frist_quelle_geaendert",
+                f"{self.data.get('abfahrt_frist_quelle')}->{quelle}, frist={targets.get('abfahrt_frist')}",
+            )
+            self.data["abfahrt_frist_quelle"] = quelle
             self._save_soon()
         status = targets.get("nachladen_status")
         if status is not None and status != self.data.get("evcc_nachladen_status"):
@@ -8074,12 +8187,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         res["sofort_km"] = kwh_to_km(sofort_kwh, self.range_conversion().get("verbrauch_kwh_100km"))
         now = dt_util.now()
         deadline, quelle = self._evcc_departure_deadline(now)
-        res["abfahrt_frist"] = deadline.isoformat()
+        res["abfahrt_frist"] = deadline.isoformat() if deadline is not None else None
         res["frist_quelle"] = quelle
         below = self._sun_below_horizon()
         out = evcc_now_entschaerfen(
             base_mode, available, sofort_kwh, min_kwh, below,
-            (deadline - now).total_seconds() / 3600.0, self._evcc_min_charge_power_kw(),
+            (deadline - now).total_seconds() / 3600.0 if deadline is not None else None,
+            self._evcc_min_charge_power_kw(),
             reserve_h=EVCC_NACHLADEN_RESERVE_H, sofort_horizont_h=EVCC_SOFORT_HORIZON_H,
             halt=(self.data.get("evcc_now_halt") or {}).get("grund"),
         )

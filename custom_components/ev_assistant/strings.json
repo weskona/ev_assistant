@@ -275,7 +275,16 @@
           "battery_charge_entity": "Speicherladung (optional, falls nicht bereits im Hausverbrauch enthalten)",
           "urlaub_entity": "Urlaubs-Entität (optional)",
           "weekly_full_charge_enabled": "Wöchentliche Vollladung fürs Zellbalancing",
-          "weekly_full_charge_interval_days": "Intervall (Tage, seit letzter Vollladung)"
+          "weekly_full_charge_interval_days": "Intervall (Tage, seit letzter Vollladung)",
+          "evcc_departure_fallback_enabled": "Rückfall-Abfahrtszeit verwenden (aus = keine Frist)",
+          "evcc_departure_fallback_mon": "Rückfall-Abfahrtszeit Montag (HH:MM, leer = allgemeine Zeit)",
+          "evcc_departure_fallback_tue": "Rückfall-Abfahrtszeit Dienstag (HH:MM, leer = allgemeine Zeit)",
+          "evcc_departure_fallback_wed": "Rückfall-Abfahrtszeit Mittwoch (HH:MM, leer = allgemeine Zeit)",
+          "evcc_departure_fallback_thu": "Rückfall-Abfahrtszeit Donnerstag (HH:MM, leer = allgemeine Zeit)",
+          "evcc_departure_fallback_fri": "Rückfall-Abfahrtszeit Freitag (HH:MM, leer = allgemeine Zeit)",
+          "evcc_departure_fallback_sat": "Rückfall-Abfahrtszeit Samstag (HH:MM, leer = allgemeine Zeit)",
+          "evcc_departure_fallback_sun": "Rückfall-Abfahrtszeit Sonntag (HH:MM, leer = allgemeine Zeit)",
+          "evcc_departure_entity": "Entität mit der nächsten Abfahrt (optional)"
         },
         "data_description": {
           "evcc_host": "Optional — ohne sie bleiben Ladeleistung/Modus/Tarife/PV im Panel einfach leer, alles andere funktioniert unverändert weiter.",
@@ -291,7 +300,16 @@
           "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch (gleiche Einheit: kumulativer Energiezähler in kWh, kein Leistungssensor) — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
           "urlaub_entity": "Optional, z.B. ein input_boolean/switch/binary_sensor \"an\" während Urlaub — betroffene Tage werden dann aus den Wochentags-Nutzungsprofilen (Fahrzeug & Haus) ausgeschlossen statt den Schnitt zu verzerren, und die evcc-Modus-/SoC-Steuerung pausiert.",
           "weekly_full_charge_enabled": "Deaktiviert (Default): keine Änderung am bisherigen Verhalten. Aktiviert: ist seit der letzten erreichten Vollladung (98% oder mehr, egal ob manuell oder automatisch) das Intervall unten verstrichen, überstimmt die evcc-Steuerung das profilbasierte Ziel mit Ziel-SoC=100%/Modus=minpv, bis 100% erreicht sind. Steuert NUR Ziel-SoC + Modus — WOHER der Ladestrom kommt (PV/Netz/Speicher), entscheidet weiterhin evcc selbst (Mindestladeleistung im minpv-Modus, Speicher-Entladesperre als eigene evcc-Einstellung). Zusätzlich per Panel-Schalter umschaltbar, ohne diesen Options-Flow erneut öffnen zu müssen.",
-          "weekly_full_charge_interval_days": "Nur relevant, wenn oben aktiviert. Eine manuelle Vollladung zählt genauso wie eine erzwungene — der Zähler unterscheidet den Grund nicht."
+          "weekly_full_charge_interval_days": "Nur relevant, wenn oben aktiviert. Eine manuelle Vollladung zählt genauso wie eine erzwungene — der Zähler unterscheidet den Grund nicht.",
+          "evcc_departure_fallback_enabled": "Aus: Gibt es keine Abfahrtsstatistik und keine Entität, gibt es keine Frist, das sanfte Nachladen macht dann keinen Zeitdruck (z. B. bei unregelmäßigen Abfahrten).",
+          "evcc_departure_fallback_mon": "Nur für Montag, solange dafür keine belastbare Abfahrtsstatistik vorliegt. Leer lassen für die allgemeine Rückfall-Abfahrtszeit.",
+          "evcc_departure_fallback_tue": "Nur für Dienstag, solange dafür keine belastbare Abfahrtsstatistik vorliegt. Leer lassen für die allgemeine Rückfall-Abfahrtszeit.",
+          "evcc_departure_fallback_wed": "Nur für Mittwoch, solange dafür keine belastbare Abfahrtsstatistik vorliegt. Leer lassen für die allgemeine Rückfall-Abfahrtszeit.",
+          "evcc_departure_fallback_thu": "Nur für Donnerstag, solange dafür keine belastbare Abfahrtsstatistik vorliegt. Leer lassen für die allgemeine Rückfall-Abfahrtszeit.",
+          "evcc_departure_fallback_fri": "Nur für Freitag, solange dafür keine belastbare Abfahrtsstatistik vorliegt. Leer lassen für die allgemeine Rückfall-Abfahrtszeit.",
+          "evcc_departure_fallback_sat": "Nur für Samstag, solange dafür keine belastbare Abfahrtsstatistik vorliegt. Leer lassen für die allgemeine Rückfall-Abfahrtszeit.",
+          "evcc_departure_fallback_sun": "Nur für Sonntag, solange dafür keine belastbare Abfahrtsstatistik vorliegt. Leer lassen für die allgemeine Rückfall-Abfahrtszeit.",
+          "evcc_departure_entity": "input_datetime, Zeitstempel-Sensor, Kalender oder „nächster Wecker“ des Handys. Liegt ein Zeitpunkt in den nächsten 36 Stunden, gilt er als Frist und geht der Statistik vor. Sonst gilt die Statistik, danach die Rückfallzeit. Gut für Schichtarbeit."
         }
       },
       "evcc_loadpoint": {

@@ -402,6 +402,19 @@ CONF_EVCC_SOFT_RECHARGE_ENABLED = "evcc_soft_recharge_enabled"
 # Rueckfall-Abfahrtszeit ("HH:MM"), solange fuer den Wochentag keine
 # belastbare Abfahrtsstatistik (plug_departure_profile frueh_roh) vorliegt.
 CONF_EVCC_DEPARTURE_FALLBACK_TIME = "evcc_departure_fallback_time"
+# Seit 0.99.61: Rueckfall ausschaltbar ("keine Frist" -- nur der PV-Ueberschuss
+# entscheidet), Rueckfallzeit je Wochentag (leer = globale Zeit) und eine
+# optionale Entitaet mit der naechsten Abfahrt (input_datetime, Zeitstempel-
+# Sensor, Kalender, naechster Wecker). Reihenfolge der Quellen siehe
+# engine.next_departure_deadline().
+CONF_EVCC_DEPARTURE_FALLBACK_ENABLED = "evcc_departure_fallback_enabled"
+CONF_EVCC_DEPARTURE_ENTITY = "evcc_departure_entity"
+CONF_EVCC_DEPARTURE_FALLBACK_WEEKDAY = (
+    "evcc_departure_fallback_mon", "evcc_departure_fallback_tue", "evcc_departure_fallback_wed",
+    "evcc_departure_fallback_thu", "evcc_departure_fallback_fri", "evcc_departure_fallback_sat",
+    "evcc_departure_fallback_sun",
+)
+DEFAULT_EVCC_DEPARTURE_FALLBACK_ENABLED = True
 # Optional, nur relevant bei aktiver evcc-Steuerung oben: Mindestladeleistung
 # der Wallbox, gegen die engine.apply_realtime_pv_override() den aktuellen
 # PV-Ueberschuss (siehe coordinator.py::_evcc_realtime_pv_surplus_w()) prueft,
@@ -507,9 +520,12 @@ PLUG_WINDOW_ENTRIES = 12
 # So lange (Sekunden) muss das Fahrzeug durchgehend abgesteckt bleiben, bevor
 # die Abfahrt bestaetigt wird (Wiederanstecken davor verwirft sie).
 PLUG_DEPARTURE_CONFIRM_S = 600
-# Nur Abfahrten in diesem Lokalzeit-Fenster zaehlen als "Morgenabfahrt".
-PLUG_DEPARTURE_WINDOW_START_H = 4
-PLUG_DEPARTURE_WINDOW_END_H = 12
+# Nur Abfahrten in diesem Lokalzeit-Fenster zaehlen als Messung. Seit 0.99.61
+# der ganze Tag (frueher 04-12 Uhr "Morgenabfahrt"): Mittags-, Spaet- und
+# Nachtschicht lieferten sonst nie eine Messung und blieben beim Rueckfall.
+# Sicher, weil fuer die Frist der FRUEHESTE gueltige Wert zaehlt.
+PLUG_DEPARTURE_WINDOW_START_H = 0
+PLUG_DEPARTURE_WINDOW_END_H = 24
 # Ist die Luecke zwischen zwei erfolgreichen Ticks groesser als dieser Faktor
 # mal das Poll-Intervall (evcc nicht erreichbar, HA-Neustart), gilt die dabei
 # erkannte Flanke als unsicher.
@@ -818,6 +834,7 @@ SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM = "set_evcc_charge_plan_range_km"
 SERVICE_SET_EVCC_MANUAL_MODE = "set_evcc_manual_mode"
 SERVICE_CLEAR_EVCC_MANUAL_MODE = "clear_evcc_manual_mode"
 SERVICE_URLAUB_SEIT = "urlaub_seit"
+SERVICE_REBUILD_DEPARTURE_PROFILE = "rebuild_departure_profile"
 SERVICE_SET_PANEL_LAYOUT = "set_panel_layout"
 SERVICE_SET_HIDDEN_TABS = "set_hidden_tabs"
 SERVICE_RESET_LIFETIME_KPIS = "reset_lifetime_kpis"

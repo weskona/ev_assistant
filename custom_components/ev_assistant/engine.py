@@ -2011,6 +2011,7 @@ def append_recent_weekday_plug_window(
     erste_abfahrt: Optional[str] = None,
     abfahrt_unsicher: bool = False,
     urlaub: bool = False,
+    abfahrten: Optional[list] = None,
 ) -> dict:
     """Bucht die Steck-Beobachtung eines Kalendertages (Gesamtdauer in
     Stunden, erste Connect-/letzte Disconnect-Uhrzeit als "HH:MM") in die
@@ -2022,7 +2023,10 @@ def append_recent_weekday_plug_window(
     `abfahrt_unsicher`, `urlaub`) werden beim Zusammenfuehren wie folgt
     behandelt: fruehere Abfahrt gewinnt, "unsicher"/"urlaub" gelten per ODER.
     Eintraege OHNE diese Felder (vor 0.99.48 gebucht) bleiben gueltig, liefern
-    aber keine Abfahrtsmessung. `connected_hours=0.0` fuer ein noch nicht
+    aber keine Abfahrtsmessung. `abfahrten` (seit 0.99.61): ALLE bestaetigten
+    Abfahrten des Tages als Liste {"hhmm", "unsicher"}, aufsteigend sortiert,
+    je Uhrzeit nur einmal, hoechstens PLUG_MAX_DEPARTURES_PER_DAY; beim
+    Zusammenfuehren werden die Listen vereinigt. `connected_hours=0.0` fuer ein noch nicht
     vorhandenes Datum legt einen leeren "gar nicht angesteckt"-Beobachtungs-
     tag an, analog append_recent_weekday_day(). Kappt danach auf die
     letzten `window` Eintraege (aelteste zuerst verworfen)."""
@@ -2043,6 +2047,8 @@ def append_recent_weekday_plug_window(
             entry.setdefault("erste_abfahrt", None)
             entry["abfahrt_unsicher"] = bool(entry.get("abfahrt_unsicher")) or bool(abfahrt_unsicher)
             entry["urlaub"] = bool(entry.get("urlaub")) or bool(urlaub)
+            if abfahrten or entry.get("abfahrten"):
+                entry["abfahrten"] = _merge_departures(entry.get("abfahrten"), abfahrten)
             break
     else:
         days.append({
@@ -2053,10 +2059,31 @@ def append_recent_weekday_plug_window(
             "erste_abfahrt": erste_abfahrt,
             "abfahrt_unsicher": bool(abfahrt_unsicher),
             "urlaub": bool(urlaub),
+            **({"abfahrten": _merge_departures(None, abfahrten)} if abfahrten else {}),
         })
     days.sort(key=lambda d: d["date"])
     result[key] = days[-window:]
     return result
+
+
+# Hoechstzahl gespeicherter Abfahrten je Kalendertag (Steckprofil).
+PLUG_MAX_DEPARTURES_PER_DAY = 6
+# Wie viele Abfahrten je Wochentag (1., 2., 3. des Tages) eine eigene Statistik bekommen.
+PLUG_DEPARTURE_ORDINALS = 3
+
+
+def _merge_departures(a: Optional[list], b: Optional[list]) -> list:
+    """Vereinigt zwei Abfahrtslisten ({"hhmm", "unsicher"}) je Uhrzeit einmal
+    (unsicher gilt per ODER), aufsteigend sortiert, auf die ersten
+    PLUG_MAX_DEPARTURES_PER_DAY gekappt."""
+    merged: dict = {}
+    for item in list(a or []) + list(b or []):
+        hhmm = item.get("hhmm")
+        if parse_hhmm_minutes(hhmm) is None:
+            continue
+        merged[hhmm] = bool(merged.get(hhmm)) or bool(item.get("unsicher"))
+    ordered = sorted(merged, key=lambda h: parse_hhmm_minutes(h))
+    return [{"hhmm": h, "unsicher": merged[h]} for h in ordered[:PLUG_MAX_DEPARTURES_PER_DAY]]
 
 
 def weekday_plug_window_profile_from_recent_days(weekday_days: dict) -> Optional[dict]:
@@ -2075,7 +2102,9 @@ def weekday_plug_window_profile_from_recent_days(weekday_days: dict) -> Optional
         return None
     result = {}
     for wd in range(7):
-        days = weekday_days.get(str(wd)) or []
+        # Aus dem Fahrtenbuch nachgerechnete Tage (quelle "fahrtenbuch") kennen
+        # keine Steckdauer und zaehlen hier nicht mit.
+        days = [d for d in (weekday_days.get(str(wd)) or []) if d.get("quelle") != "fahrtenbuch"]
         if days:
             result[wd] = round(sum(d["stunden"] for d in days) / len(days), 2)
     return result or None
@@ -2199,6 +2228,22 @@ def plug_departure_stats(
     return result
 
 
+def _ordinal_entries(entries: list, k: int) -> list:
+    """Pseudo-Eintraege fuer plug_departure_stats(): die (k+1). Abfahrt jedes
+    Tages (k=0: erste). Tage mit weniger Abfahrten liefern keine Messung."""
+    out = []
+    for entry in entries or []:
+        departures = entry.get("abfahrten") or []
+        if k < len(departures):
+            item = departures[k]
+            out.append({
+                "erste_abfahrt": item.get("hhmm"),
+                "abfahrt_unsicher": bool(item.get("unsicher")) or bool(entry.get("abfahrt_unsicher")) and k == 0,
+                "urlaub": bool(entry.get("urlaub")),
+            })
+    return out
+
+
 def plug_departure_profile(
     weekday_days: dict,
     window_start_min: int,
@@ -2214,17 +2259,145 @@ def plug_departure_profile(
     wegen Urlaub nicht gewerteten Eintraege: {"wochentage": {wd: stats},
     "urlaub_nicht_gewertet": n}. Immer alle 7 Wochentage (leere = keine_messung)."""
     weekday_days = weekday_days or {}
-    profile = {
-        wd: plug_departure_stats(
-            weekday_days.get(str(wd)) or [], window_start_min, window_end_min,
-            outlier_k, min_dev_min, min_samples, consistency_min, p10_min_n, max_outlier_share,
-        )
-        for wd in range(7)
-    }
+    args = (window_start_min, window_end_min, outlier_k, min_dev_min, min_samples,
+            consistency_min, p10_min_n, max_outlier_share)
+    profile = {}
+    for wd in range(7):
+        entries = weekday_days.get(str(wd)) or []
+        stats = plug_departure_stats(entries, *args)
+        # Folge-Abfahrten (2., 3. des Tages) mit eigener Statistik, damit "die
+        # naechste Abfahrt ab jetzt" auch bei mehreren Fahrten am Tag stimmt.
+        stats["folge"] = [
+            plug_departure_stats(_ordinal_entries(entries, k), *args)
+            for k in range(1, PLUG_DEPARTURE_ORDINALS)
+        ]
+        profile[wd] = stats
     urlaub = sum(
         1 for entries in weekday_days.values() for entry in entries if entry.get("urlaub")
     )
     return {"wochentage": profile, "urlaub_nicht_gewertet": urlaub}
+
+
+def departures_from_trips(
+    trips: list,
+    home_names: set,
+    today_iso: str,
+    tz=None,
+    max_delay_min: float = 30.0,
+    merge_min: int = 45,
+    skip_dates: Optional[set] = None,
+) -> dict:
+    """Abfahrten von zu Hause aus dem Fahrtenbuch: {Datum "YYYY-MM-DD": ["HH:MM", ...]}.
+    Gewertet werden Fahrten, die an einem Heim-Ort (`home_names`, kleingeschrieben)
+    starten, nicht als Urlaub markiert sind und rechtzeitig erfasst wurden (liegt
+    die Erfassung mehr als `max_delay_min` Minuten nach dem Fahrtende, z.B. nach
+    einem Ausfall der Odometer-Quelle, ist der Startzeitpunkt unzuverlaessig).
+    Tage ab `today_iso` und `skip_dates` (schon gemessene Tage) zaehlen nicht.
+    Abfahrten unter `merge_min` Minuten Abstand gelten als eine (geteilte Fahrt).
+    Der Startzeitpunkt einer Fahrt liegt wenige Minuten nach dem Abstecken."""
+    skip_dates = skip_dates or set()
+    per_day: dict = {}
+    for trip in trips or []:
+        if str(trip.get("start_ort") or "").strip().lower() not in home_names:
+            continue
+        if trip.get("urlaub") or not trip.get("start_ts"):
+            continue
+        end_ts, seen_ts = trip.get("end_ts"), trip.get("erfasst_ts")
+        if end_ts and seen_ts and (seen_ts - end_ts) / 60.0 > max_delay_min:
+            continue
+        moment = datetime.fromtimestamp(trip["start_ts"], tz)
+        day = moment.date().isoformat()
+        if day >= today_iso or day in skip_dates:
+            continue
+        per_day.setdefault(day, []).append(moment.hour * 60 + moment.minute)
+    result = {}
+    for day, minutes in per_day.items():
+        merged: list = []
+        for m in sorted(minutes):
+            if not merged or m - merged[-1] >= merge_min:
+                merged.append(m)
+        result[day] = [_fmt_minutes(m) for m in merged[:PLUG_MAX_DEPARTURES_PER_DAY]]
+    return result
+
+
+def departure_candidates_min(stats: Optional[dict]) -> list:
+    """Fruehste belastbare Abfahrtszeiten (Minuten seit Mitternacht, aufsteigend)
+    eines Wochentags: 1. Abfahrt (`frueh_roh_min`) plus Folge-Abfahrten."""
+    stats = stats or {}
+    values = [stats.get("frueh_roh_min")] + [f.get("frueh_roh_min") for f in stats.get("folge") or []]
+    return sorted({int(v) for v in values if v is not None})
+
+
+def departure_from_state(state, attributes: Optional[dict], now: datetime, horizon_h: float = 36.0) -> Optional[datetime]:
+    """Naechste Abfahrt aus dem Zustand einer vom Nutzer gewaehlten Entitaet
+    (input_datetime, Zeitstempel-Sensor, Kalender, "naechster Wecker" des
+    Handys). Erkannt werden ein ISO-Datum/-Zeitstempel ("2026-10-21T06:30:00+02:00",
+    "2026-10-21 06:30:00"), bei Kalendern das Attribut `start_time` und eine
+    reine Uhrzeit ("06:30[:00]" = naechstes Auftreten). Liegt der Zeitpunkt nicht in der
+    Zukunft oder weiter als `horizon_h` Stunden voraus (oder ist der Wert
+    unbrauchbar, unknown/unavailable), kommt None -- dann gilt die naechste Quelle."""
+    attributes = attributes or {}
+    candidates = []
+    start = attributes.get("start_time")
+    if isinstance(start, str) and start.strip():
+        candidates.append(start.strip())
+    if isinstance(state, str) and state.strip() and state.strip().lower() not in ("unknown", "unavailable", "none", "on", "off"):
+        candidates.append(state.strip())
+    for raw in candidates:
+        moment = None
+        time_only = re.fullmatch(r"(\d{1,2}):(\d{2})(?::\d{2})?", raw)
+        minutes = None
+        if time_only and int(time_only.group(1)) < 24 and int(time_only.group(2)) < 60:
+            minutes = int(time_only.group(1)) * 60 + int(time_only.group(2))
+        if minutes is not None:
+            moment = now.replace(hour=minutes // 60, minute=minutes % 60, second=0, microsecond=0)
+            if moment <= now:
+                moment += timedelta(days=1)
+        else:
+            try:
+                moment = datetime.fromisoformat(raw)
+            except ValueError:
+                continue
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=now.tzinfo)
+        if now < moment <= now + timedelta(hours=horizon_h):
+            return moment
+    return None
+
+
+def next_departure_deadline(
+    now: datetime,
+    wochentage: dict,
+    entity_deadline: Optional[datetime],
+    fallback_min_by_weekday: list,
+) -> tuple:
+    """(Frist, Quelle) fuer das sanfte Nachladen. Reihenfolge:
+    1. `entity_deadline` (vom Nutzer gewaehlte Entitaet/Kalender), Quelle "entitaet".
+    2. Statistik: die erste Abfahrt (1., 2., 3. des Tages) des Wochentags, deren
+       fruehester gueltiger Wert noch vor uns liegt (heute), sonst die erste von
+       morgen; Quelle "profil".
+    3. Rueckfallzeit je Wochentag (`fallback_min_by_weekday`, Index 0=Montag,
+       None = keine), Quelle "fallback".
+    4. Gibt es heute und morgen weder Statistik noch Rueckfall: (None, "keine")
+       -- unbekannte Frist erzeugt keinen Fristdruck."""
+    if entity_deadline is not None:
+        return entity_deadline, "entitaet"
+    now_min = now.hour * 60 + now.minute
+    for offset in (0, 1):
+        day = now + timedelta(days=offset)
+        wd = day.weekday()
+        times = departure_candidates_min((wochentage or {}).get(wd) or (wochentage or {}).get(str(wd)))
+        quelle = "profil"
+        if not times:
+            fb = fallback_min_by_weekday[wd] if 0 <= wd < len(fallback_min_by_weekday) else None
+            if fb is None:
+                continue
+            times, quelle = [fb], "fallback"
+        for minutes in times:
+            if offset == 1 or minutes > now_min:
+                deadline = day.replace(hour=minutes // 60, minute=minutes % 60, second=0, microsecond=0)
+                return deadline, quelle
+    return None, "keine"
 
 
 def clamp_weekday_contribution(

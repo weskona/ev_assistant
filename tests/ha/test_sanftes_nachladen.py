@@ -148,3 +148,73 @@ async def test_attribute_am_sensor(hass, coordinators):
     assert a["nachladen_status"] == "wartet_auf_sonnenuntergang"
     assert a["nachladen_ab"] and a["frist_quelle"] == "fallback" and a["abfahrt_frist"]
     assert a["sofort_kwh"] == 16.0 and a["sofort_km"] == 80.0 and a["min_km"] == 130.0
+
+
+async def test_rueckfallzeit_je_wochentag_geht_vor_der_allgemeinen_zeit(hass, coordinators):
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_DEPARTURE_FALLBACK_TIME,
+        CONF_EVCC_DEPARTURE_FALLBACK_WEEKDAY,
+    )
+
+    # 14.10.2026 = Mittwoch, 15.10. = Donnerstag (Index 3), 16.10. = Freitag (Index 4)
+    c, _ = await _coord(
+        hass, coordinators, "sn12", soc=40.0,
+        options={
+            CONF_EVCC_DEPARTURE_FALLBACK_TIME: "06:00",
+            CONF_EVCC_DEPARTURE_FALLBACK_WEEKDAY[3]: "13:30",
+            CONF_EVCC_DEPARTURE_FALLBACK_WEEKDAY[4]: "",  # leer = allgemeine Zeit
+        },
+    )
+    d, q = c._evcc_departure_deadline(_at(22))
+    assert (d.day, d.hour, d.minute, q) == (15, 13, 30, "fallback")
+    d, q = c._evcc_departure_deadline(_at(14, 0, day=15))  # Donnerstag 13:30 vorbei -> Freitag, leer = 06:00
+    assert (d.day, d.hour, d.minute, q) == (16, 6, 0, "fallback")
+
+
+async def test_rueckfall_aus_gibt_keine_frist_und_keinen_fristdruck(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_DEPARTURE_FALLBACK_ENABLED
+
+    c, _ = await _coord(
+        hass, coordinators, "sn13", soc=40.0, options={CONF_EVCC_DEPARTURE_FALLBACK_ENABLED: False},
+        sun="below_horizon",
+    )
+    d, q = c._evcc_departure_deadline(_at(22))
+    assert (d, q) == (None, "keine")
+    t = _targets(c, _at(22))
+    assert t["abfahrt_frist"] is None and t["frist_quelle"] == "keine"
+    assert t["nachladen_grund"] != "frist"
+
+
+async def test_entitaet_mit_naechster_abfahrt_geht_vor_statistik_und_rueckfall(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_DEPARTURE_ENTITY
+
+    c, _ = await _coord(
+        hass, coordinators, "sn14", soc=40.0, options={CONF_EVCC_DEPARTURE_ENTITY: "input_datetime.abfahrt"},
+    )
+    hass.states.async_set("input_datetime.abfahrt", "2026-10-15 14:15:00")
+    d, q = c._evcc_departure_deadline(_at(22))
+    assert (d.day, d.hour, d.minute, q) == (15, 14, 15, "entitaet")
+    # Kalender: Beginn des naechsten Termins
+    c2, _ = await _coord(
+        hass, coordinators, "sn15", soc=40.0, options={CONF_EVCC_DEPARTURE_ENTITY: "calendar.schicht"},
+    )
+    hass.states.async_set("calendar.schicht", "off", {"start_time": "2026-10-15 22:00:00"})
+    d, q = c2._evcc_departure_deadline(_at(22))
+    assert (d.day, d.hour, q) == (15, 22, "entitaet")
+    # unbrauchbarer Wert oder Vergangenheit -> naechste Quelle (Rueckfall)
+    hass.states.async_set("input_datetime.abfahrt", "unknown")
+    d, q = c._evcc_departure_deadline(_at(22))
+    assert (d.hour, d.minute, q) == (6, 0, "fallback")
+    hass.states.async_set("input_datetime.abfahrt", "2026-10-14 08:00:00")
+    d, q = c._evcc_departure_deadline(_at(22))
+    assert q == "fallback"
+
+
+async def test_quellenwechsel_der_frist_steht_im_ereignisprotokoll(hass, coordinators):
+    c, _ = await _coord(hass, coordinators, "sn16", soc=40.0)
+    targets = {"frist_quelle": "fallback", "abfahrt_frist": "2026-10-15T06:00:00+02:00"}
+    c._nachladen_festschreiben(targets)
+    c._nachladen_festschreiben(targets)  # unveraendert -> kein zweiter Eintrag
+    c._nachladen_festschreiben({"frist_quelle": "profil", "abfahrt_frist": "2026-10-15T13:00:00+02:00"})
+    eintraege = [e["text"] for e in c.data["event_log"] if e["kategorie"] == "abfahrt_frist_quelle_geaendert"]
+    assert len(eintraege) == 2 and eintraege[0].startswith("None->fallback") and eintraege[1].startswith("fallback->profil")

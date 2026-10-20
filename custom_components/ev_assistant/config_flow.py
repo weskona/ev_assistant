@@ -19,7 +19,10 @@ from .const import (
     CONF_EFFICIENCY,
     CONF_ERSTZULASSUNG,
     CONF_EVCC_BATTERY_PRIORITY_ENABLED,
+    CONF_EVCC_DEPARTURE_ENTITY,
+    CONF_EVCC_DEPARTURE_FALLBACK_ENABLED,
     CONF_EVCC_DEPARTURE_FALLBACK_TIME,
+    CONF_EVCC_DEPARTURE_FALLBACK_WEEKDAY,
     CONF_EVCC_HOST,
     CONF_EVCC_LOADPOINT_TITLE,
     CONF_EVCC_MODE_CONTROL_ENABLED,
@@ -84,6 +87,7 @@ from .const import (
     DEFAULT_DROP_ENDS,
     DEFAULT_EFFICIENCY,
     DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED,
+    DEFAULT_EVCC_DEPARTURE_FALLBACK_ENABLED,
     DEFAULT_EVCC_MODE_CONTROL_ENABLED,
     DEFAULT_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
     DEFAULT_EVCC_SOFT_RECHARGE_ENABLED,
@@ -227,6 +231,9 @@ _HOME_CHARGING_METHOD = selector.SelectSelector(
 _TIME_HHMM = selector.TextSelector(
     selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
 )
+_DEPARTURE_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain=["input_datetime", "sensor", "calendar"])
+)
 _NOTIFY_ENTITIES = selector.EntitySelector(
     selector.EntitySelectorConfig(domain="notify", multiple=True)
 )
@@ -367,6 +374,15 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
             CONF_EVCC_DEPARTURE_FALLBACK_TIME,
             default=cur.get(CONF_EVCC_DEPARTURE_FALLBACK_TIME, EVCC_DEPARTURE_FALLBACK_TIME),
         ): _TIME_HHMM,
+        vol.Optional(
+            CONF_EVCC_DEPARTURE_FALLBACK_ENABLED,
+            default=cur.get(CONF_EVCC_DEPARTURE_FALLBACK_ENABLED, DEFAULT_EVCC_DEPARTURE_FALLBACK_ENABLED),
+        ): bool,
+        **{
+            vol.Optional(key, description=sv(key)): _TIME_HHMM
+            for key in CONF_EVCC_DEPARTURE_FALLBACK_WEEKDAY
+        },
+        vol.Optional(CONF_EVCC_DEPARTURE_ENTITY, description=sv(CONF_EVCC_DEPARTURE_ENTITY)): _DEPARTURE_ENTITY,
         vol.Optional(
             CONF_EVCC_BATTERY_PRIORITY_ENABLED,
             default=cur.get(CONF_EVCC_BATTERY_PRIORITY_ENABLED, DEFAULT_EVCC_BATTERY_PRIORITY_ENABLED),
@@ -609,6 +625,11 @@ def _validate_departure_time(cleaned: dict, errors: dict) -> None:
     value = cleaned.get(CONF_EVCC_DEPARTURE_FALLBACK_TIME)
     if value is not None and parse_hhmm_minutes(value) is None:
         errors[CONF_EVCC_DEPARTURE_FALLBACK_TIME] = "invalid_time"
+    for key in CONF_EVCC_DEPARTURE_FALLBACK_WEEKDAY:
+        # je Wochentag leer erlaubt (= globale Rueckfallzeit)
+        weekday_value = cleaned.get(key)
+        if weekday_value not in (None, "") and parse_hhmm_minutes(weekday_value) is None:
+            errors[key] = "invalid_time"
 
 
 def _has_vehicle_name(data: dict) -> bool:

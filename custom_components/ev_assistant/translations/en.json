@@ -275,7 +275,16 @@
           "battery_charge_entity": "Battery charging (optional, if not already included in home consumption)",
           "urlaub_entity": "Vacation entity (optional)",
           "weekly_full_charge_enabled": "Weekly full charge for cell balancing",
-          "weekly_full_charge_interval_days": "Interval (days, since last full charge)"
+          "weekly_full_charge_interval_days": "Interval (days, since last full charge)",
+          "evcc_departure_fallback_enabled": "Use fallback departure time (off = no deadline)",
+          "evcc_departure_fallback_mon": "Fallback departure time Monday (HH:MM, empty = general time)",
+          "evcc_departure_fallback_tue": "Fallback departure time Tuesday (HH:MM, empty = general time)",
+          "evcc_departure_fallback_wed": "Fallback departure time Wednesday (HH:MM, empty = general time)",
+          "evcc_departure_fallback_thu": "Fallback departure time Thursday (HH:MM, empty = general time)",
+          "evcc_departure_fallback_fri": "Fallback departure time Friday (HH:MM, empty = general time)",
+          "evcc_departure_fallback_sat": "Fallback departure time Saturday (HH:MM, empty = general time)",
+          "evcc_departure_fallback_sun": "Fallback departure time Sunday (HH:MM, empty = general time)",
+          "evcc_departure_entity": "Entity with the next departure (optional)"
         },
         "data_description": {
           "evcc_host": "Optional — without it, charge power/mode/tariffs/PV in the panel simply stay empty; everything else keeps working as before.",
@@ -291,7 +300,16 @@
           "battery_charge_entity": "Optional, in addition to home consumption (same unit: cumulative energy meter in kWh, not a power sensor) — only if a home battery exists AND its charging energy isn't already included in the home consumption meter.",
           "urlaub_entity": "Optional, e.g. an input_boolean/switch/binary_sensor that's \"on\" during vacation — affected days are then excluded entirely from the weekday usage profiles (vehicle & house) instead of skewing the average, and evcc mode/SoC control pauses.",
           "weekly_full_charge_enabled": "Off by default: no change to existing behavior. On: once the interval below has elapsed since the last full charge reached (98% or more, manual or automatic — doesn't matter which), evcc control overrides the profile-based target with target SoC=100%/mode=minpv until 100% is reached. Controls ONLY target SoC + mode — WHERE the charging power comes from (solar/grid/battery) is still entirely evcc's own decision (minimum charge power in minpv mode, battery discharge lockout as evcc's own setting). Also toggleable from the panel switch without reopening this options flow.",
-          "weekly_full_charge_interval_days": "Only relevant if enabled above. A manual full charge counts the same as a forced one — the tracker doesn't distinguish why 100% was reached."
+          "weekly_full_charge_interval_days": "Only relevant if enabled above. A manual full charge counts the same as a forced one — the tracker doesn't distinguish why 100% was reached.",
+          "evcc_departure_fallback_enabled": "Off: without departure statistics and without an entity there is no deadline, so the soft recharge applies no time pressure (e.g. for irregular departures).",
+          "evcc_departure_fallback_mon": "Only for Monday, as long as there are no reliable departure statistics for it. Leave empty for the general fallback time.",
+          "evcc_departure_fallback_tue": "Only for Tuesday, as long as there are no reliable departure statistics for it. Leave empty for the general fallback time.",
+          "evcc_departure_fallback_wed": "Only for Wednesday, as long as there are no reliable departure statistics for it. Leave empty for the general fallback time.",
+          "evcc_departure_fallback_thu": "Only for Thursday, as long as there are no reliable departure statistics for it. Leave empty for the general fallback time.",
+          "evcc_departure_fallback_fri": "Only for Friday, as long as there are no reliable departure statistics for it. Leave empty for the general fallback time.",
+          "evcc_departure_fallback_sat": "Only for Saturday, as long as there are no reliable departure statistics for it. Leave empty for the general fallback time.",
+          "evcc_departure_fallback_sun": "Only for Sunday, as long as there are no reliable departure statistics for it. Leave empty for the general fallback time.",
+          "evcc_departure_entity": "input_datetime, timestamp sensor, calendar or the phone's \"next alarm\". If a time within the next 36 hours is set, it is used as the deadline and takes precedence over the statistics. Otherwise the statistics apply, then the fallback time. Good for shift work."
         }
       },
       "evcc_loadpoint": {

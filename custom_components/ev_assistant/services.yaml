@@ -1775,3 +1775,30 @@ clear_vehicle_image:
       selector:
         config_entry:
           integration: ev_assistant
+
+rebuild_departure_profile:
+  name: Abfahrtsprofil nachrechnen
+  description: >
+    Rechnet die Abfahrten von zu Hause rückwirkend aus dem Fahrtenbuch nach und
+    trägt sie ins Steckprofil ein (Quelle der Abfahrtszeiten für die Frist des
+    sanften Nachladens). Eine Fahrt, die am Heim-Ort startet, beginnt wenige
+    Minuten nach dem Abstecken. Tage mit gemessener Abfahrt, der heutige Tag,
+    Urlaub und verspätet erfasste Fahrten (z. B. nach einem Ausfall des
+    Odometers) werden übersprungen. Kann beliebig oft ausgeführt werden.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    home_ort:
+      name: Name des Heim-Ortes
+      description: >
+        Nur nötig, wenn die Fahrten zu Hause nicht als "Home" (Name der
+        Zone zone.home) im Fahrtenbuch stehen, z. B. "Zuhause".
+      required: false
+      example: Zuhause
+      selector:
+        text:

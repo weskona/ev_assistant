@@ -1,6 +1,6 @@
 """pytest fuer die reine Erkennungslogik (ohne Home Assistant)."""
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from engine import (
@@ -12,6 +12,7 @@ from engine import (
     SignalDebouncer,
     TripDetector,
     TripSample,
+    _merge_departures,
     ac_dc_breakdown,
     ac_dc_breakdown_from_totals,
     ac_dc_bucket_key,
@@ -44,6 +45,8 @@ from engine import (
     clamp_weekday_contribution,
     consumption_by_temp_bucket,
     consumption_by_temp_bucket_from_totals,
+    departure_from_state,
+    departures_from_trips,
     determine_evcc_mode,
     equivalent_full_cycles,
     equivalent_full_cycles_from_totals,
@@ -65,6 +68,7 @@ from engine import (
     merge_pending,
     min_solar_share_price_ceiling,
     net_need_after_pv_kwh,
+    next_departure_deadline,
     normalize_anbieter,
     normalize_evcc_mode,
     normalize_vehicle_label,
@@ -4626,10 +4630,8 @@ def _to_date(ts):
 
 
 def test_charges_sum_in_period_verschiedene_monate_und_nachtrag():
-    from datetime import datetime as _dt
-
     def ts(y, m, d):
-        return _dt(y, m, d, 12, 0).timestamp()
+        return datetime(y, m, d, 12, 0).timestamp()
 
     history = [
         _rec(start_ts=ts(2026, 10, 2), erfasst_ts=ts(2026, 10, 2), kosten=10.0, kwh=20.0),
@@ -5480,3 +5482,165 @@ def test_wartung_uebersicht_reicht_erstintervall_durch():
     punkt["erledigt_anzahl"] = 1
     r = wartung_uebersicht([punkt], 12000.0, None, "2026-03-01")
     assert r["punkte"][0]["intervall_phase"] == "regulaer" and r["punkte"][0]["rest_km"] == 13000.0
+
+
+# ----- Abfahrtszeit fuer jeden Nutzungsfall (0.99.61) ------------------------
+
+_TZ = timezone(timedelta(hours=2))
+_MO = datetime(2026, 10, 19, tzinfo=_TZ)  # Montag
+
+
+def _tage(wochentage: dict, n: int = 6) -> dict:
+    """{wd: [Abfahrten-Listen je Tag]} -> weekday_days fuer plug_departure_profile()."""
+    out = {}
+    for wd, listen in wochentage.items():
+        eintraege = []
+        for i in range(n):
+            zeiten = listen[i % len(listen)]
+            eintraege.append({
+                "date": f"2026-0{1 + i}-01", "stunden": 8.0, "erster_connect": "17:00", "letzter_disconnect": "07:00",
+                "erste_abfahrt": zeiten[0] if zeiten else None, "abfahrt_unsicher": False, "urlaub": False,
+                "abfahrten": [{"hhmm": z, "unsicher": False} for z in zeiten],
+            })
+        out[str(wd)] = eintraege
+    return out
+
+
+def _profil(wochentage: dict) -> dict:
+    return plug_departure_profile(_tage(wochentage), 0, 1440, 3.0, 45, 4, 0.6, 10, 0.25)["wochentage"]
+
+
+def _dl(now, profil, entity=None, fallback=None):
+    return next_departure_deadline(now, profil, entity, fallback if fallback is not None else [None] * 7)
+
+
+def _hhmm(dt):
+    return None if dt is None else dt.strftime("%a %H:%M")
+
+
+def test_abfahrt_fruehschicht_morgens():
+    profil = _profil({wd: [["06:00"]] for wd in range(5)})
+    dl, quelle = _dl(_MO.replace(hour=20), profil)  # Montagabend -> Dienstag
+    assert (_hhmm(dl), quelle) == ("Tue 06:00", "profil")
+
+
+def test_abfahrt_mittagsschicht_wird_jetzt_gemessen():
+    profil = _profil({wd: [["13:00"]] for wd in range(5)})
+    assert profil[0]["n_gueltig"] == 6 and profil[0]["status"] == "ok"
+    dl, quelle = _dl(_MO.replace(hour=9), profil, fallback=[360] * 7)
+    assert (_hhmm(dl), quelle) == ("Mon 13:00", "profil")  # nicht der 06:00-Rueckfall
+
+
+def test_abfahrt_spaetschicht_und_nachtschicht():
+    spaet = _profil({wd: [["15:00"]] for wd in range(5)})
+    assert _hhmm(_dl(_MO.replace(hour=8), spaet)[0]) == "Mon 15:00"
+    nacht = _profil({wd: [["22:00"]] for wd in range(5)})
+    assert _hhmm(_dl(_MO.replace(hour=10), nacht)[0]) == "Mon 22:00"
+    assert _hhmm(_dl(_MO.replace(hour=23), nacht)[0]) == "Tue 22:00"
+
+
+def test_abfahrt_wechselschicht_nimmt_den_fruehesten_wert():
+    # Frueh-/Spaetwoche im Wechsel: uneinheitlich, aber frueh_roh (frueheste Zeit) zaehlt
+    profil = _profil({wd: [["06:00"], ["14:00"]] for wd in range(5)})
+    assert profil[0]["status"] == "uneinheitlich" and profil[0]["frueh_roh"] == "06:00"
+    assert _hhmm(_dl(_MO.replace(hour=7), profil)[0]) == "Tue 06:00"
+
+
+def test_abfahrt_mehrere_fahrten_pro_tag_naechste_ab_jetzt():
+    profil = _profil({wd: [["07:30", "12:30", "17:45"]] for wd in range(5)})
+    assert _hhmm(_dl(_MO.replace(hour=6), profil)[0]) == "Mon 07:30"
+    assert _hhmm(_dl(_MO.replace(hour=10), profil)[0]) == "Mon 12:30"
+    assert _hhmm(_dl(_MO.replace(hour=13), profil)[0]) == "Mon 17:45"
+    assert _hhmm(_dl(_MO.replace(hour=18), profil)[0]) == "Tue 07:30"
+
+
+def test_abfahrt_ohne_daten_rueckfall_je_wochentag_oder_keine_frist():
+    leer = _profil({})
+    dl, quelle = _dl(_MO.replace(hour=20), leer, fallback=[360, 480, 360, 360, 360, 360, 360])
+    assert (_hhmm(dl), quelle) == ("Tue 08:00", "fallback")  # Wochentags-Rueckfall
+    dl, quelle = _dl(_MO.replace(hour=20), leer, fallback=[None] * 7)
+    assert (dl, quelle) == (None, "keine")  # unregelmaessig: keine Frist
+
+
+def test_abfahrt_entitaet_geht_vor_profil_und_faellt_sonst_zurueck():
+    profil = _profil({wd: [["06:00"]] for wd in range(5)})
+    wecker = _MO.replace(hour=21, minute=30) + timedelta(hours=9)  # Di 06:30? -> bewusst Di 06:30 = 21:30 + 9 h
+    dl, quelle = _dl(_MO.replace(hour=21, minute=30), profil, entity=wecker)
+    assert quelle == "entitaet" and dl == wecker
+    dl, quelle = _dl(_MO.replace(hour=21, minute=30), profil, entity=None)
+    assert quelle == "profil"
+
+
+def test_departure_from_state_formate():
+    now = _MO.replace(hour=10)
+    assert departure_from_state("2026-10-19T14:30:00+02:00", {}, now) == _MO.replace(hour=14, minute=30)
+    assert departure_from_state("2026-10-19 14:30:00", {}, now) == _MO.replace(hour=14, minute=30)  # ohne Zone
+    assert departure_from_state("on", {"start_time": "2026-10-19 16:00:00"}, now) == _MO.replace(hour=16)  # Kalender
+    assert departure_from_state("14:30:00", {}, now) == _MO.replace(hour=14, minute=30)  # Uhrzeit heute
+    assert departure_from_state("06:30", {}, now) == (_MO + timedelta(days=1)).replace(hour=6, minute=30)  # naechstes Mal
+    assert departure_from_state("6:30:00", {}, now) == (_MO + timedelta(days=1)).replace(hour=6, minute=30)
+
+
+def test_departure_from_state_ungueltig_vergangen_oder_zu_weit():
+    now = _MO.replace(hour=10)
+    assert departure_from_state("unknown", {}, now) is None
+    assert departure_from_state("unavailable", {}, now) is None
+    assert departure_from_state("kein datum", {}, now) is None
+    assert departure_from_state("2026-10-19T08:00:00+02:00", {}, now) is None  # Vergangenheit
+    assert departure_from_state("2026-10-25T08:00:00+02:00", {}, now) is None  # > 36 h
+    assert departure_from_state("25:99", {}, now) is None
+
+
+def test_merge_departures_dedupe_sortiert_und_gekappt():
+    a = [{"hhmm": "12:30", "unsicher": False}, {"hhmm": "07:30", "unsicher": False}]
+    b = [{"hhmm": "07:30", "unsicher": True}, {"hhmm": "x", "unsicher": False}]
+    assert _merge_departures(a, b) == [{"hhmm": "07:30", "unsicher": True}, {"hhmm": "12:30", "unsicher": False}]
+    viele = [{"hhmm": f"{h:02d}:00", "unsicher": False} for h in range(1, 12)]
+    assert len(_merge_departures(viele, None)) == 6
+
+
+def test_abfahrt_unsichere_folgefahrt_zaehlt_nicht_in_der_statistik():
+    tage = _tage({0: [["07:30", "12:30"]]})
+    for eintrag in tage["0"][:3]:
+        eintrag["abfahrten"][1]["unsicher"] = True
+    prof = plug_departure_profile(tage, 0, 1440, 3.0, 45, 4, 0.6, 10, 0.25)["wochentage"][0]
+    assert prof["folge"][0]["n_gueltig"] == 3 and prof["folge"][0]["status"] == "nicht_belastbar"
+
+
+# ----- Abfahrtsprofil rueckwirkend aus dem Fahrtenbuch (0.99.61) -------------
+
+def _trip(start, ort="Home", delay_min=5.0, urlaub=False, dauer_min=20):
+    ts = start.timestamp()
+    return {"start_ts": ts, "end_ts": ts + dauer_min * 60, "erfasst_ts": ts + (dauer_min + delay_min) * 60,
+            "start_ort": ort, "urlaub": urlaub, "km": 5.0}
+
+
+def test_departures_from_trips_filtert_und_fasst_zusammen():
+    d = lambda day, h, m=0: datetime(2026, 10, day, h, m)  # noqa: E731
+    trips = [
+        _trip(d(14, 7, 42)),
+        _trip(d(14, 7, 43)),                       # <45 min nach der ersten -> eine Abfahrt
+        _trip(d(14, 12, 30)),                      # 2. Abfahrt
+        _trip(d(14, 9, 0, ), ort="Autohaus"),      # startet nicht zu Hause
+        _trip(d(15, 7, 40), urlaub=True),          # Urlaub
+        _trip(d(16, 7, 40), delay_min=120.0),      # verspaetet erfasst -> unzuverlaessig
+        _trip(d(17, 6, 10), ort="HOME"),           # Gross-/Kleinschreibung egal
+        _trip(d(18, 8, 0)),                        # gemessen -> uebersprungen
+        _trip(d(20, 11, 8)),                       # heute -> zaehlt nicht
+    ]
+    result = departures_from_trips(trips, {"home"}, "2026-10-20", skip_dates={"2026-10-18"})
+    assert result == {"2026-10-14": ["07:42", "12:30"], "2026-10-17": ["06:10"]}
+
+
+def test_departures_from_trips_leere_eingabe_und_eigener_heimname():
+    assert departures_from_trips([], {"home"}, "2026-10-20") == {}
+    trips = [_trip(datetime(2026, 10, 14, 7, 42), ort="Zuhause"), {"start_ort": "Home"}]
+    assert departures_from_trips(trips, {"zuhause"}, "2026-10-20") == {"2026-10-14": ["07:42"]}
+
+
+def test_nachgerechnete_tage_zaehlen_nicht_in_der_steckdauer():
+    tage = {"0": [
+        {"date": "2026-10-05", "stunden": 8.0, "quelle": "fahrtenbuch"},
+        {"date": "2026-10-12", "stunden": 10.0},
+    ]}
+    assert weekday_plug_window_profile_from_recent_days(tage) == {0: 10.0}

@@ -218,15 +218,16 @@ async def test_nacht_ohne_anstecken_liefert_keine_messung(hass, coordinators):
     assert stats["n_gueltig"] == 0 and stats["status"] == "keine_messung"
 
 
-async def test_nur_erste_abfahrt_des_tages_zaehlt_und_nur_im_morgenfenster(hass, coordinators):
+async def test_erste_abfahrt_gilt_ganztags_und_alle_abfahrten_werden_gespeichert(hass, coordinators):
     coordinator, _ = await _make_coordinator(hass, coordinators, "dep7")
     _run(coordinator, _at(14, 2, 0), 60, True)
-    _run(coordinator, _at(14, 3, 0), 10.25, False)         # 03:00 ausserhalb Fenster, aber ERSTE
+    _run(coordinator, _at(14, 3, 0), 10.25, False)         # 03:00: seit 0.99.61 zaehlt der ganze Tag
     _run(coordinator, _at(14, 3, 10, 15), 229.75, True)
     _run(coordinator, _at(14, 7, 0), 10.25, False)         # 07:00 ist nicht mehr die erste
     today = coordinator.data["plug_window_today"]
     assert today["abfahrten_bestaetigt"] == 2
-    assert today["erste_abfahrt"] is None
+    assert today["erste_abfahrt"] == "03:00"
+    assert [a["hhmm"] for a in today["abfahrten"]] == ["03:00", "07:00"]
 
 
 async def test_urlaub_wird_am_tag_eingefroren_und_zaehlt_nicht(hass, coordinators):
@@ -326,3 +327,50 @@ async def test_plug_window_sensor_schliesst_rohlisten_vom_recorder_aus(hass, coo
     from custom_components.ev_assistant.sensor import PlugWindowSensor
 
     assert PlugWindowSensor._unrecorded_attributes == frozenset({"heute", "tage"})
+
+
+async def test_abfahrt_kurz_vor_mitternacht_geht_in_den_eintrag_ihres_tages(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "dep_mn")
+    gestern = _at(14, 23, 55).date()
+    candidate = {"ts": 0.0, "hhmm": "23:55", "date": gestern.isoformat(), "unsicher": False}
+    heute = {"date": _at(15, 0, 5).date().isoformat(), "abfahrten_bestaetigt": 0, "abfahrten": []}
+    coordinator._confirm_plug_departure(candidate, heute)
+    eintraege = coordinator.data["plug_window_weekday_days"][str(gestern.weekday())]
+    assert eintraege[-1]["date"] == gestern.isoformat()
+    assert [a["hhmm"] for a in eintraege[-1]["abfahrten"]] == ["23:55"]
+    assert heute["abfahrten"] == [] and heute["abfahrten_bestaetigt"] == 0  # heutiger Tag unberuehrt
+
+
+async def test_abfahrtsprofil_nachrechnen_aus_fahrtenbuch(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "dep_rb")
+    heute = dt_util.now().date()
+
+    def trip(tage_zurueck, hour, minute, ort="Home", delay_min=5.0):
+        start = datetime(heute.year, heute.month, heute.day, hour, minute, tzinfo=dt_util.DEFAULT_TIME_ZONE)
+        start -= timedelta(days=tage_zurueck)
+        return {"start_ts": start.timestamp(), "end_ts": start.timestamp() + 1200,
+                "erfasst_ts": start.timestamp() + 1200 + delay_min * 60, "start_ort": ort, "km": 5.0}
+
+    tag_a, tag_b = heute - timedelta(days=3), heute - timedelta(days=5)
+    coordinator.data["fahrten"] = [
+        trip(3, 7, 40), trip(3, 12, 30), trip(5, 8, 0), trip(0, 9, 0), trip(4, 7, 0, delay_min=300),
+    ]
+    # tag_b hat schon eine gemessene Abfahrt (Wallbox) -> bleibt unberuehrt
+    coordinator.data["plug_window_weekday_days"] = {str(tag_b.weekday()): [{
+        "date": tag_b.isoformat(), "stunden": 9.0, "erster_connect": "18:00", "letzter_disconnect": "07:30",
+        "erste_abfahrt": "07:31", "abfahrt_unsicher": False, "urlaub": False,
+    }]}
+    result = await coordinator.async_rebuild_departure_profile()
+    assert result == {"tage_gebucht": 1, "tage_mit_messung_uebersprungen": 1}
+    tage_a = coordinator.data["plug_window_weekday_days"][str(tag_a.weekday())]
+    eintrag = next(e for e in tage_a if e["date"] == tag_a.isoformat())
+    assert eintrag["quelle"] == "fahrtenbuch" and eintrag["erste_abfahrt"] == "07:40"
+    assert [a["hhmm"] for a in eintrag["abfahrten"]] == ["07:40", "12:30"]
+    gemessen = coordinator.data["plug_window_weekday_days"][str(tag_b.weekday())][0]
+    assert gemessen["erste_abfahrt"] == "07:31" and "quelle" not in gemessen
+    assert any(e["kategorie"] == "abfahrtsprofil_nachgerechnet" for e in coordinator.data["event_log"])
+    # wiederholbar: gleicher Stand, kein Duplikat
+    result = await coordinator.async_rebuild_departure_profile()
+    assert result["tage_gebucht"] == 1
+    tage_a = coordinator.data["plug_window_weekday_days"][str(tag_a.weekday())]
+    assert len([e for e in tage_a if e["date"] == tag_a.isoformat()]) == 1

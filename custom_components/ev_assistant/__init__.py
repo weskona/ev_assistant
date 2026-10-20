@@ -7,7 +7,7 @@ from pathlib import Path
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from . import images
@@ -53,6 +53,7 @@ from .const import (
     SERVICE_LOG,
     SERVICE_LOG_TRIP,
     SERVICE_MARK_MAINTENANCE_DONE,
+    SERVICE_REBUILD_DEPARTURE_PROFILE,
     SERVICE_RESET_LIFETIME_KPIS,
     SERVICE_RESTORE_BACKUP,
     SERVICE_SET_EVCC_CHARGE_PLAN,
@@ -367,6 +368,11 @@ EXPORT_TRIPS_SCHEMA = vol.Schema({
 
 EXPORT_EVENT_LOG_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
+})
+
+REBUILD_DEPARTURE_PROFILE_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Optional("home_ort"): str,
 })
 
 RESET_LIFETIME_KPIS_SCHEMA = vol.Schema({
@@ -738,6 +744,12 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_export_fahrtenbuch()
 
+    async def _handle_rebuild_departure_profile(call: ServiceCall) -> dict:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            return await coordinator.async_rebuild_departure_profile(call.data.get("home_ort"))
+        return {}
+
     async def _handle_export_event_log(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
@@ -1056,6 +1068,10 @@ def _register_services(hass: HomeAssistant) -> None:
         DOMAIN, SERVICE_EXPORT_EVENT_LOG, _handle_export_event_log, schema=EXPORT_EVENT_LOG_SCHEMA
     )
     hass.services.async_register(
+        DOMAIN, SERVICE_REBUILD_DEPARTURE_PROFILE, _handle_rebuild_departure_profile,
+        schema=REBUILD_DEPARTURE_PROFILE_SCHEMA, supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
         DOMAIN, SERVICE_RESET_LIFETIME_KPIS, _handle_reset_lifetime_kpis, schema=RESET_LIFETIME_KPIS_SCHEMA
     )
     hass.services.async_register(DOMAIN, SERVICE_EXPORT_BACKUP, _handle_export_backup, schema=EXPORT_BACKUP_SCHEMA)
@@ -1176,7 +1192,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_ADD_LADEKARTE, SERVICE_EDIT_LADEKARTE, SERVICE_DELETE_LADEKARTE,
                 SERVICE_ADD_LADEKARTE_PREISSTUFE, SERVICE_DELETE_LADEKARTE_PREISSTUFE,
                 SERVICE_ADD_MAINTENANCE, SERVICE_EDIT_MAINTENANCE, SERVICE_DELETE_MAINTENANCE,
-                SERVICE_MARK_MAINTENANCE_DONE, SERVICE_URLAUB_SEIT,
+                SERVICE_MARK_MAINTENANCE_DONE, SERVICE_URLAUB_SEIT, SERVICE_REBUILD_DEPARTURE_PROFILE,
                 SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED, SERVICE_SET_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
                 SERVICE_SET_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
                 SERVICE_SET_EVCC_MODE_CONTROL_PAUSE,

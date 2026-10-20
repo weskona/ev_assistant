@@ -1615,6 +1615,14 @@ class MorningDepartureSensor(EvAssistantEntity, SensorEntity):
                 "n_ausreisser_frueh": stats["n_ausreisser_frueh"],
                 "konfidenz": stats["konfidenz"],
                 "status": stats["status"],
+                # 2. und 3. Abfahrt des Tages (seit 0.99.61), je mit eigener Statistik
+                "folge": [
+                    {
+                        "typisch": f["typisch"], "frueh_roh": f["frueh_roh"],
+                        "n_gueltig": f["n_gueltig"], "status": f["status"],
+                    }
+                    for f in stats.get("folge", [])
+                ],
             }
         return {
             "je_wochentag": je_wochentag,
