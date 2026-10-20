@@ -243,6 +243,7 @@ from .engine import (
     calculate_co2_savings,
     calculate_range_km,
     calculate_savings,
+    cap_surplus_to_generation,
     charge_before_pv_decision,
     charge_cost,
     charge_pct_of_history_entry,
@@ -7499,14 +7500,22 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # UND Tarife bekannt sind -- unabhaengig davon, ob die Kappung
         # oben ueberhaupt konfiguriert ist, damit sich ein sinnvoller
         # Schwellwert dafuer erst beobachten laesst.
+        # Derselbe auf die PV-Erzeugung gedeckelte Wert wie in apply_realtime_
+        # pv_override() (cap_surplus_to_generation(), 0.99.60), sonst zeigt das
+        # Attribut einen anderen Mischpreis, als der Override tatsaechlich nutzt.
         pv_override_mischpreis_kwh = None
+        pv_surplus_gedeckelt_w = (
+            cap_surplus_to_generation(pv_surplus_w, pv_power_w) if pv_surplus_w is not None else None
+        )
         if (
-            pv_surplus_w is not None
-            and 0 < pv_surplus_w < wallbox_min_power_w
+            pv_surplus_gedeckelt_w is not None
+            and 0 < pv_surplus_gedeckelt_w < wallbox_min_power_w
             and feedin_price is not None
             and grid_price is not None
         ):
-            pv_override_mischpreis_kwh = blended_charge_price(pv_surplus_w, wallbox_min_power_w, feedin_price, grid_price)
+            pv_override_mischpreis_kwh = blended_charge_price(
+                pv_surplus_gedeckelt_w, wallbox_min_power_w, feedin_price, grid_price,
+            )
         # Ueberschuss-Zielanhebung (siehe engine.apply_opportunistic_surplus_
         # target()-Docstring): hebt target_soc auf 100 an, solange ueberhaupt
         # echter positiver Ueberschuss anliegt und der Tagesbedarf laut

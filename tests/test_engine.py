@@ -34,6 +34,7 @@ from engine import (
     calculate_co2_savings,
     calculate_range_km,
     calculate_savings,
+    cap_surplus_to_generation,
     charge_before_pv_decision,
     charge_cost,
     charge_pct_of_history_entry,
@@ -5255,6 +5256,38 @@ def test_override_speisender_hausspeicher_bleibt_pv():
 def test_override_preis_kappung_strenger_gewinnt():
     assert _ov(600.0, pv_power=3000.0, feedin_price=0.081, grid_price=0.298, max_blended_price=0.1) == "pv"
     assert _ov(600.0, pv_power=3000.0, feedin_price=0.081, grid_price=0.298, max_blended_price=1.0) == "minpv"
+
+
+def test_override_speicherexport_in_daemmerung_bleibt_pv():
+    # Vorfall 2026-10-19: 716 W Netzeinspeisung, aber nur 38 W PV (Speicher entlaedt).
+    assert _ov(716.0, pv_power=38.0) == "pv"
+    assert _ov(716.0, pv_power=38.0, last="minpv") == "pv"
+
+
+def test_override_speicherexport_preis_kappung_rechnet_auf_pv_anteil():
+    # 716 W Export bei 700 W PV und 50 % Solaranteil bei 1400 W Wallbox: knapp
+    # unter der Grenze -> pv; mit deutlich mehr echter PV -> minpv.
+    kw = dict(feedin_price=0.081, grid_price=0.298, max_blended_price=0.1895)
+    assert _ov(716.0, pv_power=300.0, share=0.0, **kw) == "pv"  # nur 300 W PV = 21 % Solaranteil
+    assert _ov(716.0, pv_power=3000.0, share=0.0, **kw) == "minpv"  # voller Export ist PV
+
+
+def test_override_ueberschuss_gleich_pv_leistung_und_schwelle():
+    assert _ov(206.0, pv_power=206.0) == "pv"  # unter 15 % von 1400 W = 210 W
+    assert _ov(210.0, pv_power=210.0) == "minpv"
+    assert _ov(900.0, pv_power=210.0) == "minpv"  # gedeckelt auf 210 W, Schwelle erreicht
+
+
+def test_override_totband_mit_deckelung():
+    assert _ov(900.0, pv_power=80.0, last="minpv") == "pv"  # 80 W < 210 - 100 -> zurueck
+
+
+def test_cap_surplus_to_generation():
+    assert cap_surplus_to_generation(716.0, 38.0) == 38.0
+    assert cap_surplus_to_generation(300.0, 900.0) == 300.0
+    assert cap_surplus_to_generation(-1386.0, 38.0) == -1386.0  # Netzbezug bleibt negativ
+    assert cap_surplus_to_generation(500.0, None) == 500.0
+    assert cap_surplus_to_generation(500.0, -3.0) == 0.0  # negative PV-Werte nie als Erzeugung
 
 
 # ----- apply_opportunistic_surplus_target: Halten bei Wolken (0.99.56) -------

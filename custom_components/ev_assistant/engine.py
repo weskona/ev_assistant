@@ -1499,6 +1499,20 @@ def min_solar_share_price_ceiling(
     return round(grid_price - share * (grid_price - feedin_price), 4)
 
 
+def cap_surplus_to_generation(pv_surplus_w: float, pv_power_w: Optional[float]) -> float:
+    """Deckelt den aus -gridPower abgeleiteten "Ueberschuss" auf die echte
+    PV-Erzeugung: Exportiert der Hausspeicher mehr, als das Haus braucht
+    (z.B. 3 kW Entladung, 38 W PV, ~700 W Netzeinspeisung in der
+    Daemmerung), ist das KEIN PV-Ueberschuss -- die Hochstufung auf "minpv"
+    startete sonst eine Ladung, die faktisch aus Speicher und Netz kam, und
+    der Solaranteil/Mischpreis wurde auf Speicherstrom gerechnet (Vorfall
+    2026-10-19, siehe apply_realtime_pv_override()). Ohne PV-Messung
+    (None) unveraendert. Negative Werte bleiben unveraendert."""
+    if pv_power_w is None:
+        return pv_surplus_w
+    return min(pv_surplus_w, max(0.0, pv_power_w))
+
+
 def apply_realtime_pv_override(
     base_mode: str,
     pv_surplus_w: float,
@@ -1552,15 +1566,22 @@ def apply_realtime_pv_override(
     reichen wenige Watt -gridPower, um sonst ~1,4 kW Netzstrom zu ziehen,
     Vorfall 0.93.4):
     - Erzeugungs-Gate: ist `pv_power_w` bekannt und <= 0, wird nicht
-      hochgestuft. None (kein PV-Zaehler in evcc) = altes Verhalten. Der
-      Ueberschuss wird bewusst NICHT auf die PV-Leistung gedeckelt (ein
-      einspeisender Hausspeicher bleibt "pv").
+      hochgestuft. None (kein PV-Zaehler in evcc) = altes Verhalten.
+    Der Ueberschuss wird seit 0.99.60 auf die echte PV-Leistung gedeckelt
+    (cap_surplus_to_generation()): -gridPower enthaelt auch Strom, den der
+    Hausspeicher ins Netz exportiert. Vorfall 2026-10-19 (Daemmerung, 38 W
+    PV, Speicher entlaedt 3 kW, ~700 W Export): der "Ueberschuss" stufte
+    alle paar Minuten auf "minpv" hoch, das Auto lud in ~4-Minuten-Schueben
+    aus Speicher und Netz, und Mindestanteil/Preis-Kappung rechneten auf
+    Speicherstrom. Mindestanteil, Totband und Preis-Kappung sehen jetzt nur
+    noch echten PV-Strom; ein Speicherexport allein stuft nie hoch.
     - Mindestanteil: Hochstufen erst ab pv_surplus_w >= min_surplus_share_pct
       /100 * wallbox_min_power_w. War der letzte Modus "minpv", bleibt er bis
       pv_surplus_w < Schwelle - hysteresis_w (nie unter 0).
     Die Preis-Kappung gilt zusaetzlich (die strengere gewinnt)."""
     if base_mode != "pv":
         return base_mode
+    pv_surplus_w = cap_surplus_to_generation(pv_surplus_w, pv_power_w)
     if pv_surplus_w <= 0:
         return "pv"
     if pv_power_w is not None and pv_power_w <= 0:

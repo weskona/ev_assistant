@@ -2,6 +2,25 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.60] - 2026-10-20
+
+### Changed
+
+- **Glow card updated from v3.5.27 to v3.5.29** (from [deepblue120/glow-dashboard](https://github.com/deepblue120/glow-dashboard)):
+  - **English interface.** The card reads the language from Home Assistant (`hass.locale.language` / `hass.language`): `en…` shows English, everything else German, so nothing changes for existing users. The new card option `language: de|en` fixes it explicitly. Dates and numbers follow the language (glow-dashboard#38).
+  - **Font bundled with the card.** "Outfit" is embedded; the card no longer loads it from `fonts.googleapis.com`, so there is no request to Google (IP address) and no different look without internet (glow-dashboard#39).
+  - Select lists are uniform and date fields only open the calendar (v3.5.28).
+
+### Fixed
+
+- **The real-time override treated battery export as PV surplus.** The surplus is derived from the grid power (`-gridPower`), which also contains energy the house battery exports to the grid. With almost no PV (dusk: 38 W) and the battery discharging more than the house needed, about 700 W of export counted as "PV surplus": the override raised `pv` to `minpv` every few minutes, evcc released the wallbox, and the car charged in bursts of about 4 minutes with roughly 1.4 kW from the battery and the grid. The minimum share and the minimum solar share price cap were calculated on battery power as well. The surplus is now capped at the real PV generation (`min(surplus, PV power)`) before any of these checks, so battery export alone never raises the mode. The attribute `pv_override_mischpreis_kwh` uses the same capped value. Without a PV meter in evcc nothing changes.
+
+### Honest limits
+
+- The classic panel (`ev-assistant-panel.js`) is still German only; the translation covers the Glow card.
+- With real PV surplus the behavior is unchanged; the change only matters when the battery exports more than the PV generates.
+- The "raise the target SoC while there is surplus" rule (`ueberschuss_ziel_erweitert_aktiv`) still only requires PV power above 0 and is not capped by this change. It does not start a charge on its own in mode `pv`.
+
 ## [0.99.59] - 2026-10-19
 
 ### Added
