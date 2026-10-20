@@ -4,6 +4,10 @@ on:
   push:
     tags:
       - "v*"
+  # Gestartet von auto-tag.yml auf dem frisch angelegten Tag: ein Tag-Push mit
+  # dem GITHUB_TOKEN loest den push-Trigger oben nicht aus. github.ref ist dabei
+  # der Tag (refs/tags/vX.Y.Z), alle Schritte unten arbeiten unveraendert.
+  workflow_dispatch:
 
 jobs:
   # hassfest, Ruff und pytest muessen vor jedem Release gruen sein. Die HACS-

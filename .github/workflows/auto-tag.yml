@@ -1,0 +1,85 @@
+name: Auto tag
+
+# Legt nach einem Merge auf main automatisch den Release-Tag an, sobald die
+# Version in custom_components/ev_assistant/manifest.json hochgezaehlt wurde
+# und es dazu noch keinen Tag gibt -- danach entsteht das Release wie bisher
+# in release.yml.
+#   - Wartet auf ein gruenes "Validate" fuer den Commit (workflow_run), damit
+#     kein Tag auf einem roten Commit landet.
+#   - Nur stabile Versionen X.Y.Z; Suffix-Versionen (z. B. -glow.1) bleiben
+#     Handarbeit.
+#   - Der CHANGELOG muss einen Abschnitt "## [X.Y.Z]" enthalten, sonst bricht
+#     der Lauf mit einer Fehlermeldung ab (kein Tag, kein Release).
+#   - Ein Tag-Push mit dem eingebauten GITHUB_TOKEN loest KEINEN weiteren
+#     Workflow aus (GitHub-Regel gegen Endlosschleifen). Darum startet dieser
+#     Workflow release.yml anschliessend selbst per workflow_dispatch auf dem
+#     Tag; ein von Hand gepushter Tag funktioniert unveraendert.
+#   - Bump der Version und CHANGELOG-Eintrag bleiben Handarbeit: ohne neue
+#     Version im Manifest (z. B. bei den Glow-Karten-Syncs) passiert nichts.
+
+on:
+  workflow_run:
+    workflows: [Validate]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: auto-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    name: Tag anlegen und Release starten
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success'
+          && github.event.workflow_run.event == 'push' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (validierter Commit)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - name: Version und Tag bestimmen
+        id: v
+        run: |
+          VERSION=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' custom_components/ev_assistant/manifest.json | head -n1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Version '$VERSION' ist keine stabile Version X.Y.Z, nichts zu tun."
+            echo "todo=false" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "Tag v$VERSION existiert schon, nichts zu tun."
+            echo "todo=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "todo=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: CHANGELOG-Abschnitt pruefen
+        if: steps.v.outputs.todo == 'true'
+        run: |
+          VERSION="${{ steps.v.outputs.version }}"
+          for f in CHANGELOG.md custom_components/ev_assistant/CHANGELOG.md; do
+            if ! grep -q "^## \[$VERSION\]" "$f"; then
+              echo "::error::$f hat keinen Abschnitt '## [$VERSION]' -- Tag v$VERSION wird nicht angelegt."
+              exit 1
+            fi
+          done
+
+      - name: Tag anlegen
+        if: steps.v.outputs.todo == 'true'
+        run: |
+          TAG="v${{ steps.v.outputs.version }}"
+          git tag "$TAG" "${{ github.event.workflow_run.head_sha }}"
+          git push origin "refs/tags/$TAG"
+
+      - name: Release-Workflow auf dem Tag starten
+        if: steps.v.outputs.todo == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run release.yml --ref "v${{ steps.v.outputs.version }}"
