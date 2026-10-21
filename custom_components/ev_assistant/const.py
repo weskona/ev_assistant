@@ -737,6 +737,12 @@ VOLLLADUNG_SOC_THRESHOLD = 98.0
 # Vollladung wurde faelschlich als erledigt verbucht. Ein echter Abschluss
 # bleibt deutlich laenger auf 98-100 %.
 VOLLLADUNG_CONFIRM_SECONDS = 120.0
+# Nachlauf der Balancing-Vollladung (seit 0.99.64): Mit VOLLLADUNG_SOC_THRESHOLD gilt die
+# Vollladung als erledigt (der Wochenzaehler startet neu), das Auto laedt aber bis 100 %
+# weiter, statt bei ~98 % zu enden. Der Nachlauf endet bei SoC >= VOLLLADUNG_NACHLAUF_SOC_DONE,
+# nach VOLLLADUNG_NACHLAUF_MAX_S Sekunden (Fahrzeuge, die bei 99 % aufhoeren) oder beim Abstecken.
+VOLLLADUNG_NACHLAUF_SOC_DONE = 99.5
+VOLLLADUNG_NACHLAUF_MAX_S = 5400.0
 # Nutzer-unsichtbar, keine Config-Option (siehe engine.py::
 # weekly_balancing_time_ok()) -- ab wann eine faellige woechentliche
 # Balancing-Vollladung tatsaechlich erzwungen wird, statt noch den Rest des

@@ -5,8 +5,8 @@ sowie das dafuer optionale, einfache Haus-Nutzungsprofil
 determine_evcc_mode() etc.) ist bereits in tests/test_engine.py abgedeckt --
 hier nur die HA-Verdrahtung (Entity-Lesen, Coordinator-Zustand, evcc-Client-
 Schreibaufrufe, Repair-Issues)."""
-from datetime import timedelta
-from unittest.mock import AsyncMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from homeassistant.helpers import issue_registry as ir
@@ -3370,3 +3370,81 @@ def test_set_min_solar_share_schema_bereich_und_null():
     for bad in (-1, 101):
         with pytest.raises(vol.Invalid):
             S({"config_entry_id": "x", "min_solar_share": bad})
+
+
+async def test_vollladung_laedt_nach_98_prozent_bis_100_weiter(hass, coordinators):
+    """Ab 98 % gilt die Balancing-Vollladung als erledigt (Wochenzaehler), das Ziel bleibt aber auf
+    100 %, bis das Auto 100 % hat, abgesteckt wird oder das Zeitlimit greift."""
+    from custom_components.ev_assistant.const import (
+        CONF_EVCC_MODE_CONTROL_ENABLED,
+        CONF_USABLE_KWH,
+        CONF_WEEKLY_FULL_CHARGE_ENABLED,
+    )
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "vl_nachlauf",
+        options={CONF_EVCC_MODE_CONTROL_ENABLED: True, CONF_USABLE_KWH: 50.0, CONF_WEEKLY_FULL_CHARGE_ENABLED: True},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._local_hour = lambda: 23  # Fallback ohne Prognose: nachts erzwungen
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    coordinator._current_loadpoint = lambda: {"connected": True}
+    coordinator.data["vollladung_letzter_ts"] = None  # faellig
+    t0 = dt_util.utcnow().timestamp()
+    with patch.object(dt_util, "utcnow", return_value=datetime.fromtimestamp(t0, tz=timezone.utc)):
+        coordinator._soc = 90.0
+        t = coordinator._evcc_mode_targets()
+        assert t["balancing_faellig"] is True and t["balancing_erzwungen"] is True and t["target_soc"] == 100
+    # SoC erreicht 98 % und bleibt 2 Minuten oben: Wochenzaehler gesetzt, Nachlauf beginnt
+    coordinator._maybe_mark_vollladung_erreicht(98.5, t0 + 10)
+    coordinator._maybe_mark_vollladung_erreicht(98.6, t0 + 140)
+    assert coordinator.data["vollladung_letzter_ts"] == t0 + 140
+    assert coordinator.data["vollladung_nachlauf"] == {"seit_ts": t0 + 140, "erzwungen": True}
+    assert any(e["kategorie"] == "vollladung_nachlauf" for e in coordinator.data["event_log"])
+    coordinator._soc = 98.6
+    with patch.object(dt_util, "utcnow", return_value=datetime.fromtimestamp(t0 + 150, tz=timezone.utc)):
+        t = coordinator._evcc_mode_targets()
+    assert t["balancing_faellig"] is False  # Intervall zurueckgesetzt
+    assert t["balancing_nachlauf"] is True and t["balancing_aktiv"] is True
+    assert t["modus"] == "minpv" and t["target_soc"] == 100 and t["balancing_erzwungen"] is True
+    # 100 % erreicht: Nachlauf endet, Ziel faellt auf das Tagesziel zurueck
+    coordinator._soc = 99.8
+    with patch.object(dt_util, "utcnow", return_value=datetime.fromtimestamp(t0 + 400, tz=timezone.utc)):
+        t = coordinator._evcc_mode_targets()
+        coordinator._maybe_mark_vollladung_erreicht(99.8, t0 + 400)
+    assert t["balancing_nachlauf"] is False and t["target_soc"] != 100
+    assert coordinator.data["vollladung_nachlauf"] is None
+    assert any(e["kategorie"] == "vollladung_nachlauf_ende" for e in coordinator.data["event_log"])
+
+
+async def test_vollladung_nachlauf_endet_beim_abstecken_und_startet_nicht_ohne_faelligkeit(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH, CONF_WEEKLY_FULL_CHARGE_ENABLED
+
+    coordinator, _ = await _make_coordinator(
+        hass, coordinators, "vl_nachlauf2",
+        options={CONF_USABLE_KWH: 50.0, CONF_WEEKLY_FULL_CHARGE_ENABLED: True},
+    )
+    t0 = dt_util.utcnow().timestamp()
+    # Ohne vorherigen "faellig"-Stand (z. B. manuelle Ladung bis 98 %): kein Nachlauf
+    coordinator._maybe_mark_vollladung_erreicht(98.5, t0)
+    coordinator._maybe_mark_vollladung_erreicht(98.6, t0 + 130)
+    assert coordinator.data.get("vollladung_nachlauf") is None
+    # Mit laufendem Nachlauf: abgesteckt beendet ihn
+    coordinator.data["vollladung_nachlauf"] = {"seit_ts": t0, "erzwungen": False}
+    coordinator._current_loadpoint = lambda: {"connected": False}
+    coordinator._maybe_mark_vollladung_erreicht(98.9, t0 + 200)
+    assert coordinator.data["vollladung_nachlauf"] is None
+
+
+async def test_balancing_nachlauf_attribut_am_modus_sensor(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_MODE_CONTROL_ENABLED, CONF_USABLE_KWH
+    from custom_components.ev_assistant.sensor import EvccModeControlSensor
+
+    coordinator, entry = await _make_coordinator(
+        hass, coordinators, "nl_attr", options={CONF_USABLE_KWH: 50.0, CONF_EVCC_MODE_CONTROL_ENABLED: True},
+    )
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)
+    coordinator._soc = 50.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    attrs = EvccModeControlSensor(coordinator, entry).extra_state_attributes
+    assert attrs["balancing_nachlauf"] is False

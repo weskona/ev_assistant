@@ -208,6 +208,8 @@ from .const import (
     USAGE_PROFILE_WINDOW_DAYS,
     VEHICLE_DISCHARGE_CONFIRM_SECONDS,
     VOLLLADUNG_CONFIRM_SECONDS,
+    VOLLLADUNG_NACHLAUF_MAX_S,
+    VOLLLADUNG_NACHLAUF_SOC_DONE,
     VOLLLADUNG_SOC_THRESHOLD,
     WARTUNG_BALD_FAELLIG_KM,
     WARTUNG_BALD_FAELLIG_TAGE,
@@ -314,6 +316,7 @@ from .engine import (
     update_period_baseline,
     vehicle_discharge_update,
     vollladung_confirm,
+    vollladung_nachlauf_aktiv,
     wartung_festes_datum_fortschreiben,
     wartung_uebersicht,
     watt_to_kw,
@@ -839,6 +842,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # engine.vollladung_confirm()); fluechtig, nach Neustart beginnt das
         # Warten neu.
         self._vollladung_pending_seit_ts: Optional[float] = None
+        # Zuletzt berechneter Balancing-Stand (faellig/erzwungen + Zeitpunkt), damit der
+        # Nachlauf in _maybe_mark_vollladung_erreicht() weiss, ob die Vollladung gerade lief.
+        self._balancing_state: Optional[dict] = None
         # Zeitpunkt der letzten Speicherung des Zustands (Heartbeat-Drosselung).
         self._ueberschuss_ziel_gespeichert_ts: float = 0.0
         # Letzter bekannter evcc-"connected"-Zustand des Loadpoints, fuer
@@ -2400,8 +2406,32 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         reached, self._vollladung_pending_seit_ts = vollladung_confirm(
             soc, VOLLLADUNG_SOC_THRESHOLD, self._vollladung_pending_seit_ts, ts, VOLLLADUNG_CONFIRM_SECONDS
         )
+        # Nachlauf (seit 0.99.64): war die Balancing-Vollladung gerade faellig, laedt das Auto
+        # nach dem Erreichen von 98 % noch bis 100 % weiter, statt dass das Ziel sofort
+        # zurueckfaellt und die Ladung bei ~98 % endet. Beenden: siehe unten und
+        # engine.vollladung_nachlauf_aktiv().
+        nachlauf = self.data.get("vollladung_nachlauf")
+        if nachlauf and not vollladung_nachlauf_aktiv(
+            nachlauf, soc, ts, VOLLLADUNG_NACHLAUF_MAX_S, VOLLLADUNG_NACHLAUF_SOC_DONE,
+            self._own_vehicle_plugged(self._current_loadpoint()),
+        ):
+            self.data["vollladung_nachlauf"] = None
+            self._log_event("vollladung_nachlauf_ende", f"soc={soc:g}%, nach {ts - nachlauf.get('seit_ts', ts):.0f} s")
+            self._save_soon()
         if not reached:
             return
+        state = self._balancing_state
+        if (
+            self.data.get("vollladung_nachlauf") is None
+            and state is not None
+            and state["due"]
+            and 0 <= ts - state["ts"] <= 900
+            and soc < VOLLLADUNG_NACHLAUF_SOC_DONE
+        ):
+            self.data["vollladung_nachlauf"] = {"seit_ts": ts, "erzwungen": bool(state["forced"])}
+            self._log_event(
+                "vollladung_nachlauf", f"98 % erreicht, laedt bis 100 % weiter (soc={soc:g}%, erzwungen={bool(state['forced'])})",
+            )
         self.data["vollladung_letzter_ts"] = ts
         self._save_soon()
 
@@ -7547,7 +7577,19 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             margin=WEEKLY_BALANCING_PV_MARGIN,
             pv_morgen_kwh=pv_morgen_fuer_auto,
         )
-        mode, target_soc = apply_weekly_balancing_override(mode, target_soc, balancing_due, forced=balancing_trigger)
+        self._balancing_state = {"due": balancing_due, "forced": balancing_trigger, "ts": dt_util.utcnow().timestamp()}
+        # Nachlauf bis 100 % (siehe _maybe_mark_vollladung_erreicht()): nach den 98 % zaehlt die
+        # Vollladung als erledigt, das Ziel bleibt aber bis zum Ende des Nachlaufs auf 100 %.
+        nachlauf = self.data.get("vollladung_nachlauf") if balancing_enabled else None
+        nachlauf_aktiv = vollladung_nachlauf_aktiv(
+            nachlauf, self._soc if isinstance(self._soc, (int, float)) else None,
+            dt_util.utcnow().timestamp(), VOLLLADUNG_NACHLAUF_MAX_S, VOLLLADUNG_NACHLAUF_SOC_DONE,
+            self._own_vehicle_plugged(self._current_loadpoint()),
+        )
+        mode, target_soc = apply_weekly_balancing_override(
+            mode, target_soc, balancing_due or nachlauf_aktiv,
+            forced=balancing_trigger or bool(nachlauf_aktiv and nachlauf.get("erzwungen")),
+        )
         # Zweite, schnellere Entscheidungsebene (siehe engine.apply_realtime_
         # pv_override()-Docstring): hebt "mode" (die obige Tages-Logik) in
         # Echtzeit von "pv" auf "minpv" an, wenn der aktuelle PV-Ueberschuss
@@ -7732,8 +7774,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # "laedt auf 100 %" anhand von "aktiv" (Nutzerfeedback 2026-10-12:
             # Knopf pulsierte nicht mehr, obwohl die Vollladung lief).
             "balancing_faellig": balancing_due,
-            "balancing_aktiv": balancing_due,
-            "balancing_erzwungen": balancing_trigger,
+            "balancing_aktiv": balancing_due or nachlauf_aktiv,
+            "balancing_nachlauf": nachlauf_aktiv,
+            "balancing_erzwungen": bool(balancing_trigger or (nachlauf_aktiv and nachlauf.get("erzwungen"))),
             "naechste_vollladung_faellig_ts": naechste_vollladung_faellig_ts,
         }
 

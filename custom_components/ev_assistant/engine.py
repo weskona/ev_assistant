@@ -1239,6 +1239,28 @@ def vollladung_confirm(
     return (now_ts - pending_since_ts) >= confirm_s, pending_since_ts
 
 
+def vollladung_nachlauf_aktiv(
+    nachlauf: Optional[dict],
+    soc: Optional[float],
+    now_ts: float,
+    max_s: float,
+    soc_done: float,
+    plugged: Optional[bool] = None,
+) -> bool:
+    """Ob die Balancing-Vollladung nach dem Erreichen von VOLLLADUNG_SOC_THRESHOLD
+    (98 %) noch bis 100 % durchladen soll. `nachlauf` = {"seit_ts", "erzwungen"}
+    aus dem Moment des Erreichens. Endet, sobald der SoC `soc_done` (99,5 %)
+    erreicht, nach `max_s` Sekunden (manche Fahrzeuge hoeren bei 99 % auf) oder
+    wenn das Fahrzeug abgesteckt ist (`plugged` False). Unbekannter SoC: nicht
+    aktiv. Rein, ohne Seiteneffekte."""
+    if not nachlauf or soc is None:
+        return False
+    since = nachlauf.get("seit_ts")
+    if since is None or soc >= soc_done or now_ts - since > max_s or plugged is False:
+        return False
+    return True
+
+
 def weekly_balancing_due(
     last_full_ts: Optional[float], now_ts: float, interval_days: float
 ) -> bool:

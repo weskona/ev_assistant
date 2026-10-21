@@ -1795,6 +1795,7 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
             "balancing_faellig": targets["balancing_faellig"],
             "balancing_aktiv": targets["balancing_aktiv"],
             "balancing_erzwungen": targets["balancing_erzwungen"],
+            "balancing_nachlauf": targets["balancing_nachlauf"],
             "naechste_vollladung_faellig_ts": targets["naechste_vollladung_faellig_ts"],
             "pausiert": bool(self.coordinator.data.get("evcc_mode_control_paused")),
             # Manueller Modus (siehe coordinator.py::async_set_evcc_manual_

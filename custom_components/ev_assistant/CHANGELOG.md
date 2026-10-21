@@ -2,6 +2,17 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.64] - 2026-10-21
+
+### Changed
+
+- **The weekly full charge now charges through to 100 %.** Until now the full charge counted as done at 98 % (`VOLLLADUNG_SOC_THRESHOLD`, held for 2 minutes), the weekly counter restarted, the target fell back to the daily target and the charge ended at about 98 %. Now, when the full charge was due, the car keeps charging up to 100 % after the 98 % are reached: the weekly counter still restarts at 98 %, but the target stays at 100 % (and the mode as before: `minpv` if the full charge was forced, otherwise `pv` with the raised target). The follow-up ends at SoC 99.5 % or more, after 90 minutes (some cars stop at 99 %) or when the car is unplugged. It only starts if the full charge was due when 98 % were reached, so a manual charge to 98 % does not trigger it. Attributes of the evcc mode control sensor: `balancing_nachlauf` (follow-up active), `balancing_aktiv` and `balancing_erzwungen` include it. The event log has `vollladung_nachlauf` (start) and `vollladung_nachlauf_ende`.
+
+### Honest limits
+
+- The 98 % threshold and the 2-minute confirmation stay (many vehicles never report exactly 100 %); only the charging continues. A car that stops at 99 % holds the target at 100 % for up to 90 minutes without drawing power.
+- The follow-up state is kept across restarts, but after a restart in the middle of the full charge it only starts if the full charge was due within the 15 minutes before 98 % were reached.
+
 ## [0.99.63] - 2026-10-21
 
 ### Fixed

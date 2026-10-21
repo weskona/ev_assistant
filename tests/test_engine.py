@@ -5703,3 +5703,22 @@ def test_entschaerfen_tagsueber_abfahrt_erst_morgen_behaelt_kurzen_horizont():
     assert (r["modus"], r["grund"]) == ("now", "sofort_zu_langsam")
     r = _ent(available=10.0, stunden=None)  # unbekannte Frist wie bisher
     assert (r["modus"], r["grund"]) == ("now", "sofort_zu_langsam")
+
+
+# ----- Nachlauf der Balancing-Vollladung bis 100 % (0.99.64) -----------------
+
+def test_vollladung_nachlauf_aktiv_bis_100_zeit_und_abstecken():
+    from engine import vollladung_nachlauf_aktiv
+
+    nl = {"seit_ts": 1000.0, "erzwungen": True}
+    args = (5400.0, 99.5)
+    assert vollladung_nachlauf_aktiv(nl, 98.2, 1100.0, *args) is True
+    assert vollladung_nachlauf_aktiv(nl, 99.4, 1100.0, *args) is True
+    assert vollladung_nachlauf_aktiv(nl, 99.5, 1100.0, *args) is False  # fast 100 % erreicht
+    assert vollladung_nachlauf_aktiv(nl, 100.0, 1100.0, *args) is False
+    assert vollladung_nachlauf_aktiv(nl, 99.0, 1000.0 + 5401, *args) is False  # Zeitlimit (Auto hoert bei 99 % auf)
+    assert vollladung_nachlauf_aktiv(nl, 99.0, 1100.0, *args, plugged=False) is False  # abgesteckt
+    assert vollladung_nachlauf_aktiv(nl, 99.0, 1100.0, *args, plugged=None) is True  # unbekannt: weiter
+    assert vollladung_nachlauf_aktiv(None, 99.0, 1100.0, *args) is False
+    assert vollladung_nachlauf_aktiv({}, 99.0, 1100.0, *args) is False
+    assert vollladung_nachlauf_aktiv(nl, None, 1100.0, *args) is False  # SoC unbekannt
