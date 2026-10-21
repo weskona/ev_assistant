@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.63] - 2026-10-21
+
+### Fixed
+
+- **Soft recharge delivered no energy when the maximum target SoC was below the car's SoC (Issue #65).** In the soft recharge (`minpv`, `nachladen_sanft` / `sofort_sanft`) evcc's minimum SoC is 0 and the need is reached through the charge target (`limitSoc`). That target was capped at "maximum target SoC for automatic charging", e.g. 20 %, while the car already stood at 24 %: evcc had nothing to charge, `minpv` delivered no energy for hours, and when the deadline check finally ran out of time the control escalated to `now` with the minimum SoC (56 %) and full power. In the soft recharge the charge target now never falls below the minimum need (the cap still applies to the comfort target and the surplus target raise, and to `pv` and `now` as before). With a maximum of 80 % or any value above the need nothing changes.
+
+### Honest limits
+
+- A maximum target SoC far below the daily need is contradictory (the need wants 56 %, the cap 20 %). The soft recharge now follows the need; if you want the car never above the cap, switch the soft recharge off or raise the need's inputs (usage buffer).
+- At midnight the PV forecast of the new day can briefly lower the need (observed in #65: `min` 15.99 kWh at 23:59, 5.68 kWh at 00:00, 23.8 kWh at 00:05), which causes two mode changes within minutes. This is not changed here.
+- The cause was derived from the numbers in the event log of #65 (target 20 % written in every step, usable capacity about 41 kWh, SoC about 24 %) and reproduced with a test; the actual configuration value was not seen.
+
 ## [0.99.62] - 2026-10-20
 
 ### Fixed

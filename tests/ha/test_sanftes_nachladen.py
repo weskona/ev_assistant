@@ -230,3 +230,39 @@ async def test_nach_mitternacht_mit_abfahrt_heute_laedt_sanft_statt_now(hass, co
     # mittags (Abfahrt erst morgen) bleibt der Tagesschutz: weiter "now"
     t = _targets(c, _at(12))
     assert (t["modus"], t["nachladen_status"]) == ("now", "sofort_zu_langsam")
+
+
+async def test_sanftes_laden_ziel_nicht_unter_dem_bedarf_trotz_kleinem_maximum(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX
+
+    # Issue #65: Maximum 20 %, SoC 40 % (20 kWh von 50), Bedarf min 26 kWh = 52 %. In minpv (sanft) muss
+    # das evcc-Ladeziel auf den Bedarf (52 %) reichen, sonst laedt evcc gar nicht und es geht spaeter auf now.
+    c, _ = await _coord(
+        hass, coordinators, "sn18", soc=40.0, sun="below_horizon",
+        options={CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX: 20},
+    )
+    t = _targets(c, _at(22))
+    assert (t["modus"], t["nachladen_status"]) == ("minpv", "sanft")
+    assert t["min_soc"] == 0 and t["target_soc"] == 52
+    # Obergrenze groesser als der Bedarf: unveraendert gedeckelt wie bisher (kein Effekt)
+    c2, _ = await _coord(
+        hass, coordinators, "sn19", soc=40.0, sun="below_horizon",
+        options={CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX: 80},
+    )
+    t = _targets(c2, _at(22))
+    assert (t["modus"], t["min_soc"], t["target_soc"]) == ("minpv", 0, 52)
+
+
+async def test_now_pfad_und_pv_bleiben_beim_gedeckelten_ziel(hass, coordinators):
+    from custom_components.ev_assistant.const import CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX
+
+    c, _ = await _coord(
+        hass, coordinators, "sn20", soc=20.0, options={CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX: 20},
+    )  # Defizit 6 kWh mittags -> now (sofort_zu_langsam): min_soc traegt den Bedarf, Ziel bleibt gedeckelt
+    t = _targets(c, _at(12))
+    assert (t["modus"], t["min_soc"], t["target_soc"]) == ("now", 52, 20)
+    c2, _ = await _coord(
+        hass, coordinators, "sn21", soc=60.0, options={CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX: 20},
+    )  # genug geladen: pv, Ziel = Obergrenze
+    t = _targets(c2, _at(12))
+    assert (t["modus"], t["nachladen_status"], t["target_soc"]) == ("pv", "nicht_noetig", 20)

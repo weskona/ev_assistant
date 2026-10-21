@@ -7486,6 +7486,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         target_soc_max = int(self._opt(CONF_EVCC_MODE_CONTROL_TARGET_SOC_MAX, DEFAULT_EVCC_MODE_CONTROL_TARGET_SOC_MAX))
         if target_soc is not None:
             target_soc = min(target_soc, target_soc_max)
+        # Sanftes Laden (entschaerftes "now" -> "minpv"): evccs min_soc steht dort auf 0,
+        # der Bedarf wird ueber das Ladeziel (limitSoc) erreicht. Liegt es unter dem
+        # aktuellen SoC (target_soc_max kleiner als der Bedarf), laedt evcc im Modus minpv
+        # gar nicht -- der Bedarf wird nie gedeckt und die Steuerung eskaliert spaeter auf
+        # "now" mit voller Leistung (Issue #65: Maximum 20 %, SoC 24 %, Bedarf 56 %). Das
+        # Ladeziel darf deshalb hier nicht unter den Mindest-Bedarf fallen; die Deckelung
+        # bleibt fuer das Komfort-Ziel und die Ueberschuss-Zielanhebung.
+        if target_soc is not None and nachladen["entschaerft"] and mode == "minpv":
+            bedarf_soc = kwh_to_soc_percent(min_kwh, usable_kwh)
+            if bedarf_soc is not None:
+                target_soc = max(target_soc, min(100, bedarf_soc))
         balancing_enabled = bool(self._opt(CONF_WEEKLY_FULL_CHARGE_ENABLED, DEFAULT_WEEKLY_FULL_CHARGE_ENABLED))
         balancing_due = False
         naechste_vollladung_faellig_ts = None
