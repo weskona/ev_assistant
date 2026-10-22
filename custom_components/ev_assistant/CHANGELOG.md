@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.65] - 2026-10-22
+
+### Changed
+
+- **Glow card updated from v3.5.29 to v3.5.30** (from [deepblue120/glow-dashboard](https://github.com/deepblue120/glow-dashboard)): new window "Autarkie" with the savings of home charging (glow-dashboard#41).
+- **The Glow card sync now also creates the release.** The pull request of the `Sync Glow card` workflow raises the patch version in the manifest and adds a `## [X.Y.Z]` section to both `CHANGELOG.md` files, so merging it creates the release automatically (`auto-tag.yml`). Before, a merged Glow update stayed unreleased until a manual version bump (0.99.64 was released without the Glow card of v3.5.30). The bump only happens if the current version is already tagged; the changelog text is just the card version and can be completed in the pull request before merging.
+
 ## [0.99.64] - 2026-10-21
 
 ### Changed
