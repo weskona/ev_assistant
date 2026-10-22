@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=55  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=56  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.5.29";
+const VERSION = "3.5.30";
 // Version der Datenschnittstelle zu ev_assistant (Panel-Konfiguration, Websocket-Befehle, evcc_live),
 // die diese Karte erwartet. Meldet ev_assistant in der Panel-Konfiguration eine andere "api_version",
 // warnt die Karte (Konsole + Hinweis). Ohne "api_version" (ältere ev_assistant-Versionen) keine Warnung.
@@ -1766,7 +1766,7 @@ class MgCarDashboard extends HTMLElement {
       tile("temp", typeof tNow === "number" ? T("Verbrauch bei {t} °C", { t: de(tNow, 0) }) : T("Verbrauch"), bv != null ? de(bv, 1) : "–", "kWh/100km",
         bv != null && typeof warm === "number" && band !== ">20°C" && warm > 0 ? T("{v} % ggü. > 20 °C", { v: `${bv >= warm ? "+" : ""}${Math.round((bv / warm - 1) * 100)}` }) : band ? `${T("Band")} ${esc(band)}` : T("noch keine Daten")),
       tile("cost", T("Kosten"), num(A.L.eur_je_100km, 2), "€/100km", `${T("Heim")} ${num(A.heim.preis_je_kwh, 2)} · ${T("Fremd")} ${num(A.fremd.preis_je_kwh, 2)} €/kWh`),
-      tile("loc", T("Autarkie gesamt"), num(A.L.gesamt_autarkie_pct, 0), "%", `${T("Heim-Solaranteil")} ${num(A.heim.solar_pct, 0)} %`),
+      tile("aut", T("Autarkie gesamt"), num(A.L.gesamt_autarkie_pct, 0), "%", `${T("Heim-Solaranteil")} ${num(A.heim.solar_pct, 0)} %`),
       tile("loc", T("Ladeorte"), num(A.heim.kwh_anteil_pct, 0), T("% Heim"), `${num(A.heim.kwh, 0)} / ${num(A.fremd.kwh, 0)} kWh`,
         `<div class="pbar two"><i style="width:${A.heim.kwh_anteil_pct || 0}%"></i><i class="o" style="width:${A.fremd.kwh_anteil_pct || 0}%"></i></div>`),
       A.acdc.dc || A.acdc.ac ? tile("acdc", T("Schnellladen"), num(A.acdc.dc?.anzahl, 0), "× DC", `${num(A.acdc.ac?.anzahl, 0)} × AC · DC Ø ${num(A.acdc.dc?.preis_je_kwh, 2)} €/kWh`) : "",
@@ -1814,6 +1814,23 @@ class MgCarDashboard extends HTMLElement {
       title = T("Batterie"); sub = T("Geschätzte Kapazität und Vollzyklen");
       body = `<div class="pcols">${col(T("Kapazität"), 0, [[T("geschätzt"), `${num(parseFloat(this._ea("battery_capacity")?.state), 1)} kWh`], [T("Vollzyklen"), num(parseFloat(this._ea("equivalent_full_cycles")?.state), 1)]])}</div>
         <div class="pnote">${T("Rollierender Schnitt aus Fremd- und Heimladungen mit großem SoC-Hub. Der Wert liegt meist über der echten Kapazität (Ladeverluste) – entscheidend ist der Trend über Monate. Vollzyklen aus Fahrtenbuch und Ladungen (0→100→0 = 1 Zyklus).")}</div>`;
+    } else if (k === "aut") {
+      // Autarkiegrad und Ersparnis der Heimladungen gegenüber reinem Netzstrom (Heim-kWh × Netzpreis aus evcc)
+      title = T("Autarkie"); sub = T("Autarkiegrad und Ersparnis beim Heimladen");
+      const h = A.heim, gr = parseFloat(this._live().tariff_grid), hk = Number(h.kwh), sp = Number(h.solar_pct);
+      const pvK = hk > 0 && sp >= 0 ? (hk * sp) / 100 : null, netK = pvK != null ? hk - pvK : null;
+      const big = (l, v, s) => `<div class="pcol paut"><h4>${l}</h4><b>${v}<small>%</small></b><p>${s}</p></div>`;
+      body = `<div class="pcols">${big(T("Autarkiegrad gesamt"), num(A.L.gesamt_autarkie_pct, 0), T("PV-Anteil an allen Ladungen (zuhause und unterwegs)"))}${big(T("Heim-Solaranteil"), num(h.solar_pct, 0), T("PV-Anteil an den Ladungen zuhause"))}</div>`;
+      if (pvK != null) body += `<div class="kbar">${pvK > 0 ? `<i class="kpv" style="width:${sp}%"></i>` : ""}<i class="kgr" style="width:${100 - sp}%"></i></div>
+        <div class="klg" style="margin:-4px 0 14px"><span><i class="kpv"></i>${T("Heim PV")} ${de(pvK, 0)} kWh</span><span><i class="kgr"></i>${T("Heim Netz")} ${de(netK, 0)} kWh</span></div>`;
+      const cost = Number(h.kosten);
+      if (hk > 0 && gr > 0 && !isNaN(cost)) {
+        const grid = hk * gr, saved = grid - cost, mx = Math.max(0.01, grid, cost);
+        body += `<div class="ksave ${saved < 0 ? "neg" : ""}"><span>${saved >= 0 ? T("Ersparnis Heimladen") : T("Mehrkosten Heimladen")}</span><div><b>${de(Math.abs(saved), 2)} €</b><small> · ${T("ggü. reinem Netzstrom zuhause")} · ${de((Math.abs(saved) / hk) * 100, 1)} ct/kWh</small></div></div>
+          <div class="kcb"><p>${T("Tatsächlich (evcc)")}<b>${de(cost, 2)} €</b></p><div class="kbar2"><i style="width:${(cost / mx) * 100}%;background:var(--green)"></i></div></div>
+          <div class="kcb"><p>${T("Nur Netzstrom")} <small class="dim">&nbsp;${de(hk, 0)} kWh × ${de(gr * 100, 1)} ct</small><b>${de(grid, 2)} €</b></p><div class="kbar2"><i style="width:${(grid / mx) * 100}%;background:#94a3b8"></i></div></div>
+          <div class="pnote">${T("Seit Einrichtung. Tatsächliche Heimkosten aus ev_assistant (evcc-Realkosten, PV mit der Einspeisevergütung bewertet), verglichen mit allen Heim-kWh zum aktuellen Netzpreis aus evcc.")}</div>`;
+      } else body += `<div class="pnote warn">${T("Für die Ersparnis fehlen Heimladungen mit Kosten oder der Netzpreis aus evcc.")}</div>`;
     } else if (k === "anb") {
       title = T("Verteilung nach Anbieter"); sub = T("Nur tatsächliche Ladungskosten, ohne Grundgebühren");
       const l = [...A.anb].sort((a, b) => (b[1].kwh ?? b[1].kosten ?? 0) - (a[1].kwh ?? a[1].kosten ?? 0)), byK = l.some(([, v]) => typeof v.kwh === "number");
@@ -3845,6 +3862,7 @@ input[type=date],input[type=datetime-local],input[type=month]{cursor:pointer;car
 .pdlg{max-width:720px}
 .pcols{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .pcol{padding:12px 14px;border-radius:16px;background:var(--tile);border:1px solid var(--tileb)}
+.paut b{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums}.paut b small{font-size:15px;margin-left:2px;color:var(--muted)}.paut p{margin:4px 0 0;font-size:12.5px}
 .pcol h4{margin:0 0 6px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .pcol p{margin:3px 0;display:flex;gap:10px;font-size:13.5px;color:var(--muted)}.pcol p b{margin-left:auto;color:var(--text);font-variant-numeric:tabular-nums;text-align:right}
 .pbands{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;height:220px;align-items:end}
@@ -4494,6 +4512,17 @@ const I18N = {
     "Bitte eine Zielzeit in der Zukunft wählen.": "Please choose a target time in the future.",
     "Keine Antwort von ev_assistant – Ladeplan vermutlich nicht gesetzt.": "No response from ev_assistant – charge plan probably not set.",
     "Ladeplan konnte nicht gesetzt werden:": "Charge plan could not be set:",
+    "Autarkiegrad und Ersparnis beim Heimladen": "Self-sufficiency and savings when charging at home",
+    "Autarkiegrad gesamt": "Total self-sufficiency",
+    "PV-Anteil an allen Ladungen (zuhause und unterwegs)": "PV share of all charges (at home and on the road)",
+    "PV-Anteil an den Ladungen zuhause": "PV share of charges at home",
+    "Ersparnis Heimladen": "Savings charging at home",
+    "Mehrkosten Heimladen": "Extra cost charging at home",
+    "ggü. reinem Netzstrom zuhause": "vs. grid power only at home",
+    "Tatsächlich (evcc)": "Actual (evcc)",
+    "Nur Netzstrom": "Grid power only",
+    "Seit Einrichtung. Tatsächliche Heimkosten aus ev_assistant (evcc-Realkosten, PV mit der Einspeisevergütung bewertet), verglichen mit allen Heim-kWh zum aktuellen Netzpreis aus evcc.": "Since setup. Actual home costs from ev_assistant (real evcc costs, PV valued at the feed-in tariff), compared with all home kWh at the current grid price from evcc.",
+    "Für die Ersparnis fehlen Heimladungen mit Kosten oder der Netzpreis aus evcc.": "The savings need home charges with costs and the grid price from evcc.",
   },
 };
 
