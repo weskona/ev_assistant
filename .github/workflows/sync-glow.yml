@@ -6,8 +6,14 @@ name: Sync Glow card
 #   - frontend/GLOW_VERSION enthaelt genau eine Referenz (Tag oder Commit).
 #   - Gibt es einen neueren v*-Tag, oeffnet dieser Workflow einen PR gegen
 #     main (geprueft von glow-sync-check.yml und der uebrigen CI). Gemergt wird
-#     von Hand; ein Release entsteht erst durch einen v*-Tag (release.yml).
-#   - Manifest-Version und CHANGELOG fasst der Workflow nicht an.
+#     von Hand.
+#   - Seit 0.99.65 zaehlt der PR zugleich die Patch-Version im Manifest hoch und
+#     legt in BEIDEN CHANGELOG.md einen Abschnitt "## [X.Y.Z]" an: Mit dem Merge
+#     entsteht so ueber auto-tag.yml/release.yml selbst ein Release. Der Bump
+#     passiert nur, wenn die aktuelle Manifest-Version schon getaggt ist (sonst
+#     wartet ohnehin noch eine unveroeffentlichte Version); ein Merge-Konflikt
+#     (Manifest/CHANGELOG hat sich auf main bewegt) loest sich, indem der
+#     Workflow neu laeuft -- er baut den PR aus dem aktuellen main neu.
 # Der Workflow liegt auf main, weil GitHub zeitgesteuerte und manuell gestartete
 # Workflows nur vom Standard-Branch ausfuehrt.
 
@@ -64,6 +70,46 @@ jobs:
           echo "ref=$REF" >> "$GITHUB_OUTPUT"
           echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
 
+      - name: Version und CHANGELOG hochzaehlen
+        if: steps.glow.outputs.changed == 'true'
+        id: bump
+        env:
+          GLOW_REF: ${{ steps.glow.outputs.ref }}
+          GLOW_CURRENT: ${{ steps.glow.outputs.current }}
+        run: |
+          set -euo pipefail
+          MANIFEST=custom_components/ev_assistant/manifest.json
+          VERSION=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$MANIFEST" | head -n1)
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Version '$VERSION' ist keine stabile Version X.Y.Z, kein Bump."
+            exit 0
+          fi
+          if ! git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "v$VERSION ist noch nicht getaggt, kein Bump."
+            exit 0
+          fi
+          NEW="${VERSION%.*}.$(( ${VERSION##*.} + 1 ))"
+          sed -i "s/\"version\": *\"$VERSION\"/\"version\": \"$NEW\"/" "$MANIFEST"
+          python3 - "$NEW" "$GLOW_CURRENT" "$GLOW_REF" <<'PY'
+          import datetime, sys
+          new, old, ref = sys.argv[1:4]
+          entry = (
+              f"## [{new}] - {datetime.date.today().isoformat()}\n\n"
+              "### Changed\n\n"
+              f"- **Glow card updated from {old} to {ref}** (automatic sync from "
+              "[deepblue120/glow-dashboard](https://github.com/deepblue120/glow-dashboard), "
+              f"[changes](https://github.com/deepblue120/glow-dashboard/compare/{old}...{ref})).\n\n"
+          )
+          for path in ("CHANGELOG.md", "custom_components/ev_assistant/CHANGELOG.md"):
+              text = open(path, encoding="utf-8").read()
+              marker = "\n## ["
+              if f"## [{new}]" in text or marker not in text:
+                  continue
+              index = text.index(marker) + 1
+              open(path, "w", encoding="utf-8").write(text[:index] + entry + text[index:])
+          PY
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+
       - name: PR gegen main oeffnen
         if: steps.glow.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
@@ -73,6 +119,9 @@ jobs:
           add-paths: |
             custom_components/ev_assistant/frontend/mg-car-dashboard.js
             custom_components/ev_assistant/frontend/GLOW_VERSION
+            custom_components/ev_assistant/manifest.json
+            CHANGELOG.md
+            custom_components/ev_assistant/CHANGELOG.md
           commit-message: "Glow-Karte auf ${{ steps.glow.outputs.ref }} aktualisiert"
           title: "Glow-Karte auf ${{ steps.glow.outputs.ref }} aktualisieren"
           body: |
@@ -81,4 +130,4 @@ jobs:
             - Vorher: `${{ steps.glow.outputs.current }}`
             - Nachher: `${{ steps.glow.outputs.ref }}`
 
-            Ersetzt `frontend/mg-car-dashboard.js` durch die Datei dieser Version und setzt `frontend/GLOW_VERSION`. Die Version im Manifest und der CHANGELOG-Eintrag bleiben Handarbeit; ein Release entsteht erst mit dem Tag (siehe #12).
+            Ersetzt `frontend/mg-car-dashboard.js` durch die Datei dieser Version und setzt `frontend/GLOW_VERSION`. ${{ steps.bump.outputs.new && format('Zaehlt die Version im Manifest auf `{0}` hoch und legt den CHANGELOG-Abschnitt an: Mit dem Merge entsteht automatisch das Release `v{0}` (auto-tag.yml). Der Text im CHANGELOG ist nur der Hinweis auf die Karten-Version, bei Bedarf vor dem Merge im PR ergaenzen.', steps.bump.outputs.new) || 'Die Manifest-Version wurde nicht erhoeht (die aktuelle Version ist noch nicht getaggt oder keine stabile Version); ein Release entsteht erst mit dem naechsten Versionsbump.' }} (siehe #12).
