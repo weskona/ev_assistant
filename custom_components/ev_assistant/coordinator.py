@@ -142,6 +142,7 @@ from .const import (
     EVCC_MIN_CURRENT_FALLBACK_A,
     EVCC_MODE_TARGET_DAYS,
     EVCC_NACHLADEN_RESERVE_H,
+    EVCC_NOW_POWER_FACTOR,
     EVCC_PHASE_KW_PER_A,
     EVCC_REALTIME_OVERRIDE_MIN_SURPLUS_PCT_DEFAULT,
     EVCC_SOFORT_HORIZON_H,
@@ -198,6 +199,7 @@ from .const import (
     STORAGE_VERSION,
     TANKERKOENIG_GRACE_S,
     TEMP_BUCKET_BOUNDARIES,
+    TEMP_BUCKET_HYSTERESIS_C,
     TEMP_BUCKET_MIN_SAMPLES,
     TRIP_CONSUMPTION_CHECK_MIN_KM,
     TRIP_CONSUMPTION_MAX_KWH_100KM,
@@ -307,7 +309,7 @@ from .engine import (
     sticky_min_soc,
     tankerkoenig_should_notify,
     temp_bucket_contribution,
-    temperature_bucket,
+    temperature_bucket_stable,
     trip_avg_consumption_kwh_from_totals,
     trip_consumption_contribution,
     trip_discharge_pct,
@@ -845,6 +847,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Zuletzt berechneter Balancing-Stand (faellig/erzwungen + Zeitpunkt), damit der
         # Nachlauf in _maybe_mark_vollladung_erreicht() weiss, ob die Vollladung gerade lief.
         self._balancing_state: Optional[dict] = None
+        # Zuletzt gewaehltes Temperaturband (Hysterese gegen Flackern um die Bandgrenze, siehe
+        # current_temp_bucket()); fluechtig.
+        self._temp_bucket_last: Optional[str] = None
         # Zeitpunkt der letzten Speicherung des Zustands (Heartbeat-Drosselung).
         self._ueberschuss_ziel_gespeichert_ts: float = 0.0
         # Letzter bekannter evcc-"connected"-Zustand des Loadpoints, fuer
@@ -3229,6 +3234,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.hass.async_create_task(self._daily_odo_period_rollover())
         self.hass.async_create_task(self._daily_cost_period_rollover())
         self.hass.async_create_task(self._daily_kwh_period_rollover())
+        # Auch die Tagesbasis fuer Haus- und Fahrzeugverbrauch ("heute bisher"): sie rollte bisher erst
+        # um 00:05 (_daily_lts_refresh). Bis dahin zaehlte noch der GESTRIGE Verbrauch als "heute
+        # verbraucht", der Rest-Bedarf war zu niedrig (PV-Anrechnung zu hoch) und sprang um 00:05 --
+        # nachts folgte ein Moduswechsel (nicht_noetig -> sofort_sanft/frist). Beide Rollover brauchen
+        # keine Statistik und sind idempotent (die Wiederholung um 00:05 aendert nichts).
+        self.hass.async_create_task(self._async_daily_house_period_rollover())
+        self.hass.async_create_task(self._async_daily_vehicle_discharge_period_rollover())
 
     @callback
     def _daily_lts_refresh(self, now) -> None:
@@ -5929,8 +5941,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     def current_temp_bucket(self) -> Optional[str]:
         """Temperaturband der aktuellen Aussentemperatur (siehe
         CONF_OUTSIDE_TEMP_ENTITY), z.B. fuer die Sensor-Attribute von
-        RangeEstimateSensor. None ohne konfigurierte/aktuelle Temperatur."""
-        return temperature_bucket(self._outside_temp, TEMP_BUCKET_BOUNDARIES)
+        RangeEstimateSensor. None ohne konfigurierte/aktuelle Temperatur. Mit
+        Hysterese (temperature_bucket_stable()): ein um die Bandgrenze
+        schwankender Wert flackert nicht."""
+        bucket = temperature_bucket_stable(
+            self._outside_temp, TEMP_BUCKET_BOUNDARIES, self._temp_bucket_last, TEMP_BUCKET_HYSTERESIS_C,
+        )
+        if bucket is not None:
+            self._temp_bucket_last = bucket
+        return bucket
 
     def equivalent_full_cycles(self) -> float:
         """Aequivalente Vollzyklen aus Live-SoC-Entladung (siehe
@@ -5978,7 +5997,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Fahrten fuers aktuelle Temperaturband vorliegen, sonst der
         rollierende 30-Tage-Schnitt (siehe range_estimate_km()-Docstring)."""
         consumption = self._vehicle_avg_consumption_kwh_per_100km_rolling()
-        bucket = temperature_bucket(self._outside_temp, TEMP_BUCKET_BOUNDARIES)
+        bucket = self.current_temp_bucket()
         bucket_consumption = self._consumption_by_temp_bucket().get(bucket)
         if bucket_consumption is not None:
             consumption = bucket_consumption
@@ -7071,6 +7090,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         avg = self._vehicle_avg_consumption_kwh_per_100km()
         if odo_km is None or not day_entry or avg is None:
             return None
+        if day_entry.get("key") not in (None, self._period_keys()["day"]):
+            return 0.0  # Basis noch von gestern (Rollover steht aus): heute noch nichts verbraucht
         km_today = odo_km - day_entry["odo_km"]
         if km_today < 0:
             # Kilometerstand ist seit der Tages-Baseline gesunken (z.B.
@@ -7219,6 +7240,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         day_entry = (self.data.get("house_periods") or {}).get("day")
         if value is None or not day_entry:
             return None
+        if day_entry.get("key") not in (None, self._period_keys()["day"]):
+            return 0.0  # Basis noch von gestern (Rollover steht aus): heute noch nichts verbraucht
         used = value - day_entry["kwh"]
         return round(used, 2) if used >= 0 else None
 
@@ -7375,6 +7398,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         day_entry = (self.data.get("vehicle_discharge_periods") or {}).get("day")
         if not day_entry:
             return None
+        if day_entry.get("key") not in (None, self._period_keys()["day"]):
+            return 0.0  # Basis noch von gestern (Rollover steht aus): heute noch nichts verbraucht
         used = self.data.get("vehicle_discharge_kwh_total", 0.0) - day_entry["kwh"]
         return round(used, 2) if used >= 0 else None
 
@@ -8245,6 +8270,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         res["abfahrt_frist"] = deadline.isoformat() if deadline is not None else None
         res["frist_quelle"] = quelle
         below = self._sun_below_horizon()
+        max_power_kw = self._evcc_max_charge_power_kw()
+        p_now_kw = max_power_kw * EVCC_NOW_POWER_FACTOR if max_power_kw else None
         out = evcc_now_entschaerfen(
             base_mode, available, sofort_kwh, min_kwh, below,
             (deadline - now).total_seconds() / 3600.0 if deadline is not None else None,
@@ -8252,6 +8279,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             reserve_h=EVCC_NACHLADEN_RESERVE_H, sofort_horizont_h=EVCC_SOFORT_HORIZON_H,
             sofort_horizont_max_h=EVCC_SOFORT_HORIZON_MAX_H,
             abfahrt_heute=deadline is not None and deadline.date() == now.date(),
+            p_now_kw=p_now_kw,
             halt=(self.data.get("evcc_now_halt") or {}).get("grund"),
         )
         res.update(modus=out["modus"], grund=out["grund"], halt=out["halt"])

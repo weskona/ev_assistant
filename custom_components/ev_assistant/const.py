@@ -294,6 +294,9 @@ CONF_PV_FORECAST_TODAY_REMAINING_ENTITY = "pv_forecast_today_remaining_entity"
 CONF_OUTSIDE_TEMP_ENTITY = "outside_temp_entity"
 # Baender in °C: (0, 10, 20) -> "<0°C", "0-10°C", "10-20°C", ">20°C".
 TEMP_BUCKET_BOUNDARIES = (0.0, 10.0, 20.0)
+# Hysterese (°C) um die Bandgrenzen: eine um die Grenze schwankende Aussentemperatur schaltet das
+# Verbrauchsband nicht bei jeder Messung um (siehe engine.temperature_bucket_stable()).
+TEMP_BUCKET_HYSTERESIS_C = 1.0
 # Wie viele Fahrten mit bekannter Start-Temperatur mindestens in einem Band
 # liegen muessen, bevor dessen Durchschnitt als verlaesslich gilt.
 TEMP_BUCKET_MIN_SAMPLES = 3
@@ -695,6 +698,10 @@ EVCC_SOFORT_HORIZON_H = 2.0
 EVCC_SOFORT_HORIZON_MAX_H = 8.0
 # Reserve (h) auf die Mindestleistungs-Ladedauer in zu_langsam().
 EVCC_NACHLADEN_RESERVE_H = 0.5
+# Abschlag auf die geschaetzte Leistung von "now" (Loadpoint-Maximum) fuer den spaetesten
+# Start von "now" (siehe engine.evcc_now_entschaerfen(), p_now_kw): evcc erreicht die volle
+# Leistung nicht sofort (Anlauf, Phasenumschaltung, Hausverbrauch am Netzanschluss).
+EVCC_NOW_POWER_FACTOR = 0.85
 # Spannungsannahme wie DEFAULT_WALLBOX_MIN_POWER_W (kW je A und Phase).
 EVCC_PHASE_KW_PER_A = 0.23
 EVCC_MIN_CURRENT_FALLBACK_A = 6.0

@@ -94,6 +94,7 @@ from engine import (
     tankerkoenig_should_notify,
     temp_bucket_contribution,
     temperature_bucket,
+    temperature_bucket_stable,
     trip_avg_consumption_kwh_from_totals,
     trip_consumption_contribution,
     trip_discharge_pct,
@@ -5722,3 +5723,45 @@ def test_vollladung_nachlauf_aktiv_bis_100_zeit_und_abstecken():
     assert vollladung_nachlauf_aktiv(None, 99.0, 1100.0, *args) is False
     assert vollladung_nachlauf_aktiv({}, 99.0, 1100.0, *args) is False
     assert vollladung_nachlauf_aktiv(nl, None, 1100.0, *args) is False  # SoC unbekannt
+
+
+# ----- erst minpv, dann spaet "now" (0.99.66) ---------------------------------
+
+def test_entschaerfen_frist_erst_minpv_und_now_erst_gegen_ende():
+    # Issue #65: Defizit 9,25 kWh, 5,85 h bis zur Frist, minpv einphasig 1,38 kW (zu langsam),
+    # "now" schafft ~9,4 kW. Frueher sofort "now" (Mindestleistung als Massstab), jetzt erst minpv.
+    kw = dict(available=10.35, sofort=5.0, min_kwh=19.6, sonne_unten=True, stunden=5.85, p=1.38)
+    alt = _ent(**kw)  # ohne p_now: wie bisher
+    assert (alt["modus"], alt["grund"]) == ("now", "frist")
+    neu = _ent(p_now_kw=9.35, **kw)
+    assert (neu["modus"], neu["grund"], neu["halt"]) == ("minpv", "nachladen_sanft", None)
+
+
+def test_entschaerfen_frist_spaetester_start_von_now():
+    # Spaeter am Morgen, minpv hat ein Stueck geliefert: erst wenn "now" gerade noch rechtzeitig
+    # (plus 0,5 h Reserve) schafft, geht es auf "now". Defizit 2,6 kWh / 9,35 kW = 0,28 h + 0,5 h.
+    kw = dict(available=17.0, sofort=5.0, min_kwh=19.6, sonne_unten=True, p=1.38, p_now_kw=9.35)
+    assert _ent(stunden=0.9, **kw)["modus"] == "minpv"
+    r = _ent(stunden=0.7, **kw)
+    assert (r["modus"], r["grund"], r["halt"]) == ("now", "frist", "frist")
+
+
+def test_entschaerfen_frist_p_now_nicht_groesser_als_mindestleistung_wird_ignoriert():
+    kw = dict(available=10.35, sofort=5.0, min_kwh=19.6, sonne_unten=True, stunden=5.85, p=1.38)
+    assert _ent(p_now_kw=1.0, **kw)["modus"] == "now"
+    assert _ent(p_now_kw=None, **kw)["modus"] == "now"
+
+
+def test_temperature_bucket_stable_flackert_nicht_um_die_grenze():
+    b = (0.0, 10.0, 20.0)
+    last = temperature_bucket_stable(9.8, b, None)
+    assert last == "0-10°C"  # ohne Vorgaenger: wie temperature_bucket()
+    for temp in (10.2, 9.9, 10.4, 9.6, 10.5):  # schwankt um 10 °C, bleibt im Band
+        assert temperature_bucket_stable(temp, b, last) == "0-10°C"
+    assert temperature_bucket_stable(11.5, b, last) == "10-20°C"  # klar darueber: Wechsel
+    last = "10-20°C"
+    for temp in (9.8, 10.4, 9.6):  # schwankt zurueck, bleibt im oberen Band
+        assert temperature_bucket_stable(temp, b, last) == "10-20°C"
+    assert temperature_bucket_stable(8.5, b, last) == "0-10°C"  # klar darunter: Wechsel
+    assert temperature_bucket_stable(None, b, last) is None
+    assert temperature_bucket_stable(15.0, b, "0-10°C") == "10-20°C"  # Vorgaenger nicht an dieser Grenze

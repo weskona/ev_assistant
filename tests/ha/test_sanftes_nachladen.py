@@ -266,3 +266,20 @@ async def test_now_pfad_und_pv_bleiben_beim_gedeckelten_ziel(hass, coordinators)
     )  # genug geladen: pv, Ziel = Obergrenze
     t = _targets(c2, _at(12))
     assert (t["modus"], t["nachladen_status"], t["target_soc"]) == ("pv", "nicht_noetig", 20)
+
+
+async def test_frist_erst_minpv_und_now_erst_gegen_ende(hass, coordinators):
+    # Issue #65: Bedarf (min) 26 kWh, verfuegbar 16 kWh (Defizit 10 kWh, "sofort"-Teil 16 kWh erfuellt).
+    # 7 h vor 06:00 reicht minpv allein (1,38 kW einphasig) nicht -- frueher sofort "now". Jetzt erst minpv;
+    # "now" (~9,4 kW) schafft die 10 kWh in gut einer Stunde, also erst gegen Ende.
+    c, _ = await _coord(hass, coordinators, "sn22", soc=32.0, sun="below_horizon")
+    c._current_loadpoint = lambda: {"effectiveMinCurrent": 6, "effectiveMaxCurrent": 16, "phasesConfigured": 0}
+    t = _targets(c, _at(23))
+    assert (t["modus"], t["nachladen_status"]) == ("minpv", "sanft")
+    assert t["min_soc"] == 0
+    t = _targets(c, _at(4, 30, day=15))  # 1,5 h vor 06:00, Defizit unveraendert -> jetzt "now"
+    assert (t["modus"], t["nachladen_status"]) == ("now", "frist")
+    # ohne bekannte Maximalleistung bleibt es beim bisherigen Verhalten (Mindestleistung als Massstab)
+    c2, _ = await _coord(hass, coordinators, "sn23", soc=32.0, sun="below_horizon")
+    t = _targets(c2, _at(23))
+    assert (t["modus"], t["nachladen_status"]) == ("now", "frist")

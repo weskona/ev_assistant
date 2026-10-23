@@ -58,7 +58,7 @@ def _seed_usage_profile(coordinator, weekday_kwh=10.0, avg_consumption=20.0):
 def _seed_odo_today(coordinator, baseline_km, current_km):
     coordinator.data["odo"] = current_km
     coordinator.data["odo_unit"] = "km"
-    coordinator.data["odo_periods"] = {"day": {"key": "irgendein-schluessel", "odo_km": baseline_km}}
+    coordinator.data["odo_periods"] = {"day": {"key": coordinator._period_keys()["day"], "odo_km": baseline_km}}
 
 
 def _fake_evcc_client(probe_result="loadpoint", mode_ok=True, min_soc_ok=True, limit_soc_ok=True):
@@ -259,7 +259,7 @@ async def test_house_kwh_used_today_normalfall(hass, coordinators):
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hkut1", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
-    coordinator.data["house_periods"] = {"day": {"key": "x", "kwh": 1000.0}}
+    coordinator.data["house_periods"] = {"day": {"key": coordinator._period_keys()["day"], "kwh": 1000.0}}
     hass.states.async_set("sensor.haus", "1004.5")
     assert coordinator._house_kwh_used_today() == 4.5
 
@@ -280,7 +280,7 @@ async def test_house_kwh_used_today_negatives_delta_gibt_none(hass, coordinators
     coordinator, _ = await _make_coordinator(
         hass, coordinators, "hkut3", options={CONF_HOME_CONSUMPTION_ENTITY: "sensor.haus"},
     )
-    coordinator.data["house_periods"] = {"day": {"key": "x", "kwh": 1000.0}}
+    coordinator.data["house_periods"] = {"day": {"key": coordinator._period_keys()["day"], "kwh": 1000.0}}
     hass.states.async_set("sensor.haus", "990.0")
     assert coordinator._house_kwh_used_today() is None
 
@@ -295,7 +295,7 @@ async def test_house_remaining_today_kwh_mit_vollstaendigem_profil(hass, coordin
     )
     today_wd = dt_util.now().date().weekday()
     coordinator.data["house_weekday_days"] = {str(today_wd): [{"date": "2020-01-01", "kwh": 12.0}]}
-    coordinator.data["house_periods"] = {"day": {"key": "x", "kwh": 100.0}}
+    coordinator.data["house_periods"] = {"day": {"key": coordinator._period_keys()["day"], "kwh": 100.0}}
     hass.states.async_set("sensor.haus", "104.0")
     # Fixe Tageszeit statt der echten Wanduhrzeit -- sonst waere die
     # Erwartung vom weichen Abbau (siehe engine.py::remaining_today_kwh())
@@ -582,7 +582,7 @@ async def test_vehicle_discharge_usage_profile_normale_durchschnittsbildung(hass
 
 async def test_vehicle_discharge_kwh_used_today_normalfall(hass, coordinators):
     coordinator, _ = await _make_coordinator(hass, coordinators, "vdkut1")
-    coordinator.data["vehicle_discharge_periods"] = {"day": {"key": "x", "kwh": 5.0}}
+    coordinator.data["vehicle_discharge_periods"] = {"day": {"key": coordinator._period_keys()["day"], "kwh": 5.0}}
     coordinator.data["vehicle_discharge_kwh_total"] = 6.5
     assert coordinator._vehicle_discharge_kwh_used_today() == 1.5
 
@@ -839,7 +839,7 @@ async def test_evcc_mode_targets_mit_hausverbrauch_reduziert_pv_fuer_auto(hass, 
     hass.states.async_set("sensor.pv_rest", "4.0", {"unit_of_measurement": "kWh"})
     today_wd = dt_util.now().date().weekday()
     coordinator.data["house_weekday_days"] = {str(today_wd): [{"date": "2020-01-01", "kwh": 3.0}]}
-    coordinator.data["house_periods"] = {"day": {"key": "x", "kwh": 100.0}}
+    coordinator.data["house_periods"] = {"day": {"key": coordinator._period_keys()["day"], "kwh": 100.0}}
     hass.states.async_set("sensor.haus", "100.0")
     targets = coordinator._evcc_mode_targets()
     assert targets["haus_rest_heute_kwh"] == 3.0
@@ -857,7 +857,7 @@ async def test_evcc_mode_targets_bevorzugt_discharge_basiertes_used_today(hass, 
     _seed_usage_profile(coordinator, weekday_kwh=10.0)
     coordinator._soc = 50.0
     coordinator._day_fraction_elapsed = lambda: 0.0
-    coordinator.data["vehicle_discharge_periods"] = {"day": {"key": "x", "kwh": 5.0}}
+    coordinator.data["vehicle_discharge_periods"] = {"day": {"key": coordinator._period_keys()["day"], "kwh": 5.0}}
     coordinator.data["vehicle_discharge_kwh_total"] = 7.0  # 2.0 kWh heute schon verbraucht
     targets = coordinator._evcc_mode_targets()
     assert targets["rest_heute_roh_kwh"] == 8.0  # 10.0 - 2.0, nicht 10.0 - 0.0
@@ -879,7 +879,7 @@ async def test_evcc_mode_targets_nutzt_day_fraction_elapsed_fuer_weichen_abbau(h
     coordinator, _ = await _make_coordinator(hass, coordinators, "emt_taper", options={CONF_USABLE_KWH: 50.0})
     _seed_usage_profile(coordinator, weekday_kwh=15.0)
     coordinator._soc = 50.0
-    coordinator.data["vehicle_discharge_periods"] = {"day": {"key": "x", "kwh": 5.0}}
+    coordinator.data["vehicle_discharge_periods"] = {"day": {"key": coordinator._period_keys()["day"], "kwh": 5.0}}
     coordinator.data["vehicle_discharge_kwh_total"] = 17.5  # 17.5 - 5.0 = 12.5 kWh heute schon verbraucht
 
     coordinator._day_fraction_elapsed = lambda: 0.0
@@ -3448,3 +3448,51 @@ async def test_balancing_nachlauf_attribut_am_modus_sensor(hass, coordinators):
     coordinator._day_fraction_elapsed = lambda: 0.0
     attrs = EvccModeControlSensor(coordinator, entry).extra_state_attributes
     assert attrs["balancing_nachlauf"] is False
+
+
+async def test_veraltete_tagesbasis_nach_mitternacht_zaehlt_als_noch_nichts_verbraucht(hass, coordinators):
+    """Zwischen 00:00 und dem Rollover galt die Tagesbasis von GESTERN: der Verbrauch von gestern zaehlte als
+    "heute verbraucht", der Rest-Bedarf war zu niedrig und sprang beim Rollover (Issue #65)."""
+    coordinator, _ = await _make_coordinator(hass, coordinators, "mn_basis")
+    gestern = "1999-12-31"
+    coordinator.data["vehicle_discharge_periods"] = {"day": {"key": gestern, "kwh": 5.0}}
+    coordinator.data["vehicle_discharge_kwh_total"] = 8.5
+    assert coordinator._vehicle_discharge_kwh_used_today() == 0.0
+    coordinator.data["vehicle_discharge_periods"] = {"day": {"key": coordinator._period_keys()["day"], "kwh": 5.0}}
+    assert coordinator._vehicle_discharge_kwh_used_today() == 3.5  # heutige Basis: normal
+    coordinator.data["house_periods"] = {"day": {"key": gestern, "kwh": 1000.0}}
+    coordinator._house_combined_reading_kwh = lambda: 1021.0
+    assert coordinator._house_kwh_used_today() == 0.0
+    _seed_odo_today(coordinator, baseline_km=100.0, current_km=117.0)
+    coordinator.data["odo_periods"]["day"]["key"] = gestern
+    coordinator._vehicle_avg_consumption_kwh_per_100km = lambda: 20.0
+    assert coordinator._kwh_used_today() == 0.0
+
+
+async def test_mitternachts_rollover_setzt_auch_haus_und_fahrzeug_basis_zurueck(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "mn_roll")
+    gestern = "1999-12-31"
+    coordinator.data["vehicle_discharge_periods"] = {"day": {"key": gestern, "kwh": 5.0}}
+    coordinator.data["vehicle_discharge_kwh_total"] = 8.5
+    coordinator._house_combined_reading_kwh = lambda: 1021.0
+    coordinator.data["house_periods"] = {"day": {"key": gestern, "kwh": 1000.0}}
+    coordinator._midnight_period_rollover()
+    await hass.async_block_till_done()
+    heute = coordinator._period_keys()["day"]
+    assert coordinator.data["vehicle_discharge_periods"]["day"]["key"] == heute
+    assert coordinator.data["house_periods"]["day"]["key"] == heute
+    assert coordinator._vehicle_discharge_kwh_used_today() == 0.0
+    assert coordinator._house_kwh_used_today() == 0.0
+
+
+async def test_temperaturband_flackert_um_die_grenze_nicht(hass, coordinators):
+    coordinator, _ = await _make_coordinator(hass, coordinators, "tb_hyst")
+    coordinator._outside_temp = 9.8
+    assert coordinator.current_temp_bucket() == "0-10°C"
+    for temp in (10.3, 9.7, 10.4):
+        coordinator._outside_temp = temp
+        assert coordinator.current_temp_bucket() == "0-10°C"
+    coordinator._outside_temp = 11.6
+    assert coordinator.current_temp_bucket() == "10-20°C"
+    coordinator._outside_temp = 9.9
+    assert coordinator.current_temp_bucket() == "10-20°C"

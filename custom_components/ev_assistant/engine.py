@@ -2792,6 +2792,7 @@ def evcc_now_entschaerfen(
     halt: Optional[str] = None,
     sofort_horizont_max_h: float = 8.0,
     abfahrt_heute: bool = False,
+    p_now_kw: Optional[float] = None,
 ) -> dict:
     """Entschaerft ein "now" aus determine_evcc_mode(): nur wenn das Ziel
     sonst nicht erreichbar waere, bleibt es "now". Jeder andere Basismodus
@@ -2808,7 +2809,13 @@ def evcc_now_entschaerfen(
        (Bericht nach 0.99.61). Tagsueber (Abfahrt erst morgen) bleibt es beim
        kurzen Horizont: das Auto kann heute noch gebraucht werden.
     b) sonst (available < min_kwh): frist_druck = zu_langsam bis zur
-       Abfahrt; Tor offen = Sonne unten ODER unbekannt (None) ODER
+       Abfahrt; seit 0.99.66 gemessen an der Leistung von "now" (`p_now_kw`,
+       falls bekannt und groesser als die Mindestleistung), nicht mehr an der
+       Mindestleistung: erst sanft mit minpv laden und erst GEGEN ENDE auf
+       "now" gehen, wenn es sonst nicht mehr rechtzeitig reicht (spaetester
+       sicherer Start), statt sofort auf "now", sobald minpv allein es nicht
+       schaffen wuerde (Issue #65: 9,3 kWh Defizit, 5,9 h Zeit, 1,4 kW minpv ->
+       frueher sofort mit 11 kW geladen); Tor offen = Sonne unten ODER unbekannt (None) ODER
        frist_druck. Tor zu -> "pv" (wartet_auf_sonnenuntergang); Tor offen
        und frist_druck -> "now" (frist); sonst "minpv" (nachladen_sanft).
        Unbekannte Frist (None) gibt keinen Fristdruck.
@@ -2831,9 +2838,10 @@ def evcc_now_entschaerfen(
         if zu_langsam(sofort - available, horizont, p_min_kw, reserve_h):
             return {"modus": "now", "grund": "sofort_zu_langsam", "halt": "sofort_zu_langsam"}
         return {"modus": "minpv", "grund": "sofort_sanft", "halt": None}
+    p_frist_kw = p_now_kw if p_now_kw is not None and p_now_kw > p_min_kw else p_min_kw
     frist_druck = (
         stunden_bis_abfahrt is not None
-        and zu_langsam(min_kwh - available, stunden_bis_abfahrt, p_min_kw, reserve_h)
+        and zu_langsam(min_kwh - available, stunden_bis_abfahrt, p_frist_kw, reserve_h)
     )
     if sonne_unten is False and not frist_druck:
         return {"modus": "pv", "grund": "wartet_auf_sonnenuntergang", "halt": None}
@@ -3067,6 +3075,28 @@ def temperature_bucket(temp_c: Optional[float], boundaries: tuple = (0.0, 10.0, 
         if temp_c < b:
             return f"<{b:g}°C" if i == 0 else f"{sorted_b[i - 1]:g}-{b:g}°C"
     return f">{sorted_b[-1]:g}°C"
+
+
+def temperature_bucket_stable(
+    temp_c: Optional[float],
+    boundaries: tuple,
+    last_bucket: Optional[str],
+    margin: float = 1.0,
+) -> Optional[str]:
+    """temperature_bucket() mit Hysterese: liegt die Temperatur innerhalb von
+    `margin` °C um eine Bandgrenze, bleibt das zuletzt gewaehlte Band erhalten,
+    sofern es zu den beiden moeglichen Baendern an dieser Grenze gehoert. Ohne
+    das schaltet eine um die Grenze schwankende Aussentemperatur (z.B. nachts
+    um 10 °C) den Verbrauchsschnitt minuetlich zwischen zwei Baendern hin und
+    her (29,9 <-> 20,3 kWh/100 km), und damit Puffer, Bedarf und Modus."""
+    raw = temperature_bucket(temp_c, boundaries)
+    if temp_c is None or last_bucket is None or last_bucket == raw:
+        return raw
+    low = temperature_bucket(temp_c - margin, boundaries)
+    high = temperature_bucket(temp_c + margin, boundaries)
+    if low != high and last_bucket in (low, high):
+        return last_bucket
+    return raw
 
 
 def temp_bucket_contribution(

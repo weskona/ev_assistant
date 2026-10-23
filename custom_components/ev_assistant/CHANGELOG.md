@@ -2,6 +2,22 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.66] - 2026-10-23
+
+### Changed
+
+- **The soft recharge first charges with `minpv` and only switches to `now` towards the end.** Until now the deadline check used the *minimum* power (1.38 kW with one phase, `minpv` always charges single-phase) as its yardstick and switched to `now` as soon as `minpv` alone could not reach the need by the deadline, e.g. 9.3 kWh missing and 5.9 hours left meant full power (11 kW) right away (Issue #65). Now the yardstick is the power of `now` (maximum current x phases of the charge point, reduced by 15 % for ramp-up and phase switching): `minpv` keeps charging, the shortfall shrinks, and only when even `now` would barely make it before the deadline (plus the 0.5 h reserve) does the control switch to `now` (`frist`). The `now` that follows is then short. Example: 10 kWh missing, 7 h left, 11 kW wallbox: `minpv` until about 04:20, then `now` for about an hour.
+- Unchanged: the "sofort" part (today's need within 2 h, or up to 8 h until a departure that is still ahead today) keeps its yardstick; the hold time (`now` because of `frist` stays until the need is reached); without a known maximum power of the charge point (no `effectiveMaxCurrent` from evcc) everything works as before.
+
+### Fixed
+
+- **The need jumped at 00:05 every night (and caused two mode changes in a few minutes).** The "used so far today" baselines of the house and of the vehicle (live SoC) were only rolled over at 00:05, the other period baselines already at 00:00:03. Until 00:05 the consumption of yesterday counted as "used today": the remaining need of the day looked too low and the PV credit too high (e.g. need 20.2 kWh at 00:04 and 27.2 kWh at 00:05, house remaining 5.1 kWh instead of 26.2 kWh), the control said `nicht_noetig`, and at 00:05 it switched to `sofort_sanft`/`frist` (Issue #65). Both rollovers now also run at 00:00:03 (they need no statistics; the run at 00:05 changes nothing), and a baseline that still belongs to yesterday counts as "nothing used yet today".
+- **The consumption average flapped around a temperature band limit.** With an outside temperature hovering around 10 °C at night the average consumption switched between two bands (29.9 and 20.3 kWh/100 km), and with it the usage buffer (8.96 and 6.08 kWh), the need (by about 2.9 kWh) and the mode, minute by minute. The temperature band now has a hysteresis of 1 °C (`TEMP_BUCKET_HYSTERESIS_C`): near a limit the band chosen last stays.
+
+### Honest limits
+
+- The late `now` relies on the estimated power of `now`. If the car or the charge point charges slower than maximum current x phases (a single-phase onboard charger, a house limit), `now` starts too late and the need may not be reached by the deadline. The 15 % reduction and the 0.5 h reserve are a margin, not a guarantee; the need (`min`) itself already contains the usage buffer.
+
 ## [0.99.65] - 2026-10-22
 
 ### Changed
