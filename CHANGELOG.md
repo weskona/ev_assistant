@@ -2,6 +2,18 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.67] - 2026-10-24
+
+### Changed
+
+- **The Glow panel is now the main panel.** The sidebar entry of the Glow card is now called **"EV Assistant"** (icon `mdi:ev-station`) and, as Home Assistant sorts the panels by title, stands first. The classic panel is called **"EV Assistant (klassisch)"** (icon `mdi:car-electric-outline`) and shows a note that it will be removed in a later release. The URL paths do not change (`/ev-assistant` stays the classic panel, `/ev-assistant-glow` the Glow panel), so bookmarks and dashboard links keep working. Nothing is removed yet; the classic panel is planned to go away in a later release (weskona/ev_assistant#12, phase 5) once the Glow panel has proven itself as the default.
+- The Glow panel covers what the classic panel does: charges, trips, charging cards, maintenance, leasing, vacation, backup, event log, trip log import/export, and the interface is available in English. Only the layout options of the classic panel (`set_panel_layout`, `set_hidden_tabs`) have no counterpart.
+
+### Honest limits
+
+- The sidebar order is the default order by title; anyone who rearranged the sidebar keeps their own order. A user who had pinned the old entry sees the new name there.
+- The services `set_panel_layout` and `set_hidden_tabs` only affect the classic panel and will be removed together with it.
+
 ## [0.99.66] - 2026-10-23
 
 ### Changed

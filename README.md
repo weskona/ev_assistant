@@ -42,7 +42,7 @@ A few known limitations, stated plainly:
 - **Automatic evcc mode/SoC control** — optionally steers evcc's charge mode from your own usage profile, including a real-time PV-surplus override, an economic cap on grid top-ups, and home-battery priority.
 - **Trip import** — bulk-import historical trips from another trip-log app/export.
 - **Full sidebar panel** — a built-in, customizable EV dashboard; no Lovelace card setup needed.
-- **Glow panel (preview)** — a second sidebar entry "EV Assistant Glow" with the [Glow card](https://github.com/deepblue120/glow-dashboard), kept in sync from its own repository. The classic panel stays the default for now; the Glow card still lacks a few classic features (e.g. hidden tabs, panel layout, outlier details of the plug profile) and loads its font from Google Fonts.
+- **Glow panel (main panel)** — the sidebar entry "EV Assistant" shows the [Glow card](https://github.com/deepblue120/glow-dashboard), kept in sync from its own repository. The interface is available in English and German and the font is bundled with the card (no request to Google Fonts). The classic panel is still available as "EV Assistant (klassisch)" and will be removed in a later release; the Glow card still lacks a few classic features (e.g. hidden tabs, panel layout, outlier details of the plug profile).
 - **Multi-vehicle support** — one integration entry per vehicle, with a panel tab switcher.
 - **Diagnostics & repair issues** — a downloadable redacted state snapshot, plus Repair issues when a source entity goes stale.
 - **Leasing mileage budget, charging cards, and vehicle maintenance tracking** — all fully optional, panel-managed.

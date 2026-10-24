@@ -78,13 +78,16 @@ _LOGGER = logging.getLogger(__name__)
 
 _PANEL_URL_PATH = "ev-assistant"
 _PANEL_STATIC_PATH = "/ev_assistant_static"
-_PANEL_TITLE = "EV Assistant"
-_PANEL_ICON = "mdi:ev-station"
-# Zweites Sidebar-Panel mit der Glow-Karte (Pre-Release-Branch glow-panel,
-# siehe weskona/ev_assistant#12). Das klassische Panel bleibt daneben bestehen.
+# Seit 0.99.67 ist die Glow-Karte das Haupt-Panel ("EV Assistant", erster Eintrag der
+# Sidebar: HA sortiert Panels alphabetisch nach Titel) und das klassische Panel heisst
+# "EV Assistant (klassisch)" und entfaellt in einem spaeteren Release (siehe
+# weskona/ev_assistant#12, Phase 5). Die URL-Pfade bleiben unveraendert, damit
+# Lesezeichen und Dashboard-Links weiter funktionieren.
+_PANEL_TITLE = "EV Assistant (klassisch)"
+_PANEL_ICON = "mdi:car-electric-outline"
 _GLOW_PANEL_URL_PATH = "ev-assistant-glow"
-_GLOW_PANEL_TITLE = "EV Assistant Glow"
-_GLOW_PANEL_ICON = "mdi:flare"
+_GLOW_PANEL_TITLE = "EV Assistant"
+_GLOW_PANEL_ICON = "mdi:ev-station"
 # Version der Panel-Konfiguration/WebSocket-Schnittstelle, die Frontends (Glow-Karte)
 # pruefen. Bei inkompatiblen Aenderungen an "entities"/"vehicles" erhoehen.
 _PANEL_API_VERSION = 1

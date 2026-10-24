@@ -72,4 +72,9 @@ async def test_beide_panels_werden_registriert_mit_api_version(hass):
     assert glow["module_url"].startswith("/ev_assistant_static/ev-assistant-glow-panel.js?v=")
     assert glow["config"]["api_version"] == 1
     assert registriert["ev-assistant"]["config"]["api_version"] == 1
+    # seit 0.99.67: Glow ist das Haupt-Panel, das klassische heisst "(klassisch)"; die URL-Pfade bleiben
+    assert glow["sidebar_title"] == "EV Assistant" and glow["sidebar_icon"] == "mdi:ev-station"
+    assert registriert["ev-assistant"]["sidebar_title"] == "EV Assistant (klassisch)"
+    assert registriert["ev-assistant"]["sidebar_title"] > glow["sidebar_title"]  # Glow steht alphabetisch zuerst
+    assert registriert["ev-assistant"]["sidebar_icon"] != glow["sidebar_icon"]
     assert glow["config"]["config_entry_id"] == registriert["ev-assistant"]["config"]["config_entry_id"]

@@ -347,6 +347,11 @@ class EVAssistantPanel extends HTMLElement {
     this.shadowRoot.appendChild(this._buildStyles());
     const app = document.createElement("div");
     app.className = "app";
+    // Hinweis seit 0.99.67: Glow ist das Haupt-Panel, dieses klassische Panel entfaellt in einem spaeteren Release
+    const note = document.createElement("div");
+    note.className = "deprecation";
+    note.textContent = "Dieses klassische Panel entfällt in einem späteren Release. Bitte den Eintrag „EV Assistant“ in der Seitenleiste nutzen.";
+    app.appendChild(note);
     // Fahrzeugauswahl VOR der Tab-Leiste: erst das Fahrzeug waehlen, dann
     // dessen Tabs -- eigene Zeile statt Teil der App-Bar, sonst konkurriert
     // der Umschalter mit der Tab-Leiste um den Platz und schiebt hintere
@@ -6412,6 +6417,10 @@ class EVAssistantPanel extends HTMLElement {
       .app {
         display: flex; flex-direction: column; height: 100%;
         container-type: inline-size; container-name: panel;
+      }
+      .deprecation {
+        margin: 8px 12px 0; padding: 8px 12px; border-radius: 8px; font-size: 0.85rem;
+        background: rgba(245, 158, 11, 0.16); color: var(--ink); border: 1px solid rgba(245, 158, 11, 0.5);
       }
 
       /* Appbar */
