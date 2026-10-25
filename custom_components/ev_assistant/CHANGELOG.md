@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.68] - 2026-10-25
+
+### Changed
+
+- **Glow card updated from v3.5.30 to v3.5.32** (automatic sync from [deepblue120/glow-dashboard](https://github.com/deepblue120/glow-dashboard), [changes](https://github.com/deepblue120/glow-dashboard/compare/v3.5.30...v3.5.32)).
+
 ## [0.99.67] - 2026-10-24
 
 ### Changed

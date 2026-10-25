@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=56  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=58  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.5.30";
+const VERSION = "3.5.32";
 // Version der Datenschnittstelle zu ev_assistant (Panel-Konfiguration, Websocket-Befehle, evcc_live),
 // die diese Karte erwartet. Meldet ev_assistant in der Panel-Konfiguration eine andere "api_version",
 // warnt die Karte (Konsole + Hinweis). Ohne "api_version" (ältere ev_assistant-Versionen) keine Warnung.
@@ -504,6 +504,7 @@ class MgCarDashboard extends HTMLElement {
     this._charges = out;
     this._renderCharges();
     if (this._subPage() === "cost") this._render_cost();
+    if (this._subPage() === "prof") { this._render_ana(); if (this._dlg === "ana") this._renderAnaDlg(); }
   }
 
   _openCharges() {
@@ -1663,6 +1664,9 @@ class MgCarDashboard extends HTMLElement {
   _roundKm(km) { if (typeof km !== "number" || isNaN(km)) return null; km = Math.max(0, km); return km < 100 ? Math.round(km / 5) * 5 : Math.round(km / 10) * 10; }
 
   _render_prof() {
+    // die Analyse rechnet mit allen Ladungen (wie „Laden & Kosten“)
+    if (!this._charges || Date.now() - this._charges.t > 5 * 60000) this._loadCharges();
+    if (!this._evaTrips) this._loadTrips();
     this._render_week(); this._render_morrow(); this._render_ana(); this._render_misch();
   }
 
@@ -1749,9 +1753,44 @@ class MgCarDashboard extends HTMLElement {
       ${bufTile}${pvTile}</div>${reach}`;
   }
 
+  /* Daten der Analyse. Ladeorte, Kosten, Autarkie, AC/DC und Anbieter aus allen Ladungen (evcc-Ladelogbuch + Fremdladungen
+     aus ev_assistant) – dieselbe Grundlage wie „Laden & Kosten“. Die Summen in ev_assistants „Ladeorte“-Sensor zählen erst ab
+     der Einrichtung und den Heim-Solaranteil nur aus selbst mitgeschriebenen Ladungen, sie weichen deshalb ab. Solange die
+     Ladungen nicht geladen sind, gelten die Werte aus ev_assistant. */
   _anaData() {
-    const L = this._ea("charging_location_breakdown")?.attributes || {}, R = this._ea("range_estimate")?.attributes || {};
-    return { L, R, heim: L.heim || {}, fremd: L.fremd || {}, acdc: L.ac_dc || {}, anb: Object.entries(L.anbieter || {}) };
+    const L0 = this._ea("charging_location_breakdown")?.attributes || {}, R = this._ea("range_estimate")?.attributes || {};
+    const list = this._charges?.list || [];
+    if (!list.length) return { L: L0, R, heim: L0.heim || {}, fremd: L0.fremd || {}, acdc: L0.ac_dc || {}, anb: Object.entries(L0.anbieter || {}), src: "eva" };
+    const fi = parseFloat(this._live().tariff_feedin), feedin = isNaN(fi) ? null : fi;
+    const acc = () => ({ kwh: 0, kosten: 0, pk: 0, n: 0 });
+    const H = { ...acc(), pv: 0, pvBase: 0 }, F = acc(), AC = acc(), DC = acc(), anb = {};
+    const add = (o, x) => { o.n++; o.kwh += x.kwh || 0; if (x.cost != null && x.kwh > 0) { o.kosten += x.cost; o.pk += x.kwh; } };
+    for (const x of list) {
+      if (x.type === "home") {
+        add(H, x);
+        if (x.pv != null && x.kwh > 0) { H.pv += x.kwh * Math.max(0, Math.min(100, x.pv)) / 100; H.pvBase += x.kwh; }
+      } else {
+        add(F, x); add(this._cpSplit(x, feedin).dc ? DC : AC, x);
+        const n = String(x.raw?.anbieter || "").trim();
+        if (n) add((anb[n] ||= acc()), x);
+      }
+    }
+    const tot = H.kwh + F.kwh, r = (v, d = 4) => Math.round(v * 10 ** d) / 10 ** d;   // Prozente erst bei der Anzeige runden
+    const loc = (o) => (o.n ? { kwh: r(o.kwh, 2), kosten: o.pk > 0 ? r(o.kosten, 2) : undefined, preis_je_kwh: o.pk > 0 ? r(o.kosten / o.pk, 4) : undefined,
+      kwh_anteil_pct: tot > 0 && o.kwh > 0 ? r((o.kwh / tot) * 100) : undefined, anzahl: o.n, kwh_bepreist: r(o.pk, 2) } : {});
+    const heim = { ...loc(H), solar_pct: H.pvBase > 0 ? r((H.pv / H.pvBase) * 100) : undefined, pv_kwh: r(H.pv, 2) };
+    // €/100 km über den Zeitraum des Fahrtenbuchs (Ladungen + Ladekarten-Gebühren / gefahrene km), erst ab 30 Tagen Fahrtenbuch –
+    // vorher passen Ladungen und Fahrten zeitlich nicht zusammen, dann gilt der Wert aus ev_assistant
+    const trips = this._evaTrips?.list || [], t0 = Math.min(...trips.map((t) => new Date(t.start).getTime()).filter((x) => x > 0));
+    const S = isFinite(t0) && Date.now() - t0 > 30 * 86400000 ? this._cpSum(t0, Date.now() + 1) : null;
+    const L = { ...L0, gesamt_autarkie_pct: tot > 0 ? r((H.pv / tot) * 100) : undefined, eur_je_100km: S && S.km > 1 ? r((S.total / S.km) * 100, 2) : L0.eur_je_100km };
+    return { L, R, heim, fremd: loc(F), acdc: { ...(AC.n ? { ac: loc(AC) } : {}), ...(DC.n ? { dc: loc(DC) } : {}) },
+      anb: Object.entries(anb).map(([k, o]) => [k, loc(o)]), src: "log", since: Math.min(...list.map((x) => x.ts)) };
+  }
+  // Hinweis auf die Datengrundlage im Detailfenster
+  _anaSrc(A) {
+    return A.src === "log" ? T("Grundlage: evcc-Ladelogbuch und Fremdladungen aus ev_assistant seit {d} – wie „Laden & Kosten“ (Zeitraum Gesamt).", { d: new Date(A.since).toLocaleDateString(LOC) })
+      : T("Werte aus ev_assistant (seit Einrichtung). Die Ladungen werden noch geladen.");
   }
 
   _render_ana() {
@@ -1769,7 +1808,7 @@ class MgCarDashboard extends HTMLElement {
       tile("aut", T("Autarkie gesamt"), num(A.L.gesamt_autarkie_pct, 0), "%", `${T("Heim-Solaranteil")} ${num(A.heim.solar_pct, 0)} %`),
       tile("loc", T("Ladeorte"), num(A.heim.kwh_anteil_pct, 0), T("% Heim"), `${num(A.heim.kwh, 0)} / ${num(A.fremd.kwh, 0)} kWh`,
         `<div class="pbar two"><i style="width:${A.heim.kwh_anteil_pct || 0}%"></i><i class="o" style="width:${A.fremd.kwh_anteil_pct || 0}%"></i></div>`),
-      A.acdc.dc || A.acdc.ac ? tile("acdc", T("Schnellladen"), num(A.acdc.dc?.anzahl, 0), "× DC", `${num(A.acdc.ac?.anzahl, 0)} × AC · DC Ø ${num(A.acdc.dc?.preis_je_kwh, 2)} €/kWh`) : "",
+      A.acdc.dc || A.acdc.ac ? tile("acdc", T("Schnellladen"), num(A.acdc.dc?.anzahl ?? 0, 0), "× DC", `${num(A.acdc.ac?.anzahl ?? 0, 0)} × AC · DC Ø ${num(A.acdc.dc?.preis_je_kwh, 2)} €/kWh`) : "",
       anb.length ? tile("anb", T("Top-Anbieter"), esc(anb[0][0]), "", `${anb[0][1].kosten != null ? de(anb[0][1].kosten, 0) + " €" : ""}${anb[0][1].kwh != null ? ` · ${de(anb[0][1].kwh, 0)} kWh` : ""}`) : "",
     ].filter(Boolean);
     el.innerHTML = this._hd(T("Analyse"), T("Kachel antippen für Details")) + `<div class="ptiles">${tiles.join("")}</div>`;
@@ -1823,19 +1862,21 @@ class MgCarDashboard extends HTMLElement {
       body = `<div class="pcols">${big(T("Autarkiegrad gesamt"), num(A.L.gesamt_autarkie_pct, 0), T("PV-Anteil an allen Ladungen (zuhause und unterwegs)"))}${big(T("Heim-Solaranteil"), num(h.solar_pct, 0), T("PV-Anteil an den Ladungen zuhause"))}</div>`;
       if (pvK != null) body += `<div class="kbar">${pvK > 0 ? `<i class="kpv" style="width:${sp}%"></i>` : ""}<i class="kgr" style="width:${100 - sp}%"></i></div>
         <div class="klg" style="margin:-4px 0 14px"><span><i class="kpv"></i>${T("Heim PV")} ${de(pvK, 0)} kWh</span><span><i class="kgr"></i>${T("Heim Netz")} ${de(netK, 0)} kWh</span></div>`;
-      const cost = Number(h.kosten);
-      if (hk > 0 && gr > 0 && !isNaN(cost)) {
-        const grid = hk * gr, saved = grid - cost, mx = Math.max(0.01, grid, cost);
-        body += `<div class="ksave ${saved < 0 ? "neg" : ""}"><span>${saved >= 0 ? T("Ersparnis Heimladen") : T("Mehrkosten Heimladen")}</span><div><b>${de(Math.abs(saved), 2)} €</b><small> · ${T("ggü. reinem Netzstrom zuhause")} · ${de((Math.abs(saved) / hk) * 100, 1)} ct/kWh</small></div></div>
+      // nur Ladungen mit bekannten Kosten vergleichen
+      const cost = Number(h.kosten), pk = h.kwh_bepreist != null ? Number(h.kwh_bepreist) : hk;
+      if (pk > 0 && gr > 0 && !isNaN(cost)) {
+        const grid = pk * gr, saved = grid - cost, mx = Math.max(0.01, grid, cost);
+        body += `<div class="ksave ${saved < 0 ? "neg" : ""}"><span>${saved >= 0 ? T("Ersparnis Heimladen") : T("Mehrkosten Heimladen")}</span><div><b>${de(Math.abs(saved), 2)} €</b><small> · ${T("ggü. reinem Netzstrom zuhause")} · ${de((Math.abs(saved) / pk) * 100, 1)} ct/kWh</small></div></div>
           <div class="kcb"><p>${T("Tatsächlich (evcc)")}<b>${de(cost, 2)} €</b></p><div class="kbar2"><i style="width:${(cost / mx) * 100}%;background:var(--green)"></i></div></div>
-          <div class="kcb"><p>${T("Nur Netzstrom")} <small class="dim">&nbsp;${de(hk, 0)} kWh × ${de(gr * 100, 1)} ct</small><b>${de(grid, 2)} €</b></p><div class="kbar2"><i style="width:${(grid / mx) * 100}%;background:#94a3b8"></i></div></div>
-          <div class="pnote">${T("Seit Einrichtung. Tatsächliche Heimkosten aus ev_assistant (evcc-Realkosten, PV mit der Einspeisevergütung bewertet), verglichen mit allen Heim-kWh zum aktuellen Netzpreis aus evcc.")}</div>`;
+          <div class="kcb"><p>${T("Nur Netzstrom")} <small class="dim">&nbsp;${de(pk, 0)} kWh × ${de(gr * 100, 1)} ct</small><b>${de(grid, 2)} €</b></p><div class="kbar2"><i style="width:${(grid / mx) * 100}%;background:#94a3b8"></i></div></div>
+          <div class="pnote">${T("Tatsächliche Heimkosten laut evcc (PV mit der Einspeisevergütung bewertet), verglichen mit allen Heim-kWh zum aktuellen Netzpreis aus evcc.")}</div>`;
       } else body += `<div class="pnote warn">${T("Für die Ersparnis fehlen Heimladungen mit Kosten oder der Netzpreis aus evcc.")}</div>`;
+      body += `<div class="pnote">${this._anaSrc(A)}</div>`;
     } else if (k === "anb") {
       title = T("Verteilung nach Anbieter"); sub = T("Nur tatsächliche Ladungskosten, ohne Grundgebühren");
       const l = [...A.anb].sort((a, b) => (b[1].kwh ?? b[1].kosten ?? 0) - (a[1].kwh ?? a[1].kosten ?? 0)), byK = l.some(([, v]) => typeof v.kwh === "number");
       const mx = Math.max(0.1, ...l.map(([, v]) => (byK ? v.kwh : v.kosten) || 0));
-      body = `<div class="panb">${l.map(([n, v]) => `<div><p><b>${esc(n)}</b><span>${byK ? `${num(v.kwh, 1)} kWh` : `${num(v.kosten, 2)} €`}${typeof v.preis_je_kwh === "number" ? ` · Ø ${de(v.preis_je_kwh, 3)} €/kWh` : ""}</span></p><i><em style="width:${(((byK ? v.kwh : v.kosten) || 0) / mx) * 100}%"></em></i></div>`).join("")}</div>`;
+      body = `<div class="pnote" style="margin-bottom:10px">${this._anaSrc(A)}</div><div class="panb">${l.map(([n, v]) => `<div><p><b>${esc(n)}</b><span>${byK ? `${num(v.kwh, 1)} kWh` : `${num(v.kosten, 2)} €`}${typeof v.preis_je_kwh === "number" ? ` · Ø ${de(v.preis_je_kwh, 3)} €/kWh` : ""}</span></p><i><em style="width:${(((byK ? v.kwh : v.kosten) || 0) / mx) * 100}%"></em></i></div>`).join("")}</div>`;
     } else {
       title = T("Ladeorte"); sub = T("Heim und Fremd über alle Ladungen");
       const h = A.heim, f = A.fremd, ac = A.acdc.ac, dc = A.acdc.dc;
@@ -1843,7 +1884,7 @@ class MgCarDashboard extends HTMLElement {
         ${col(`${T("Fremd")} · ${num(f.kwh_anteil_pct, 0)} %`, 0, [[T("Energie"), `${num(f.kwh, 1)} kWh`], [T("Kosten"), `${num(f.kosten, 2)} €`], [T("Ø Preis"), `${num(f.preis_je_kwh, 3)} €/kWh`]])}</div>
         <div class="pcols">${col(T("Gesamt"), 0, [["€/100 km", num(A.L.eur_je_100km, 2)], [T("Autarkie"), `${num(A.L.gesamt_autarkie_pct, 1)} %`]])}
         ${ac || dc ? col(T("Fremd nach AC / DC"), 0, [ac && ["AC", `${num(ac.anzahl, 0)} × · ${num(ac.kwh, 0)} kWh · Ø ${num(ac.preis_je_kwh, 2)} €`], dc && ["DC", `${num(dc.anzahl, 0)} × · ${num(dc.kwh, 0)} kWh · Ø ${num(dc.preis_je_kwh, 2)} €`]]) : ""}</div>
-        <div class="pnote">${T("Solaranteil nur für Heimladungen, die evcc gesteuert hat. Fremdladung zählt beim Autarkiegrad als 0 % Solar. AC/DC geschätzt aus der Ø Ladeleistung je Ladung.")}</div>`;
+        <div class="pnote">${T("Solaranteil nur für Heimladungen, die evcc gesteuert hat. Fremdladung zählt beim Autarkiegrad als 0 % Solar. AC/DC geschätzt aus der Ø Ladeleistung je Ladung.")} ${this._anaSrc(A)}</div>`;
     }
     d.innerHTML = `<div class="dpan pdlg"><div class="dhd"><span class="dico">${icon("mdi:chart-box-outline")}</span>
       <span class="rtx"><span class="rname">${title}</span><span class="rsub">${sub}</span></span>
@@ -4052,7 +4093,7 @@ const I18N = {
     "Lademanagement": "Charge management",
     "Automatik": "Automatic",
     "Manuell": "Manual",
-    "Lademodus": "Charging mode",
+    "Lademodus": "Mode",
     "evcc-Modus": "evcc mode",
     "Empfehlung": "Recommendation",
     "Laden vor PV sinnvoll": "Charge before PV",
@@ -4521,7 +4562,9 @@ const I18N = {
     "ggü. reinem Netzstrom zuhause": "vs. grid power only at home",
     "Tatsächlich (evcc)": "Actual (evcc)",
     "Nur Netzstrom": "Grid power only",
-    "Seit Einrichtung. Tatsächliche Heimkosten aus ev_assistant (evcc-Realkosten, PV mit der Einspeisevergütung bewertet), verglichen mit allen Heim-kWh zum aktuellen Netzpreis aus evcc.": "Since setup. Actual home costs from ev_assistant (real evcc costs, PV valued at the feed-in tariff), compared with all home kWh at the current grid price from evcc.",
+    "Tatsächliche Heimkosten laut evcc (PV mit der Einspeisevergütung bewertet), verglichen mit allen Heim-kWh zum aktuellen Netzpreis aus evcc.": "Actual home costs according to evcc (PV valued at the feed-in tariff), compared with all home kWh at the current grid price from evcc.",
+    "Grundlage: evcc-Ladelogbuch und Fremdladungen aus ev_assistant seit {d} – wie „Laden & Kosten“ (Zeitraum Gesamt).": "Based on the evcc charging log and public charges from ev_assistant since {d} – same as “Charging & costs” (period Total).",
+    "Werte aus ev_assistant (seit Einrichtung). Die Ladungen werden noch geladen.": "Values from ev_assistant (since setup). The charges are still loading.",
     "Für die Ersparnis fehlen Heimladungen mit Kosten oder der Netzpreis aus evcc.": "The savings need home charges with costs and the grid price from evcc.",
   },
 };
