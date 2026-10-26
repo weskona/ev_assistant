@@ -29,16 +29,19 @@ Das Glow-Panel mit Demodaten (Screenshots aus dem Projekt der [Glow-Karte](https
   <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/profil-analyse.png" alt="Profil & Analyse" width="49%">
   <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/laden-kosten.png" alt="Laden & Kosten" width="49%">
   <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/einstellungen.png" alt="Einstellungen und Wartung" width="49%">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/handy.png" alt="Handy-Ansicht" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/menu-lademodus.png" alt="Lademodus-Menü" width="49%">
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/menu-lademodus.png" alt="Lademodus-Menü" width="32%">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-ladungen.png" alt="Dialog Alle Ladungen" width="32%">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-fahrten.png" alt="Dialog Alle Fahrten" width="32%">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-autarkie.png" alt="Dialog Autarkie" width="32%">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-bestaetigen.png" alt="Fremdladung bestätigen" width="32%">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/handy-kosten.png" alt="Kosten auf dem Handy" width="32%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-ladungen.png" alt="Dialog Alle Ladungen" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-fahrten.png" alt="Dialog Alle Fahrten" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-autarkie.png" alt="Dialog Autarkie" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-bestaetigen.png" alt="Fremdladung bestätigen" width="49%">
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/handy.png" alt="Handy-Ansicht" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/handy-kosten.png" alt="Kosten auf dem Handy" width="49%">
 </p>
 
 _Das Panel gibt es auf Deutsch und Englisch._
