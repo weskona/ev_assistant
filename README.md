@@ -29,16 +29,19 @@ The Glow panel with demo data (screenshots from the [Glow card](https://github.c
   <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/profil-analyse.png" alt="Profile & analysis" width="49%">
   <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/laden-kosten.png" alt="Charging & costs" width="49%">
   <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/einstellungen.png" alt="Settings and maintenance" width="49%">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/handy.png" alt="Phone layout" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/menu-lademodus.png" alt="Charge mode menu" width="49%">
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/menu-lademodus.png" alt="Charge mode menu" width="32%">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-ladungen.png" alt="All charges dialog" width="32%">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-fahrten.png" alt="All trips dialog" width="32%">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-autarkie.png" alt="Self-sufficiency dialog" width="32%">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-bestaetigen.png" alt="Confirm an external charge" width="32%">
-  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/handy-kosten.png" alt="Costs on the phone" width="32%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-ladungen.png" alt="All charges dialog" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-fahrten.png" alt="All trips dialog" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-autarkie.png" alt="Self-sufficiency dialog" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/dlg-bestaetigen.png" alt="Confirm an external charge" width="49%">
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/handy.png" alt="Phone layout" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/handy-kosten.png" alt="Costs on the phone" width="49%">
 </p>
 
 _Some of the screenshots show the German interface; the panel is available in English and German._
