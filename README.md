@@ -51,6 +51,25 @@ See the [Wiki](https://github.com/weskona/ev_assistant/wiki) for the full breakd
 
 ---
 
+## Screenshots
+
+The Glow panel with demo data (screenshots from the [Glow card](https://github.com/deepblue120/glow-dashboard) project):
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/overview-en.png" alt="Overview tab of the Glow panel" width="100%">
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/profil-analyse.png" alt="Profile & analysis" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/laden-kosten.png" alt="Charging & costs" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/einstellungen.png" alt="Settings and maintenance" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/handy.png" alt="Phone layout" width="49%">
+</p>
+
+_Some of the screenshots show the German interface; the panel is available in English and German._
+
+---
+
 ## Installation
 
 ### Via HACS (recommended)

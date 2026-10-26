@@ -51,6 +51,25 @@ Die vollständige Aufschlüsselung jedes Sensors, Services und Panel-Tabs steht 
 
 ---
 
+## Screenshots
+
+Das Glow-Panel mit Demodaten (Screenshots aus dem Projekt der [Glow-Karte](https://github.com/deepblue120/glow-dashboard)):
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/uebersicht.png" alt="Übersicht des Glow-Panels" width="100%">
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/profil-analyse.png" alt="Profil & Analyse" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/laden-kosten.png" alt="Laden & Kosten" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/einstellungen.png" alt="Einstellungen und Wartung" width="49%">
+  <img src="https://raw.githubusercontent.com/weskona/ev_assistant/main/docs/screenshots/handy.png" alt="Handy-Ansicht" width="49%">
+</p>
+
+_Das Panel gibt es auf Deutsch und Englisch._
+
+---
+
 ## Installation
 
 ### Über HACS (empfohlen)
