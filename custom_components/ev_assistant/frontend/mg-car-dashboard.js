@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=58  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=59  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.5.32";
+const VERSION = "3.5.33";
 // Version der Datenschnittstelle zu ev_assistant (Panel-Konfiguration, Websocket-Befehle, evcc_live),
 // die diese Karte erwartet. Meldet ev_assistant in der Panel-Konfiguration eine andere "api_version",
 // warnt die Karte (Konsole + Hinweis). Ohne "api_version" (ältere ev_assistant-Versionen) keine Warnung.
@@ -1787,6 +1787,21 @@ class MgCarDashboard extends HTMLElement {
     return { L, R, heim, fremd: loc(F), acdc: { ...(AC.n ? { ac: loc(AC) } : {}), ...(DC.n ? { dc: loc(DC) } : {}) },
       anb: Object.entries(anb).map(([k, o]) => [k, loc(o)]), src: "log", since: Math.min(...list.map((x) => x.ts)) };
   }
+  /* Ladewirkungsgrad (ev_assistant „Ladewirkungsgrad (gemessen)“): gemessen aus Heimladungen, bis genug Ladungen
+     ausgewertet sind gilt der Startwert aus den Optionen (Attribut manueller_wert_prozent) */
+  _effData() {
+    const s = this._ea("measured_efficiency"); if (!s) return null;
+    const a = s.attributes || {}, v = parseFloat(s.state), measured = !isNaN(v), man = Number(a.manueller_wert_prozent);
+    const val = measured ? v : man;
+    if (isNaN(val)) return null;
+    return { val, measured, man: isNaN(man) ? null : man, n: Number(a.anzahl_sessions) || 0, need: Number(a.benoetigte_sessions) || null,
+      list: (Array.isArray(a.einzelwerte_prozent) ? a.einzelwerte_prozent : []).filter((x) => typeof x === "number") };
+  }
+  _effTile(tile) {
+    const D = this._effData(); if (!D) return "";
+    return tile("eff", T("Ladewirkungsgrad"), de(D.val, 1), "%", D.measured ? T("gemessen · {n} Ladungen", { n: D.n })
+      : T("Startwert · {a} von {b} Ladungen gemessen", { a: D.n, b: D.need ?? "–" }));
+  }
   // Hinweis auf die Datengrundlage im Detailfenster
   _anaSrc(A) {
     return A.src === "log" ? T("Grundlage: evcc-Ladelogbuch und Fremdladungen aus ev_assistant seit {d} – wie „Laden & Kosten“ (Zeitraum Gesamt).", { d: new Date(A.since).toLocaleDateString(LOC) })
@@ -1804,6 +1819,7 @@ class MgCarDashboard extends HTMLElement {
       tile("bat", T("Batterie"), isNaN(cap) ? "–" : de(cap, 1), "kWh", isNaN(cyc) ? T("geschätzte Kapazität") : T("{n} Vollzyklen", { n: de(cyc, 0) })),
       tile("temp", typeof tNow === "number" ? T("Verbrauch bei {t} °C", { t: de(tNow, 0) }) : T("Verbrauch"), bv != null ? de(bv, 1) : "–", "kWh/100km",
         bv != null && typeof warm === "number" && band !== ">20°C" && warm > 0 ? T("{v} % ggü. > 20 °C", { v: `${bv >= warm ? "+" : ""}${Math.round((bv / warm - 1) * 100)}` }) : band ? `${T("Band")} ${esc(band)}` : T("noch keine Daten")),
+      this._effTile(tile),
       tile("cost", T("Kosten"), num(A.L.eur_je_100km, 2), "€/100km", `${T("Heim")} ${num(A.heim.preis_je_kwh, 2)} · ${T("Fremd")} ${num(A.fremd.preis_je_kwh, 2)} €/kWh`),
       tile("aut", T("Autarkie gesamt"), num(A.L.gesamt_autarkie_pct, 0), "%", `${T("Heim-Solaranteil")} ${num(A.heim.solar_pct, 0)} %`),
       tile("loc", T("Ladeorte"), num(A.heim.kwh_anteil_pct, 0), T("% Heim"), `${num(A.heim.kwh, 0)} / ${num(A.fremd.kwh, 0)} kWh`,
@@ -1853,6 +1869,17 @@ class MgCarDashboard extends HTMLElement {
       title = T("Batterie"); sub = T("Geschätzte Kapazität und Vollzyklen");
       body = `<div class="pcols">${col(T("Kapazität"), 0, [[T("geschätzt"), `${num(parseFloat(this._ea("battery_capacity")?.state), 1)} kWh`], [T("Vollzyklen"), num(parseFloat(this._ea("equivalent_full_cycles")?.state), 1)]])}</div>
         <div class="pnote">${T("Rollierender Schnitt aus Fremd- und Heimladungen mit großem SoC-Hub. Der Wert liegt meist über der echten Kapazität (Ladeverluste) – entscheidend ist der Trend über Monate. Vollzyklen aus Fahrtenbuch und Ladungen (0→100→0 = 1 Zyklus).")}</div>`;
+    } else if (k === "eff") {
+      title = T("Ladewirkungsgrad"); sub = T("Anteil der Energie aus der Wallbox, der im Akku ankommt");
+      const D = this._effData();
+      if (!D) body = `<div class="empty">${T("ev_assistant liefert keinen Ladewirkungsgrad.")}</div>`;
+      else {
+        const L = D.list.slice(-24), lo = L.length ? Math.max(0, Math.floor((Math.min(...L) - 8) / 5) * 5) : 0;
+        body = `<div class="pcols"><div class="pcol paut"><h4>${D.measured ? T("Gemessen") : T("Startwert")}</h4><b>${de(D.val, 1)}<small>%</small></b><p>${T("≈ {v} % Ladeverlust", { v: de(100 - D.val, 1) })}</p></div>
+          ${col(T("Kalibrierung"), 0, [[T("Gemessene Ladungen"), D.need ? T("{n} (mindestens {m})", { n: D.n, m: D.need }) : String(D.n)], D.man != null && [T("Startwert (Optionen)"), `${de(D.man, 1)} %`], [T("Für Berechnungen"), D.measured ? T("gemessener Wert") : T("Startwert")]])}</div>`;
+        if (L.length) body += `<h4 class="peffh">${T("Einzelwerte der letzten Ladungen")}</h4><div class="pbands peff" style="grid-template-columns:repeat(${L.length},minmax(0,52px))">${L.map((x, i) => `<div class="${i === L.length - 1 ? "cur" : ""}"><em>${de(x, 0)}</em><i style="height:${Math.max(4, ((x - lo) / Math.max(1, 100 - lo)) * 100)}%"></i><small>${i + 1}</small></div>`).join("")}</div>`;
+        body += `<div class="pnote">${T("Ermittelt aus Heimladungen: Energie laut Wallbox im Verhältnis zum Ladestand-Zuwachs mal Akkukapazität. Sobald genug Ladungen gemessen sind, ersetzt der gemessene Wert den Startwert in allen Berechnungen (z. B. Kosten und Verbrauch).")}</div>`;
+      }
     } else if (k === "aut") {
       // Autarkiegrad und Ersparnis der Heimladungen gegenüber reinem Netzstrom (Heim-kWh × Netzpreis aus evcc)
       title = T("Autarkie"); sub = T("Autarkiegrad und Ersparnis beim Heimladen");
@@ -3903,6 +3930,7 @@ input[type=date],input[type=datetime-local],input[type=month]{cursor:pointer;car
 .pdlg{max-width:720px}
 .pcols{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .pcol{padding:12px 14px;border-radius:16px;background:var(--tile);border:1px solid var(--tileb)}
+.pbands.peff{height:150px;gap:6px;margin-bottom:12px}.pbands.peff em{font-size:12px}.pbands.peff small{font-size:11px}.peffh{margin:14px 0 8px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .paut b{font-size:30px;font-weight:700;font-variant-numeric:tabular-nums}.paut b small{font-size:15px;margin-left:2px;color:var(--muted)}.paut p{margin:4px 0 0;font-size:12.5px}
 .pcol h4{margin:0 0 6px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
 .pcol p{margin:3px 0;display:flex;gap:10px;font-size:13.5px;color:var(--muted)}.pcol p b{margin-left:auto;color:var(--text);font-variant-numeric:tabular-nums;text-align:right}
@@ -4553,6 +4581,22 @@ const I18N = {
     "Bitte eine Zielzeit in der Zukunft wählen.": "Please choose a target time in the future.",
     "Keine Antwort von ev_assistant – Ladeplan vermutlich nicht gesetzt.": "No response from ev_assistant – charge plan probably not set.",
     "Ladeplan konnte nicht gesetzt werden:": "Charge plan could not be set:",
+    "Ladewirkungsgrad": "Charging efficiency",
+    "gemessen · {n} Ladungen": "measured · {n} charges",
+    "Startwert · {a} von {b} Ladungen gemessen": "start value · {a} of {b} charges measured",
+    "Anteil der Energie aus der Wallbox, der im Akku ankommt": "Share of the energy from the wallbox that reaches the battery",
+    "ev_assistant liefert keinen Ladewirkungsgrad.": "ev_assistant provides no charging efficiency.",
+    "Gemessen": "Measured",
+    "Startwert": "Start value",
+    "≈ {v} % Ladeverlust": "≈ {v} % charging loss",
+    "Kalibrierung": "Calibration",
+    "Gemessene Ladungen": "Measured charges",
+    "{n} (mindestens {m})": "{n} (at least {m})",
+    "Startwert (Optionen)": "Start value (options)",
+    "Für Berechnungen": "Used for calculations",
+    "gemessener Wert": "measured value",
+    "Einzelwerte der letzten Ladungen": "Individual values of recent charges",
+    "Ermittelt aus Heimladungen: Energie laut Wallbox im Verhältnis zum Ladestand-Zuwachs mal Akkukapazität. Sobald genug Ladungen gemessen sind, ersetzt der gemessene Wert den Startwert in allen Berechnungen (z. B. Kosten und Verbrauch).": "Determined from home charges: energy according to the wallbox compared with the state-of-charge gain times battery capacity. Once enough charges are measured, the measured value replaces the start value in all calculations (e.g. costs and consumption).",
     "Autarkiegrad und Ersparnis beim Heimladen": "Self-sufficiency and savings when charging at home",
     "Autarkiegrad gesamt": "Total self-sufficiency",
     "PV-Anteil an allen Ladungen (zuhause und unterwegs)": "PV share of all charges (at home and on the road)",
