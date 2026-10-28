@@ -7,4 +7,8 @@
 # zusaetzlich einzeln pinnen, das wuerde nur mit den eigenen Pins kollidieren
 # koennen. Version bei Bedarf zusammen mit der unterstuetzten HA-Version
 # aktualisieren (das Paket wird taeglich synchron zu Home Assistant releast).
-pytest-homeassistant-custom-component==0.13.356
+# Der Pin sollte in der Naehe der HA-Version der Nutzer bleiben: mit HA 2026.9
+# wechselte die Formular-Serialisierung (probatio statt voluptuous_serialize),
+# ein Schema mit vol.Match fiel erst auf der echten Installation auf (siehe
+# tests/ha/test_config_flow_serializable.py). Aktuell: 0.13.375 = HA 2026.10.4.
+pytest-homeassistant-custom-component==0.13.375
