@@ -6,7 +6,14 @@
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.5.33";
+const VERSION = "3.5.35";
+// merkt sich den letzten Wechsel der Adresse (auch wenn die Karte dabei aus- und neu eingehängt wird, z. B. durch Detailfenster)
+const NAV = (window.__glowCarNav = window.__glowCarNav || (() => {
+  const n = { cur: location.pathname, t: 0 };
+  const f = () => { if (location.pathname !== n.cur) { n.cur = location.pathname; n.t = Date.now(); } };
+  window.addEventListener("location-changed", f, true); window.addEventListener("popstate", f, true);
+  return n;
+})());
 // Version der Datenschnittstelle zu ev_assistant (Panel-Konfiguration, Websocket-Befehle, evcc_live),
 // die diese Karte erwartet. Meldet ev_assistant in der Panel-Konfiguration eine andere "api_version",
 // warnt die Karte (Konsole + Hinweis). Ohne "api_version" (ältere ev_assistant-Versionen) keine Warnung.
@@ -171,7 +178,7 @@ const CAR_DEFAULTS = {
       { hours: 168, label: "7 T" },
       { hours: 720, label: "30 T" },
     ],
-    history_hours: 24,                 // Zeitraum beim ersten Öffnen (einer der Werte oben)
+    history_hours: 720,                // Zeitraum beim Öffnen (einer der Werte oben), 720 = 30 T
     bars_from_hours: 0,                // ab diesem Zeitraum geladene kWh als Balken (Netz/PV) statt Linie (0 = immer Balken)
     bars_daily_from_hours: 72,         // ab diesem Zeitraum Tagesbalken (darunter stündlich), 72 = ab 3 Tagen
     bars_weekly_from_hours: 744,       // ab diesem Zeitraum Wochenbalken (Mo–So), 744 = ab 31 Tagen
@@ -260,6 +267,12 @@ class MgCarDashboard extends HTMLElement {
     this._update();
   }
   connectedCallback() {
+    // Beim Aufrufen der Seite immer die erste Ansicht (Übersicht, Verlauf 30 T, Kosten: Monat). Bleibt die Adresse gleich
+    // (Detailfenster auf und zu, Karte neu eingehängt), bleibt die gewählte Ansicht erhalten.
+    const st = window.__glowCarState;
+    if (st && st.epoch === NAV.t) { this._pg = st.pg; this._hh = st.hh; this._cp = st.cp ? { ...st.cp } : null; if (this._built) { this._showPage(); this._update(true); } }
+    else this._resetView();
+    this._snap();
     if (!this._onResize) {
       this._onResize = () => { cancelAnimationFrame(this._fitRaf); this._fitRaf = requestAnimationFrame(() => { this._fit(); this._render_trips(); this._kFit(); this._fitHist(); }); };
       this._ro = new ResizeObserver(this._onResize);
@@ -272,6 +285,12 @@ class MgCarDashboard extends HTMLElement {
     if (this._onResize) { window.removeEventListener("resize", this._onResize); this._ro.disconnect(); }
     clearInterval(this._histTimer); this._histTimer = null;
   }
+  _resetView() {
+    this._pg = "main"; this._hh = null; this._cp = null;
+    if (this._built) { this._showPage(); this._update(true); }
+    if (this._hass) { this._carHist = null; this._loadCarHist(); }
+  }
+  _snap() { window.__glowCarState = { epoch: NAV.t, pg: this._pg, hh: this._hh, cp: this._cp ? { ...this._cp } : null }; }
 
   _build() {
     // @font-face wirkt nicht im Shadow DOM, deshalb einmalig in den Seitenkopf
@@ -1353,9 +1372,8 @@ class MgCarDashboard extends HTMLElement {
   _histHours() {
     if (this._hh) return this._hh;
     const hs = this._ranges().map((r) => r.h);
-    let v = null; try { v = Number(localStorage.getItem("mg-car-hist-hours")); } catch (e) {}
     const def = Number(this._config.car.history_hours);
-    return (this._hh = hs.includes(v) ? v : hs.includes(def) ? def : hs[Math.min(1, hs.length - 1)]);
+    return (this._hh = hs.includes(def) ? def : hs.includes(720) ? 720 : hs[Math.min(1, hs.length - 1)]);
   }
   _rangeLbl(h) { return h < 48 ? `${h} h` : h % 24 === 0 ? T("{n} T", { n: h / 24 }) : `${h} h`; }
 
@@ -1648,8 +1666,7 @@ class MgCarDashboard extends HTMLElement {
   /* ---------- Unterseite „Profil & Analyse“ (Daten aus ev_assistant) ---------- */
   _subPage() {
     if (this._pg) return this._pg;
-    let v = null; try { v = localStorage.getItem("mg-car-page"); } catch (e) {}
-    return (this._pg = ["prof", "set", "cost"].includes(v) ? v : "main");
+    return (this._pg = "main");   // beim Aufrufen immer die Übersicht
   }
   _showPage() {
     const p = this._subPage(), sr = this.shadowRoot;
@@ -1922,8 +1939,7 @@ class MgCarDashboard extends HTMLElement {
   // Zeitraum: Tag / Woche / Monat / Jahr / Gesamt, mit Blättern (off = 0 aktuell, -1 davor …)
   _cpGet() {
     if (this._cp) return this._cp;
-    let p = null; try { p = localStorage.getItem("mg-car-cost-period"); } catch (x) {}
-    return (this._cp = { p: ["day", "week", "month", "year", "all"].includes(p) ? p : "month", off: 0 });
+    return (this._cp = { p: "month", off: 0 });
   }
   _cpRange(p = this._cpGet().p, off = this._cpGet().off) {
     const n = new Date();
@@ -3124,6 +3140,7 @@ class MgCarDashboard extends HTMLElement {
 
   /* ---------- Klicks ---------- */
   _click(e) {
+    queueMicrotask(() => this._snap());   // gewählte Ansicht merken
     const el = e.composedPath().find((n) => n.dataset && n.dataset.act);
     if (!el) return;
     e.stopPropagation();
