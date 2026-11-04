@@ -14,7 +14,7 @@ Checkout gelesen, mit --zip die manifest.json im Wurzelverzeichnis der Zip
   - version == Tag ohne fuehrendes "v" -- auch bei Suffix-Tags komplett
     (v0.99.42-glow.2 <-> 0.99.42-glow.2)
   - hacs.json ist valides JSON
-  - mit --zip: beide Panel-Module, die Glow-Karte und GLOW_VERSION liegen in
+  - mit --zip: Panel-Wrapper, Glow-Karte und GLOW_VERSION liegen in
     der Zip (REQUIRED_ZIP_FILES)
   - CHANGELOG.md hat einen Abschnitt "## [<version>]": bei stabilen Tags ein
     Fehler, bei Pre-Releases (Tag mit "-") nur eine Warnung
@@ -39,10 +39,9 @@ DOMAIN = "ev_assistant"
 REQUIRED_KEYS = ("domain", "name", "version")
 MANIFEST_IN_REPO = Path("custom_components") / DOMAIN / "manifest.json"
 # Dateien, die in der fertigen Zip liegen muessen (Pfade relativ zur Zip-Wurzel):
-# beide Panels samt Glow-Karte (siehe Issue #12) -- fehlt eine, registriert die
-# Integration ein Panel, dessen Modul HACS nie ausgeliefert hat.
+# das Panel (Wrapper plus Glow-Karte, siehe Issue #12) -- fehlt eine, registriert
+# die Integration ein Panel, dessen Modul HACS nie ausgeliefert hat.
 REQUIRED_ZIP_FILES = (
-    "frontend/ev-assistant-panel.js",
     "frontend/ev-assistant-glow-panel.js",
     "frontend/mg-car-dashboard.js",
     "frontend/GLOW_VERSION",

@@ -214,8 +214,8 @@ def resolve_lade_modus(value) -> str:
 # CONF_EVCC_MODE_CONTROL_ENABLED haengen, unabhaengig davon). Jederzeit
 # umschaltbar (Nutzerwunsch: "falls man mal von evcc weg will") -- Daten des
 # jeweils inaktiven Pfads bleiben unter denselben CONF_-Schluesseln
-# gespeichert, nur der Options-Flow zeigt sie nicht mehr an (analog dem
-# hidden_tabs-Muster: ausblenden statt loeschen).
+# gespeichert, nur der Options-Flow zeigt sie nicht mehr an (ausblenden
+# statt loeschen).
 CONF_HOME_CHARGING_METHOD = "home_charging_method"
 HOME_CHARGING_METHOD_EVCC = "evcc"
 HOME_CHARGING_METHOD_GENERISCH = "generisch"
@@ -852,69 +852,9 @@ SERVICE_SET_EVCC_MANUAL_MODE = "set_evcc_manual_mode"
 SERVICE_CLEAR_EVCC_MANUAL_MODE = "clear_evcc_manual_mode"
 SERVICE_URLAUB_SEIT = "urlaub_seit"
 SERVICE_REBUILD_DEPARTURE_PROFILE = "rebuild_departure_profile"
-SERVICE_SET_PANEL_LAYOUT = "set_panel_layout"
-SERVICE_SET_HIDDEN_TABS = "set_hidden_tabs"
 SERVICE_RESET_LIFETIME_KPIS = "reset_lifetime_kpis"
 SERVICE_EXPORT_BACKUP = "export_backup"
 SERVICE_RESTORE_BACKUP = "restore_backup"
-
-# Bekannte Karten-Schluessel fuer das anpassbare Beta-Panel-Layout (Nutzerwunsch
-# 2026-09-23: "der nutzer bekommt eine auswahl von karten, die er selber im
-# panel anordnen oder auch auswaehlen kann" / "ich wuerde das panel gerne in
-# grids aufteilen, so das der nutzer auch karten nebeneinander anordnen
-# kann") -- siehe coordinator.py::async_set_panel_layout()/panel_layout()
-# sowie frontend/ev-assistant-panel.js::_panelSectionBuilders(). Die
-# vormals festen 2-Spalten-Paare ("hero"/"bottom") sind hier in ihre
-# Einzelkarten aufgetrennt (hero_cost/soc/last_charge, comparison/
-# ladeorte/acdc), damit wirklich jede Karte mit jeder anderen frei
-# kombinierbar ist -- auf Kosten des vorher bewusst ungleichen
-# Spaltenverhaeltnisses der Hero-Zeile (Nutzerentscheidung 2026-09-23).
-#
-# "soc"/"last_charge" sowie "ladeorte"/"acdc" waren urspruenglich je EIN
-# gemeinsamer Schluessel ("hero_secondary"/"location"), der je nach
-# Lademodus eine von zwei strukturell verschiedenen Karten baute (z.B.
-# "location" -> Ladeorte in gemischt/nur_zuhause, aber AC/DC-Aufschluesselung
-# in nur_auswaerts) -- Nutzerfeedback 2026-09-29: "im panel auch karten
-# auswaehlbar die nix mit nur fremdladen zu tun haben, und ac dc
-# aufschluesselung zb wird garnich angezeigt" / "die karten mal vernuenftig
-# den jeweiligen lademodi zuweisen". Ein gemeinsamer Schluessel bedeutete,
-# dass Sichtbarkeit/Groesse zwischen den beiden Karten "durchsickerte": wer
-# z.B. "Ladeorte" in gemischt einmal ausblendete, hatte damit (unsichtbar,
-# unter demselben Schluessel) automatisch auch "AC/DC-Aufschluesselung"
-# ausgeblendet, sobald spaeter auf nur_auswaerts umgestellt wurde -- ohne
-# jede Moeglichkeit, das fuer nur eine der beiden Karten zu unterscheiden.
-# Jede Karte hat jetzt einen eigenen, modusunabhaengigen Schluessel; welche
-# davon im aktuellen Modus ueberhaupt existiert, entscheidet weiterhin
-# _panelSectionBuilders() (null fuer die im aktuellen Modus nicht
-# zutreffende Karte).
-#
-# Nur hier gelistete Schluessel werden von async_set_panel_layout()
-# uebernommen -- ein unbekannter/veralteter Wert (z.B. aus einer alten
-# Panel-Version, oder die inzwischen aufgeteilten "hero_secondary"/
-# "location") wird stillschweigend verworfen statt eine kaputte Karte zu
-# erzeugen.
-PANEL_LAYOUT_KEYS = (
-    "hero_cost", "soc", "last_charge", "wallbox", "kpi",
-    "comparison", "ladeorte", "acdc", "evcc_mode",
-)
-
-# Tabs, die der Nutzer ueber set_hidden_tabs()/die "Sichtbare Tabs"-Kachel im
-# Einstellungen-Tab ausblenden kann (Nutzerwunsch, Issue #2/Jochen754-Folge-
-# feedback 2026-09-27: "Leasing", "Ladekarten", "Wartung" nannte er konkret,
-# "Nutzungsprofil" bewusst NICHT dabei -- Nutzerentscheidung "profil auch
-# immer sichtbar"). "uebersicht_beta"/"fahrzeuge"/"analyse"/"einstellungen"
-# bleiben als Kernfunktionen bzw. Ort zum Wiedereinblenden ebenfalls immer
-# sichtbar. Nur hier gelistete Werte werden von async_set_hidden_tabs()
-# uebernommen (analog PANEL_LAYOUT_KEYS oben).
-HIDEABLE_TAB_IDS = ("leasing", "ladekarten", "wartung")
-
-# Erlaubte Groessenstufen je Karte (Nutzerwunsch: "vlt auch die groesse
-# aendern kann") -- feste Stufen statt freiem Ziehen/Resize (aufwaendiger,
-# fehleranfaelliger, siehe Chatverlauf), als Bruchteil der Grid-Breite.
-# "full" ist der Default fuer unbekannte/fehlende Werte (siehe
-# async_set_panel_layout()) -- eine Karte lieber zu breit als unsichtbar
-# darzustellen.
-PANEL_LAYOUT_SIZES = ("third", "half", "twothirds", "full")
 
 NOTIFY_TAG = "ev_assistant"
 

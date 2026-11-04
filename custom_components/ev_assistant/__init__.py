@@ -62,8 +62,6 @@ from .const import (
     SERVICE_SET_EVCC_MODE_CONTROL_PAUSE,
     SERVICE_SET_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
     SERVICE_SET_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
-    SERVICE_SET_HIDDEN_TABS,
-    SERVICE_SET_PANEL_LAYOUT,
     SERVICE_SET_USAGE_PROFILE_BUFFER_KM,
     SERVICE_SET_USAGE_PROFILE_BUFFER_PCT,
     SERVICE_SET_VEHICLE_IMAGE,
@@ -78,16 +76,16 @@ _LOGGER = logging.getLogger(__name__)
 
 _PANEL_URL_PATH = "ev-assistant"
 _PANEL_STATIC_PATH = "/ev_assistant_static"
-# Seit 0.99.67 ist die Glow-Karte das Haupt-Panel ("EV Assistant", erster Eintrag der
-# Sidebar: HA sortiert Panels alphabetisch nach Titel) und das klassische Panel heisst
-# "EV Assistant (klassisch)" und entfaellt in einem spaeteren Release (siehe
-# weskona/ev_assistant#12, Phase 5). Die URL-Pfade bleiben unveraendert, damit
-# Lesezeichen und Dashboard-Links weiter funktionieren.
-_PANEL_TITLE = "EV Assistant (klassisch)"
-_PANEL_ICON = "mdi:car-electric-outline"
-_GLOW_PANEL_URL_PATH = "ev-assistant-glow"
-_GLOW_PANEL_TITLE = "EV Assistant"
-_GLOW_PANEL_ICON = "mdi:ev-station"
+# Seit 0.99.76 ist die Glow-Karte (frontend/ev-assistant-glow-panel.js, Karte aus
+# deepblue120/glow-dashboard) das einzige Panel (siehe weskona/ev_assistant#12,
+# Phase 5). Sie liegt unter dem bisherigen URL-Pfad "ev-assistant", damit
+# Lesezeichen, Dashboard-Links und die Suche der Karte nach dem Panel weiter
+# funktionieren. Der fruehere Pfad des Glow-Panels wird nur noch aufgeraeumt.
+_PANEL_TITLE = "EV Assistant"
+_PANEL_ICON = "mdi:ev-station"
+_PANEL_WEBCOMPONENT = "ev-assistant-glow-panel"
+_PANEL_MODULE = "ev-assistant-glow-panel.js"
+_OLD_PANEL_URL_PATHS = ("ev-assistant-glow",)
 # Version der Panel-Konfiguration/WebSocket-Schnittstelle, die Frontends (Glow-Karte)
 # pruefen. Bei inkompatiblen Aenderungen an "entities"/"vehicles" erhoehen.
 _PANEL_API_VERSION = 1
@@ -204,9 +202,15 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
             )
             domain_data[_STATIC_REGISTERED] = True
 
-        js_file = frontend_dir / "ev-assistant-panel.js"
+        # Cache-Buster: der Wrapper reicht seine "?v=..."-Query an die Karte
+        # (mg-car-dashboard.js) weiter, die per Sync-PR aktualisiert wird, ohne
+        # dass sich der Wrapper aendert -- deshalb zaehlt die juengste Aenderung
+        # beider Dateien, sonst zeigt der Browser nach einem Karten-Update die
+        # alte Karte.
         try:
-            cache_bust = str(int(js_file.stat().st_mtime))
+            cache_bust = str(int(max(
+                (frontend_dir / name).stat().st_mtime for name in (_PANEL_MODULE, "mg-car-dashboard.js")
+            )))
         except Exception:
             cache_bust = "1"
 
@@ -244,7 +248,7 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
         if evcc_vehicle_name:
             panel_config["evcc_vehicle_name"] = evcc_vehicle_name
 
-        for url_path in (_PANEL_URL_PATH, _GLOW_PANEL_URL_PATH):
+        for url_path in (_PANEL_URL_PATH, *_OLD_PANEL_URL_PATHS):
             try:
                 frontend.async_remove_panel(hass, url_path, warn_if_unknown=False)
             except Exception:
@@ -252,45 +256,23 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
 
         register_kwargs = {
             "frontend_url_path": _PANEL_URL_PATH,
-            "webcomponent_name": "ev-assistant-panel",
-            "module_url": f"{_PANEL_STATIC_PATH}/ev-assistant-panel.js?v={cache_bust}",
+            "webcomponent_name": _PANEL_WEBCOMPONENT,
+            "module_url": f"{_PANEL_STATIC_PATH}/{_PANEL_MODULE}?v={cache_bust}",
             "sidebar_title": _PANEL_TITLE,
             "sidebar_icon": _PANEL_ICON,
             "require_admin": False,
             "config": panel_config,
         }
-        # HA 2026.8+ wraps custom panels in its own safe-area padding by
-        # default (notch/status-bar clearance) unless the panel opts out --
-        # our own :host{height:100%} flex layout already assumes it owns the
-        # full viewport, and the extra wrapper broke internal touch scrolling
-        # on some devices. `handle_safe_area` doesn't exist on older cores
-        # (HACS min version is 2024.1.0), so only pass it if supported.
+        # HA 2026.8+ umhuellt eigene Panels standardmaessig mit einem Safe-Area-
+        # Abstand (Statusleiste/Notch). Die Glow-Karte braucht ihn: ihre eigene
+        # Messung griff in der iOS-App nicht, die Tabs lagen unter Uhr und
+        # Kamera. `handle_safe_area` gibt es nur in neueren Cores (HACS-Minimum
+        # ist 2024.4), also nur uebergeben, wenn unterstuetzt.
         if "handle_safe_area" in inspect.signature(panel_custom.async_register_panel).parameters:
-            register_kwargs["handle_safe_area"] = True
+            register_kwargs["handle_safe_area"] = False
 
         await panel_custom.async_register_panel(hass, **register_kwargs)
         domain_data[_PANEL_REGISTERED] = True
-
-        # Glow-Panel: gleicher Konfigurations-Kontext, eigener Wrapper. Ein
-        # Fehler hier darf das klassische Panel nicht mit abraeumen.
-        try:
-            glow_js = frontend_dir / "ev-assistant-glow-panel.js"
-            glow_bust = str(int(glow_js.stat().st_mtime))
-            await panel_custom.async_register_panel(hass, **{
-                **register_kwargs,
-                "frontend_url_path": _GLOW_PANEL_URL_PATH,
-                "webcomponent_name": "ev-assistant-glow-panel",
-                "module_url": f"{_PANEL_STATIC_PATH}/ev-assistant-glow-panel.js?v={glow_bust}",
-                "sidebar_title": _GLOW_PANEL_TITLE,
-                "sidebar_icon": _GLOW_PANEL_ICON,
-                # Anders als das klassische Panel bekommt das Glow-Panel den
-                # Safe-Area-Abstand (Statusleiste/Notch) von Home Assistant:
-                # die eigene Messung der Karte griff in der iOS-App nicht,
-                # die Tabs lagen unter Uhr und Kamera.
-                **({"handle_safe_area": False} if "handle_safe_area" in register_kwargs else {}),
-            })
-        except Exception as glow_exc:  # noqa: BLE001
-            _LOGGER.warning("EV Assistant Glow-Panel konnte nicht registriert werden: %s", glow_exc)
         _LOGGER.info("EV Assistant Panel registriert (v=%s, %d Fahrzeuge)", cache_bust, len(vehicles))
     except Exception as exc:  # noqa: BLE001
         _LOGGER.warning("EV Assistant Panel konnte nicht registriert werden: %s", exc)
@@ -303,7 +285,6 @@ def _async_unregister_panel(hass: HomeAssistant) -> None:
     try:
         from homeassistant.components import frontend
         frontend.async_remove_panel(hass, _PANEL_URL_PATH, warn_if_unknown=False)
-        frontend.async_remove_panel(hass, _GLOW_PANEL_URL_PATH, warn_if_unknown=False)
         hass.data[DOMAIN].pop(_PANEL_REGISTERED, None)
     except Exception as exc:  # noqa: BLE001
         _LOGGER.debug("Fehler beim Entfernen des Panels: %s", exc)
@@ -604,13 +585,6 @@ CLEAR_EVCC_MANUAL_MODE_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
 })
 
-SET_PANEL_LAYOUT_SCHEMA = vol.Schema({
-    vol.Required("config_entry_id"): str,
-    vol.Required("layout"): [
-        {vol.Required("key"): str, vol.Required("visible"): bool, vol.Optional("size"): str}
-    ],
-})
-
 SET_VEHICLE_IMAGE_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
     vol.Required("file_id"): str,
@@ -618,11 +592,6 @@ SET_VEHICLE_IMAGE_SCHEMA = vol.Schema({
 
 CLEAR_VEHICLE_IMAGE_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
-})
-
-SET_HIDDEN_TABS_SCHEMA = vol.Schema({
-    vol.Required("config_entry_id"): str,
-    vol.Required("hidden_tabs"): [str],
 })
 
 
@@ -992,11 +961,6 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_clear_evcc_manual_mode()
 
-    async def _handle_set_panel_layout(call: ServiceCall) -> None:
-        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
-        if coordinator:
-            await coordinator.async_set_panel_layout(call.data["layout"])
-
     def _vehicle_image_coordinator(call: ServiceCall) -> EvAssistantCoordinator:
         """Wie _coordinator_for(), wirft bei unbekannter config_entry_id aber
         (ServiceValidationError) statt still nichts zu tun -- Lehre aus
@@ -1058,11 +1022,6 @@ def _register_services(hass: HomeAssistant) -> None:
             coordinator._log_event("fahrzeugbild", "entfernt")
             coordinator._save_soon()
         await _refresh_vehicle_image_entity(entry_id)
-
-    async def _handle_set_hidden_tabs(call: ServiceCall) -> None:
-        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
-        if coordinator:
-            await coordinator.async_set_hidden_tabs(call.data["hidden_tabs"])
 
     hass.services.async_register(DOMAIN, SERVICE_LOG, _handle_log, schema=LOG_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DISCARD, _handle_discard, schema=DISCARD_SCHEMA)
@@ -1161,20 +1120,12 @@ def _register_services(hass: HomeAssistant) -> None:
         schema=CLEAR_EVCC_MANUAL_MODE_SCHEMA,
     )
     hass.services.async_register(
-        DOMAIN, SERVICE_SET_PANEL_LAYOUT, _handle_set_panel_layout,
-        schema=SET_PANEL_LAYOUT_SCHEMA,
-    )
-    hass.services.async_register(
         DOMAIN, SERVICE_SET_VEHICLE_IMAGE, _handle_set_vehicle_image,
         schema=SET_VEHICLE_IMAGE_SCHEMA,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_CLEAR_VEHICLE_IMAGE, _handle_clear_vehicle_image,
         schema=CLEAR_VEHICLE_IMAGE_SCHEMA,
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_SET_HIDDEN_TABS, _handle_set_hidden_tabs,
-        schema=SET_HIDDEN_TABS_SCHEMA,
     )
 
 
@@ -1206,9 +1157,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_SET_EVCC_MODE_CONTROL_PAUSE,
                 SERVICE_SET_EVCC_CHARGE_PLAN, SERVICE_CLEAR_EVCC_CHARGE_PLAN,
                 SERVICE_SET_EVCC_CHARGE_PLAN_RANGE_KM, SERVICE_SET_EVCC_MANUAL_MODE,
-                SERVICE_CLEAR_EVCC_MANUAL_MODE, SERVICE_SET_PANEL_LAYOUT,
+                SERVICE_CLEAR_EVCC_MANUAL_MODE,
                 SERVICE_RESET_LIFETIME_KPIS, SERVICE_EXPORT_BACKUP, SERVICE_RESTORE_BACKUP,
-                SERVICE_SET_HIDDEN_TABS, SERVICE_SET_VEHICLE_IMAGE, SERVICE_CLEAR_VEHICLE_IMAGE,
+                SERVICE_SET_VEHICLE_IMAGE, SERVICE_CLEAR_VEHICLE_IMAGE,
             ):
                 hass.services.async_remove(DOMAIN, service)
         else:
