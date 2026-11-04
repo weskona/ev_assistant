@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=60  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=61  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.5.36";
+const VERSION = "3.5.37";
 // merkt sich den letzten Wechsel der Adresse (auch wenn die Karte dabei aus- und neu eingehängt wird, z. B. durch Detailfenster)
 const NAV = (window.__glowCarNav = window.__glowCarNav || (() => {
   const n = { cur: location.pathname, t: 0 };
@@ -3734,6 +3734,7 @@ const CAR_STYLE = `
 /* ---------- Handy: Cockpit-Ansicht (.wrap.mob, Karte bis 600 px breit) ---------- */
 .mrows{display:none}
 .wrap.mob{padding:10px 10px 18px}
+.wrap.mob.sat{padding-top:calc(10px + env(safe-area-inset-top,0px))}   /* iPhone: nicht unter Uhr und Kamera (Statusleiste) */
 .wrap.mob .pages{margin:0 0 10px}
 .wrap.mob .pages > .hsegs{overflow-x:auto;scrollbar-width:none;max-width:100%;justify-self:stretch}.wrap.mob .pages > .hsegs::-webkit-scrollbar{display:none}
 .wrap.mob .pages .hseg{flex:none;font-size:13px;padding:7px 11px}
