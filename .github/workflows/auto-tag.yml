@@ -14,6 +14,8 @@ name: Auto tag
 #     Workflow aus (GitHub-Regel gegen Endlosschleifen). Darum startet dieser
 #     Workflow release.yml anschliessend selbst per workflow_dispatch auf dem
 #     Tag; ein von Hand gepushter Tag funktioniert unveraendert.
+#   - Schlaegt der Dispatch wegen eines GitHub-Serverfehlers (502) fehl, wird
+#     er bis zu fuenfmal wiederholt.
 #   - Bump der Version und CHANGELOG-Eintrag bleiben Handarbeit: ohne neue
 #     Version im Manifest (z. B. bei den Glow-Karten-Syncs) passiert nichts.
 
@@ -82,4 +84,12 @@ jobs:
         if: steps.v.outputs.todo == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run release.yml --ref "v${{ steps.v.outputs.version }}"
+        run: |
+          # Die GitHub-API liefert gelegentlich ein kurzes 502; der Tag steht
+          # dann schon, darum den Dispatch mehrfach versuchen.
+          for i in 1 2 3 4 5; do
+            gh workflow run release.yml --ref "v${{ steps.v.outputs.version }}" && exit 0
+            echo "Versuch $i fehlgeschlagen, neuer Versuch in 20 s."
+            sleep 20
+          done
+          exit 1
