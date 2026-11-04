@@ -1,6 +1,6 @@
 """Umbau von coordinator.py (Issue #12): Wartung, Ladekarten, Leasing und
 Import/Export/Backup liegen in eigenen Klassen (maintenance.py, charge_cards.py,
-leasing.py, data_transfer.py). Die Methoden des Coordinators bleiben mit
+leasing.py, notifications.py, data_transfer.py). Die Methoden des Coordinators bleiben mit
 gleichem Namen und gleicher Signatur bestehen und rufen nur durch -- Dienste,
 Sensoren, Panel und Tests sehen dieselbe Schnittstelle. Diese Tests pruefen
 mechanisch fuer jede durchgereichte Methode, dass Signatur und Weiterleitung
@@ -25,6 +25,11 @@ _DELEGATES = [
         ("async_delete_ladekarte",) * 2, ("_ladekarten_cost_total",) * 2, ("ladekarten_stats",) * 2,
     ]),
     ("leasing.Leasing", "_leasing", [("leasing_stats",) * 2, ("_check_leasing_thresholds",) * 2]),
+    ("notifications.Notifications", "_notifications", [
+        ("_en",) * 2, ("_notify",) * 2, ("_push",) * 2, ("_notify_soc_threshold",) * 2,
+        ("_notify_trip",) * 2, ("_dismiss_trip",) * 2, ("_notify_tankerkoenig_unavailable",) * 2,
+        ("_dismiss_tankerkoenig_unavailable",) * 2, ("_persistent_notification",) * 2, ("_dismiss",) * 2,
+    ]),
     ("data_transfer.DataTransfer", "_transfer", [
         ("async_import_fahrtenbuch", "import_fahrtenbuch"), ("async_export_fahrtenbuch", "export_fahrtenbuch"),
         ("async_export_event_log", "export_event_log"), ("async_export_backup", "export_backup"),
