@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.75] - 2026-11-04
+
+### Fixed
+
+- **Glow panel: on the iPhone (Companion app) the top of the page, including the tab bar, sat under the status bar (clock, battery, camera) and could not be tapped.** The Glow card tried to measure the status-bar height itself; three card updates (v4.0.1 to v4.0.3) did not fix it in the iOS app. The Glow panel is now registered without `handle_safe_area`, so Home Assistant adds the safe-area padding (`--safe-area-inset-top`/`-bottom`) around the panel itself, the same way it does for any other custom panel. The classic panel is unchanged: it still opts out and handles the notch itself.
+
 ## [0.99.74] - 2026-11-04
 
 ### Changed

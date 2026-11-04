@@ -57,12 +57,15 @@ async def test_beide_panels_werden_registriert_mit_api_version(hass):
     entry.add_to_hass(hass)
     registriert = {}
 
-    async def _register(hass_, **kwargs):
+    # echte Funktion statt Mock, damit HAs Signaturpruefung auf handle_safe_area greift
+    async def _register(hass_, *, handle_safe_area=None, **kwargs):
+        if handle_safe_area is not None:
+            kwargs["handle_safe_area"] = handle_safe_area
         registriert[kwargs["frontend_url_path"]] = kwargs
 
     hass.data.setdefault(DOMAIN, {})[_STATIC_REGISTERED] = True
     hass.http = MagicMock()
-    with patch("homeassistant.components.panel_custom.async_register_panel", side_effect=_register), \
+    with patch("homeassistant.components.panel_custom.async_register_panel", new=_register), \
             patch("homeassistant.components.frontend.async_remove_panel"):
         await _async_register_panel(hass, entry)
 
@@ -78,3 +81,6 @@ async def test_beide_panels_werden_registriert_mit_api_version(hass):
     assert registriert["ev-assistant"]["sidebar_title"] > glow["sidebar_title"]  # Glow steht alphabetisch zuerst
     assert registriert["ev-assistant"]["sidebar_icon"] != glow["sidebar_icon"]
     assert glow["config"]["config_entry_id"] == registriert["ev-assistant"]["config"]["config_entry_id"]
+    # Glow bekommt den Safe-Area-Abstand von HA (iOS-App), das klassische Panel macht ihn selbst
+    assert glow.get("handle_safe_area") is False
+    assert registriert["ev-assistant"].get("handle_safe_area") is True
