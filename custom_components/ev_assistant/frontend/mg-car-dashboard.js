@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=62  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=63  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.5.38";
+const VERSION = "3.5.39";
 // merkt sich den letzten Wechsel der Adresse (auch wenn die Karte dabei aus- und neu eingehängt wird, z. B. durch Detailfenster)
 const NAV = (window.__glowCarNav = window.__glowCarNav || (() => {
   const n = { cur: location.pathname, t: 0 };
@@ -2946,6 +2946,7 @@ class MgCarDashboard extends HTMLElement {
     const wrap = this.shadowRoot?.querySelector(".wrap");
     if (!wrap) return;
     const top = this._docTop();
+    // Höhe aus --safe-area-inset-top (setzt Home Assistant; die iOS-App übergibt sie selbst, weil env() dort 0 liefert).
     // ganz oben (ohne HA-Kopfzeile): Abstand zur iPhone-Statusleiste. Deren Höhe (Uhr, Kamera, ca. 47–59 px) wird gemessen –
     // beginnt die Karte darin, bekommt sie den Abstand; liegt sie tiefer, hat Home Assistant den Platz schon freigehalten
     const inset = this.shadowRoot.querySelector(".sai")?.offsetHeight || 0;
@@ -2988,7 +2989,7 @@ class MgCarDashboard extends HTMLElement {
     if (!on) { if (el && el._owner === this) el.remove(); return; }
     if (!el) {
       el = document.createElement("div"); el.id = "mg-car-statusbar";
-      Object.assign(el.style, { position: "fixed", top: "0", left: "0", right: "0", height: "env(safe-area-inset-top,0px)", zIndex: "6", pointerEvents: "none" });
+      Object.assign(el.style, { position: "fixed", top: "0", left: "0", right: "0", height: "var(--safe-area-inset-top,env(safe-area-inset-top,0px))", zIndex: "6", pointerEvents: "none" });
       document.body.appendChild(el);
     }
     el._owner = this;
@@ -3698,7 +3699,7 @@ ha-icon{--mdc-icon-size:22px;display:inline-flex}
 .rsub{font-size:13.5px;color:var(--muted)}
 .dx{width:44px;height:44px;border-radius:15px;background:rgba(255,255,255,.06);border:1px solid var(--line);display:grid;place-items:center}
 .dbody{overflow:auto;padding:16px 20px 22px;display:flex;flex-direction:column;gap:14px}
-@media (max-width:760px){.dlg{max-width:100vw;max-height:100vh;height:100%;margin:0}.dpan{height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;border-radius:0;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}}
+@media (max-width:760px){.dlg{max-width:100vw;max-height:100vh;height:100%;margin:0}.dpan{height:100vh;height:100dvh;max-height:100vh;max-height:100dvh;border-radius:0;padding-top:var(--safe-area-inset-top,env(safe-area-inset-top,0px));padding-bottom:var(--safe-area-inset-bottom,env(safe-area-inset-bottom,0px))}}
 .panel.car{display:flex;flex-direction:column}
 .carbody{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .soc{font-size:64px;font-weight:800;line-height:1;letter-spacing:-.02em}
@@ -3744,17 +3745,17 @@ ha-icon{--mdc-icon-size:22px;display:inline-flex}
   .panel{border-radius:24px;padding:16px}
 }
 @media (prefers-reduced-motion:reduce){.bar span.charging{animation:none}}
-.wrap.sat{padding-top:calc(18px + env(safe-area-inset-top,0px))}
-.wrap.fit.sat{padding-top:calc(12px + env(safe-area-inset-top,0px))}
-@container (max-width:720px){.wrap.sat{padding-top:calc(12px + env(safe-area-inset-top,0px))}}
+.wrap.sat{padding-top:calc(18px + var(--safe-area-inset-top,env(safe-area-inset-top,0px)))}
+.wrap.fit.sat{padding-top:calc(12px + var(--safe-area-inset-top,env(safe-area-inset-top,0px)))}
+@container (max-width:720px){.wrap.sat{padding-top:calc(12px + var(--safe-area-inset-top,env(safe-area-inset-top,0px)))}}
 `;
 
 const CAR_STYLE = `
 /* ---------- Handy: Cockpit-Ansicht (.wrap.mob, Karte bis 600 px breit) ---------- */
 .mrows{display:none}
 .wrap.mob{padding:10px 10px 18px}
-.sai{position:absolute;top:0;left:0;width:0;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none}   /* misst die Höhe der Statusleiste */
-.wrap.mob.sat{padding-top:calc(10px + env(safe-area-inset-top,0px))}   /* iPhone: nicht unter Uhr und Kamera (Statusleiste) */
+.sai{position:absolute;top:0;left:0;width:0;height:var(--safe-area-inset-top,env(safe-area-inset-top,0px));visibility:hidden;pointer-events:none}   /* misst die Höhe der Statusleiste */
+.wrap.mob.sat{padding-top:calc(10px + var(--safe-area-inset-top,env(safe-area-inset-top,0px)))}   /* iPhone: nicht unter Uhr und Kamera (Statusleiste) */
 .wrap.mob .pages{margin:0 0 10px}
 .wrap.mob .pages > .hsegs{overflow-x:auto;scrollbar-width:none;max-width:100%;justify-self:stretch}.wrap.mob .pages > .hsegs::-webkit-scrollbar{display:none}
 .wrap.mob .pages .hseg{flex:none;font-size:13px;padding:7px 11px}
