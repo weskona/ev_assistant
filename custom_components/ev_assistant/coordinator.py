@@ -162,7 +162,6 @@ from .const import (
     EVENT_TRIP_PENDING,
     EVENT_VEHICLE_DISCHARGE_URLAUB_APPLIED,
     FAHRTEN_MAX_MONATE,
-    HIDEABLE_TAB_IDS,
     HISTORY_MAX_MONATE,
     IMPLAUSIBLE_POWER_RATIO,
     IMPLAUSIBLE_REGEN_DELTA_PCT,
@@ -182,8 +181,6 @@ from .const import (
     NOTIFY_TAG,
     ODO_ACCEPT_REPEATS,
     OUTLIER_DAMPING_FACTOR,
-    PANEL_LAYOUT_KEYS,
-    PANEL_LAYOUT_SIZES,
     PLUG_DEPARTURE_CONFIRM_S,
     PLUG_DEPARTURE_CONSISTENCY_MIN,
     PLUG_DEPARTURE_MAX_OUTLIER_SHARE,
@@ -443,17 +440,6 @@ def _empty_data() -> dict:
         "leasing_notified_rank": 0,
         "plug_debounce_state": None,
         "motor_debounce_state": None,
-        # Vom Nutzer gewaehlte Sichtbarkeit/Reihenfolge der Beta-Panel-Karten
-        # (siehe async_set_panel_layout()/panel_layout()) -- Liste aus
-        # {"key": <Karten-Schluessel>, "visible": bool}, Listenreihenfolge =
-        # Anzeigereihenfolge. Leer ohne gespeicherte Einstellung, das
-        # Panel-JS faellt dann auf seine eigene Standardreihenfolge zurueck.
-        "panel_layout": [],
-        # Vom Nutzer ausgeblendete Tabs (siehe async_set_hidden_tabs()/
-        # hidden_tabs()) -- Liste aus Tab-IDs (const.py::HIDEABLE_TAB_IDS).
-        # Leer ohne gespeicherte Einstellung, alle ausblendbaren Tabs
-        # bleiben dann sichtbar.
-        "hidden_tabs": [],
         # Ob gerade eine generische (nicht-evcc) Heim-Ladesession mit
         # laufender Solaranteil-/Kosten-Akkumulation offen ist (siehe
         # _process_home_tick()/_set_home()) -- persistiert, damit ein
@@ -883,74 +869,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         hier defensiv "gemischt" -- identisch zum bisherigen Verhalten."""
         return resolve_lade_modus(self._opt(CONF_LADE_MODUS))
 
-    def panel_layout(self) -> list:
-        """Vom Nutzer gespeicherte Sichtbarkeit/Reihenfolge der Beta-Panel-
-        Karten (siehe async_set_panel_layout()) -- Liste aus {"key":...,
-        "visible": bool} in Anzeigereihenfolge. Leere Liste ohne
-        gespeicherte Einstellung; das Panel-JS faellt dann auf seine eigene
-        Standardreihenfolge zurueck (siehe _panelSectionBuilders())."""
-        return list(self.data.get("panel_layout") or [])
-
-    async def async_set_panel_layout(self, layout: list) -> None:
-        """Speichert die vom Nutzer im "Panel anpassen"-Popup gewaehlte
-        Sichtbarkeit/Reihenfolge der Beta-Panel-Karten (Nutzerwunsch
-        2026-09-23: "der nutzer bekommt eine auswahl von karten, die er
-        selber im panel anordnen oder auch auswaehlen kann, welche karten er
-        ueberhaupt angezeigt bekommen moechte") -- serverseitig statt per
-        localStorage gespeichert (Nutzerwunsch: "serverseitig speichern"),
-        damit die Anordnung geraeteuebergreifend erhalten bleibt. Reine
-        Praesentationseinstellung, kein Recompute noetig. Nur bekannte
-        Karten-Schluessel (siehe const.py::PANEL_LAYOUT_KEYS) werden
-        uebernommen, alles andere (z.B. aus einer alten Panel-Version)
-        stillschweigend verworfen statt eine kaputte/leere Karte zu
-        erzeugen. "size" (siehe const.py::PANEL_LAYOUT_SIZES, Nutzerwunsch
-        "vlt auch die groesse aendern kann") faellt bei fehlendem/
-        unbekanntem Wert defensiv auf "full" zurueck -- eine Karte lieber
-        zu breit als unsichtbar/kaputt darzustellen."""
-        clean = [
-            {
-                "key": item["key"],
-                "visible": bool(item.get("visible", True)),
-                "size": item.get("size") if item.get("size") in PANEL_LAYOUT_SIZES else "full",
-            }
-            for item in layout
-            if isinstance(item, dict) and item.get("key") in PANEL_LAYOUT_KEYS
-        ]
-        self.data["panel_layout"] = clean
-        self.async_set_updated_data(self.data)
-        self._save_soon()
-
-    def hidden_tabs(self) -> list:
-        """Vom Nutzer ausgeblendete Panel-Tabs (siehe async_set_hidden_
-        tabs()) -- Liste aus Tab-IDs (const.py::HIDEABLE_TAB_IDS). Leere
-        Liste ohne gespeicherte Einstellung; das Panel-JS zeigt dann alle
-        ausblendbaren Tabs (analog panel_layout())."""
-        return list(self.data.get("hidden_tabs") or [])
-
-    async def async_set_hidden_tabs(self, hidden_tabs: list) -> None:
-        """Speichert die vom Nutzer in der "Sichtbare Tabs"-Kachel (Ein-
-        stellungen-Tab) gewaehlten ausgeblendeten Tabs (Nutzerwunsch, Issue
-        #2/Jochen754-Folgefeedback 2026-09-27: "Leasing", "Ladekarten",
-        "Wartung" ausblendbar machen) -- serverseitig statt per Browser-
-        localStorage gespeichert (analog async_set_panel_layout(), gleiche
-        Begruendung: geraeteuebergreifend erhalten). Reine Praesentations-
-        einstellung, kein Recompute noetig. Nur bekannte Tab-IDs (siehe
-        const.py::HIDEABLE_TAB_IDS) werden uebernommen, alles andere
-        stillschweigend verworfen (analog PANEL_LAYOUT_KEYS-Filterung).
-        "leasing" wird zusaetzlich, unabhaengig von dieser Liste, im
-        Panel-JS ausgeblendet, wenn kein Leasing-Vertrag konfiguriert ist
-        (Nutzerentscheidung 2026-09-27) -- das betrifft nur die Anzeige,
-        nicht diese gespeicherte Liste selbst."""
-        clean = [tab_id for tab_id in hidden_tabs if tab_id in HIDEABLE_TAB_IDS]
-        self.data["hidden_tabs"] = clean
-        self.async_set_updated_data(self.data)
-        self._save_soon()
-
     async def async_setup(self) -> None:
         stored = await self._store.async_load()
         if stored:
             base = _empty_data()
             base.update(stored)
+            # Reine Anzeigeeinstellungen des entfallenen klassischen Panels
+            # (set_panel_layout/set_hidden_tabs, bis 0.99.75) -- nicht weiter
+            # mitschleppen.
+            base.pop("panel_layout", None)
+            base.pop("hidden_tabs", None)
             self.data = base
         # Migration: "pending" war vor Mehrfach-Unterstuetzung ein einzelnes
         # Dict oder None statt einer Liste.
@@ -8403,7 +8331,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
     def _evcc_charge_plan_feedback_text(self, target_soc, target_time: float) -> Optional[str]:
         """Live-Einschaetzung, wie der Ladeverlauf mit den aktuell gesetzten
         Ladeplan-Parametern zu erwarten ist -- fuer EvccChargePlanSensor's
-        `erwartung`-Attribut, das ev-assistant-panel.js direkt in der
+        `erwartung`-Attribut, das das Panel direkt in der
         Ladeplan-Karte anzeigt (Nutzerwunsch 2026-09-22: "sollte nach
         abschicken des gewuenschten ladestands eine offensichtliche meldung
         erscheinen, wie die ladung zu erwarten ist"; danach praezisiert:

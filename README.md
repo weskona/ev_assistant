@@ -72,9 +72,8 @@ A few known limitations, stated plainly:
 - **Cost comparison** — compares total EV spend against an equivalent combustion car, with automatic or live fuel-price lookup.
 - **Automatic evcc mode/SoC control** — optionally steers evcc's charge mode from your own usage profile, including a real-time PV-surplus override, an economic cap on grid top-ups, and home-battery priority.
 - **Trip import** — bulk-import historical trips from another trip-log app/export.
-- **Full sidebar panel** — a built-in, customizable EV dashboard; no Lovelace card setup needed.
-- **Glow panel (main panel)** — the sidebar entry "EV Assistant" shows the [Glow card](https://github.com/deepblue120/glow-dashboard), kept in sync from its own repository. The interface is available in English and German and the font is bundled with the card (no request to Google Fonts). The classic panel is still available as "EV Assistant (klassisch)" and will be removed in a later release; the Glow card still lacks a few classic features (e.g. hidden tabs, panel layout, outlier details of the plug profile).
-- **Multi-vehicle support** — one integration entry per vehicle, with a panel tab switcher.
+- **Sidebar panel** — the sidebar entry "EV Assistant" shows the [Glow card](https://github.com/deepblue120/glow-dashboard), kept in sync from its own repository; no Lovelace setup needed. The interface is available in English and German and the font is bundled with the card (no request to Google Fonts). Since 0.99.76 it is the only panel: the former classic panel and its "visible tabs" / "panel layout" settings were removed.
+- **Multi-vehicle support** — one integration entry per vehicle, with a vehicle switcher in the panel.
 - **Diagnostics & repair issues** — a downloadable redacted state snapshot, plus Repair issues when a source entity goes stale.
 - **Leasing mileage budget, charging cards, and vehicle maintenance tracking** — all fully optional, panel-managed.
 
@@ -122,7 +121,6 @@ The [Wiki](https://github.com/weskona/ev_assistant/wiki) has the full reference:
 | [Automatic evcc Mode Control](https://github.com/weskona/ev_assistant/wiki/Automatic-evcc-Mode-Control) | Deep dive: the day-ahead decision, PV-surplus carryover, real-time override, economic cap, charge plan. |
 | [External Charge Detection](https://github.com/weskona/ev_assistant/wiki/External-Charge-Detection-Deep-Dive) | Deep dive: the exact state machine behind detecting away-from-home charges. |
 | [Usage Profile & Recency-Weighting](https://github.com/weskona/ev_assistant/wiki/Usage-Profile-Deep-Dive) | Deep dive: how your typical daily need is learned and kept current. |
-| [Panel Customization Guide](https://github.com/weskona/ev_assistant/wiki/Panel-Customization-Guide) | Practical walkthrough of card selection/reordering/sizing. |
 | [Tips and Tricks](https://github.com/weskona/ev_assistant/wiki/Tips-and-Tricks) | Home Assistant tricks that work around a real limitation, e.g. multiple possible drivers for trip location. |
 | [Architecture & Contributing](https://github.com/weskona/ev_assistant/wiki/Architecture-and-Contributing) | Module layout, testing, and a guide to adding a new sensor. |
 | [FAQ / Troubleshooting](https://github.com/weskona/ev_assistant/wiki/FAQ-Troubleshooting) | Setup issues and common behavior questions. |

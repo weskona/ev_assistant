@@ -1,4 +1,4 @@
-"""Glow-Panel (zweiter Sidebar-Eintrag, Karte aus deepblue120/glow-dashboard,
+"""Glow-Panel (einziges Panel, Karte aus deepblue120/glow-dashboard,
 siehe Issue #12): Registrierung, Schnittstellenversion und die mitgelieferten
 Dateien. Die Karte selbst wird nie von Hand editiert (glow-sync-check.yml);
 hier steht nur der Vertrag zwischen Integration und Karte."""
@@ -36,7 +36,7 @@ def test_wrapper_definiert_das_registrierte_webcomponent():
     assert '"mg-car-dashboard.js"' in text  # laedt die Karte neben sich
 
 
-async def test_beide_panels_werden_registriert_mit_api_version(hass):
+async def test_nur_glow_panel_wird_registriert_mit_api_version(hass):
     from custom_components.ev_assistant import _STATIC_REGISTERED, _async_register_panel
     from custom_components.ev_assistant.const import (
         CONF_SOC_ENTITY,
@@ -69,18 +69,39 @@ async def test_beide_panels_werden_registriert_mit_api_version(hass):
             patch("homeassistant.components.frontend.async_remove_panel"):
         await _async_register_panel(hass, entry)
 
-    assert set(registriert) == {"ev-assistant", "ev-assistant-glow"}
-    glow = registriert["ev-assistant-glow"]
-    assert glow["webcomponent_name"] == "ev-assistant-glow-panel"
-    assert glow["module_url"].startswith("/ev_assistant_static/ev-assistant-glow-panel.js?v=")
-    assert glow["config"]["api_version"] == 1
-    assert registriert["ev-assistant"]["config"]["api_version"] == 1
-    # seit 0.99.67: Glow ist das Haupt-Panel, das klassische heisst "(klassisch)"; die URL-Pfade bleiben
-    assert glow["sidebar_title"] == "EV Assistant" and glow["sidebar_icon"] == "mdi:ev-station"
-    assert registriert["ev-assistant"]["sidebar_title"] == "EV Assistant (klassisch)"
-    assert registriert["ev-assistant"]["sidebar_title"] > glow["sidebar_title"]  # Glow steht alphabetisch zuerst
-    assert registriert["ev-assistant"]["sidebar_icon"] != glow["sidebar_icon"]
-    assert glow["config"]["config_entry_id"] == registriert["ev-assistant"]["config"]["config_entry_id"]
-    # Glow bekommt den Safe-Area-Abstand von HA (iOS-App), das klassische Panel macht ihn selbst
-    assert glow.get("handle_safe_area") is False
-    assert registriert["ev-assistant"].get("handle_safe_area") is True
+    # seit 0.99.76 ist Glow das einzige Panel, unter dem bisherigen URL-Pfad
+    assert set(registriert) == {"ev-assistant"}
+    panel = registriert["ev-assistant"]
+    assert panel["webcomponent_name"] == "ev-assistant-glow-panel"
+    assert panel["module_url"].startswith("/ev_assistant_static/ev-assistant-glow-panel.js?v=")
+    assert panel["sidebar_title"] == "EV Assistant" and panel["sidebar_icon"] == "mdi:ev-station"
+    assert panel["config"]["api_version"] == 1
+    assert panel["config"]["config_entry_id"] == entry.entry_id
+    # Glow bekommt den Safe-Area-Abstand von HA (iOS-App)
+    assert panel.get("handle_safe_area") is False
+
+
+def test_klassisches_panel_ist_entfernt():
+    assert not (FRONTEND / "ev-assistant-panel.js").exists()
+
+
+async def test_alte_anzeigeeinstellungen_des_klassischen_panels_werden_beim_laden_verworfen(
+    hass, hass_storage, coordinators
+):
+    """panel_layout/hidden_tabs (set_panel_layout/set_hidden_tabs, bis 0.99.75)
+    gehoerten nur dem entfallenen klassischen Panel und werden nicht mehr
+    mitgeschleppt."""
+    from custom_components.ev_assistant.const import DOMAIN, STORAGE_KEY, STORAGE_VERSION
+    from custom_components.ev_assistant.coordinator import EvAssistantCoordinator
+
+    entry = MockConfigEntry(domain=DOMAIN, data={}, options={}, entry_id="alt1")
+    entry.add_to_hass(hass)
+    hass_storage[f"{STORAGE_KEY}_{entry.entry_id}"] = {
+        "version": STORAGE_VERSION,
+        "data": {"panel_layout": [{"key": "soc", "visible": True}], "hidden_tabs": ["wartung"], "fahrten": []},
+    }
+    coordinator = EvAssistantCoordinator(hass, entry)
+    coordinators.append(coordinator)
+    await coordinator.async_setup()
+    assert "panel_layout" not in coordinator.data and "hidden_tabs" not in coordinator.data
+    assert coordinator.data["fahrten"] == []

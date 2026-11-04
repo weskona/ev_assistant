@@ -72,9 +72,8 @@ Ein paar bekannte Grenzen, unverblümt:
 - **Kostenvergleich** — vergleicht die gesamten EV-Ausgaben gegen einen vergleichbaren Verbrenner, mit automatischer oder Live-Kraftstoffpreis-Ermittlung.
 - **Automatische evcc-Modus-/SoC-Steuerung** — steuert optional evccs Lademodus aus eurem eigenen Nutzungsprofil, inklusive Echtzeit-PV-Überschuss-Übersteuerung, wirtschaftlicher Kappung des Netz-Zuschusses und Speicher-Priorität.
 - **Fahrten-Import** — historische Fahrten aus einer anderen Fahrtenbuch-App/einem Export bulk-importieren.
-- **Vollständiges Seitenleisten-Panel** — ein eingebautes, anpassbares EV-Dashboard; keine Lovelace-Karten-Einrichtung nötig.
-- **Glow-Panel (Haupt-Panel)** — der Seitenleisten-Eintrag „EV Assistant“ zeigt die [Glow-Karte](https://github.com/deepblue120/glow-dashboard), die aus deren eigenem Repository nachgezogen wird. Die Oberfläche gibt es auf Deutsch und Englisch, die Schrift ist in der Karte eingebettet (keine Anfrage an Google Fonts). Das klassische Panel bleibt als „EV Assistant (klassisch)“ erhalten und entfällt in einem späteren Release; der Glow-Karte fehlen noch einige klassische Funktionen (z. B. ausblendbare Tabs, Panel-Layout, Ausreißer-Details des Steckerprofils).
-- **Multi-Fahrzeug-Unterstützung** — ein Integrations-Eintrag je Fahrzeug, mit Panel-Tab-Umschalter.
+- **Seitenleisten-Panel** — der Seitenleisten-Eintrag „EV Assistant“ zeigt die [Glow-Karte](https://github.com/deepblue120/glow-dashboard), die aus deren eigenem Repository nachgezogen wird; keine Lovelace-Einrichtung nötig. Die Oberfläche gibt es auf Deutsch und Englisch, die Schrift ist in der Karte eingebettet (keine Anfrage an Google Fonts). Seit 0.99.76 ist es das einzige Panel: das frühere klassische Panel und seine Einstellungen „Sichtbare Tabs“ / „Panel anpassen“ sind entfallen.
+- **Multi-Fahrzeug-Unterstützung** — ein Integrations-Eintrag je Fahrzeug, mit Fahrzeug-Umschalter im Panel.
 - **Diagnose & Repair-Issues** — ein herunterladbarer, geschwärzter Zustands-Snapshot, sowie Repair-Issues, wenn eine Quell-Entität veraltet.
 - **Leasing-Kilometerbudget, Ladekarten und Fahrzeugwartung** — alles vollständig optional, panel-verwaltet.
 

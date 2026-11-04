@@ -179,9 +179,3 @@ def test_zip_ohne_glow_karte_faellt_durch(tmp_path, capsys):
     zip_path = _zip(tmp_path, json.dumps(GOOD), omit=["frontend/mg-car-dashboard.js"])
     assert _run(root, "v0.99.42", "--zip", str(zip_path)) == 1
     assert "frontend/mg-car-dashboard.js fehlt in der Zip" in capsys.readouterr().out
-
-
-def test_zip_ohne_klassisches_panel_faellt_durch(tmp_path):
-    root = _repo(tmp_path, json.dumps(GOOD))
-    zip_path = _zip(tmp_path, json.dumps(GOOD), omit=["frontend/ev-assistant-panel.js"])
-    assert _run(root, "v0.99.42", "--zip", str(zip_path)) == 1

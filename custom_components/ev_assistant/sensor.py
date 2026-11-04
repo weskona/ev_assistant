@@ -207,14 +207,10 @@ class TotalCostSensor(EvAssistantEntity, SensorEntity):
 
 
 class CountSensor(EvAssistantEntity, SensorEntity):
-    """Fremdladung-Anzahl -- traegt zusaetzlich "lade_modus", "panel_layout"
-    und "hidden_tabs" als Attribute (siehe coordinator.py::lade_modus()/
-    panel_layout()/hidden_tabs()), damit das Panel alle drei lesen kann,
-    ohne einen neuen Netzwerkweg/Sensor dafuer zu brauchen (dieselbe
-    Entitaet wird ohnehin schon fuer die Fahrzeuge-Tab-KPI aufgeloest).
-    Bewusst hier statt an einer neuen dedizierten Entitaet, um keine
-    zusaetzliche Sensor-Entitaet nur fuer solche Sichtbarkeits-/
-    Einstellungs-Flags anzulegen."""
+    """Fremdladung-Anzahl -- traegt zusaetzlich "lade_modus" als Attribut (siehe
+    coordinator.py::lade_modus()), damit das Panel es lesen kann, ohne einen
+    neuen Netzwerkweg/Sensor dafuer zu brauchen (dieselbe Entitaet wird
+    ohnehin schon fuer die Fahrzeuge-KPI aufgeloest)."""
 
     _attr_translation_key = "count"
     # Siehe Kommentar bei TotalKwhSensor -- totals["count"] kann durch
@@ -233,8 +229,6 @@ class CountSensor(EvAssistantEntity, SensorEntity):
     def extra_state_attributes(self):
         return {
             "lade_modus": self.coordinator.lade_modus(),
-            "panel_layout": self.coordinator.panel_layout(),
-            "hidden_tabs": self.coordinator.hidden_tabs(),
         }
 
 

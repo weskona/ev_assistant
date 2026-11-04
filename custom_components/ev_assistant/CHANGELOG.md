@@ -2,6 +2,23 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.76] - 2026-11-04
+
+### Removed
+
+- **The classic panel is gone: the Glow card is now the only panel** (phase 5 of #12). `frontend/ev-assistant-panel.js` (7,400 lines) is deleted. The sidebar entry "EV Assistant" shows the Glow card from [deepblue120/glow-dashboard](https://github.com/deepblue120/glow-dashboard) under the unchanged URL path `/ev-assistant` (bookmarks and dashboard links keep working). The former second entry "EV Assistant (klassisch)" and the old path `/ev-assistant-glow` disappear.
+- **Services `ev_assistant.set_panel_layout` and `ev_assistant.set_hidden_tabs` are removed** (they only configured the classic panel: card layout and hidden tabs). Automations or scripts that call them must drop those calls. Stored values are discarded when the data is loaded; the attributes `panel_layout` and `hidden_tabs` of the "count" sensor are gone (`lade_modus` stays).
+
+### Changed
+
+- The panel module now also busts the browser cache when only the Glow card file changes (a sync pull request replaces `mg-car-dashboard.js` without touching the wrapper); before, a card update could keep showing the old card until the browser cache expired.
+- `check_release.py --zip` no longer requires the classic panel, only the wrapper, the Glow card and `GLOW_VERSION`.
+
+### Honest limits
+
+- The Glow card does not show everything the classic panel did: the outlier details of the typical morning departure (`frueh_roh`, `n_ausreisser_frueh`, `n_ausreisser`), the range-in-km values of the charge control (`min_km`, `target_km`, `rest_heute_km`, `pv_fuer_auto_km`, `usable_kwh`) and the state of the gentle top-up (waiting for sunset). The data is still on the sensors' attributes. Missing display details are requests to the card, see #12.
+- The wiki pages "Panel Tour" and "Panel Customization Guide" describe the removed classic panel and are outdated.
+
 ## [0.99.75] - 2026-11-04
 
 ### Fixed
