@@ -2,7 +2,7 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
-## [0.99.77] - 2026-11-04
+## [Unreleased]
 
 ### Removed
 

@@ -96,7 +96,7 @@ async def test_unload_flusht_ausstehenden_save_soon_stand(hass, hass_storage):
 
 
 async def test_entfernter_dienst_set_usage_profile_buffer_pct_ist_nicht_registriert(hass):
-    """Der %-Puffer-Dienst entfiel mit 0.99.77 (nur noch Rueckfall, die km-
+    """Der %-Puffer-Dienst entfiel vor 1.0 (nur noch Rueckfall, die km-
     Variante set_usage_profile_buffer_km ersetzt ihn); die uebrigen Dienste
     bleiben."""
     from custom_components.ev_assistant.const import DOMAIN

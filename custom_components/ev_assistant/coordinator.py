@@ -872,7 +872,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # mitschleppen.
             base.pop("panel_layout", None)
             base.pop("hidden_tabs", None)
-            base.pop("usage_profile_buffer_pct_override", None)  # Dienst entfiel mit 0.99.77
+            base.pop("usage_profile_buffer_pct_override", None)  # Dienst entfiel vor 1.0
             self.data = base
         # Migration: "pending" war vor Mehrfach-Unterstuetzung ein einzelnes
         # Dict oder None statt einer Liste.
@@ -6771,7 +6771,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         """CONF_USAGE_PROFILE_BUFFER_PCT (Standard 20): nur noch der Rueckfall,
         wenn der Verbrauch und damit der km-Puffer (siehe
         _usage_profile_buffer_km()) unbekannt ist. Der Laufzeit-Override samt
-        Dienst set_usage_profile_buffer_pct entfiel mit 0.99.77 -- der Wert
+        Dienst set_usage_profile_buffer_pct entfiel vor 1.0 -- der Wert
         ist kein Formularfeld mehr, ein bereits gespeicherter bleibt gueltig."""
         return float(self._opt(CONF_USAGE_PROFILE_BUFFER_PCT, DEFAULT_USAGE_PROFILE_BUFFER_PCT))
 

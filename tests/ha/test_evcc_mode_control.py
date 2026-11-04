@@ -1011,7 +1011,7 @@ async def test_evcc_mode_targets_ohne_tarife_kein_mischpreis(hass, coordinators)
     assert targets["pv_override_max_mischpreis_kwh"] is None
 
 
-# ----- _usage_profile_buffer_pct (nur noch der %-Rueckfall, Dienst entfiel mit 0.99.77) ------
+# ----- _usage_profile_buffer_pct (nur noch der %-Rueckfall, Dienst entfiel vor 1.0) ------
 
 async def test_usage_profile_buffer_pct_ohne_override_gibt_konfigurierten_wert(hass, coordinators):
     from custom_components.ev_assistant.const import CONF_USAGE_PROFILE_BUFFER_PCT
