@@ -30,6 +30,14 @@ python3 .github/scripts/gen_interfaces.py
 
 and commit the result; `tests/test_stable_interfaces.py` fails otherwise. Adding something is fine. A removed or renamed entry in the diff of that page is a **breaking change** (needs a major version and a CHANGELOG entry).
 
+## Persisted data
+
+The coordinator keeps its whole persistent state in one dict (`self.data`) that is written to the store and read back on the next start, so every key is a contract with the data users already have on disk. `tests/ha/test_data_contract.py` fails when a key of `_empty_data()` is renamed, removed or gets another default. If that is intended, think about a migration in `async_setup()` first, then regenerate the snapshot:
+
+```bash
+UPDATE_DATA_CONTRACT=1 pytest tests/ha/test_data_contract.py
+```
+
 ## Code conventions
 
 This codebase follows two conventions fairly strictly throughout `engine.py`/`coordinator.py`/etc. — please match them:

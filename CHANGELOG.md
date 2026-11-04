@@ -7,6 +7,7 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Added
 
 - **Stable interfaces page** (`docs/stable-interfaces.md`, `docs/stable-interfaces.de.md`): the services (with fields), entity keys, config-flow keys, WebSocket commands and the panel configuration with its `api_version`, which are meant to stay stable within 1.x. The page is generated from the code by `.github/scripts/gen_interfaces.py`; `tests/test_stable_interfaces.py` (also part of the "Engine tests" CI job) fails when code and page differ, so a changed interface always shows up in a diff. The test helpers `simulate_event` and `simulate_trip` are marked as not part of the promise.
+- **Safety net for restructuring the coordinator** (tests only, no behavior change): `tests/ha/test_data_contract.py` pins the persisted data (every key and default of `_empty_data()` in `tests/ha/data_contract/empty_data.json`, the store names and version), checks that loading and saving never loses a key (also an unknown one from a newer version), and fixes the format of the backup export/restore and of the trip-log CSV export and import. A renamed or removed key fails the test with a hint that existing user data would be lost and a migration is needed.
 
 ### Changed
 
