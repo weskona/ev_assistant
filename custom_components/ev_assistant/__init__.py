@@ -210,7 +210,7 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
             cache_bust = str(int(max(
                 (frontend_dir / name).stat().st_mtime for name in (_PANEL_MODULE, "mg-car-dashboard.js")
             )))
-        except Exception:
+        except OSError:
             cache_bust = "1"
 
         ent_reg = er.async_get(hass)
@@ -250,8 +250,8 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
         for url_path in (_PANEL_URL_PATH, *_OLD_PANEL_URL_PATHS):
             try:
                 frontend.async_remove_panel(hass, url_path, warn_if_unknown=False)
-            except Exception:
-                pass
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Panel %s konnte nicht entfernt werden: %s", url_path, err)
 
         register_kwargs = {
             "frontend_url_path": _PANEL_URL_PATH,
@@ -274,7 +274,10 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
         domain_data[_PANEL_REGISTERED] = True
         _LOGGER.info("EV Assistant Panel registriert (v=%s, %d Fahrzeuge)", cache_bust, len(vehicles))
     except Exception as exc:  # noqa: BLE001
-        _LOGGER.warning("EV Assistant Panel konnte nicht registriert werden: %s", exc)
+        _LOGGER.warning(
+            "EV Assistant Panel konnte nicht registriert werden: %s", exc,
+            exc_info=_LOGGER.isEnabledFor(logging.DEBUG),  # Traceback nur mit Debug-Log
+        )
 
 
 def _async_unregister_panel(hass: HomeAssistant) -> None:

@@ -8,6 +8,10 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 
 - **Stable interfaces page** (`docs/stable-interfaces.md`, `docs/stable-interfaces.de.md`): the services (with fields), entity keys, config-flow keys, WebSocket commands and the panel configuration with its `api_version`, which are meant to stay stable within 1.x. The page is generated from the code by `.github/scripts/gen_interfaces.py`; `tests/test_stable_interfaces.py` (also part of the "Engine tests" CI job) fails when code and page differ, so a changed interface always shows up in a diff. The test helpers `simulate_event` and `simulate_trip` are marked as not part of the promise.
 
+### Changed
+
+- **No more silent `except Exception: pass`.** 14 places swallowed every error around `persistent_notification.create/.dismiss` (charge, trip, maintenance, leasing, charge-plan notices, export confirmations) without a trace; they now go through one helper (`_persistent_notification()`): a missing service is a debug line, every other error is a warning in the log, and the action itself (confirming a charge, exporting, ...) still never fails because of it. The same for two listener unsubscribes (debug line) and the panel removal. The panel-registration warning carries the traceback when debug logging is on, and the cache-key lookup only catches `OSError`. `tests/test_no_silent_except.py` fails when a broad handler with only `pass` comes back.
+
 ### Removed
 
 - **Service `ev_assistant.set_usage_profile_buffer_pct` is removed.** Since 0.99.52 the percentage buffer is only a fallback for an unknown consumption, the buffer is set in km (`set_usage_profile_buffer_km`, the Glow card uses it), and since the classic panel went away (0.99.76) no interface called the percentage service any more. Automations or scripts that call it must drop the call (use `set_usage_profile_buffer_km`). The stored percentage value stays valid as the fallback; its runtime override is discarded when the data is loaded.

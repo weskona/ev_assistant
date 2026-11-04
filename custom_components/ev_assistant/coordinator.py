@@ -11,6 +11,7 @@ from typing import Callable, Optional
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ServiceNotFound
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import (
@@ -2159,8 +2160,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             if unsub is not None:
                 try:
                     unsub()
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.debug("Listener %s konnte nicht abgemeldet werden: %s", attr, err)
                 setattr(self, attr, None)
 
     def _wire_odo(self) -> None:
@@ -3981,14 +3982,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 message = f"{len(pending_list)} offene Fremdladungen:\n" + "\n".join(lines) + "\nkWh und Preis eintragen."
 
         await self._push(NOTIFY_EVENT_FREMDLADUNG, title, message)
-        try:
-            await self.hass.services.async_call(
-                "persistent_notification", "create",
-                {"notification_id": self._notify_tag, "title": title, "message": message},
-                blocking=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        await self._persistent_notification(
+            "create",
+            {"notification_id": self._notify_tag, "title": title, "message": message},
+        )
 
     async def _push(self, event_key: str, title: str, message: str) -> None:
         """Sendet eine Push-Benachrichtigung an die konfigurierten Notify-
@@ -4023,14 +4020,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             f"Fahrzeug-Akku hat {threshold} % erreicht."
         )
         await self._push(NOTIFY_EVENT_SOC_SCHWELLE, title, message)
-        try:
-            await self.hass.services.async_call(
-                "persistent_notification", "create",
-                {"notification_id": f"{self._notify_tag}_soc_{threshold}", "title": title, "message": message},
-                blocking=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        await self._persistent_notification(
+            "create",
+            {"notification_id": f"{self._notify_tag}_soc_{threshold}", "title": title, "message": message},
+        )
 
     # ----- Fahrtenbuch -----------------------------------------------------
     async def _handle_pending_trip(self, pend: dict) -> None:
@@ -4080,23 +4073,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 message = f"{len(pending_list)} offene Fahrten:\n" + "\n".join(lines) + "\nStart-/Zielort eintragen."
 
         await self._push(NOTIFY_EVENT_FAHRT, title, message)
-        try:
-            await self.hass.services.async_call(
-                "persistent_notification", "create",
-                {"notification_id": f"{self._notify_tag}_trip", "title": title, "message": message},
-                blocking=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        await self._persistent_notification(
+            "create",
+            {"notification_id": f"{self._notify_tag}_trip", "title": title, "message": message},
+        )
 
     async def _dismiss_trip(self) -> None:
-        try:
-            await self.hass.services.async_call(
-                "persistent_notification", "dismiss",
-                {"notification_id": f"{self._notify_tag}_trip"}, blocking=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        await self._persistent_notification(
+            "dismiss",
+            {"notification_id": f"{self._notify_tag}_trip"},
+        )
 
     async def _notify_tankerkoenig_unavailable(self) -> None:
         """Dauerhafte Benachrichtigung, solange Tankerkoenig keinen einzigen
@@ -4116,23 +4102,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "stattdessen mit dem letzten bekannten bzw. festen Fallback-Preis weiter."
         )
         await self._push(NOTIFY_EVENT_TANKERKOENIG, title, message)
-        try:
-            await self.hass.services.async_call(
-                "persistent_notification", "create",
-                {"notification_id": f"{self._notify_tag}_tankerkoenig", "title": title, "message": message},
-                blocking=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        await self._persistent_notification(
+            "create",
+            {"notification_id": f"{self._notify_tag}_tankerkoenig", "title": title, "message": message},
+        )
 
     async def _dismiss_tankerkoenig_unavailable(self) -> None:
-        try:
-            await self.hass.services.async_call(
-                "persistent_notification", "dismiss",
-                {"notification_id": f"{self._notify_tag}_tankerkoenig"}, blocking=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        await self._persistent_notification(
+            "dismiss",
+            {"notification_id": f"{self._notify_tag}_tankerkoenig"},
+        )
 
     def _build_trip_record(self, pend: dict, start_ort: Optional[str], end_ort: Optional[str]) -> dict:
         """Baut den Fahrtenbuch-Eintrag aus einer offenen Fahrt (siehe
@@ -4705,21 +4684,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._save()
         self.hass.bus.async_fire(EVENT_TRIP_IMPORTED, {"anzahl": len(imported)})
         en = self._en()
-        try:
-            await self.hass.services.async_call(
-                "persistent_notification", "create",
-                {
-                    "notification_id": f"{self._notify_tag}_import",
-                    "title": "Trip log import" if en else "Fahrtenbuch-Import",
-                    "message": (
-                        f"{len(imported)} trip(s) imported."
-                        if en else f"{len(imported)} Fahrt(en) importiert."
-                    ),
-                },
-                blocking=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        await self._persistent_notification(
+            "create",
+            {
+                "notification_id": f"{self._notify_tag}_import",
+                "title": "Trip log import" if en else "Fahrtenbuch-Import",
+                "message": (
+                    f"{len(imported)} trip(s) imported."
+                    if en else f"{len(imported)} Fahrt(en) importiert."
+                ),
+            },
+        )
         self.async_set_updated_data(self.data)
         return len(imported)
 
@@ -4746,21 +4721,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self.hass.async_add_executor_job(self._write_fahrtenbuch_csv, path, fahrten)
         filename = os.path.basename(path)
         en = self._en()
-        try:
-            await self.hass.services.async_call(
-                "persistent_notification", "create",
-                {
-                    "notification_id": f"{self._notify_tag}_export",
-                    "title": "Trip log exported" if en else "Fahrtenbuch exportiert",
-                    "message": (
-                        f"CSV export ready: [{filename}](/local/{filename})" if en
-                        else f"CSV-Export bereit: [{filename}](/local/{filename})"
-                    ),
-                },
-                blocking=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        await self._persistent_notification(
+            "create",
+            {
+                "notification_id": f"{self._notify_tag}_export",
+                "title": "Trip log exported" if en else "Fahrtenbuch exportiert",
+                "message": (
+                    f"CSV export ready: [{filename}](/local/{filename})" if en
+                    else f"CSV-Export bereit: [{filename}](/local/{filename})"
+                ),
+            },
+        )
         return path
 
     @staticmethod
@@ -4790,21 +4761,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self.hass.async_add_executor_job(self._write_event_log_txt, path, log)
         filename = os.path.basename(path)
         en = self._en()
-        try:
-            await self.hass.services.async_call(
-                "persistent_notification", "create",
-                {
-                    "notification_id": f"{self._notify_tag}_event_log_export",
-                    "title": "Event log exported" if en else "Ereignisprotokoll exportiert",
-                    "message": (
-                        f"Log ready: [{filename}](/local/{filename})" if en
-                        else f"Protokoll bereit: [{filename}](/local/{filename})"
-                    ),
-                },
-                blocking=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        await self._persistent_notification(
+            "create",
+            {
+                "notification_id": f"{self._notify_tag}_event_log_export",
+                "title": "Event log exported" if en else "Ereignisprotokoll exportiert",
+                "message": (
+                    f"Log ready: [{filename}](/local/{filename})" if en
+                    else f"Protokoll bereit: [{filename}](/local/{filename})"
+                ),
+            },
+        )
         return path
 
     @staticmethod
@@ -4841,21 +4808,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self.hass.async_add_executor_job(self._write_backup_json, path, payload)
         filename = os.path.basename(path)
         en = self._en()
-        try:
-            await self.hass.services.async_call(
-                "persistent_notification", "create",
-                {
-                    "notification_id": f"{self._notify_tag}_backup_export",
-                    "title": "Backup exported" if en else "Backup exportiert",
-                    "message": (
-                        f"Backup ready: [{filename}](/local/{filename})" if en
-                        else f"Backup bereit: [{filename}](/local/{filename})"
-                    ),
-                },
-                blocking=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        await self._persistent_notification(
+            "create",
+            {
+                "notification_id": f"{self._notify_tag}_backup_export",
+                "title": "Backup exported" if en else "Backup exportiert",
+                "message": (
+                    f"Backup ready: [{filename}](/local/{filename})" if en
+                    else f"Backup bereit: [{filename}](/local/{filename})"
+                ),
+            },
+        )
         return path
 
     @staticmethod
@@ -5567,17 +5530,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         else:
             message = "Check the maintenance tab for details." if en else "Details siehe Wartung-Tab."
         await self._push(NOTIFY_EVENT_WARTUNG, title, message)
-        try:
-            await self.hass.services.async_call(
-                "persistent_notification", "create",
-                {
-                    "notification_id": f"{self._notify_tag}_wartung_{punkt['id']}",
-                    "title": title, "message": message,
-                },
-                blocking=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        await self._persistent_notification(
+            "create",
+            {
+                "notification_id": f"{self._notify_tag}_wartung_{punkt['id']}",
+                "title": title, "message": message,
+            },
+        )
 
     async def async_discard(self, start_ts: Optional[float] = None) -> None:
         """Verwirft eine offene Fremdladung. Bei mehreren gleichzeitig
@@ -6156,14 +6115,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         else:
             message = "Check the leasing tab for details." if en else "Details siehe Leasing-Tab."
         await self._push(NOTIFY_EVENT_LEASING, title, message)
-        try:
-            await self.hass.services.async_call(
-                "persistent_notification", "create",
-                {"notification_id": f"{self._notify_tag}_leasing", "title": title, "message": message},
-                blocking=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        await self._persistent_notification(
+            "create",
+            {"notification_id": f"{self._notify_tag}_leasing", "title": title, "message": message},
+        )
 
     def _evcc_vehicle_key(self) -> Optional[str]:
         """Fahrzeugname in evcc: aus Konfiguration oder via Auto-Erkennung
@@ -8285,21 +8240,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "evcc_charge_plan: Ziel-SoC %s%% bis %s nicht erreichbar (max. ca. %s%% bei %.1f kW), setze %s%%",
             requested_soc, target_time_local, max_soc, max_power_kw, max_soc,
         )
-        try:
-            await self.hass.services.async_call(
-                "persistent_notification", "create",
-                {
-                    "notification_id": f"{self._notify_tag}_charge_plan_unreachable",
-                    "title": "Ladeplan-Ziel nicht erreichbar",
-                    "message": (
-                        f"{requested_soc}% bis {target_time_local} sind mit ca. {max_power_kw:.1f} kW "
-                        f"Ladeleistung nicht erreichbar. Stattdessen auf das maximal Mögliche gesetzt: {max_soc}%."
-                    ),
-                },
-                blocking=False,
-            )
-        except Exception:  # noqa: BLE001
-            pass
+        await self._persistent_notification(
+            "create",
+            {
+                "notification_id": f"{self._notify_tag}_charge_plan_unreachable",
+                "title": "Ladeplan-Ziel nicht erreichbar",
+                "message": (
+                    f"{requested_soc}% bis {target_time_local} sind mit ca. {max_power_kw:.1f} kW "
+                    f"Ladeleistung nicht erreichbar. Stattdessen auf das maximal Mögliche gesetzt: {max_soc}%."
+                ),
+            },
+        )
         return max_soc
 
     def _evcc_charge_plan_feedback_text(self, target_soc, target_time: float) -> Optional[str]:
@@ -8440,13 +8391,24 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.async_set_updated_data(self.data)
         return True
 
-    async def _dismiss(self) -> None:
+    async def _persistent_notification(self, action: str, data: dict) -> None:
+        """persistent_notification.create/.dismiss, best effort: eine fehlende
+        Benachrichtigung darf nie die eigentliche Aktion (Ladung erfassen,
+        Export, Erinnerung ...) abbrechen. Fehlt der Dienst (Integration
+        "persistent_notification" deaktiviert), ist das nur eine Debug-Zeile;
+        jeder andere Fehler (z.B. ein ungueltiger Payload nach einer Aenderung
+        hier) steht als Warnung im Log statt still verschluckt zu werden."""
         try:
-            await self.hass.services.async_call(
-                "persistent_notification", "dismiss", {"notification_id": self._notify_tag}, blocking=False
-            )
-        except Exception:  # noqa: BLE001
-            pass
+            await self.hass.services.async_call("persistent_notification", action, data, blocking=False)
+        except ServiceNotFound:
+            _LOGGER.debug("persistent_notification.%s nicht verfuegbar", action)
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("persistent_notification.%s fehlgeschlagen: %s", action, err)
+
+    async def _dismiss(self) -> None:
+        await self._persistent_notification(
+            "dismiss", {"notification_id": self._notify_tag},
+        )
 
     def _log_event(self, kategorie: str, text: str) -> None:
         """Haengt einen Eintrag ans persistente Ereignisprotokoll an (siehe
@@ -8496,6 +8458,6 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         for unsub in self._unsub:
             try:
                 unsub()
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Listener konnte nicht abgemeldet werden: %s", err)
         self._unsub = []
