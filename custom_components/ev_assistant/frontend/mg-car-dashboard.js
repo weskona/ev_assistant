@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=61  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=62  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.5.37";
+const VERSION = "3.5.38";
 // merkt sich den letzten Wechsel der Adresse (auch wenn die Karte dabei aus- und neu eingehängt wird, z. B. durch Detailfenster)
 const NAV = (window.__glowCarNav = window.__glowCarNav || (() => {
   const n = { cur: location.pathname, t: 0 };
@@ -282,6 +282,7 @@ class MgCarDashboard extends HTMLElement {
     if (!this._histTimer) this._histTimer = setInterval(() => { this._loadCarHist(); this._loadLastSession(); this._loadTrips(); }, 15 * 60000);
   }
   disconnectedCallback() {
+    this._statusBar(false);
     if (this._onResize) { window.removeEventListener("resize", this._onResize); this._ro.disconnect(); }
     clearInterval(this._histTimer); this._histTimer = null;
   }
@@ -329,7 +330,7 @@ class MgCarDashboard extends HTMLElement {
       this.shadowRoot.addEventListener("pointerleave", () => { const t = this.shadowRoot.querySelector(".gtip"); if (t) t.hidden = true; this.shadowRoot.querySelector(".hl")?.setAttribute("width", 0); }, true);
     }
     this.shadowRoot.innerHTML = `<style>${STYLE}${CAR_STYLE}</style>
-      <div class="wrap carpage">
+      <div class="wrap carpage"><div class="sai"></div>
         <div class="apiwarn" id="apiwarn" hidden></div>
         <div class="pages"><div class="hsegs"><button class="hseg" data-act="page" data-p="main">${T("Übersicht")}</button><button class="hseg" data-act="page" data-p="prof">${T("Profil &amp; Analyse")}</button><button class="hseg" data-act="page" data-p="cost">${T("Laden &amp; Kosten")}</button><button class="hseg" data-act="page" data-p="set">${T("Einstellungen")}</button></div><div class="kper" id="kper" hidden></div></div>
         <div class="grid" id="pmain">
@@ -2945,7 +2946,10 @@ class MgCarDashboard extends HTMLElement {
     const wrap = this.shadowRoot?.querySelector(".wrap");
     if (!wrap) return;
     const top = this._docTop();
-    wrap.classList.toggle("sat", top < 30);   // ganz oben (ohne HA-Kopfzeile): Abstand zur iPhone-Statusleiste
+    // ganz oben (ohne HA-Kopfzeile): Abstand zur iPhone-Statusleiste. Deren Höhe (Uhr, Kamera, ca. 47–59 px) wird gemessen –
+    // beginnt die Karte darin, bekommt sie den Abstand; liegt sie tiefer, hat Home Assistant den Platz schon freigehalten
+    const inset = this.shadowRoot.querySelector(".sai")?.offsetHeight || 0;
+    wrap.classList.toggle("sat", top < Math.max(30, inset));
     // Handy (Karte bis 600 px breit): Cockpit-Ansicht – Auto und Laden in einer Kachel, Lademanagement darunter, der Rest als Zeilen
     const mob = this.clientWidth > 0 && this.clientWidth <= 600;
     if (mob !== !!this._mob) {
@@ -2953,6 +2957,7 @@ class MgCarDashboard extends HTMLElement {
       const car = this.shadowRoot.getElementById("car"); if (car) car._html = null;
       if (this._hass && this._built) Promise.resolve().then(() => this._update(true));
     }
+    this._statusBar(mob && inset > 0 && wrap.classList.contains("sat"), wrap);
     const on = this._config?.fit_screen !== false && this.clientWidth > 1180;
     if (!on) { wrap.classList.remove("fit"); return; }
     const h = Math.max(560, Math.floor(window.innerHeight - top));
@@ -2974,6 +2979,20 @@ class MgCarDashboard extends HTMLElement {
     const slack = last ? col.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom : 0;
     const want = Math.round(Math.max(110, Math.min(200, over > 0 ? cur - over - 2 : cur + Math.max(0, slack - 4))));
     if (Math.abs(want - cur) >= 2 && want !== h._chh) { h._chh = want; h.style.setProperty("--chh", want + "px"); }
+  }
+  /* iPhone ohne HA-Kopfzeile: die Statusleiste ist durchsichtig, beim Scrollen läuft die Karte unter Uhr und Kamera durch.
+     Eine feste, deckende Fläche in Hintergrundfarbe darüber verhindert das (am Dokument, da position:fixed im Shadow DOM
+     wegen container-type an der Karte hängen würde). */
+  _statusBar(on, wrap) {
+    let el = document.getElementById("mg-car-statusbar");
+    if (!on) { if (el && el._owner === this) el.remove(); return; }
+    if (!el) {
+      el = document.createElement("div"); el.id = "mg-car-statusbar";
+      Object.assign(el.style, { position: "fixed", top: "0", left: "0", right: "0", height: "env(safe-area-inset-top,0px)", zIndex: "6", pointerEvents: "none" });
+      document.body.appendChild(el);
+    }
+    el._owner = this;
+    el.style.background = getComputedStyle(wrap).backgroundColor || "#0b0d12";
   }
   _docTop() {
     let y = this.getBoundingClientRect().top + window.scrollY;
@@ -3734,6 +3753,7 @@ const CAR_STYLE = `
 /* ---------- Handy: Cockpit-Ansicht (.wrap.mob, Karte bis 600 px breit) ---------- */
 .mrows{display:none}
 .wrap.mob{padding:10px 10px 18px}
+.sai{position:absolute;top:0;left:0;width:0;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none}   /* misst die Höhe der Statusleiste */
 .wrap.mob.sat{padding-top:calc(10px + env(safe-area-inset-top,0px))}   /* iPhone: nicht unter Uhr und Kamera (Statusleiste) */
 .wrap.mob .pages{margin:0 0 10px}
 .wrap.mob .pages > .hsegs{overflow-x:auto;scrollbar-width:none;max-width:100%;justify-self:stretch}.wrap.mob .pages > .hsegs::-webkit-scrollbar{display:none}
