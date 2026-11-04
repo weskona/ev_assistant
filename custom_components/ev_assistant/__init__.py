@@ -283,6 +283,11 @@ async def _async_register_panel(hass: HomeAssistant, entry: ConfigEntry) -> None
                 "module_url": f"{_PANEL_STATIC_PATH}/ev-assistant-glow-panel.js?v={glow_bust}",
                 "sidebar_title": _GLOW_PANEL_TITLE,
                 "sidebar_icon": _GLOW_PANEL_ICON,
+                # Anders als das klassische Panel bekommt das Glow-Panel den
+                # Safe-Area-Abstand (Statusleiste/Notch) von Home Assistant:
+                # die eigene Messung der Karte griff in der iOS-App nicht,
+                # die Tabs lagen unter Uhr und Kamera.
+                **({"handle_safe_area": False} if "handle_safe_area" in register_kwargs else {}),
             })
         except Exception as glow_exc:  # noqa: BLE001
             _LOGGER.warning("EV Assistant Glow-Panel konnte nicht registriert werden: %s", glow_exc)
