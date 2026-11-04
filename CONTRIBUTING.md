@@ -20,6 +20,16 @@ Open a [GitHub Issue](https://github.com/weskona/ev_assistant/issues). For a bug
 
 4. Open the PR against `main` with a short description of what changed and why.
 
+## Stable interfaces
+
+[docs/stable-interfaces.md](docs/stable-interfaces.md) ([Deutsch](docs/stable-interfaces.de.md)) lists the services, entities, config keys, WebSocket commands and the panel configuration that stay stable within 1.x. It is generated from the code. If you add, rename or remove one of them, run
+
+```bash
+python3 .github/scripts/gen_interfaces.py
+```
+
+and commit the result; `tests/test_stable_interfaces.py` fails otherwise. Adding something is fine. A removed or renamed entry in the diff of that page is a **breaking change** (needs a major version and a CHANGELOG entry).
+
 ## Code conventions
 
 This codebase follows two conventions fairly strictly throughout `engine.py`/`coordinator.py`/etc. — please match them:
