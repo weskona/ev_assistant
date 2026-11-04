@@ -598,13 +598,6 @@ def _empty_data() -> dict:
         "plug_departure_candidate": None,
         "plug_last_tick_ts": None,
         "plug_departure_prev": None,
-        # Laufzeit-Override fuer CONF_USAGE_PROFILE_BUFFER_PCT (siehe
-        # _usage_profile_buffer_pct()/async_set_usage_profile_buffer_pct())
-        # -- Schieberegler in der Wallbox-Karte (Uebersicht-Beta), damit
-        # der Puffer nicht jedesmal ueber den Options-Flow (samt vollem
-        # Reload der Integration) angepasst werden muss. None = kein
-        # Override, es gilt der konfigurierte/Default-Wert.
-        "usage_profile_buffer_pct_override": None,
         # km-Variante (0.99.52), siehe _usage_profile_buffer_km(). Fehlt der
         # Schluessel in alten Daten/Backups, gilt er wie None.
         "usage_profile_buffer_km_override": None,
@@ -879,6 +872,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # mitschleppen.
             base.pop("panel_layout", None)
             base.pop("hidden_tabs", None)
+            base.pop("usage_profile_buffer_pct_override", None)  # Dienst entfiel mit 0.99.77
             self.data = base
         # Migration: "pending" war vor Mehrfach-Unterstuetzung ein einzelnes
         # Dict oder None statt einer Liste.
@@ -6774,17 +6768,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return result
 
     def _usage_profile_buffer_pct(self) -> float:
-        """CONF_USAGE_PROFILE_BUFFER_PCT, aber mit Vorrang fuer einen
-        gesetzten Laufzeit-Override (siehe async_set_usage_profile_buffer_
-        pct() -- Schieberegler in der Wallbox-Karte, Uebersicht-Beta).
-        Bewusst NICHT ueber entry.options geloest: eine Aenderung dort
-        loest per Update-Listener einen vollen Reload der Integration aus
-        (siehe __init__.py::_async_reload()), was fuer einen haeufig
-        genutzten Schieberegler viel zu schwerfaellig waere (kurzes
-        Aufflackern aller Entities bei jeder Anpassung)."""
-        override = self.data.get("usage_profile_buffer_pct_override")
-        if override is not None:
-            return float(override)
+        """CONF_USAGE_PROFILE_BUFFER_PCT (Standard 20): nur noch der Rueckfall,
+        wenn der Verbrauch und damit der km-Puffer (siehe
+        _usage_profile_buffer_km()) unbekannt ist. Der Laufzeit-Override samt
+        Dienst set_usage_profile_buffer_pct entfiel mit 0.99.77 -- der Wert
+        ist kein Formularfeld mehr, ein bereits gespeicherter bleibt gueltig."""
         return float(self._opt(CONF_USAGE_PROFILE_BUFFER_PCT, DEFAULT_USAGE_PROFILE_BUFFER_PCT))
 
     def _usage_profile_buffer_km(self) -> float:
@@ -6818,25 +6806,11 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         res["puffer_prozent"] = buffer_pct
         return res
 
-    async def async_set_usage_profile_buffer_pct(self, buffer_pct: Optional[float]) -> None:
-        """Setzt/loescht den Laufzeit-Override aus _usage_profile_buffer_
-        pct() -- `buffer_pct=None` setzt auf den konfigurierten Wert
-        zurueck. Geklemmt auf [0, 100]. Stoesst danach sofort eine
-        Neuauswertung der evcc-Modus-/SoC-Ziele an, damit eine Slider-
-        Aenderung ohne Verzoegerung in Min-/Ziel-SoC sichtbar wird, statt
-        erst beim naechsten ohnehin faelligen Update."""
-        self.data["usage_profile_buffer_pct_override"] = (
-            None if buffer_pct is None else max(0.0, min(100.0, float(buffer_pct)))
-        )
-        self.async_set_updated_data(self.data)
-        await self._async_apply_evcc_mode_control()
-        self._save_soon()
-
     async def async_set_weekly_full_charge_enabled(self, enabled: Optional[bool]) -> None:
         """Schreibt CONF_WEEKLY_FULL_CHARGE_ENABLED direkt in entry.data --
-        ANDERS als _usage_profile_buffer_pct()/async_set_usage_profile_
-        buffer_pct() (Laufzeit-Override in self.data, um den haeufig
-        genutzten Schieberegler nicht bei jedem Ziehen einen vollen Reload
+        ANDERS als _usage_profile_buffer_km()/async_set_usage_profile_
+        buffer_km() (Laufzeit-Override in self.data, um die haeufig
+        genutzte Einstellung nicht bei jeder Aenderung einen vollen Reload
         ausloesen zu lassen). Hier bewusst der schwerfaelligere Weg: der
         Schalter wird selten genutzt, dafuer bleibt der Options-Flow so
         NIE mit dem Panel-Schalter auseinander -- ein zufaelliges
@@ -6875,7 +6849,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         enabled() oben (siehe dortigen Docstring): selten genutzt (kein
         Schieberegler-Dauerbetrieb), daher bewusst der entry.data-Weg statt
         eines reinen Laufzeit-Overrides wie bei async_set_usage_profile_
-        buffer_pct() -- der Options-Flow zeigt so nie einen veralteten Wert.
+        buffer_km() -- der Options-Flow zeigt so nie einen veralteten Wert.
         `target_soc_max=None` entfernt den Key wieder (zurueck auf
         DEFAULT_EVCC_MODE_CONTROL_TARGET_SOC_MAX). async_update_entry()
         loest ueber den bestehenden Update-Listener automatisch einen
@@ -8027,7 +8001,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         einfacher Dauer-Schalter statt Zeitfenster (Nutzerentscheidung,
         Produktionsfeedback 2026-09-18). Reiner Laufzeit-Zustand in self.data
         (kein Config-Flow-Feld, kein Reload noetig), analog
-        async_set_usage_profile_buffer_pct()."""
+        async_set_usage_profile_buffer_km()."""
         self.data["evcc_mode_control_paused"] = bool(paused)
         self.async_set_updated_data(self.data)
         self._save_soon()
@@ -8389,7 +8363,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         control()). Stoesst nach Erfolg einen sofortigen evcc-State-Refresh
         an, damit Sensor/Panel den neuen Plan ohne Wartezeit auf den
         naechsten Poll-Zyklus zeigen (analog async_set_usage_profile_
-        buffer_pct()). Prueft vorher ueber _clamp_evcc_charge_plan_target_
+        buffer_km()). Prueft vorher ueber _clamp_evcc_charge_plan_target_
         soc(), ob target_soc bis target_time ueberhaupt erreichbar ist, und
         kappt/informiert sonst (siehe dortigen Docstring) -- gilt daher
         automatisch auch fuer async_set_evcc_charge_plan_range_km(), das

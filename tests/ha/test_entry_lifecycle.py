@@ -93,3 +93,19 @@ async def test_unload_flusht_ausstehenden_save_soon_stand(hass, hass_storage):
 
     storage_key = f"{STORAGE_KEY}_{entry.entry_id}"
     assert hass_storage[storage_key]["data"].get("_test_marker") == "ausstehende_aenderung"
+
+
+async def test_entfernter_dienst_set_usage_profile_buffer_pct_ist_nicht_registriert(hass):
+    """Der %-Puffer-Dienst entfiel mit 0.99.77 (nur noch Rueckfall, die km-
+    Variante set_usage_profile_buffer_km ersetzt ihn); die uebrigen Dienste
+    bleiben."""
+    from custom_components.ev_assistant.const import DOMAIN
+
+    entry = _make_entry(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert not hass.services.has_service(DOMAIN, "set_usage_profile_buffer_pct")
+    assert hass.services.has_service(DOMAIN, "set_usage_profile_buffer_km")
+    for service in ("simulate_event", "simulate_trip", "rebuild_departure_profile"):
+        assert hass.services.has_service(DOMAIN, service), service

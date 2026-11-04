@@ -63,7 +63,6 @@ from .const import (
     SERVICE_SET_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
     SERVICE_SET_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
     SERVICE_SET_USAGE_PROFILE_BUFFER_KM,
-    SERVICE_SET_USAGE_PROFILE_BUFFER_PCT,
     SERVICE_SET_VEHICLE_IMAGE,
     SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED,
     SERVICE_SIMULATE,
@@ -498,20 +497,14 @@ MARK_MAINTENANCE_DONE_SCHEMA = vol.Schema({
     vol.Optional("datum"): str,
 })
 
-# buffer_pct absichtlich optional OHNE Default: fehlt es, wird der
+# buffer_km absichtlich optional OHNE Default: fehlt es, wird der
 # Laufzeit-Override zurueckgesetzt (siehe coordinator.py::async_set_
-# usage_profile_buffer_pct()), statt versehentlich auf 0 zu klemmen.
+# usage_profile_buffer_km()), statt versehentlich auf 0 zu klemmen.
 # vol.Any(None, ...) zusaetzlich zum blossen vol.Optional: ein explizit
 # mitgegebenes null/None (z.B. per REST-API statt einfach das Feld
 # wegzulassen) wuerde sonst an vol.Coerce(float) scheitern (float(None)
 # wirft) und die gesamte Anfrage mit 400 ablehnen, statt wie beabsichtigt
 # den Override zurueckzusetzen -- gefundener Vorfall 2026-09-17.
-SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA = vol.Schema({
-    vol.Required("config_entry_id"): str,
-    vol.Optional("buffer_pct"): vol.Any(None, vol.Coerce(float)),
-})
-
-# buffer_km: wie buffer_pct -- fehlend/null setzt den Override zurueck.
 SET_USAGE_PROFILE_BUFFER_KM_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
     vol.Optional("buffer_km"): vol.Any(None, vol.Coerce(float)),
@@ -526,7 +519,7 @@ URLAUB_SEIT_SCHEMA = vol.Schema({
 # null), wird CONF_WEEKLY_FULL_CHARGE_ENABLED aus entry.data entfernt
 # (zurueck auf DEFAULT_WEEKLY_FULL_CHARGE_ENABLED, siehe coordinator.py::
 # async_set_weekly_full_charge_enabled()) -- ANDERS als
-# SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA (reiner Laufzeit-Override statt
+# SET_USAGE_PROFILE_BUFFER_KM_SCHEMA (reiner Laufzeit-Override statt
 # Persistenz, siehe dortigen coordinator.py-Docstring), aber mit demselben
 # vol.Any(None, ...)-Fix fuer ein explizit mitgegebenes null.
 SET_WEEKLY_FULL_CHARGE_ENABLED_SCHEMA = vol.Schema({
@@ -872,11 +865,6 @@ def _register_services(hass: HomeAssistant) -> None:
                 call.data["wartung_id"], call.data.get("km"), call.data.get("datum"),
             )
 
-    async def _handle_set_usage_profile_buffer_pct(call: ServiceCall) -> None:
-        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
-        if coordinator:
-            await coordinator.async_set_usage_profile_buffer_pct(call.data.get("buffer_pct"))
-
     async def _handle_set_usage_profile_buffer_km(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
@@ -1072,10 +1060,6 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
         DOMAIN, SERVICE_MARK_MAINTENANCE_DONE, _handle_mark_maintenance_done,
         schema=MARK_MAINTENANCE_DONE_SCHEMA,
-    )
-    hass.services.async_register(
-        DOMAIN, SERVICE_SET_USAGE_PROFILE_BUFFER_PCT, _handle_set_usage_profile_buffer_pct,
-        schema=SET_USAGE_PROFILE_BUFFER_PCT_SCHEMA,
     )
     hass.services.async_register(
         DOMAIN, SERVICE_SET_USAGE_PROFILE_BUFFER_KM, _handle_set_usage_profile_buffer_km,

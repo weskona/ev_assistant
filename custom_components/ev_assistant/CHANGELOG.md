@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.77] - 2026-11-04
+
+### Removed
+
+- **Service `ev_assistant.set_usage_profile_buffer_pct` is removed.** Since 0.99.52 the percentage buffer is only a fallback for an unknown consumption, the buffer is set in km (`set_usage_profile_buffer_km`, the Glow card uses it), and since the classic panel went away (0.99.76) no interface called the percentage service any more. Automations or scripts that call it must drop the call (use `set_usage_profile_buffer_km`). The stored percentage value stays valid as the fallback; its runtime override is discarded when the data is loaded.
+- The services `simulate_event`, `simulate_trip` (test helpers) and `rebuild_departure_profile` (maintenance) stay.
+
 ## [0.99.76] - 2026-11-04
 
 ### Removed

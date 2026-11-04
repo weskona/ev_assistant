@@ -1011,11 +1011,7 @@ async def test_evcc_mode_targets_ohne_tarife_kein_mischpreis(hass, coordinators)
     assert targets["pv_override_max_mischpreis_kwh"] is None
 
 
-# ----- _usage_profile_buffer_pct / async_set_usage_profile_buffer_pct ------
-# Schieberegler in der Wallbox-Karte (Uebersicht-Beta) -- der Override lebt
-# bewusst in self.data statt in entry.options, siehe Docstring: eine
-# Options-Aenderung wuerde per Update-Listener einen vollen Reload der
-# Integration ausloesen.
+# ----- _usage_profile_buffer_pct (nur noch der %-Rueckfall, Dienst entfiel mit 0.99.77) ------
 
 async def test_usage_profile_buffer_pct_ohne_override_gibt_konfigurierten_wert(hass, coordinators):
     from custom_components.ev_assistant.const import CONF_USAGE_PROFILE_BUFFER_PCT
@@ -1033,43 +1029,14 @@ async def test_usage_profile_buffer_pct_ohne_konfiguration_gibt_default(hass, co
     assert coordinator._usage_profile_buffer_pct() == DEFAULT_USAGE_PROFILE_BUFFER_PCT
 
 
-async def test_set_usage_profile_buffer_pct_override_hat_vorrang(hass, coordinators):
+async def test_buffer_pct_wirkt_sich_auf_usage_profile_tomorrow_aus(hass, coordinators):
     from custom_components.ev_assistant.const import CONF_USAGE_PROFILE_BUFFER_PCT
 
     coordinator, _ = await _make_coordinator(
-        hass, coordinators, "upbp3", options={CONF_USAGE_PROFILE_BUFFER_PCT: 30.0},
+        hass, coordinators, "upbp6", options={CONF_USAGE_PROFILE_BUFFER_PCT: 50.0},
     )
-    await coordinator.async_set_usage_profile_buffer_pct(45.0)
-    assert coordinator._usage_profile_buffer_pct() == 45.0
-    # entry.options selbst bleibt unveraendert -- kein Reload ausgeloest.
-    assert coordinator.entry.options[CONF_USAGE_PROFILE_BUFFER_PCT] == 30.0
-
-
-async def test_set_usage_profile_buffer_pct_wird_geklemmt(hass, coordinators):
-    coordinator, _ = await _make_coordinator(hass, coordinators, "upbp4")
-    await coordinator.async_set_usage_profile_buffer_pct(150.0)
-    assert coordinator._usage_profile_buffer_pct() == 100.0
-    await coordinator.async_set_usage_profile_buffer_pct(-10.0)
-    assert coordinator._usage_profile_buffer_pct() == 0.0
-
-
-async def test_set_usage_profile_buffer_pct_none_setzt_zurueck(hass, coordinators):
-    from custom_components.ev_assistant.const import CONF_USAGE_PROFILE_BUFFER_PCT
-
-    coordinator, _ = await _make_coordinator(
-        hass, coordinators, "upbp5", options={CONF_USAGE_PROFILE_BUFFER_PCT: 30.0},
-    )
-    await coordinator.async_set_usage_profile_buffer_pct(45.0)
-    assert coordinator._usage_profile_buffer_pct() == 45.0
-    await coordinator.async_set_usage_profile_buffer_pct(None)
-    assert coordinator._usage_profile_buffer_pct() == 30.0
-
-
-async def test_set_usage_profile_buffer_pct_wirkt_sich_auf_usage_profile_tomorrow_aus(hass, coordinators):
-    coordinator, _ = await _make_coordinator(hass, coordinators, "upbp6")
     _seed_usage_profile(coordinator, weekday_kwh=10.0)
     coordinator.range_conversion = lambda: {}  # Verbrauch unbekannt -> %-Rueckfall (siehe test_buffer_km.py fuer km)
-    await coordinator.async_set_usage_profile_buffer_pct(50.0)
     need = coordinator.usage_profile_tomorrow()
     assert need["puffer_prozent"] == 50.0
     assert need["benoetigt_kwh"] == 15.0  # 10 kWh * 1.5
