@@ -20,7 +20,14 @@ A comprehensive **EV monitoring integration for Home Assistant**. EV Assistant c
 
 ### Status & Known Limitations
 
-EV Assistant is in **active 0.x development** — pre-1.0. Behavior and configuration can still change between releases; check the [CHANGELOG](CHANGELOG.md) when updating.
+EV Assistant is **stable from version 1.0**. Within 1.x the following interfaces only change in a breaking way with the next major version, and every breaking change is announced in the [CHANGELOG](CHANGELOG.md):
+
+- the **services** and their parameters,
+- the **unique IDs and documented attributes** of the sensors and binary sensors,
+- the **config-flow and options keys** (existing installations keep working without reconfiguration),
+- the **WebSocket commands** `ev_assistant/*` and the `api_version` of the panel configuration (the contract with the Glow card).
+
+What can still change: the numbers behind the automatic control (thresholds, estimates and recommendations are tuned from real-world feedback), new sensors, attributes and services are added (additive, not breaking), and the panel — it is the card of [glow-dashboard](https://github.com/deepblue120/glow-dashboard), a separate project that is synchronized into this repository.
 
 It's been tested primarily against **one real setup**: a Stellantis-based vehicle (SoC via the manufacturer's cloud integration), one evcc version, one wallbox. That's a narrow slice of the "any vehicle, any evcc version, any wallbox" space this integration aims to cover — feedback from different vehicles, SoC reporting behavior, evcc versions, and wallboxes is genuinely wanted, not just tolerated.
 
@@ -94,7 +101,14 @@ Found a bug or have a feature request? Please [open a GitHub Issue](https://gith
 
 ### Status & bekannte Grenzen
 
-EV Assistant befindet sich in **aktiver 0.x-Entwicklung** — vor 1.0. Verhalten und Konfiguration können sich zwischen Releases noch ändern; beim Update das [CHANGELOG](CHANGELOG.md) prüfen.
+EV Assistant ist **ab Version 1.0 stabil**. Innerhalb von 1.x ändern sich die folgenden Schnittstellen nur mit der nächsten Hauptversion inkompatibel, und jede solche Änderung wird im [CHANGELOG](CHANGELOG.md) angekündigt:
+
+- die **Dienste** und ihre Parameter,
+- die **Unique-IDs und dokumentierten Attribute** der Sensoren und Binärsensoren,
+- die **Config-Flow- und Optionsschlüssel** (bestehende Installationen laufen ohne Neukonfiguration weiter),
+- die **WebSocket-Befehle** `ev_assistant/*` und die `api_version` der Panel-Konfiguration (der Vertrag mit der Glow-Karte).
+
+Was sich noch ändern kann: die Zahlen hinter der automatischen Steuerung (Schwellen, Schätzungen und Empfehlungen werden anhand von Rückmeldungen aus dem Alltag nachjustiert), neue Sensoren, Attribute und Dienste kommen hinzu (additiv, nicht inkompatibel) und das Panel — es ist die Karte aus [glow-dashboard](https://github.com/deepblue120/glow-dashboard), einem eigenen Projekt, das in dieses Repository synchronisiert wird.
 
 Getestet wurde primär gegen **eine reale Installation**: ein Stellantis-basiertes Fahrzeug (SoC über die Cloud-Integration des Herstellers), eine evcc-Version, eine Wallbox. Das ist nur ein schmaler Ausschnitt des angestrebten „jedes Fahrzeug, jede evcc-Version, jede Wallbox"-Spektrums — Feedback von anderen Fahrzeugen, SoC-Meldeverhalten, evcc-Versionen und Wallboxen ist ausdrücklich erwünscht, nicht nur geduldet.
 
