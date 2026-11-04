@@ -52,7 +52,7 @@ _Some of the screenshots show the German interface; the panel is available in En
 
 EV Assistant is **stable from version 1.0**. Within 1.x the following interfaces only change in a breaking way with the next major version, and every breaking change is announced in the [CHANGELOG](custom_components/ev_assistant/CHANGELOG.md):
 
-- the **services** and their parameters,
+- the **services** and their parameters (except the test helpers `simulate_event` and `simulate_trip`, which are not part of the promise),
 - the **unique IDs and documented attributes** of the sensors and binary sensors,
 - the **config-flow and options keys** (existing installations keep working without reconfiguration),
 - the **WebSocket commands** `ev_assistant/*` and the `api_version` of the panel configuration (the contract with the Glow card).

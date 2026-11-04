@@ -22,7 +22,7 @@ A comprehensive **EV monitoring integration for Home Assistant**. EV Assistant c
 
 EV Assistant is **stable from version 1.0**. Within 1.x the following interfaces only change in a breaking way with the next major version, and every breaking change is announced in the [CHANGELOG](CHANGELOG.md):
 
-- the **services** and their parameters,
+- the **services** and their parameters (except the test helpers `simulate_event` and `simulate_trip`, which are not part of the promise),
 - the **unique IDs and documented attributes** of the sensors and binary sensors,
 - the **config-flow and options keys** (existing installations keep working without reconfiguration),
 - the **WebSocket commands** `ev_assistant/*` and the `api_version` of the panel configuration (the contract with the Glow card).
@@ -103,7 +103,7 @@ Found a bug or have a feature request? Please [open a GitHub Issue](https://gith
 
 EV Assistant ist **ab Version 1.0 stabil**. Innerhalb von 1.x ändern sich die folgenden Schnittstellen nur mit der nächsten Hauptversion inkompatibel, und jede solche Änderung wird im [CHANGELOG](CHANGELOG.md) angekündigt:
 
-- die **Dienste** und ihre Parameter,
+- die **Dienste** und ihre Parameter (ausgenommen die Testwerkzeuge `simulate_event` und `simulate_trip`, die nicht Teil der Zusage sind),
 - die **Unique-IDs und dokumentierten Attribute** der Sensoren und Binärsensoren,
 - die **Config-Flow- und Optionsschlüssel** (bestehende Installationen laufen ohne Neukonfiguration weiter),
 - die **WebSocket-Befehle** `ev_assistant/*` und die `api_version` der Panel-Konfiguration (der Vertrag mit der Glow-Karte).

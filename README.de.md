@@ -52,7 +52,7 @@ _Das Panel gibt es auf Deutsch und Englisch._
 
 EV Assistant ist **ab Version 1.0 stabil**. Innerhalb von 1.x ändern sich die folgenden Schnittstellen nur mit der nächsten Hauptversion inkompatibel, und jede solche Änderung wird im [CHANGELOG](custom_components/ev_assistant/CHANGELOG.md) angekündigt:
 
-- die **Dienste** und ihre Parameter,
+- die **Dienste** und ihre Parameter (ausgenommen die Testwerkzeuge `simulate_event` und `simulate_trip`, die nicht Teil der Zusage sind),
 - die **Unique-IDs und dokumentierten Attribute** der Sensoren und Binärsensoren,
 - die **Config-Flow- und Optionsschlüssel** (bestehende Installationen laufen ohne Neukonfiguration weiter),
 - die **WebSocket-Befehle** `ev_assistant/*` und die `api_version` der Panel-Konfiguration (der Vertrag mit der Glow-Karte).
