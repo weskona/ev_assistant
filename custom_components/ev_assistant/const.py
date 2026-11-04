@@ -865,7 +865,7 @@ NOTIFY_TAG = "ev_assistant"
 WARTUNG_BALD_FAELLIG_TAGE = 30.0
 WARTUNG_BALD_FAELLIG_KM = 1000.0
 
-# Eigenes, von _LEASING_ROLLING_WINDOW_DAYS (coordinator.py) isoliertes
+# Eigenes, von _LEASING_ROLLING_WINDOW_DAYS (leasing.py) isoliertes
 # Rolling-Fenster fuer km_pro_tag in wartung_status() -- bewusst NICHT
 # wiederverwendet/umbenannt, um den bestehenden, getesteten Leasing-Code
 # nicht anzufassen, auch wenn der Wert identisch ist.

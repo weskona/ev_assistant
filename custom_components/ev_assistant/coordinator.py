@@ -22,6 +22,7 @@ from homeassistant.helpers.template import Template
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+from .charge_cards import ChargeCards
 from .const import (
     AC_MAX_KW,
     BATTERY_CAPACITY_HOME_MAX_STORED,
@@ -55,14 +56,6 @@ from .const import (
     CONF_HOME_TEMPLATE,
     CONF_IDLE_TIMEOUT,
     CONF_LADE_MODUS,
-    CONF_LEASING_END_DATUM,
-    CONF_LEASING_INKL_KM,
-    CONF_LEASING_PREIS_MEHR_KM,
-    CONF_LEASING_PREIS_MINDER_KM,
-    CONF_LEASING_START_DATUM,
-    CONF_LEASING_START_KM,
-    CONF_LEASING_TOLERANZ_MEHR_KM,
-    CONF_LEASING_TOLERANZ_MINDER_KM,
     CONF_MOTOR_DEBOUNCE,
     CONF_MOTOR_ENTITY,
     CONF_NOISE,
@@ -162,19 +155,14 @@ from .const import (
     HISTORY_MAX_MONATE,
     IMPLAUSIBLE_POWER_RATIO,
     IMPLAUSIBLE_REGEN_DELTA_PCT,
-    LADEKARTE_AVG_DAYS_PER_MONTH,
-    LEASING_KNAPP_SCHWELLE_PCT,
-    LEASING_TOLERANZ_PCT,
     MAX_PLAUSIBLE_CHARGE_KW,
     MAX_POWER_GAP_S,
     MILES_TO_KM,
     MIN_USAGE_PROFILE_DAYS,
     NOTIFY_EVENT_FAHRT,
     NOTIFY_EVENT_FREMDLADUNG,
-    NOTIFY_EVENT_LEASING,
     NOTIFY_EVENT_SOC_SCHWELLE,
     NOTIFY_EVENT_TANKERKOENIG,
-    NOTIFY_EVENT_WARTUNG,
     NOTIFY_TAG,
     ODO_ACCEPT_REPEATS,
     OUTLIER_DAMPING_FACTOR,
@@ -207,11 +195,6 @@ from .const import (
     VOLLLADUNG_NACHLAUF_MAX_S,
     VOLLLADUNG_NACHLAUF_SOC_DONE,
     VOLLLADUNG_SOC_THRESHOLD,
-    WARTUNG_BALD_FAELLIG_KM,
-    WARTUNG_BALD_FAELLIG_TAGE,
-    WARTUNG_PRESETS,
-    WARTUNG_ROLLING_WINDOW_DAYS,
-    WARTUNG_TAGE_PRO_MONAT,
     WEEKLY_BALANCING_FALLBACK_HOUR,
     WEEKLY_BALANCING_NIGHT_END_HOUR,
     WEEKLY_BALANCING_PV_MARGIN,
@@ -271,10 +254,7 @@ from .engine import (
     is_plausible_trip_consumption,
     kwh_to_km,
     kwh_to_soc_percent,
-    ladekarte_legacy_gebuehren,
-    ladekarten_summary,
     latest_charge,
-    leasing_status,
     match_evcc_vehicle,
     max_achievable_target_soc,
     merge_pending,
@@ -296,7 +276,6 @@ from .engine import (
     remove_weekday_day,
     restore_surplus_target_active,
     rolling_consumption_kwh_per_100km,
-    rolling_km_per_day,
     round_km_display,
     session_totals_since,
     split_by_age,
@@ -314,8 +293,6 @@ from .engine import (
     vehicle_discharge_update,
     vollladung_confirm,
     vollladung_nachlauf_aktiv,
-    wartung_festes_datum_fortschreiben,
-    wartung_uebersicht,
     watt_to_kw,
     weekday_plug_window_profile_from_recent_days,
     weekday_profile_from_recent_days,
@@ -326,6 +303,8 @@ from .engine import (
     wh_to_kwh,
 )
 from .evcc_client import EvccClient
+from .leasing import Leasing
+from .maintenance import Maintenance
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -384,21 +363,6 @@ _ROLLING_CONSUMPTION_WINDOW_DAYS = 30
 # vertraut wird -- sonst wuerde z.B. eine einzelne kurze Kaltstart-/
 # Stadtfahrt direkt nach einer laengeren Standzeit den Verbrauch verzerren.
 _ROLLING_CONSUMPTION_MIN_KM = 50.0
-
-# Rolling-Fenster fuer das aktuelle Fahrtempo (siehe engine.py::
-# rolling_km_per_day()), das leasing_stats() als "rollierende" Projektion
-# neben die lineare Projektion seit Vertragsbeginn stellt -- kurz genug, um
-# eine juengere Verhaltensaenderung (z.B. neuer Arbeitsweg) schneller
-# abzubilden als der lineare Vertrags-Schnitt es koennte.
-_LEASING_ROLLING_WINDOW_DAYS = 30
-# Rangfolge fuer die Hysterese in _check_leasing_thresholds() -- je hoeher,
-# desto schlechter der Status.
-_LEASING_STATUS_RANK = {"im_budget": 0, "knapp": 1, "ueber": 2}
-# Rangfolge fuer die Hysterese in _check_wartung_thresholds() -- analog
-# _LEASING_STATUS_RANK, aber je Wartungspunkt-id einzeln gefuehrt (siehe
-# self.data["wartung_notified"]) statt einmal global wie beim Leasing-Vertrag.
-_WARTUNG_STATUS_RANK = {"ok": 0, "unbekannt": 0, "bald_faellig": 1, "ueberfaellig": 2}
-
 
 def _empty_data() -> dict:
     return {
@@ -641,6 +605,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._archive_store = Store(hass, 1, f"{STORAGE_KEY}_{entry.entry_id}_archiv")
         # Import/Export/Backup (siehe data_transfer.py); der Zustand bleibt hier.
         self._transfer = DataTransfer(self)
+        self._maintenance = Maintenance(self)
+        self._charge_cards = ChargeCards(self)
+        self._leasing = Leasing(self)
         self._notify_tag = f"{NOTIFY_TAG}_{entry.entry_id}"
         self._unsub: list[Callable] = []
         self._soc: Optional[float] = None
@@ -4268,25 +4235,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return True
 
     def _migrate_wartung_zeit_einheiten(self) -> bool:
-        """Einmalige Migration bestehender Wartungspunkte von
-        zeit_intervall_tage (Tage, vor der Umstellung auf Monats-Intervalle)
-        auf zeit_intervall_monate (siehe engine.wartung_status()). Tage
-        lassen sich nicht exakt auf Kalendermonate abbilden -- gerundet
-        ueber WARTUNG_TAGE_PRO_MONAT (fuer die alten glatten Presets, z.B.
-        730 Tage, ergibt das exakt 24 Monate). Idempotent OHNE eigenes
-        Flag: nach dem ersten Lauf existiert kein zeit_intervall_tage mehr,
-        ein zweiter Lauf findet also nichts mehr zu tun. Gibt True zurueck,
-        wenn mindestens ein Punkt migriert wurde (der Aufrufer muss dann
-        sofort speichern, siehe async_setup())."""
-        geaendert = False
-        for punkt in self.data.get("wartung") or []:
-            if "zeit_intervall_tage" not in punkt:
-                continue
-            alte_tage = punkt.pop("zeit_intervall_tage")
-            if alte_tage:
-                punkt["zeit_intervall_monate"] = max(1, round(alte_tage / WARTUNG_TAGE_PRO_MONAT))
-            geaendert = True
-        return geaendert
+        """Siehe Maintenance._migrate_wartung_zeit_einheiten()."""
+        return self._maintenance._migrate_wartung_zeit_einheiten()
 
     def _migrate_home_sessions_wh(self) -> bool:
         """Einmalige Migration bestehender home_sessions: evccs
@@ -4312,62 +4262,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return True
 
     def _migrate_wartung_erledigt_anzahl(self) -> bool:
-        """Einmalige Migration (Issue #48): Wartungspunkte ohne Erledigt-
-        Zaehler bekommen `erledigt_anzahl` = 1, wenn sie ein last_done haben,
-        sonst 0. So aendert sich bei Bestandspunkten nichts, auch wenn spaeter
-        ein Erstintervall eingetragen wird (ein reines Startwert-last_done
-        zaehlt dann als erledigt, korrigierbar ueber edit_maintenance).
-        Idempotent ohne Flag: nach dem ersten Lauf tragen alle Punkte den
-        Zaehler. Gibt True zurueck, wenn etwas geaendert wurde."""
-        geaendert = False
-        for punkt in self.data.get("wartung") or []:
-            if "erledigt_anzahl" not in punkt:
-                punkt["erledigt_anzahl"] = 1 if punkt.get("last_done") else 0
-                geaendert = True
-        return geaendert
+        """Siehe Maintenance._migrate_wartung_erledigt_anzahl()."""
+        return self._maintenance._migrate_wartung_erledigt_anzahl()
 
     def _migrate_wartung_hu_typ(self) -> bool:
-        """Einmalige Migration bestehender HU/TUEV-Wartungspunkte von vor
-        Einfuehrung des "typ"-Markers (siehe async_add_maintenance()) --
-        erkannt am WOERTLICHEN historischen Namen "HU/TÜV" (Presets wurden
-        vor diesem Feld nicht am Punkt gespeichert, nur beim Anlegen
-        gelesen). Bewusst der feste Alt-Name statt WARTUNG_PRESETS["tuev"]
-        ["name"] -- die Vorlage heisst inzwischen nur noch "HU" (siehe
-        _migrate_wartung_hu_name() unten), Bestandspunkte aus der Zeit davor
-        tragen aber noch woertlich "HU/TÜV". Bewusst nur HU/TUEV betroffen:
-        Inspektion/freie Punkte brauchen keinen Marker, da das Panel-
-        Bearbeiten-Formular "kein typ" identisch zu "nicht HU" behandelt
-        (alle Felder zeigen) -- also unveraendertes Verhalten fuer sie.
-        Idempotent OHNE eigenes Flag: nach dem ersten Lauf tragen migrierte
-        Punkte "typ", ein zweiter Lauf findet dort nichts mehr zu tun. Gibt
-        True zurueck, wenn mindestens ein Punkt migriert wurde (der
-        Aufrufer muss dann sofort speichern, siehe async_setup())."""
-        geaendert = False
-        for punkt in self.data.get("wartung") or []:
-            if "typ" not in punkt and punkt.get("name") == "HU/TÜV":
-                punkt["typ"] = "tuev"
-                geaendert = True
-        return geaendert
+        """Siehe Maintenance._migrate_wartung_hu_typ()."""
+        return self._maintenance._migrate_wartung_hu_typ()
 
     def _migrate_wartung_hu_name(self) -> bool:
-        """Einmalige Umbenennung bestehender HU-Punkte von "HU/TÜV" auf das
-        seitdem kuerzere Preset "HU" (siehe const.py::WARTUNG_PRESETS).
-        Laeuft NACH _migrate_wartung_hu_typ() (siehe async_setup()), damit
-        ein Punkt, der in genau diesem Setup-Durchlauf erst seinen "typ"-
-        Marker bekommen hat, hier sofort mit erfasst wird. Nur Punkte mit
-        typ == "tuev" UND dem woertlichen Alt-Namen -- ein frei benannter
-        Punkt, der zufaellig "HU/TÜV" heisst, aber kein HU-Preset-Punkt ist
-        (kein typ), bleibt unangetastet; ein HU-Punkt, den der Nutzer selbst
-        schon anders umbenannt hat, ebenso (dessen Name ist dann nicht mehr
-        der woertliche Alt-Name). Idempotent OHNE eigenes Flag: nach dem
-        ersten Lauf lautet der Name nicht mehr "HU/TÜV", ein zweiter Lauf
-        findet nichts mehr zu tun."""
-        geaendert = False
-        for punkt in self.data.get("wartung") or []:
-            if punkt.get("typ") == "tuev" and punkt.get("name") == "HU/TÜV":
-                punkt["name"] = WARTUNG_PRESETS["tuev"]["name"]
-                geaendert = True
-        return geaendert
+        """Siehe Maintenance._migrate_wartung_hu_name()."""
+        return self._maintenance._migrate_wartung_hu_name()
 
     def _migrate_verbrenner_price_weighting(self) -> bool:
         """Einmalige Migration von zeitgewichteter auf km-gewichtete
@@ -4865,44 +4769,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self, name: str, monatliche_gebuehr: float, start_datum: str,
         end_datum: Optional[str] = None,
     ) -> None:
-        """Legt eine neue Ladekarte an -- reiner Kostenposten (siehe
-        engine.ladekarte_accrued_cost()), keine Verknuepfung mit
-        Fremdladungen noetig (die optionale karte_id auf einzelnen
-        Ladungen, siehe async_log_charge(), ist rein informativ). id ist
-        ein simpler Millisekunden-Zeitstempel -- analog erfasst_ts bei
-        Fremdladungen/Fahrten, hier ausreichend, da Karten einzeln von
-        Hand angelegt werden (kein Tight-Loop-Kollisionsrisiko wie beim
-        Bulk-Import von Fahrten). `monatliche_gebuehr` wird als erste
-        Gebuehrenstufe ab `start_datum` gespeichert (siehe "gebuehren" in
-        engine.ladekarte_accrued_cost()) -- weitere Stufen (z.B. Ende eines
-        reduzierten Einfuehrungspreises) kommen ueber
-        async_add_ladekarte_preisstufe() dazu."""
-        karte = {
-            "id": int(time.time() * 1000),
-            "name": name.strip(),
-            "gebuehren": [{"ab_datum": start_datum, "gebuehr": round(float(monatliche_gebuehr), 2)}],
-            "start_datum": start_datum,
-            "end_datum": end_datum,
-        }
-        karten = list(self.data.get("ladekarten") or [])
-        karten.append(karte)
-        self.data["ladekarten"] = karten
-        await self._save()
-        self.async_set_updated_data(self.data)
-
-    @staticmethod
-    def _ladekarte_gebuehren(karte: dict) -> list:
-        """Gebuehrenstufen einer Karte, mit Ruecklauf-Kompatibilitaet fuer
-        Karten aus der Zeit vor Gebuehrenstufen (siehe engine.
-        ladekarte_legacy_gebuehren()) -- gibt IMMER die tatsaechliche Liste
-        zurueck (nicht nur zur Berechnung wie im engine-Pendant), damit
-        Schreibzugriffe (Stufe hinzufuegen/loeschen) sie direkt mutieren
-        koennen."""
-        gebuehren = karte.get("gebuehren")
-        if not gebuehren:
-            gebuehren = ladekarte_legacy_gebuehren(karte)
-            karte["gebuehren"] = gebuehren
-        return gebuehren
+        """Siehe ChargeCards.async_add_ladekarte()."""
+        return await self._charge_cards.async_add_ladekarte(name, monatliche_gebuehr, start_datum, end_datum)
 
     async def async_edit_ladekarte(
         self,
@@ -4912,101 +4780,20 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         start_datum: Optional[str] = None,
         end_datum: Optional[str] = None,
     ) -> bool:
-        """Korrigiert eine bestehende Ladekarte -- alle Felder optional,
-        nur mitgegebene Werte werden geaendert (analog async_edit_charge()).
-        end_datum: None laesst das Feld unveraendert, ein LEERER String
-        loescht ein zuvor gesetztes Enddatum (z.B. eine gekuendigte Karte
-        reaktivieren) -- unterscheidbar, weil ein Service-Aufruf ohne
-        end_datum-Feld ueberhaupt None liefert, waehrend ein explizit
-        geleertes Formularfeld "" liefert. monatliche_gebuehr korrigiert die
-        Gebuehr der ZEITLICH FRUEHESTEN Stufe (typischerweise ein Tippfehler
-        beim Anlegen) -- ein PREISWECHSEL (z.B. Ende eines reduzierten
-        Einfuehrungspreises) laeuft stattdessen ueber
-        async_add_ladekarte_preisstufe(), da hier nicht klar waere, welche
-        von mehreren Stufen gemeint ist. Gibt False zurueck, wenn keine
-        Karte mit dieser id gefunden wurde."""
-        karten = self.data.get("ladekarten") or []
-        for karte in karten:
-            if karte.get("id") == karte_id:
-                if name is not None:
-                    karte["name"] = name.strip()
-                if monatliche_gebuehr is not None:
-                    gebuehren = self._ladekarte_gebuehren(karte)
-                    if gebuehren:
-                        fruehste = min(gebuehren, key=lambda s: s.get("ab_datum") or "")
-                        fruehste["gebuehr"] = round(float(monatliche_gebuehr), 2)
-                if start_datum is not None:
-                    karte["start_datum"] = start_datum
-                if end_datum is not None:
-                    karte["end_datum"] = end_datum or None
-                await self._save()
-                self.async_set_updated_data(self.data)
-                return True
-        return False
+        """Siehe ChargeCards.async_edit_ladekarte()."""
+        return await self._charge_cards.async_edit_ladekarte(karte_id, name, monatliche_gebuehr, start_datum, end_datum)
 
     async def async_add_ladekarte_preisstufe(self, karte_id: int, gebuehr: float, ab_datum: str) -> bool:
-        """Fuegt einer bestehenden Ladekarte eine neue Gebuehrenstufe hinzu
-        (siehe engine.ladekarte_accrued_cost()) -- z.B. wenn ein reduzierter
-        Einfuehrungspreis nach einigen Monaten auf den regulaeren Preis
-        steigt. Existiert bereits eine Stufe mit exakt diesem ab_datum,
-        wird deren Gebuehr ersetzt statt eine doppelte Stufe anzulegen
-        (Korrektur eines Tippfehlers bei einem bereits erfassten
-        Preiswechsel). Gibt False zurueck, wenn keine Karte mit dieser id
-        gefunden wurde."""
-        karten = self.data.get("ladekarten") or []
-        for karte in karten:
-            if karte.get("id") == karte_id:
-                gebuehren = self._ladekarte_gebuehren(karte)
-                for stufe in gebuehren:
-                    if stufe.get("ab_datum") == ab_datum:
-                        stufe["gebuehr"] = round(float(gebuehr), 2)
-                        break
-                else:
-                    gebuehren.append({"ab_datum": ab_datum, "gebuehr": round(float(gebuehr), 2)})
-                await self._save()
-                self.async_set_updated_data(self.data)
-                return True
-        return False
+        """Siehe ChargeCards.async_add_ladekarte_preisstufe()."""
+        return await self._charge_cards.async_add_ladekarte_preisstufe(karte_id, gebuehr, ab_datum)
 
     async def async_delete_ladekarte_preisstufe(self, karte_id: int, ab_datum: str) -> bool:
-        """Entfernt eine Gebuehrenstufe wieder (siehe
-        async_add_ladekarte_preisstufe()) -- z.B. eine versehentlich
-        angelegte. Die zeitlich fruehste Stufe kann nicht geloescht werden
-        (eine Karte braucht immer mindestens eine bekannte Gebuehr, siehe
-        engine.ladekarte_accrued_cost()) -- der Aufruf gibt dafuer False
-        zurueck, genau wie wenn Karte oder Stufe nicht gefunden wurden."""
-        karten = self.data.get("ladekarten") or []
-        for karte in karten:
-            if karte.get("id") == karte_id:
-                gebuehren = self._ladekarte_gebuehren(karte)
-                if len(gebuehren) <= 1:
-                    return False
-                fruehste = min(gebuehren, key=lambda s: s.get("ab_datum") or "")
-                if fruehste.get("ab_datum") == ab_datum:
-                    return False
-                for i, stufe in enumerate(gebuehren):
-                    if stufe.get("ab_datum") == ab_datum:
-                        gebuehren.pop(i)
-                        await self._save()
-                        self.async_set_updated_data(self.data)
-                        return True
-                return False
-        return False
+        """Siehe ChargeCards.async_delete_ladekarte_preisstufe()."""
+        return await self._charge_cards.async_delete_ladekarte_preisstufe(karte_id, ab_datum)
 
     async def async_delete_ladekarte(self, karte_id: int) -> bool:
-        """Loescht eine Ladekarte vollstaendig. Bereits zugeordnete
-        Fremdladungen (rec["karte_id"], siehe async_log_charge()) behalten
-        ihre Referenz -- eine verwaiste karte_id wird beim Anzeigen einfach
-        ignoriert, nicht rueckwirkend aus der Historie entfernt. Gibt False
-        zurueck, wenn keine Karte mit dieser id gefunden wurde."""
-        karten = self.data.get("ladekarten") or []
-        for i, karte in enumerate(karten):
-            if karte.get("id") == karte_id:
-                karten.pop(i)
-                await self._save()
-                self.async_set_updated_data(self.data)
-                return True
-        return False
+        """Siehe ChargeCards.async_delete_ladekarte()."""
+        return await self._charge_cards.async_delete_ladekarte(karte_id)
 
     async def async_add_maintenance(
         self,
@@ -5023,83 +4810,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         erst_km_intervall: Optional[float] = None,
         erst_zeit_intervall_monate: Optional[int] = None,
     ) -> Optional[int]:
-        """Legt einen neuen Wartungspunkt an (siehe engine.wartung_status()
-        fuer die Faelligkeitsberechnung) -- id ist ein simpler Millisekunden-
-        Zeitstempel, analog async_add_ladekarte(). `preset` referenziert
-        optional eine Vorlage (siehe const.py::WARTUNG_PRESETS, z.B. "tuev"):
-        liefert deren km_intervall/zeit_intervall_monate/name als FALLBACK,
-        wo das jeweilige Feld hier nicht explizit gesetzt ist -- Presets
-        sind nur Startwerte, jedes einzeln ueberschreibbar. `last_done_km`/
-        `last_done_datum` seeden optional einen bereits in der Vergangenheit
-        liegenden letzten Service (z.B. beim Nacherfassen eines Termins von
-        vor ein paar Monaten) -- fuer den Normalfall "gerade erledigt" siehe
-        stattdessen async_mark_maintenance_done(). `reminder_monate`/
-        `reminder_km` ueberschreiben pro Punkt die globalen
-        WARTUNG_BALD_FAELLIG_TAGE/-_KM-Schwellen (siehe
-        engine.wartung_uebersicht()) -- `reminder_monate` wird EINMALIG ueber
-        WARTUNG_TAGE_PRO_MONAT in Tage umgerechnet und als reminder_tage
-        gespeichert (die Schwelle selbst braucht keine Kalenderpraezision,
-        anders als zeit_intervall_monate).
-
-        `erst_km_intervall`/`erst_zeit_intervall_monate` (Issue #48) ersetzen
-        das regulaere Intervall, solange der Punkt noch nie erledigt wurde
-        (`erledigt_anzahl` 0, siehe engine.wartung_status()) -- z.B. erste
-        Inspektion nach 12.500 km, danach alle 25.000 km. Zaehlen nicht als
-        eigenes Faelligkeitskriterium.
-
-        Ohne Namen (auch nicht aus dem Preset) oder ohne mindestens ein
-        Faelligkeitskriterium (km_intervall/zeit_intervall_monate/
-        festes_datum, auch nach Preset-Vorbefuellung) wird NICHTS angelegt
-        (Warnung im Log, analog async_log_trip() ohne offene Fahrt) -- ein
-        Wartungspunkt ganz ohne jedes Kriterium waere nie faellig und daher
-        sinnlos. Gibt die neue id zurueck, oder None bei Ablehnung."""
-        vorlage = WARTUNG_PRESETS.get(preset, {}) if preset else {}
-        effektiver_name = (name or vorlage.get("name") or "").strip()
-        effektiv_km = km_intervall if km_intervall is not None else vorlage.get("km_intervall")
-        effektiv_zeit = (
-            zeit_intervall_monate if zeit_intervall_monate is not None else vorlage.get("zeit_intervall_monate")
+        """Siehe Maintenance.async_add_maintenance()."""
+        return await self._maintenance.async_add_maintenance(
+            name,
+            preset,
+            km_intervall,
+            zeit_intervall_monate,
+            festes_datum,
+            kosten,
+            last_done_km,
+            last_done_datum,
+            reminder_monate,
+            reminder_km,
+            erst_km_intervall,
+            erst_zeit_intervall_monate,
         )
-        effektiv_fest = festes_datum if festes_datum is not None else vorlage.get("festes_datum")
-        if not effektiver_name:
-            _LOGGER.warning("ev_assistant: Wartungspunkt ohne Namen (auch nicht aus Preset) abgelehnt")
-            return None
-        if not (effektiv_km or effektiv_zeit or effektiv_fest):
-            _LOGGER.warning(
-                "ev_assistant: Wartungspunkt '%s' ohne jedes Faelligkeitskriterium abgelehnt", effektiver_name
-            )
-            return None
-        punkt = {
-            "id": int(time.time() * 1000),
-            "name": effektiver_name,
-            # Roher preset-Wert (z.B. "tuev"/"inspektion"), None ohne Preset --
-            # anders als vorlage/effektiv_* oben (nur transiente Default-
-            # Quelle) bleibt dieser Marker dauerhaft am Punkt erhalten, damit
-            # das Panel-Bearbeiten-Formular praesetabhaengige Felder (z.B.
-            # kein km bei HU) rendern kann, ohne aus den gesetzten Kriterien
-            # raten zu muessen (siehe _migrate_wartung_hu_typ() fuer
-            # Bestandseintraege von vor diesem Feld).
-            "typ": preset,
-            "km_intervall": effektiv_km,
-            "zeit_intervall_monate": effektiv_zeit,
-            "festes_datum": effektiv_fest,
-            "last_done": (
-                {"km": last_done_km, "datum": last_done_datum}
-                if last_done_km is not None or last_done_datum is not None else None
-            ),
-            "kosten": kosten,
-            "aktiv": True,
-            "reminder_tage": round(reminder_monate * WARTUNG_TAGE_PRO_MONAT, 1) if reminder_monate is not None else None,
-            "reminder_km": reminder_km,
-            "erst_km_intervall": erst_km_intervall or None,
-            "erst_zeit_intervall_monate": erst_zeit_intervall_monate or None,
-            "erledigt_anzahl": 0,
-        }
-        punkte = list(self.data.get("wartung") or [])
-        punkte.append(punkt)
-        self.data["wartung"] = punkte
-        await self._save()
-        self.async_set_updated_data(self.data)
-        return punkt["id"]
 
     async def async_edit_maintenance(
         self,
@@ -5118,206 +4843,41 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         erst_zeit_intervall_monate: Optional[int] = None,
         erledigt_anzahl: Optional[int] = None,
     ) -> bool:
-        """Korrigiert einen bestehenden Wartungspunkt -- alle Felder
-        optional, nur mitgegebene Werte werden geaendert (analog
-        async_edit_ladekarte()). km_intervall/zeit_intervall_monate/
-        festes_datum/kosten/reminder_monate/reminder_km: None laesst das
-        Feld unveraendert, ein LEERER STRING loescht ein zuvor gesetztes
-        Kriterium (bzw. die Kosten/den Reminder-Override) wieder -- z.B. um
-        von "km ODER Zeit" auf nur noch "Zeit" umzustellen. Nach Anwenden
-        aller Aenderungen muss mindestens ein Faelligkeitskriterium uebrig
-        bleiben, sonst wird die GESAMTE Aenderung verworfen (Warnung, False)
-        statt einen nutzlosen Wartungspunkt ohne jedes Kriterium zu
-        erzeugen -- reminder_monate/reminder_km zaehlen dabei NICHT als
-        Faelligkeitskriterium. `last_done_km`/`last_done_datum` korrigieren
-        den zuletzt erfassten Service direkt (z.B. ein Tippfehler) -- fuer
-        "gerade jetzt erledigt" siehe async_mark_maintenance_done(). Gibt
-        False zurueck, wenn keine id gefunden wurde oder die Aenderung
-        mangels Kriterium verworfen wurde. `erst_km_intervall`/`erst_zeit_
-        intervall_monate` (Erstintervall, Issue #48): leerer String loescht;
-        `erledigt_anzahl` korrigiert den Erledigt-Zaehler (0 = Erstintervall
-        gilt wieder, z.B. bei einem migrierten Punkt, dessen last_done nur ein
-        Startwert war)."""
-        punkte = self.data.get("wartung") or []
-        for punkt in punkte:
-            if punkt.get("id") != wartung_id:
-                continue
-            alt = dict(punkt)
-            if name is not None:
-                punkt["name"] = name.strip()
-            if km_intervall is not None:
-                punkt["km_intervall"] = None if km_intervall == "" else float(km_intervall)
-            if zeit_intervall_monate is not None:
-                punkt["zeit_intervall_monate"] = None if zeit_intervall_monate == "" else int(zeit_intervall_monate)
-            if festes_datum is not None:
-                punkt["festes_datum"] = festes_datum or None
-            if kosten is not None:
-                punkt["kosten"] = None if kosten == "" else float(kosten)
-            if reminder_monate is not None:
-                punkt["reminder_tage"] = (
-                    None if reminder_monate == "" else round(float(reminder_monate) * WARTUNG_TAGE_PRO_MONAT, 1)
-                )
-            if reminder_km is not None:
-                punkt["reminder_km"] = None if reminder_km == "" else float(reminder_km)
-            if erst_km_intervall is not None:
-                punkt["erst_km_intervall"] = None if erst_km_intervall == "" else float(erst_km_intervall)
-            if erst_zeit_intervall_monate is not None:
-                punkt["erst_zeit_intervall_monate"] = (
-                    None if erst_zeit_intervall_monate == "" else int(erst_zeit_intervall_monate)
-                )
-            if erledigt_anzahl is not None:
-                punkt["erledigt_anzahl"] = max(0, int(erledigt_anzahl))
-            if last_done_km is not None or last_done_datum is not None:
-                last_done = dict(punkt.get("last_done") or {})
-                if last_done_km is not None:
-                    last_done["km"] = last_done_km
-                if last_done_datum is not None:
-                    last_done["datum"] = last_done_datum
-                punkt["last_done"] = last_done
-            if aktiv is not None:
-                punkt["aktiv"] = aktiv
-            if not (punkt.get("km_intervall") or punkt.get("zeit_intervall_monate") or punkt.get("festes_datum")):
-                punkt.clear()
-                punkt.update(alt)
-                _LOGGER.warning(
-                    "ev_assistant: Aenderung an Wartungspunkt '%s' verworfen -- kein Kriterium mehr uebrig",
-                    alt.get("name"),
-                )
-                return False
-            await self._save()
-            self.async_set_updated_data(self.data)
-            return True
-        return False
+        """Siehe Maintenance.async_edit_maintenance()."""
+        return await self._maintenance.async_edit_maintenance(
+            wartung_id,
+            name,
+            km_intervall,
+            zeit_intervall_monate,
+            festes_datum,
+            kosten,
+            last_done_km,
+            last_done_datum,
+            aktiv,
+            reminder_monate,
+            reminder_km,
+            erst_km_intervall,
+            erst_zeit_intervall_monate,
+            erledigt_anzahl,
+        )
 
     async def async_delete_maintenance(self, wartung_id: int) -> bool:
-        """Loescht einen Wartungspunkt vollstaendig. Gibt False zurueck,
-        wenn keine id gefunden wurde."""
-        punkte = self.data.get("wartung") or []
-        for i, punkt in enumerate(punkte):
-            if punkt.get("id") == wartung_id:
-                punkte.pop(i)
-                self.data.setdefault("wartung_notified", {}).pop(str(wartung_id), None)
-                await self._save()
-                self.async_set_updated_data(self.data)
-                return True
-        return False
+        """Siehe Maintenance.async_delete_maintenance()."""
+        return await self._maintenance.async_delete_maintenance(wartung_id)
 
     async def async_mark_maintenance_done(
         self, wartung_id: int, km: Optional[float] = None, datum: Optional[str] = None,
     ) -> bool:
-        """Setzt last_done auf den aktuellen Kilometerstand + heute (oder
-        auf `km`/`datum`, falls uebergeben -- z.B. um einen vor ein paar
-        Tagen tatsaechlich durchgefuehrten Termin nachzutragen). Aendert
-        last_done immer, auch wenn km/datum zufaellig mit dem vorherigen
-        Stand uebereinstimmen sollten -- das setzt gleichzeitig die
-        Benachrichtigungs-Hysterese fuer diesen Punkt zurueck (siehe
-        _check_wartung_thresholds()). Hat der Punkt ZUSAETZLICH sowohl
-        festes_datum als auch zeit_intervall_monate gesetzt (z.B. HU/TUEV:
-        ein bekannter naechster Termin mit Wiederholungs-Intervall), wird
-        festes_datum auf den naechsten Termin AB DIESEM Erledigungszeitpunkt
-        fortgeschrieben (siehe engine.wartung_festes_datum_fortschreiben())
-        -- bewusst auch bei einer VERFRUEHTEN Erledigung, die den Takt dann
-        nach vorne zieht, statt den urspruenglichen Rhythmus beizubehalten.
-        Gibt False zurueck, wenn keine id gefunden wurde."""
-        punkte = self.data.get("wartung") or []
-        for punkt in punkte:
-            if punkt.get("id") == wartung_id:
-                effektiv_km = km if km is not None else self._odo_km()
-                effektiv_datum = datum or dt_util.now().date().isoformat()
-                punkt["last_done"] = {"km": effektiv_km, "datum": effektiv_datum}
-                # Erledigt-Zaehler (Erstintervall, Issue #48): ab dem ersten
-                # Erledigen gelten die regulaeren Intervalle.
-                punkt["erledigt_anzahl"] = int(punkt.get("erledigt_anzahl") or 0) + 1
-                neues_festes_datum = wartung_festes_datum_fortschreiben(
-                    punkt.get("festes_datum"), punkt.get("zeit_intervall_monate"), effektiv_datum,
-                )
-                if neues_festes_datum is not None:
-                    punkt["festes_datum"] = neues_festes_datum
-                await self._save()
-                self.async_set_updated_data(self.data)
-                return True
-        return False
+        """Siehe Maintenance.async_mark_maintenance_done()."""
+        return await self._maintenance.async_mark_maintenance_done(wartung_id, km, datum)
 
     def wartung_stats(self) -> dict:
-        """Faelligkeit aller Wartungspunkte (siehe engine.wartung_uebersicht()).
-        Leeres dict ohne jeden Wartungspunkt (analog leasing_stats()).
-        `km_pro_tag` kommt aus demselben rollierenden-Fenster-Prinzip wie
-        die Leasing-Hochrechnung (rolling_km_per_day()), aber ueber eine
-        eigene, isolierte Konstante (WARTUNG_ROLLING_WINDOW_DAYS) -- bewusst
-        NICHT mit der bestehenden Leasing-Fensterkonstante geteilt/
-        umbenannt, um deren getesteten Code nicht anzufassen."""
-        punkte = self.data.get("wartung") or []
-        if not punkte:
-            return {}
-        fahrten = self.data.get("fahrten") or []
-        km_pro_tag = rolling_km_per_day(fahrten, time.time(), WARTUNG_ROLLING_WINDOW_DAYS)
-        heute = dt_util.now().date().isoformat()
-        return wartung_uebersicht(
-            punkte, self._odo_km(), km_pro_tag, heute,
-            WARTUNG_BALD_FAELLIG_TAGE, WARTUNG_BALD_FAELLIG_KM,
-        )
+        """Siehe Maintenance.wartung_stats()."""
+        return self._maintenance.wartung_stats()
 
     def _check_wartung_thresholds(self) -> None:
-        """Benachrichtigung, wenn ein Wartungspunkt erstmals "bald_faellig"
-        oder "ueberfaellig" wird -- Hysterese analog
-        _check_leasing_thresholds(), aber JE WARTUNGSPUNKT einzeln
-        (self.data["wartung_notified"], keyed nach str(id)) statt einmal
-        global: mehrere Wartungspunkte werden unabhaengig voneinander
-        faellig. Der gespeicherte Zustand eines Punkts wird zurueckgesetzt,
-        sobald sich dessen last_done aendert (z.B. durch
-        async_mark_maintenance_done()/eine last_done-Korrektur) -- ein
-        gerade erledigter Punkt verdient wieder eigene Benachrichtigungen
-        ab "ok". Inaktive Punkte (siehe "aktiv") werden ignoriert.
-        Geloeschte Punkte werden aus wartung_notified entfernt, sonst
-        waechst es unbegrenzt mit toten ids."""
-        punkte = self.wartung_stats().get("punkte", [])
-        notified = self.data.setdefault("wartung_notified", {})
-        for punkt in punkte:
-            if punkt.get("aktiv") is False:
-                continue
-            key = str(punkt["id"])
-            identity = punkt.get("last_done")
-            eintrag = notified.get(key)
-            if eintrag is None or eintrag.get("identity") != identity:
-                eintrag = {"identity": identity, "rank": 0}
-                notified[key] = eintrag
-            rang = _WARTUNG_STATUS_RANK.get(punkt.get("status"), 0)
-            if rang <= eintrag["rank"]:
-                continue
-            eintrag["rank"] = rang
-            if rang > 0:
-                self.hass.async_create_task(self._notify_wartung(punkt))
-        live_ids = {str(p["id"]) for p in punkte}
-        for key in list(notified):
-            if key not in live_ids:
-                del notified[key]
-
-    async def _notify_wartung(self, punkt: dict) -> None:
-        """Push + persistent_notification, wenn ein Wartungspunkt
-        "bald_faellig" oder "ueberfaellig" wird -- siehe
-        _check_wartung_thresholds()."""
-        en = self._en()
-        name = punkt.get("name") or "?"
-        if punkt.get("status") == "ueberfaellig":
-            title = f"Maintenance overdue: {name}" if en else f"Wartung ueberfaellig: {name}"
-        else:
-            title = f"Maintenance due soon: {name}" if en else f"Wartung bald faellig: {name}"
-        rest_tage = punkt.get("rest_tage")
-        rest_km = punkt.get("rest_km")
-        if rest_tage is not None:
-            message = f"Due in {rest_tage} day(s)." if en else f"Faellig in {rest_tage} Tag(en)."
-        elif rest_km is not None:
-            message = f"Due in {rest_km:.0f} km." if en else f"Faellig in {rest_km:.0f} km."
-        else:
-            message = "Check the maintenance tab for details." if en else "Details siehe Wartung-Tab."
-        await self._push(NOTIFY_EVENT_WARTUNG, title, message)
-        await self._persistent_notification(
-            "create",
-            {
-                "notification_id": f"{self._notify_tag}_wartung_{punkt['id']}",
-                "title": title, "message": message,
-            },
-        )
+        """Siehe Maintenance._check_wartung_thresholds()."""
+        return self._maintenance._check_wartung_thresholds()
 
     async def async_discard(self, start_ts: Optional[float] = None) -> None:
         """Verwirft eine offene Fremdladung. Bei mehreren gleichzeitig
@@ -5521,24 +5081,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return True
 
     def _ladekarten_cost_total(self) -> float:
-        """Aufgelaufene Summe aller Ladekarten-Grundgebuehren bis heute
-        (siehe engine.ladekarten_summary()) -- 0.0 ohne jede Karte. Eigene
-        Methode statt Inline-Code, da mehrere Stellen (_ev_cost_total_
-        since_setup(), savings(), charging_location_stats()) sie
-        brauchen."""
-        return self.ladekarten_stats().get("gesamt", 0.0)
+        """Siehe ChargeCards._ladekarten_cost_total()."""
+        return self._charge_cards._ladekarten_cost_total()
 
     def ladekarten_stats(self) -> dict:
-        """Ladekarten-Uebersicht (siehe engine.ladekarten_summary()) --
-        leeres dict ohne jede angelegte Karte (macht das Feature komplett
-        inaktiv/unsichtbar, analog leasing_stats()). Absichtlich UNGECACHT:
-        die Berechnung ist trivial billig (kurze Liste, reine Datums-
-        arithmetik), anders als z.B. rolling_km_per_day() bei leasing_stats()."""
-        karten = self.data.get("ladekarten") or []
-        if not karten:
-            return {}
-        heute = dt_util.now().date().isoformat()
-        return ladekarten_summary(karten, heute, LADEKARTE_AVG_DAYS_PER_MONTH)
+        """Siehe ChargeCards.ladekarten_stats()."""
+        return self._charge_cards.ladekarten_stats()
 
     def _vehicle_avg_consumption_kwh_per_100km(self) -> Optional[float]:
         """Durchschnittsverbrauch des Fahrzeugs in kWh/100km ueber die
@@ -5800,106 +5348,12 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         return result
 
     def leasing_stats(self) -> dict:
-        """Leasing-Kilometerbudget (siehe engine.py::leasing_status()).
-        Verwendet den ABSOLUTEN Kilometerstand (self.data["odo"], mit
-        derselben odo_unit-Umrechnung wie _km_driven()) gegen den
-        konfigurierten Vertrags-Start-km -- bewusst NICHT _km_driven()
-        selbst, das nur seit der ev_assistant-Einrichtung zaehlt und damit
-        fuer einen laufenden Leasingvertrag die falsche Referenz waere.
-        Leeres dict, solange inkl_km/end_datum nicht konfiguriert sind
-        (siehe build_leasing_schema()) -- macht das Feature komplett
-        inaktiv, bis es eingerichtet ist (keine Sensoren mit Rauschen).
-        Fehlen weitere Pflichtfelder (Start-km/-datum), liefert bereits
-        engine.leasing_status() selbst ein leeres dict.
-
-        Ergebnis wird zwischengespeichert (siehe _leasing_cache in
-        __init__) -- ohne das wuerde sowohl LeasingKmVorRuecklaufSensor
-        (native_value + extra_state_attributes) als auch
-        _check_leasing_thresholds() dieselbe Berechnung (inkl.
-        rolling_km_per_day() ueber das gesamte Fahrtenbuch) jeweils einzeln
-        anstossen -- bis zu dreimal pro Update fuer denselben Wert."""
-        inkl_km = self._opt(CONF_LEASING_INKL_KM)
-        end_datum = self._opt(CONF_LEASING_END_DATUM)
-        if not inkl_km or not end_datum:
-            return {}
-        odo = self.data.get("odo")
-        if odo is None:
-            return {}
-        odo_km = odo * MILES_TO_KM if self.data.get("odo_unit") == "mi" else odo
-        start_km = self._opt(CONF_LEASING_START_KM)
-        heute = dt_util.now().date().isoformat()
-        cache_key = (self._fahrten_version, odo_km, heute, start_km, end_datum)
-        if self._leasing_cache is not None and self._leasing_cache[0] == cache_key:
-            return self._leasing_cache[1]
-        fahrten = self.data.get("fahrten") or []
-        rollierendes_tempo = rolling_km_per_day(fahrten, time.time(), _LEASING_ROLLING_WINDOW_DAYS)
-        result = leasing_status(
-            aktueller_km=odo_km,
-            vertrag_start_km=start_km,
-            vertrag_start_datum=self._opt(CONF_LEASING_START_DATUM),
-            vertrag_end_datum=end_datum,
-            inkl_gesamt_km=inkl_km,
-            heute=heute,
-            preis_mehr_km=self._opt(CONF_LEASING_PREIS_MEHR_KM),
-            preis_minder_km=self._opt(CONF_LEASING_PREIS_MINDER_KM),
-            toleranz_mehr_km=self._opt(CONF_LEASING_TOLERANZ_MEHR_KM),
-            toleranz_minder_km=self._opt(CONF_LEASING_TOLERANZ_MINDER_KM),
-            rollierendes_tempo_km_pro_tag=rollierendes_tempo,
-            knapp_schwelle_pct=LEASING_KNAPP_SCHWELLE_PCT,
-            toleranz_pct=LEASING_TOLERANZ_PCT,
-        )
-        self._leasing_cache = (cache_key, result)
-        return result
+        """Siehe Leasing.leasing_stats()."""
+        return self._leasing.leasing_stats()
 
     def _check_leasing_thresholds(self) -> None:
-        """Benachrichtigung, wenn die (lineare) Leasing-Projektion erstmals
-        "knapp" oder "ueber" erreicht -- Hysterese analog
-        _check_soc_thresholds(): der bereits gemeldete Status wird
-        persistiert (ueberlebt einen HA-Neustart) und erst erneut gemeldet,
-        wenn eine SCHLECHTERE Stufe erreicht wird -- sonst wuerde eine
-        Projektion, die knapp um die Schwelle pendelt, bei jeder Messung neu
-        benachrichtigen. Der gespeicherte Zustand wird zurueckgesetzt,
-        sobald sich die Vertrags-Identitaet (Start-km + End-Datum) aendert
-        -- ein neuer/verlaengerter Vertrag verdient wieder eigene
-        Benachrichtigungen ab "im_budget"."""
-        stats = self.leasing_stats()
-        status = stats.get("status")
-        if status is None:
-            return
-        identity = [self._opt(CONF_LEASING_START_KM), self._opt(CONF_LEASING_END_DATUM)]
-        if self.data.get("leasing_notified_identity") != identity:
-            self.data["leasing_notified_identity"] = identity
-            self.data["leasing_notified_rank"] = 0
-        worst_rank = self.data.get("leasing_notified_rank", 0)
-        rank = _LEASING_STATUS_RANK.get(status, 0)
-        if rank <= worst_rank:
-            return
-        self.data["leasing_notified_rank"] = rank
-        if rank > 0:
-            self.hass.async_create_task(self._notify_leasing(status, stats))
-
-    async def _notify_leasing(self, status: str, stats: dict) -> None:
-        """Push + persistent_notification, wenn die Leasing-Projektion
-        "knapp" oder "ueber" erreicht -- siehe _check_leasing_thresholds()."""
-        en = self._en()
-        if status == "ueber":
-            title = "Leasing mileage budget exceeded" if en else "Leasing-Kilometerbudget ueberschritten"
-        else:
-            title = "Leasing mileage budget tight" if en else "Leasing-Kilometerbudget knapp"
-        km_vor_ruecklauf = stats.get("km_vor_ruecklauf")
-        if km_vor_ruecklauf is not None:
-            message = (
-                f"Linear projection is currently {km_vor_ruecklauf:+.0f} km vs. plan."
-                if en else
-                f"Die lineare Projektion liegt aktuell {km_vor_ruecklauf:+.0f} km gegenueber dem Soll."
-            )
-        else:
-            message = "Check the leasing tab for details." if en else "Details siehe Leasing-Tab."
-        await self._push(NOTIFY_EVENT_LEASING, title, message)
-        await self._persistent_notification(
-            "create",
-            {"notification_id": f"{self._notify_tag}_leasing", "title": title, "message": message},
-        )
+        """Siehe Leasing._check_leasing_thresholds()."""
+        return self._leasing._check_leasing_thresholds()
 
     def _evcc_vehicle_key(self) -> Optional[str]:
         """Fahrzeugname in evcc: aus Konfiguration oder via Auto-Erkennung
