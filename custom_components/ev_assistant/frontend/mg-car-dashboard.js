@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=63  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=64  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "3.5.39";
+const VERSION = "4.0.4";
 // merkt sich den letzten Wechsel der Adresse (auch wenn die Karte dabei aus- und neu eingehängt wird, z. B. durch Detailfenster)
 const NAV = (window.__glowCarNav = window.__glowCarNav || (() => {
   const n = { cur: location.pathname, t: 0 };
@@ -694,6 +694,49 @@ class MgCarDashboard extends HTMLElement {
   /* Lademanagement mit ev_assistant, zwei Bereiche:
      evcc         – was evcc gerade tut (nur Anzeige): Lademodus, Ladeziel, Ladeplan
      ev_assistant – Steuerung: Auto / manueller Modus, Ladeziel, Vollladung, Automatik pausieren, Ladeplan setzen */
+  /* km zu einem Ladestand (ev_assistant: km_pro_prozent bzw. fertiger km-Wert), als „≈ 290 km“ – leer ohne Verbrauch */
+  _socKm(ma, soc, km) {
+    let v = typeof km === "number" ? km : null;
+    if (v == null && typeof ma.km_pro_prozent === "number" && typeof soc === "number") v = soc * ma.km_pro_prozent;
+    v = this._roundKm(v);
+    return v == null ? "" : ` <small class="mkm">≈ ${de(v, 0)} km</small>`;
+  }
+  /* Ladesteuerung in km: Mindest- und Ziel-Ladestand, Rest der heutigen Fahrten, PV fürs Auto (ohne Verbrauch % bzw. kWh) */
+  _ctlInfo(ma) {
+    if (!ma.aktiv) return "";
+    const km = (v) => (typeof v === "number" ? `${de(this._roundKm(v), 0)} km` : null);
+    const kwh = (v) => (typeof v === "number" ? `${de(v, 1)} kWh` : null);
+    const pct = (v) => (typeof v === "number" ? `${de(v, 0)} %` : null);
+    const it = (l, main, sub, t) => (main ? `<div title="${esc(t)}"><span>${l}</span><b>${main}${sub ? `<small>${sub}</small>` : ""}</b></div>` : "");
+    const items = [
+      it(T("Mindestens"), km(ma.min_km) || pct(ma.min_soc), km(ma.min_km) ? pct(ma.min_soc) : null, T("Mindestreichweite, die bis zur Abfahrt da sein muss")),
+      it(T("Ziel"), km(ma.target_km) || pct(ma.target_soc), km(ma.target_km) ? pct(ma.target_soc) : null, T("Zielreichweite inklusive Puffer")),
+      it(T("Rest heute"), km(ma.rest_heute_km) || kwh(ma.rest_heute_kwh), null, T("Rest der heutigen Fahrten")),
+      it(T("PV fürs Auto"), km(ma.pv_fuer_auto_km) || kwh(ma.pv_fuer_auto_kwh), null, T("Reichweite, die die PV-Prognose fürs Auto übrig lässt")),
+    ].filter(Boolean);
+    return items.length ? `<div class="mctl">${items.join("")}</div>` : "";
+  }
+  /* Sanftes Nachladen: Zustand und Grund (nur wenn die Option in ev_assistant an ist) */
+  _nachladenInfo(ma) {
+    const st = ma.nachladen_status;
+    if (st == null) return "";
+    const tm = (iso) => { const d = iso ? new Date(iso) : null; if (!d || isNaN(d)) return null;
+      const same = d.toDateString() === new Date().toDateString(), tom = d.toDateString() === new Date(Date.now() + 86400000).toDateString();
+      return `${same ? T("heute") : tom ? T("morgen") : WD[d.getDay()]} ${uhr(`${pad(d.getHours())}:${pad(d.getMinutes())}`)}`; };
+    const Q = { profil: N("laut Profil"), entitaet: N("laut Abfahrts-Entität"), fallback: N("Standard-Abfahrtszeit") };
+    const frist = tm(ma.abfahrt_frist), quelle = Q[ma.frist_quelle] ? T(Q[ma.frist_quelle]) : "";
+    const sofort = typeof ma.sofort_km === "number" ? `${de(this._roundKm(ma.sofort_km), 0)} km` : typeof ma.sofort_kwh === "number" ? `${de(ma.sofort_kwh, 1)} kWh` : null;
+    const S = {
+      nicht_noetig: ["mdi:check-circle-outline", "ok", T("Kein Nachladen nötig"), T("Der Akku reicht bis zur Abfahrt.")],
+      sanft: ["mdi:leaf", "ok", T("Lädt sanft mit Mindestleistung"), frist ? T("Reicht so bis zur Abfahrt {t}.", { t: frist }) : ""],
+      sofort_sanft: ["mdi:leaf", "ok", T("Lädt sanft für heute"), sofort ? T("{v} für die heutigen Fahrten.", { v: sofort }) : ""],
+      wartet_auf_sonnenuntergang: ["mdi:weather-sunset-down", "wait", T("Wartet auf den Sonnenuntergang"), tm(ma.nachladen_ab) ? T("Nachladen ab {t}.", { t: tm(ma.nachladen_ab) }) : ""],
+      frist: ["mdi:lightning-bolt", "hot", T("Lädt jetzt mit voller Leistung"), frist ? T("Sonst reicht es nicht bis zur Abfahrt {t}.", { t: frist }) : ""],
+      sofort_zu_langsam: ["mdi:lightning-bolt", "hot", T("Lädt jetzt mit voller Leistung"), sofort ? T("Sanft wäre zu langsam für die heutigen Fahrten ({v}).", { v: sofort }) : ""],
+    }[st] || ["mdi:information-outline", "", esc(st), ma.nachladen_grund ? esc(ma.nachladen_grund) : ""];
+    const meta = [frist && st !== "sanft" && st !== "frist" ? T("Abfahrt {t}", { t: frist }) : "", quelle].filter(Boolean).join(" · ");
+    return `<div class="mnl ${S[1]}" title="${esc(T("Sanftes Nachladen"))}">${icon(S[0])}<span><b>${S[2]}</b><small>${[S[3].replace(/\.$/, ""), meta].filter(Boolean).join(" · ")}</small></span></div>`;
+  }
   _render_mgmt_eva(el) {
     const E = this._eva(), L = this._live(), mc = this._st(E.evcc_mode_control), ma = mc?.attributes || {};
     const ms = this._evaModeState(), entry = this._evaEntryId();
@@ -754,8 +797,8 @@ class MgCarDashboard extends HTMLElement {
             <small>${ps && !isNaN(ps) ? `${T("Laden")} ${uhr(`${hm(ps)}${pe && !isNaN(pe) ? `–${hm(pe)}` : ""}`)}` : ""}${kmT}</small></span>
           <span class="mpb"><button class="qbtn ghost" data-act="mplanedit">${icon("mdi:pencil")}${T("Ändern")}</button><button class="qbtn ghost" data-act="mplanclear" title="${T("Ladeplan löschen")}" aria-label="${T("Ladeplan löschen")}">${icon("mdi:delete-outline")}</button></span></div>
         ${pa.erwartung ? `<div class="mpe">${icon("mdi:information-outline")}${esc(pa.erwartung)}</div>` : ""}${reqMsg}</div>`;
-    } else if (this._mob && !pi && !this._planOpen && !pr?.busy && !pr?.err) {
-      // Handy: ohne Plan nur eine Zeile, das Formular klappt beim Antippen auf
+    } else if (!pi && !this._planOpen && !pr?.busy && !pr?.err) {
+      // ohne Plan nur eine Zeile, das Formular klappt beim Antippen auf
       planBox = `<button class="mplanrow" data-act="mplanopen">${icon("mdi:calendar-plus")}<b>${T("Ladeplan setzen")}</b><span>${T("Ziel und Uhrzeit wählen")}</span></button>${reqMsg}`;
     } else {
       // Ziel: Auswahl wie beim Ladeziel (Menü), Wert und Umrechnung im Button
@@ -767,7 +810,7 @@ class MgCarDashboard extends HTMLElement {
       planBox = `<div class="mplan"><div class="mphd mph3"><span class="mpl">${icon("mdi:calendar-plus")}${pi ? T("Ändern") : T("Ladeplan")}</span><span class="mpc">${setBtn}</span><span class="mpr">${usw}</span></div>
         <div class="mpg"><label><span>${T("Ziel")}</span><button class="msel mptgt" data-act="mptgtmenu" data-u="${unit}" data-v="${tv}" aria-label="${T("Ziel")}"><b>${tl}</b><small>${ts}</small>${icon("mdi:chevron-down", "mchv")}</button></label>
           <label><span>${T("Bis")}</span><input class="pin" type="datetime-local" value="${esc(val)}" data-act="none" aria-label="${T("Zielzeit")}"></label></div>
-        ${pi || (this._mob && this._planOpen) ? `<div class="mpb end"><button class="qbtn ghost" data-act="mplancancel">${T("Abbrechen")}</button></div>` : ""}
+        ${pi || this._planOpen ? `<div class="mpb end"><button class="qbtn ghost" data-act="mplancancel">${T("Abbrechen")}</button></div>` : ""}
         ${reqMsg}</div>`;
     }
     const planForm = planBox;
@@ -775,7 +818,7 @@ class MgCarDashboard extends HTMLElement {
     const rec = this._st(E.charge_before_pv_recommended);
     const err = this._mgmtErr ? `<div class="mpe err merr">${icon("mdi:alert-circle-outline")}<span>ev_assistant: ${esc(this._mgmtErr.msg)}</span></div>` : "";
     el.innerHTML = head + err + `
-      <div class="mgrp">${modes}${ctl}${planForm}</div>
+      <div class="mgrp">${modes}${ctl}${this._planOpen || this._planEdit ? "" : this._ctlInfo(ma)}${this._nachladenInfo(ma)}${planForm}</div>
       ${rec?.state === "on" ? `<div class="lrows"><button class="lrow warn" data-act="more" data-entity="${esc(E.charge_before_pv_recommended)}">${icon("mdi:weather-cloudy-alert")}<span>${T("Empfehlung")}</span><b>${T("Laden vor PV sinnvoll")}</b></button></div>` : ""}`;
   }
 
@@ -915,7 +958,7 @@ class MgCarDashboard extends HTMLElement {
       const max = opt("socmax", ma.target_soc_max != null ? Number(ma.target_soc_max) : 80), cur = ma.target_soc != null ? Number(ma.target_soc) : null;
       const why = ma.balancing_aktiv ? T("Vollladung") : ma.ueberschuss_ziel_erweitert_aktiv ? T("PV-Überschuss") : "";
       limBtn = `<button class="mbtn lim" data-act="evalimmenu" title="${T("Ladeziel in ev_assistant (höchstens so weit lädt die Automatik)")}">
-          ${icon("mdi:battery-check-outline")}<div class="mtx"><b>${de(max, 0)} %</b><span>${T("Ladeziel")}</span></div>${icon("mdi:chevron-down", "mchv")}</button>`;
+          ${icon("mdi:battery-check-outline")}<div class="mtx"><b>${de(max, 0)} %${this._socKm(ma, max, max === Number(ma.target_soc_max) ? ma.target_soc_max_km : null)}</b><span>${T("Ladeziel")}</span></div>${icon("mdi:chevron-down", "mchv")}</button>`;
       top = `<div class="mbottom">${limBtn}
         <div class="mbtn ro tnow" title="${T("Ziel, das ev_assistant gerade an evcc gibt (aus Bedarf, PV-Überschuss und Vollladung)")}">
           ${icon("mdi:target")}<div class="mtx"><b>${cur != null && !isNaN(cur) ? `${de(cur, 0)} %` : "–"}</b><span>${T("Ziel jetzt")}${why ? ` · ${why}` : ""}</span></div></div></div>`;
@@ -1710,12 +1753,18 @@ class MgCarDashboard extends HTMLElement {
     const pl = PWD.map(([k]) => (Pl[k] !== undefined ? parseFloat(Pl[k]) : null));
     const minN = this._ea("morning_departure")?.attributes?.mindestanzahl || 4;
     const dep = (s) => !s ? "–" : s.status === "ok" && s.typisch ? s.typisch : s.status === "nicht_belastbar" ? `${s.n_gueltig}/${minN}` : s.status === "uneinheitlich" ? "?" : "–";
+    // verworfene frühe Messungen: die „typische“ Zeit trügt dann – Hinweis mit der frühesten Messung
+    const depOut = (s) => {
+      const n = Number(s?.n_ausreisser_frueh) || 0; if (!n || !s.frueh_roh) return "";
+      const t = n === 1 ? T("1 früherer Ausreißer, {t}", { t: s.frueh_roh }) : T("{n} frühere Ausreißer, früheste {t}", { n, t: s.frueh_roh });
+      return `<small class="pout" title="${esc(t)}">${icon("mdi:alert-outline")}${esc(s.frueh_roh)}</small>`;
+    };
     const { today, tomorrow } = this._wdIdx(), showHs = Hs.konfiguriert === true && hs.some((x) => x != null);
     if (this._mob) {   // Handy: eine Zeile je Tag
       const cols = [[T("Auto"), (i) => `${hasKm ? this._roundKm(ev[i]) : de(ev[i], 1)}<small>${hasKm ? "km" : "kWh"}</small>`, "ev"],
         showHs && [T("Haus"), (i) => (hs[i] == null ? "–" : `${de(hs[i], 1)}<small>kWh</small>`), "hs"],
         pl.some((x) => x != null) && [T("Steckt"), (i) => (pl[i] == null ? "–" : `${de(pl[i], pl[i] >= 10 ? 0 : 1)}<small>h</small>`), "pl"],
-        Dp && [T("Abfahrt"), (i) => esc(dep(Dp[PWD[i][0]])), "dp"]].filter(Boolean);
+        Dp && [T("Abfahrt"), (i) => esc(dep(Dp[PWD[i][0]])) + depOut(Dp[PWD[i][0]]), "dp"]].filter(Boolean);
       const g = `style="grid-template-columns:52px repeat(${cols.length},minmax(0,1fr))"`;
       el.innerHTML = head + `<div class="pwk"><div class="pwr ph" ${g}><span></span>${cols.map(([l]) => `<span>${l}</span>`).join("")}</div>`
         + PWD.map(([, lbl], i) => `<div class="pwr ${i === tomorrow ? "tm" : i === today ? "td" : ""}" ${g}><b>${lbl}${i === tomorrow ? `<em>${T("morgen")}</em>` : i === today ? `<em>${T("heute")}</em>` : ""}</b>${cols.map(([, f, c]) => `<span class="${c}">${f(i)}</span>`).join("")}</div>`).join("") + `</div>`;
@@ -1727,7 +1776,7 @@ class MgCarDashboard extends HTMLElement {
         <div class="pmt ev"><small>${T("Auto")}${hasKm ? ` ${T("(ca.)")}` : ""}</small><b>${hasKm ? this._roundKm(ev[i]) : de(ev[i], 1)}<em>${hasKm ? "km" : "kWh"}</em></b><div class="pbar"><i style="width:${(ev[i] / evMax) * 100}%"></i></div></div>
         ${showHs ? `<div class="pmt hs"><small>${T("Haus")}</small><b>${hs[i] == null ? "–" : de(hs[i], 1)}<em>${hs[i] == null ? "" : "kWh"}</em></b><div class="pbar"><i style="width:${hs[i] == null ? 0 : (hs[i] / hsMax) * 100}%"></i></div></div>` : ""}
         ${pl.some((x) => x != null) ? `<div class="pmt pl"><small>${T("Steckt")}</small><b>${pl[i] == null ? "–" : de(pl[i], pl[i] >= 10 ? 0 : 1)}<em>${pl[i] == null ? "" : "h"}</em></b></div>` : ""}
-        ${Dp ? `<div class="pmt dp"><small>${T("Abfahrt")}</small><b>${dep(Dp[k])}</b></div>` : ""}</div>`;
+        ${Dp ? `<div class="pmt dp"><small>${T("Abfahrt")}</small><b>${dep(Dp[k])}</b>${depOut(Dp[k])}</div>` : ""}</div>`;
     }).join("");
     el.innerHTML = head + `<div class="pdays">${days}</div>`;
   }
@@ -3984,6 +4033,17 @@ input[type=date],input[type=datetime-local],input[type=month]{cursor:pointer;car
 .mst b ha-icon{--mdc-icon-size:17px;flex:none}
 .mst b .glyph{font-size:13px;font-weight:800}
 .mgl small{letter-spacing:0;text-transform:none;font-weight:500;color:var(--dim);margin-left:4px}
+.mbtn b .mkm{font-size:11px;font-weight:600;color:var(--muted);margin-left:3px}
+.mctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:6px;margin:0 0 8px}
+.mctl > div{padding:6px 10px;border-radius:12px;background:rgba(255,255,255,.02);border:1px dashed var(--tileb);min-width:0}
+.mctl span{display:block;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mctl b{font-size:14px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}.mctl b small{font-size:11px;color:var(--muted);font-weight:600;margin-left:4px}
+.mnl{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;margin:0 0 8px;background:rgba(255,255,255,.03);border:1px solid var(--tileb)}
+.mnl > ha-icon{--mdc-icon-size:18px;flex:none;color:var(--muted)}
+.mnl span{display:flex;flex-direction:column;min-width:0}.mnl b{font-size:13.5px;font-weight:600}.mnl small{font-size:12px;color:var(--muted)}
+.mnl.ok > ha-icon{color:var(--green)}.mnl.wait > ha-icon{color:var(--gold)}.mnl.hot > ha-icon{color:var(--orange)}.mnl.hot{border-color:rgba(251,146,60,.35)}
+.pmt .pout,.pwr .pout,.pout{display:inline-flex;align-items:center;gap:2px;font-size:11px;font-weight:600;color:var(--orange);margin-top:1px}.pout ha-icon{--mdc-icon-size:12px}
+.pwr .pout{margin-left:4px}
 .mbottom.m3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:8px 0}
 .mbottom.m3 .mbtn{padding:8px 10px;min-width:0}
 .mbottom.m3 .mbtn span{overflow:hidden;text-overflow:ellipsis}
@@ -4866,6 +4926,30 @@ const I18N = {
     "Bitte eine Zielzeit in der Zukunft wählen.": "Please choose a target time in the future.",
     "Keine Antwort von ev_assistant – Ladeplan vermutlich nicht gesetzt.": "No response from ev_assistant – charge plan probably not set.",
     "Ladeplan konnte nicht gesetzt werden:": "Charge plan could not be set:",
+    "Mindestens": "Minimum",
+    "Rest heute": "Rest of today",
+    "Mindestreichweite, die bis zur Abfahrt da sein muss": "Minimum range required by departure",
+    "Zielreichweite inklusive Puffer": "Target range including buffer",
+    "Rest der heutigen Fahrten": "Remaining trips today",
+    "Reichweite, die die PV-Prognose fürs Auto übrig lässt": "Range the PV forecast leaves for the car",
+    "laut Profil": "per profile",
+    "laut Abfahrts-Entität": "per departure entity",
+    "Standard-Abfahrtszeit": "default departure time",
+    "Kein Nachladen nötig": "No top-up needed",
+    "Der Akku reicht bis zur Abfahrt.": "The battery lasts until departure.",
+    "Lädt sanft mit Mindestleistung": "Gentle charging at minimum power",
+    "Reicht so bis zur Abfahrt {t}.": "Enough by departure {t}.",
+    "Lädt sanft für heute": "Gentle charging for today",
+    "{v} für die heutigen Fahrten.": "{v} for today's trips.",
+    "Wartet auf den Sonnenuntergang": "Waiting for sunset",
+    "Nachladen ab {t}.": "Top-up from {t}.",
+    "Lädt jetzt mit voller Leistung": "Charging now at full power",
+    "Sonst reicht es nicht bis zur Abfahrt {t}.": "Otherwise it would not be enough by departure {t}.",
+    "Sanft wäre zu langsam für die heutigen Fahrten ({v}).": "Gentle charging would be too slow for today's trips ({v}).",
+    "Abfahrt {t}": "Departure {t}",
+    "Sanftes Nachladen": "Gentle top-up",
+    "1 früherer Ausreißer, {t}": "1 earlier outlier, {t}",
+    "{n} frühere Ausreißer, früheste {t}": "{n} earlier outliers, earliest {t}",
     "Leistung": "Power",
     "Kennzahlen": "Statistics",
     "Ladeplan setzen": "Set charge plan",
