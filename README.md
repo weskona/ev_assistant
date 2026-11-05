@@ -50,7 +50,14 @@ _Some of the screenshots show the German interface; the panel is available in En
 
 ## Status & Known Limitations
 
-EV Assistant is in **active 0.x development** — pre-1.0. Behavior and configuration can still change between releases; check the [CHANGELOG](custom_components/ev_assistant/CHANGELOG.md) when updating.
+EV Assistant is **stable from version 1.0**. Within 1.x the following interfaces only change in a breaking way with the next major version, and every breaking change is announced in the [CHANGELOG](custom_components/ev_assistant/CHANGELOG.md):
+
+- the **services** and their parameters (except the test helpers `simulate_event` and `simulate_trip`, which are not part of the promise),
+- the **unique IDs and documented attributes** of the sensors and binary sensors,
+- the **config-flow and options keys** (existing installations keep working without reconfiguration),
+- the **WebSocket commands** `ev_assistant/*` and the `api_version` of the panel configuration (the contract with the Glow card).
+
+What can still change: the numbers behind the automatic control (thresholds, estimates and recommendations are tuned from real-world feedback), new sensors, attributes and services are added (additive, not breaking), and the panel — it is the card of [glow-dashboard](https://github.com/deepblue120/glow-dashboard), a separate project that is synchronized into this repository.
 
 It was developed primarily against **one real setup**: a Stellantis-based vehicle (SoC via the manufacturer's cloud integration), one evcc version, one wallbox. Reports from other setups have since shaped several fixes — e.g. a VW ID.3 with a different SoC source and a go-e wallbox — but that is still a narrow slice of the "any vehicle, any evcc version, any wallbox" space this integration aims to cover. Feedback from different vehicles, SoC reporting behavior, evcc versions, and wallboxes is genuinely wanted, not just tolerated.
 

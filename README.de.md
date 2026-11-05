@@ -50,7 +50,14 @@ _Das Panel gibt es auf Deutsch und Englisch._
 
 ## Status & bekannte Grenzen
 
-EV Assistant befindet sich in **aktiver 0.x-Entwicklung** — vor 1.0. Verhalten und Konfiguration können sich zwischen Releases noch ändern; beim Update das [CHANGELOG](custom_components/ev_assistant/CHANGELOG.md) prüfen.
+EV Assistant ist **ab Version 1.0 stabil**. Innerhalb von 1.x ändern sich die folgenden Schnittstellen nur mit der nächsten Hauptversion inkompatibel, und jede solche Änderung wird im [CHANGELOG](custom_components/ev_assistant/CHANGELOG.md) angekündigt:
+
+- die **Dienste** und ihre Parameter (ausgenommen die Testwerkzeuge `simulate_event` und `simulate_trip`, die nicht Teil der Zusage sind),
+- die **Unique-IDs und dokumentierten Attribute** der Sensoren und Binärsensoren,
+- die **Config-Flow- und Optionsschlüssel** (bestehende Installationen laufen ohne Neukonfiguration weiter),
+- die **WebSocket-Befehle** `ev_assistant/*` und die `api_version` der Panel-Konfiguration (der Vertrag mit der Glow-Karte).
+
+Was sich noch ändern kann: die Zahlen hinter der automatischen Steuerung (Schwellen, Schätzungen und Empfehlungen werden anhand von Rückmeldungen aus dem Alltag nachjustiert), neue Sensoren, Attribute und Dienste kommen hinzu (additiv, nicht inkompatibel) und das Panel — es ist die Karte aus [glow-dashboard](https://github.com/deepblue120/glow-dashboard), einem eigenen Projekt, das in dieses Repository synchronisiert wird.
 
 Entwickelt wurde primär gegen **eine reale Installation**: ein Stellantis-basiertes Fahrzeug (SoC über die Cloud-Integration des Herstellers), eine evcc-Version, eine Wallbox. Meldungen von anderen Installationen haben seitdem mehrere Korrekturen geprägt — z.B. ein VW ID.3 mit anderer SoC-Quelle und eine go-e-Wallbox —, trotzdem bleibt das nur ein schmaler Ausschnitt des angestrebten „jedes Fahrzeug, jede evcc-Version, jede Wallbox"-Spektrums. Feedback von anderen Fahrzeugen, SoC-Meldeverhalten, evcc-Versionen und Wallboxen ist ausdrücklich erwünscht, nicht nur geduldet.
 
