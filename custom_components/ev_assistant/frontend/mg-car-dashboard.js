@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=64  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=65  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "4.0.4";
+const VERSION = "4.0.5";
 // merkt sich den letzten Wechsel der Adresse (auch wenn die Karte dabei aus- und neu eingehängt wird, z. B. durch Detailfenster)
 const NAV = (window.__glowCarNav = window.__glowCarNav || (() => {
   const n = { cur: location.pathname, t: 0 };
@@ -1752,7 +1752,9 @@ class MgCarDashboard extends HTMLElement {
     const hs = PWD.map(([k]) => (Hs[k] !== undefined ? parseFloat(Hs[k]) : null)), hsMax = Math.max(0.1, ...hs.filter((x) => x != null));
     const pl = PWD.map(([k]) => (Pl[k] !== undefined ? parseFloat(Pl[k]) : null));
     const minN = this._ea("morning_departure")?.attributes?.mindestanzahl || 4;
-    const dep = (s) => !s ? "–" : s.status === "ok" && s.typisch ? s.typisch : s.status === "nicht_belastbar" ? `${s.n_gueltig}/${minN}` : s.status === "uneinheitlich" ? "?" : "–";
+    // Abfahrtszeit als HTML; bei „uneinheitlich“ (keine typische Zeit) die früheste Messung kursiv statt „?“ (#54)
+    const dep = (s) => !s ? "–" : s.status === "ok" && s.typisch ? esc(s.typisch) : s.status === "nicht_belastbar" ? `${esc(s.n_gueltig)}/${minN}`
+      : s.status === "uneinheitlich" ? (s.frueh_roh ? `<i class="pfrueh" title="${esc(T("Abfahrten streuen, früheste Messung {t}", { t: s.frueh_roh }))}">${esc(s.frueh_roh)}</i>` : "?") : "–";
     // verworfene frühe Messungen: die „typische“ Zeit trügt dann – Hinweis mit der frühesten Messung
     const depOut = (s) => {
       const n = Number(s?.n_ausreisser_frueh) || 0; if (!n || !s.frueh_roh) return "";
@@ -1764,7 +1766,7 @@ class MgCarDashboard extends HTMLElement {
       const cols = [[T("Auto"), (i) => `${hasKm ? this._roundKm(ev[i]) : de(ev[i], 1)}<small>${hasKm ? "km" : "kWh"}</small>`, "ev"],
         showHs && [T("Haus"), (i) => (hs[i] == null ? "–" : `${de(hs[i], 1)}<small>kWh</small>`), "hs"],
         pl.some((x) => x != null) && [T("Steckt"), (i) => (pl[i] == null ? "–" : `${de(pl[i], pl[i] >= 10 ? 0 : 1)}<small>h</small>`), "pl"],
-        Dp && [T("Abfahrt"), (i) => esc(dep(Dp[PWD[i][0]])) + depOut(Dp[PWD[i][0]]), "dp"]].filter(Boolean);
+        Dp && [T("Abfahrt"), (i) => dep(Dp[PWD[i][0]]) + depOut(Dp[PWD[i][0]]), "dp"]].filter(Boolean);
       const g = `style="grid-template-columns:52px repeat(${cols.length},minmax(0,1fr))"`;
       el.innerHTML = head + `<div class="pwk"><div class="pwr ph" ${g}><span></span>${cols.map(([l]) => `<span>${l}</span>`).join("")}</div>`
         + PWD.map(([, lbl], i) => `<div class="pwr ${i === tomorrow ? "tm" : i === today ? "td" : ""}" ${g}><b>${lbl}${i === tomorrow ? `<em>${T("morgen")}</em>` : i === today ? `<em>${T("heute")}</em>` : ""}</b>${cols.map(([, f, c]) => `<span class="${c}">${f(i)}</span>`).join("")}</div>`).join("") + `</div>`;
@@ -4042,6 +4044,7 @@ input[type=date],input[type=datetime-local],input[type=month]{cursor:pointer;car
 .mnl > ha-icon{--mdc-icon-size:18px;flex:none;color:var(--muted)}
 .mnl span{display:flex;flex-direction:column;min-width:0}.mnl b{font-size:13.5px;font-weight:600}.mnl small{font-size:12px;color:var(--muted)}
 .mnl.ok > ha-icon{color:var(--green)}.mnl.wait > ha-icon{color:var(--gold)}.mnl.hot > ha-icon{color:var(--orange)}.mnl.hot{border-color:rgba(251,146,60,.35)}
+.pfrueh{font-style:italic;font-weight:600}
 .pmt .pout,.pwr .pout,.pout{display:inline-flex;align-items:center;gap:2px;font-size:11px;font-weight:600;color:var(--orange);margin-top:1px}.pout ha-icon{--mdc-icon-size:12px}
 .pwr .pout{margin-left:4px}
 .mbottom.m3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px;margin:8px 0}
@@ -4949,6 +4952,7 @@ const I18N = {
     "Abfahrt {t}": "Departure {t}",
     "Sanftes Nachladen": "Gentle top-up",
     "1 früherer Ausreißer, {t}": "1 earlier outlier, {t}",
+    "Abfahrten streuen, früheste Messung {t}": "Departures vary, earliest measurement {t}",
     "{n} frühere Ausreißer, früheste {t}": "{n} earlier outliers, earliest {t}",
     "Leistung": "Power",
     "Kennzahlen": "Statistics",
