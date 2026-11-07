@@ -69,3 +69,19 @@ def test_rueckfall_abfahrtszeit_leer_ist_erlaubt():
     errors: dict = {}
     config_flow._validate_departure_time({}, errors)
     assert errors == {}
+
+
+def test_vorklimatisierung_felder_im_fahrtenbuch_schritt():
+    """#92: drei optionale Felder (Status + zwei Buttons) im Fahrtenbuch-
+    Schritt; die Start-/Stopp-Felder erlauben nur button-Entitaeten, weil die
+    Karte sie per button.press ausloest."""
+    from custom_components.ev_assistant.config_flow import build_trip_schema
+
+    schema = build_trip_schema({}).schema
+    fields = {str(k): (k, v) for k, v in schema.items()}
+    for key in ("precondition_status_entity", "precondition_start_entity", "precondition_stop_entity"):
+        assert key in fields, key
+        assert type(fields[key][0]).__name__ == "Optional", key
+    for key in ("precondition_start_entity", "precondition_stop_entity"):
+        assert fields[key][1].config["domain"] == ["button"]
+    assert "button" not in fields["precondition_status_entity"][1].config["domain"]

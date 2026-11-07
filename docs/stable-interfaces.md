@@ -191,6 +191,9 @@ Stored in the config entry (`data`/`options`). Existing installations keep worki
 | trip | `motor_debounce_s` | – |
 | trip | `motor_entity` | – |
 | trip | `outside_temp_entity` | – |
+| trip | `precondition_start_entity` | – |
+| trip | `precondition_status_entity` | – |
+| trip | `precondition_stop_entity` | – |
 | trip | `pv_forecast_entity` | – |
 | trip | `trip_auto_confirm` | – |
 | trip | `trip_idle_timeout_s` | – |
@@ -219,4 +222,4 @@ The panel hands this configuration to the Glow card. `api_version` is raised on 
 
 - Current `api_version`: **1**
 - Top-level keys: `api_version`, `config_entry_id`, `entities`, `evcc_vehicle_name`, `name`, `title`, `vehicles`
-- Keys of `entities` (besides the `unique_id` keys above, which are present when the entity exists): `gps_entity`, `home_entity`, `motor_entity`, `odo_entity`, `outside_temp_entity`, `plug_entity`, `power_entity`, `soc_entity`, `wallbox_charging_entity`, `wallbox_connected_entity`, `wallbox_energy_entity`
+- Keys of `entities` (besides the `unique_id` keys above, which are present when the entity exists): `gps_entity`, `home_entity`, `motor_entity`, `odo_entity`, `outside_temp_entity`, `plug_entity`, `power_entity`, `precondition_start_entity`, `precondition_status_entity`, `precondition_stop_entity`, `soc_entity`, `wallbox_charging_entity`, `wallbox_connected_entity`, `wallbox_energy_entity`

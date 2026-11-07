@@ -153,10 +153,14 @@
           "trip_auto_confirm": "Fahrt automatisch ins Fahrtenbuch übernehmen (ohne manuelle Bestätigung)",
           "usage_profile_buffer_km": "Puffer für Nutzungsprofil (km, fester Zuschlag auf den Wochentags-Bedarf)",
           "pv_forecast_entity": "PV-Ertragsprognose für morgen (optional, beliebige sensor-Entität, z.B. Solcast/Forecast.Solar)",
-          "outside_temp_entity": "Außentemperatur (optional, Wetter-Integration oder Sensor — für temperaturabhängige Verbrauchs-/Reichweitenschätzung)"
+          "outside_temp_entity": "Außentemperatur (optional, Wetter-Integration oder Sensor — für temperaturabhängige Verbrauchs-/Reichweitenschätzung)",
+          "precondition_status_entity": "Vorklimatisierung: Status-Entität (optional, z.B. Befehlsstatus der Fahrzeug-Integration)",
+          "precondition_start_entity": "Vorklimatisierung starten: Button (optional)",
+          "precondition_stop_entity": "Vorklimatisierung beenden: Button (optional)"
         },
         "data_description": {
-          "gps_entity": "Optional. Bevorzugt eine Standort-Entität des Fahrzeugs selbst (z.B. aus einer Fahrzeug-Cloud-Integration wie We Connect/MySkoda oder einem GPS-Modul), falls vorhanden — eine Personen-Entität (Smartphone/person) erkennt nur, wo sich diese Entität befindet, nicht wer tatsächlich fährt, und kann bei mehreren möglichen Fahrern im Haushalt zum falschen Ort führen. Ohnehin nur ein Vorschlag für Start-/Zielort, vor dem Speichern bzw. nachträglich per edit_trip korrigierbar."
+          "gps_entity": "Optional. Bevorzugt eine Standort-Entität des Fahrzeugs selbst (z.B. aus einer Fahrzeug-Cloud-Integration wie We Connect/MySkoda oder einem GPS-Modul), falls vorhanden — eine Personen-Entität (Smartphone/person) erkennt nur, wo sich diese Entität befindet, nicht wer tatsächlich fährt, und kann bei mehreren möglichen Fahrern im Haushalt zum falschen Ort führen. Ohnehin nur ein Vorschlag für Start-/Zielort, vor dem Speichern bzw. nachträglich per edit_trip korrigierbar.",
+          "precondition_status_entity": "Optional. Wenn deine Fahrzeug-Integration (z.B. Stellantis/MyCitroën, MyPeugeot, Hyundai/Kia, Tesla) eine Vorklimatisierung per Button anbietet, trage hier den Status und die beiden Buttons (starten/beenden) ein. Die Glow-Karte zeigt dann Status und Buttons an; ohne diese Felder bleibt der Bereich ausgeblendet. EV Assistant löst nichts selbst aus, es merkt sich nur die Entity-IDs für die Karte."
         }
       },
       "leasing": {
@@ -370,10 +374,14 @@
           "trip_auto_confirm": "Fahrt automatisch ins Fahrtenbuch übernehmen (ohne manuelle Bestätigung)",
           "usage_profile_buffer_km": "Puffer für Nutzungsprofil (km, fester Zuschlag auf den Wochentags-Bedarf)",
           "pv_forecast_entity": "PV-Ertragsprognose für morgen (optional, beliebige sensor-Entität, z.B. Solcast/Forecast.Solar)",
-          "outside_temp_entity": "Außentemperatur (optional, Wetter-Integration oder Sensor — für temperaturabhängige Verbrauchs-/Reichweitenschätzung)"
+          "outside_temp_entity": "Außentemperatur (optional, Wetter-Integration oder Sensor — für temperaturabhängige Verbrauchs-/Reichweitenschätzung)",
+          "precondition_status_entity": "Vorklimatisierung: Status-Entität (optional, z.B. Befehlsstatus der Fahrzeug-Integration)",
+          "precondition_start_entity": "Vorklimatisierung starten: Button (optional)",
+          "precondition_stop_entity": "Vorklimatisierung beenden: Button (optional)"
         },
         "data_description": {
-          "gps_entity": "Optional. Bevorzugt eine Standort-Entität des Fahrzeugs selbst (z.B. aus einer Fahrzeug-Cloud-Integration wie We Connect/MySkoda oder einem GPS-Modul), falls vorhanden — eine Personen-Entität (Smartphone/person) erkennt nur, wo sich diese Entität befindet, nicht wer tatsächlich fährt, und kann bei mehreren möglichen Fahrern im Haushalt zum falschen Ort führen. Ohnehin nur ein Vorschlag für Start-/Zielort, vor dem Speichern bzw. nachträglich per edit_trip korrigierbar."
+          "gps_entity": "Optional. Bevorzugt eine Standort-Entität des Fahrzeugs selbst (z.B. aus einer Fahrzeug-Cloud-Integration wie We Connect/MySkoda oder einem GPS-Modul), falls vorhanden — eine Personen-Entität (Smartphone/person) erkennt nur, wo sich diese Entität befindet, nicht wer tatsächlich fährt, und kann bei mehreren möglichen Fahrern im Haushalt zum falschen Ort führen. Ohnehin nur ein Vorschlag für Start-/Zielort, vor dem Speichern bzw. nachträglich per edit_trip korrigierbar.",
+          "precondition_status_entity": "Optional. Wenn deine Fahrzeug-Integration (z.B. Stellantis/MyCitroën, MyPeugeot, Hyundai/Kia, Tesla) eine Vorklimatisierung per Button anbietet, trage hier den Status und die beiden Buttons (starten/beenden) ein. Die Glow-Karte zeigt dann Status und Buttons an; ohne diese Felder bleibt der Bereich ausgeblendet. EV Assistant löst nichts selbst aus, es merkt sich nur die Entity-IDs für die Karte."
         }
       },
       "leasing": {
