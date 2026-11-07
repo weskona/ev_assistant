@@ -63,3 +63,28 @@ async def test_eigene_entitaeten_bleiben_erhalten(hass):
     m = _build_entity_map(reg, entry)
     assert m["odo"] == "sensor.ev_km_stand"
     assert m["plug_entity"] == "binary_sensor.auto_stecker"
+
+
+async def test_vorklimatisierung_geht_in_die_panel_konfiguration(hass):
+    """#92: Status-Entitaet und die beiden Buttons der Vorklimatisierung
+    erscheinen unter ihrem Options-Schluessel in der Panel-Konfiguration; die
+    Glow-Karte zeigt sie nur, wenn sie gesetzt sind."""
+    from custom_components.ev_assistant import _build_entity_map
+
+    entry = _entry(hass, options={
+        "precondition_status_entity": "sensor.e_c3_befehlsstatus",
+        "precondition_start_entity": "button.e_c3_vorklimatisierung_starten",
+        "precondition_stop_entity": "button.e_c3_vorklimatisierung_stoppen",
+    })
+    m = _build_entity_map(er.async_get(hass), entry)
+    assert m["precondition_status_entity"] == "sensor.e_c3_befehlsstatus"
+    assert m["precondition_start_entity"] == "button.e_c3_vorklimatisierung_starten"
+    assert m["precondition_stop_entity"] == "button.e_c3_vorklimatisierung_stoppen"
+
+
+async def test_ohne_vorklimatisierung_fehlen_die_schluessel(hass):
+    from custom_components.ev_assistant import _build_entity_map
+
+    entry = _entry(hass, options={"soc_entity": "sensor.auto_soc"})
+    m = _build_entity_map(er.async_get(hass), entry)
+    assert not any(k.startswith("precondition_") for k in m)

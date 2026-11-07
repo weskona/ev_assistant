@@ -59,6 +59,9 @@ from .const import (
     CONF_PLUG_ENTITY,
     CONF_POWER_ENTITY,
     CONF_POWER_IS_AC,
+    CONF_PRECONDITION_START_ENTITY,
+    CONF_PRECONDITION_STATUS_ENTITY,
+    CONF_PRECONDITION_STOP_ENTITY,
     CONF_PV_FORECAST_ENTITY,
     CONF_PV_FORECAST_TODAY_REMAINING_ENTITY,
     CONF_PV_GENERATION_ENTITY,
@@ -192,6 +195,15 @@ _OUTSIDE_TEMP_ENTITY = selector.EntitySelector(
     # coordinator.py::_extract_temp()), der Filter wuerde sie sonst
     # ausschliessen.
     selector.EntitySelectorConfig(domain=["sensor", "weather"])
+)
+# Vorklimatisierung (siehe const.py::CONF_PRECONDITION_STATUS_ENTITY): Status
+# darf ein sensor, binary_sensor oder climate sein (Hersteller unterscheiden
+# sich), Start/Stopp sind Buttons -- die Karte loest sie per button.press aus.
+_PRECONDITION_STATUS_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain=["sensor", "binary_sensor", "climate"])
+)
+_PRECONDITION_BUTTON_ENTITY = selector.EntitySelector(
+    selector.EntitySelectorConfig(domain="button")
 )
 _TANKERKOENIG_FUEL_TYPE = selector.SelectSelector(
     selector.SelectSelectorConfig(
@@ -568,6 +580,15 @@ def build_trip_schema(cur: dict) -> vol.Schema:
         ): vol.All(vol.Coerce(float), vol.Range(min=0, max=USAGE_PROFILE_BUFFER_KM_MAX)),
         vol.Optional(CONF_PV_FORECAST_ENTITY, description=sv(CONF_PV_FORECAST_ENTITY)): _PV_FORECAST_ENTITY,
         vol.Optional(CONF_OUTSIDE_TEMP_ENTITY, description=sv(CONF_OUTSIDE_TEMP_ENTITY)): _OUTSIDE_TEMP_ENTITY,
+        vol.Optional(
+            CONF_PRECONDITION_STATUS_ENTITY, description=sv(CONF_PRECONDITION_STATUS_ENTITY)
+        ): _PRECONDITION_STATUS_ENTITY,
+        vol.Optional(
+            CONF_PRECONDITION_START_ENTITY, description=sv(CONF_PRECONDITION_START_ENTITY)
+        ): _PRECONDITION_BUTTON_ENTITY,
+        vol.Optional(
+            CONF_PRECONDITION_STOP_ENTITY, description=sv(CONF_PRECONDITION_STOP_ENTITY)
+        ): _PRECONDITION_BUTTON_ENTITY,
     })
 
 

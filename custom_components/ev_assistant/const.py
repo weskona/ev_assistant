@@ -292,6 +292,16 @@ CONF_PV_FORECAST_TODAY_REMAINING_ENTITY = "pv_forecast_today_remaining_entity"
 # Auswertung -- siehe engine.temperature_bucket()/consumption_by_temp_bucket()
 # sowie coordinator.py::_extract_temp()/range_estimate_km().
 CONF_OUTSIDE_TEMP_ENTITY = "outside_temp_entity"
+# Vorklimatisierung (Wunsch aus #92): drei optionale Verweise auf Entitaeten, die
+# eine Hersteller-/Cloud-Integration des Fahrzeugs bereitstellt. ev_assistant
+# fuehrt nichts selbst aus und liest nichts davon -- die Entity-IDs gehen nur in
+# die Panel-Konfiguration (siehe __init__.py::_PANEL_SOURCE_ENTITY_KEYS), die
+# Glow-Karte zeigt damit Status und Start-/Stopp-Buttons und loest die Buttons
+# selbst ueber Home Assistant aus. Ohne diese Felder bleibt der Bereich in der
+# Karte ausgeblendet (analog Leasing).
+CONF_PRECONDITION_STATUS_ENTITY = "precondition_status_entity"
+CONF_PRECONDITION_START_ENTITY = "precondition_start_entity"
+CONF_PRECONDITION_STOP_ENTITY = "precondition_stop_entity"
 # Baender in °C: (0, 10, 20) -> "<0°C", "0-10°C", "10-20°C", ">20°C".
 TEMP_BUCKET_BOUNDARIES = (0.0, 10.0, 20.0)
 # Hysterese (°C) um die Bandgrenzen: eine um die Grenze schwankende Aussentemperatur schaltet das

@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.78] - 2026-11-07
+
+### Added
+
+- **Pre-conditioning: optional entities for the Glow card** (#92, wish from deepblue120). If your vehicle integration offers pre-conditioning (e.g. the command status plus a "start" and a "stop" button, as for the Citroën ë-C3 via Stellantis), you can enter them in step 7 (trip log) of the setup/options flow: **Pre-conditioning status** (`precondition_status_entity`, sensor, binary sensor or climate) and the two buttons **start** and **stop** (`precondition_start_entity`, `precondition_stop_entity`, only `button` entities). EV Assistant itself does not trigger anything and reads nothing from them: the three entity IDs only go into the panel configuration (`entities`, like the other source entities), so a Glow card that supports it can show the status and the buttons and press them through Home Assistant. Without these fields nothing changes and the card keeps the section hidden (like leasing without a contract). Additive: no change to existing keys, services or `api_version` (still 1); the new keys are in the [stable interfaces](docs/stable-interfaces.md) list. The card part follows in a Glow release.
+
 ## [0.99.77] - 2026-11-05
 
 ### Added
