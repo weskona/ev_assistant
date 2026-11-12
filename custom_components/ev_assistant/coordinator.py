@@ -246,6 +246,7 @@ from .engine import (
     is_plausible_trip_consumption,
     kwh_to_km,
     kwh_to_soc_percent,
+    last_trip_end_ort,
     latest_charge,
     match_evcc_vehicle,
     max_achievable_target_soc,
@@ -3785,7 +3786,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # NICHT selbst: faellt die Fahrt spaeter fertig, wuerden die
         # Start-Werte der VORHERIGEN Fahrt (oder None) uebernommen.
         if not was_active and self._trip_detector.active:
-            self._trip_start_zone = self._person_zone
+            # Startort-Vorschlag: Endort der zeitlich letzten erfassten Fahrt
+            # (dort wurde das Fahrzeug zuletzt abgestellt), erst danach die
+            # aktuelle Personenzone -- die kann bei verzoegerten Meldungen
+            # schon nicht mehr stimmen (#95).
+            self._trip_start_zone = (
+                last_trip_end_ort(self.data.get("fahrten"), self.data.get("pending_trips")) or self._person_zone
+            )
             self.data["trip_start_zone"] = self._trip_start_zone
             self._trip_start_soc = self._soc
             self.data["trip_start_soc"] = self._trip_start_soc

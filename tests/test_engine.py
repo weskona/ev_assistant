@@ -5765,3 +5765,66 @@ def test_temperature_bucket_stable_flackert_nicht_um_die_grenze():
     assert temperature_bucket_stable(8.5, b, last) == "0-10°C"  # klar darunter: Wechsel
     assert temperature_bucket_stable(None, b, last) is None
     assert temperature_bucket_stable(15.0, b, "0-10°C") == "10-20°C"  # Vorgaenger nicht an dieser Grenze
+
+
+# ----- last_trip_end_ort: Startort-Vorschlag aus der letzten Fahrt (#95) ------
+
+def test_last_trip_end_ort_bestaetigte_fahrt():
+    from engine import last_trip_end_ort
+
+    fahrten = [
+        {"start_ts": 100.0, "end_ts": 200.0, "end_ort": "Buero"},
+        {"start_ts": 300.0, "end_ts": 400.0, "end_ort": "Zuhause"},
+    ]
+    assert last_trip_end_ort(fahrten, []) == "Zuhause"
+
+
+def test_last_trip_end_ort_zeitlich_letzte_zaehlt_nicht_die_letzte_in_der_liste():
+    from engine import last_trip_end_ort
+
+    fahrten = [
+        {"start_ts": 300.0, "end_ts": 400.0, "end_ort": "Zuhause"},
+        {"start_ts": 100.0, "end_ts": 200.0, "end_ort": "Buero"},  # spaeter nachgetragen
+    ]
+    assert last_trip_end_ort(fahrten, []) == "Zuhause"
+
+
+def test_last_trip_end_ort_offene_fahrt_als_ersatz_wenn_juenger():
+    from engine import last_trip_end_ort
+
+    fahrten = [{"start_ts": 100.0, "end_ts": 200.0, "end_ort": "Buero"}]
+    pending = [{"start_ts": 300.0, "end_ts": 400.0, "end_ort_vorschlag": "Supermarkt"}]
+    assert last_trip_end_ort(fahrten, pending) == "Supermarkt"
+
+
+def test_last_trip_end_ort_bestaetigte_fahrt_hat_vorrang_bei_gleicher_zeit():
+    from engine import last_trip_end_ort
+
+    fahrten = [{"start_ts": 300.0, "end_ts": 400.0, "end_ort": "Zuhause"}]
+    pending = [{"start_ts": 300.0, "end_ts": 400.0, "end_ort_vorschlag": "unterwegs"}]
+    assert last_trip_end_ort(fahrten, pending) == "Zuhause"
+
+
+def test_last_trip_end_ort_letzte_fahrt_ohne_endort_kein_rueckgriff_auf_aeltere():
+    from engine import last_trip_end_ort
+
+    fahrten = [
+        {"start_ts": 100.0, "end_ts": 200.0, "end_ort": "Buero"},
+        {"start_ts": 300.0, "end_ts": 400.0, "end_ort": ""},
+    ]
+    assert last_trip_end_ort(fahrten, []) is None
+
+
+def test_last_trip_end_ort_leer_und_unbrauchbare_eintraege():
+    from engine import last_trip_end_ort
+
+    assert last_trip_end_ort(None, None) is None
+    assert last_trip_end_ort([], []) is None
+    assert last_trip_end_ort([{"end_ort": "X"}, "kaputt", None], []) is None  # ohne Zeitstempel
+    assert last_trip_end_ort([{"start_ts": 1.0, "end_ts": 2.0, "end_ort": "  Zuhause  "}], []) == "Zuhause"
+
+
+def test_last_trip_end_ort_ohne_end_ts_gilt_start_ts():
+    from engine import last_trip_end_ort
+
+    assert last_trip_end_ort([{"start_ts": 500.0, "end_ort": "Zuhause"}], []) == "Zuhause"

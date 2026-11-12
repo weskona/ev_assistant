@@ -923,6 +923,40 @@ def weekday_usage_profile(
     return {wd: round(totals[wd] / counts[wd], 2) for wd in range(7)}
 
 
+def last_trip_end_ort(fahrten: Optional[list], pending_trips: Optional[list]) -> Optional[str]:
+    """Endort der zeitlich letzten erfassten Fahrt -- Vorschlag fuer den
+    Startort der naechsten Fahrt. Ein Fahrzeug startet normalerweise dort,
+    wo es zuletzt abgestellt wurde; die Personenzone zum Fahrtbeginn kann bei
+    verzoegerten Standort-/Fahrzeugmeldungen schon nicht mehr stimmen (#95).
+
+    Gesucht wird ueber BESTAETIGTE Fahrten (`fahrten`, Feld end_ort) und noch
+    OFFENE (`pending_trips`, deren Vorschlag end_ort_vorschlag) die mit dem
+    groessten end_ts (ohne end_ts start_ts). Bei gleichem Zeitpunkt gewinnt die
+    bestaetigte Fahrt (der Endort ist dort bewusst eingetragen oder korrigiert).
+    Hat die zeitlich letzte Fahrt keinen Endort (leer/None), gibt es KEINEN
+    Rueckgriff auf eine aeltere Fahrt (deren Endort waere veraltet) -- None,
+    der Aufrufer faellt dann auf die Personenzone zurueck. Das separate
+    Fahrtenarchiv zaehlt nicht mit: die letzte Fahrt steht praktisch immer in
+    der aktuellen Liste, sonst greift derselbe Rueckfall."""
+    best_ts: Optional[float] = None
+    best_ort: Optional[str] = None
+    candidates = [(rec, "end_ort", True) for rec in fahrten or []]
+    candidates += [(rec, "end_ort_vorschlag", False) for rec in pending_trips or []]
+    for rec, key, confirmed in candidates:
+        if not isinstance(rec, dict):
+            continue
+        ts = rec.get("end_ts")
+        if ts is None:
+            ts = rec.get("start_ts")
+        if not isinstance(ts, (int, float)):
+            continue
+        if best_ts is None or ts > best_ts or (ts == best_ts and confirmed):
+            best_ts = ts
+            ort = rec.get(key)
+            best_ort = ort.strip() if isinstance(ort, str) and ort.strip() else None
+    return best_ort
+
+
 def trip_weekday_kwh_parts(rec: dict) -> Optional[tuple]:
     """Beitrag EINER Fahrt zu weekday_usage_profile_from_totals(): ("exact",
     kwh), wenn verbrauch_kwh bekannt ist -- sonst ("est_km", km), wenn
