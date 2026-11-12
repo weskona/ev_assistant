@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.79] - 2026-11-12
+
+### Fixed
+
+- **"Charge before PV" recommendation now uses the PV that is left for the car** (e.g. "Laden kann warten" / "Laden empfehlenswert" on the Profile & analysis page). It compared the battery plus the **raw** PV forecast for the whole house with tomorrow's need, so it could say "charging can wait" while the charge control correctly charged: with 19.4 kWh forecast, 26.0 kWh expected house consumption and 13.0 of 20.1 kWh needed in the battery, the card showed "PV for the car: 0 km" next to "Akku plus PV-Prognose decken den Bedarf". The recommendation now subtracts tomorrow's house consumption from the forecast (house usage profile, same calculation as the charge control, never below 0). Without a house usage profile, or without a value for tomorrow's weekday, it stays with the raw forecast as before. The binary sensor `charge_before_pv_recommended` gets the additional attribute `pv_fuer_auto_morgen_kwh`; `pv_prognose_morgen_kwh` (raw forecast) is unchanged. In such cases the recommendation can now flip from "can wait" to "charging recommended".
+
 ## [0.99.78] - 2026-11-07
 
 ### Added

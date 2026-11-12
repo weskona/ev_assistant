@@ -6017,14 +6017,42 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         if need is None or available is None:
             return None
         pv_forecast = self._pv_forecast_tomorrow_kwh()
+        # Entscheidend ist, was DEM AUTO von der PV bleibt (Prognose minus
+        # Hausverbrauch), nicht die rohe Prognose fuers ganze Haus -- sonst
+        # sagt die Empfehlung "Laden kann warten", waehrend die Ladesteuerung
+        # ("PV fuers Auto: 0 km") zu Recht laedt (Nutzerbeobachtung 2026-11-12:
+        # 19,4 kWh Prognose, 26 kWh Haus, 13 von 20 kWh Bedarf im Akku).
+        # Ohne Hausprofil bleibt es bei der rohen Prognose (siehe
+        # _pv_morgen_fuer_auto_kwh()).
+        pv_for_car = self._pv_morgen_fuer_auto_kwh(pv_forecast)
         result = {
             "verfuegbare_kwh": available,
             "benoetigt_morgen_kwh": need["benoetigt_kwh"],
-            "empfehlung": charge_before_pv_decision(available, need["benoetigt_kwh"], pv_forecast),
+            "empfehlung": charge_before_pv_decision(
+                available, need["benoetigt_kwh"], pv_for_car if pv_for_car is not None else pv_forecast
+            ),
         }
         if pv_forecast is not None:
             result["pv_prognose_morgen_kwh"] = round(pv_forecast, 2)
+        if pv_for_car is not None:
+            result["pv_fuer_auto_morgen_kwh"] = round(pv_for_car, 2)
         return result
+
+    def _pv_morgen_fuer_auto_kwh(self, pv_morgen_roh: Optional[float]) -> Optional[float]:
+        """PV von morgen, die dem Auto bleibt: Prognose (gilt fuers ganze Haus)
+        minus erwarteten Hausverbrauch (inkl. Speicherladung) des morgigen
+        Wochentags laut Hausprofil, nie negativ. None ohne Prognose, ohne
+        Hausprofil oder ohne Wert fuer den morgigen Wochentag -- die Aufrufer
+        entscheiden dann selbst (Ladesteuerung: nicht auf morgen verlassen,
+        Empfehlung: rohe Prognose wie bisher)."""
+        if pv_morgen_roh is None:
+            return None
+        tomorrow_wd = (dt_util.now().date() + timedelta(days=1)).weekday()
+        haus_profil = self.house_usage_profile()
+        haus_morgen = haus_profil.get(tomorrow_wd) if haus_profil else None
+        if haus_morgen is None:
+            return None
+        return max(0.0, pv_morgen_roh - float(haus_morgen))
 
     # ----- evcc-Modus-/SoC-Steuerung (siehe CONF_EVCC_MODE_CONTROL_ENABLED) --
     #
@@ -6545,13 +6573,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # Tagesende (Nutzerfeedback 2026-10-12: 7,8 kWh Prognose gaukelten
         # genug PV vor, das Haus braucht davon das meiste).
         pv_morgen_roh = self._pv_forecast_tomorrow_kwh()
-        haus_profil = self.house_usage_profile()
-        haus_morgen = haus_profil.get(tomorrow_wd) if haus_profil else None
-        pv_morgen_fuer_auto = (
-            max(0.0, pv_morgen_roh - float(haus_morgen))
-            if pv_morgen_roh is not None and haus_morgen is not None
-            else None
-        )
+        pv_morgen_fuer_auto = self._pv_morgen_fuer_auto_kwh(pv_morgen_roh)
         balancing_trigger = balancing_due and weekly_balancing_time_ok(
             pv_rest_heute_roh_optional,
             self._local_hour(),

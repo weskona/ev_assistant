@@ -1076,9 +1076,10 @@ def charge_before_pv_decision(
     Mit pv_forecast_kwh: die morgen erwartete PV-Erzeugung darf eine Luecke
     schliessen, die der aktuelle Akkustand allein nicht abdeckt -- das ist
     der eigentliche Sinn der Empfehlung ("heute ohne PV nachladen, oder
-    reicht es, bis zur PV von morgen zu warten"). Rohe Ertragsprognose ohne
-    Abzug fuer den Haus-Eigenverbrauch, siehe coordinator.py fuer die
-    Einheitenumrechnung und Dokumentation dieser Vereinfachung."""
+    reicht es, bis zur PV von morgen zu warten"). `pv_forecast_kwh` ist die
+    PV, die DEM AUTO bleibt (Prognose minus Hausverbrauch, siehe
+    coordinator.py::_pv_morgen_fuer_auto_kwh()); ohne Hausprofil die rohe
+    Prognose fuers ganze Haus."""
     if pv_forecast_kwh is None:
         return available_kwh < needed_kwh
     return (available_kwh + pv_forecast_kwh) < needed_kwh
