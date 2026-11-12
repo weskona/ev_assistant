@@ -5770,7 +5770,7 @@ def test_temperature_bucket_stable_flackert_nicht_um_die_grenze():
 # ----- last_trip_end_ort: Startort-Vorschlag aus der letzten Fahrt (#95) ------
 
 def test_last_trip_end_ort_bestaetigte_fahrt():
-    from custom_components.ev_assistant.engine import last_trip_end_ort
+    from engine import last_trip_end_ort
 
     fahrten = [
         {"start_ts": 100.0, "end_ts": 200.0, "end_ort": "Buero"},
@@ -5780,7 +5780,7 @@ def test_last_trip_end_ort_bestaetigte_fahrt():
 
 
 def test_last_trip_end_ort_zeitlich_letzte_zaehlt_nicht_die_letzte_in_der_liste():
-    from custom_components.ev_assistant.engine import last_trip_end_ort
+    from engine import last_trip_end_ort
 
     fahrten = [
         {"start_ts": 300.0, "end_ts": 400.0, "end_ort": "Zuhause"},
@@ -5790,7 +5790,7 @@ def test_last_trip_end_ort_zeitlich_letzte_zaehlt_nicht_die_letzte_in_der_liste(
 
 
 def test_last_trip_end_ort_offene_fahrt_als_ersatz_wenn_juenger():
-    from custom_components.ev_assistant.engine import last_trip_end_ort
+    from engine import last_trip_end_ort
 
     fahrten = [{"start_ts": 100.0, "end_ts": 200.0, "end_ort": "Buero"}]
     pending = [{"start_ts": 300.0, "end_ts": 400.0, "end_ort_vorschlag": "Supermarkt"}]
@@ -5798,7 +5798,7 @@ def test_last_trip_end_ort_offene_fahrt_als_ersatz_wenn_juenger():
 
 
 def test_last_trip_end_ort_bestaetigte_fahrt_hat_vorrang_bei_gleicher_zeit():
-    from custom_components.ev_assistant.engine import last_trip_end_ort
+    from engine import last_trip_end_ort
 
     fahrten = [{"start_ts": 300.0, "end_ts": 400.0, "end_ort": "Zuhause"}]
     pending = [{"start_ts": 300.0, "end_ts": 400.0, "end_ort_vorschlag": "unterwegs"}]
@@ -5806,7 +5806,7 @@ def test_last_trip_end_ort_bestaetigte_fahrt_hat_vorrang_bei_gleicher_zeit():
 
 
 def test_last_trip_end_ort_letzte_fahrt_ohne_endort_kein_rueckgriff_auf_aeltere():
-    from custom_components.ev_assistant.engine import last_trip_end_ort
+    from engine import last_trip_end_ort
 
     fahrten = [
         {"start_ts": 100.0, "end_ts": 200.0, "end_ort": "Buero"},
@@ -5816,7 +5816,7 @@ def test_last_trip_end_ort_letzte_fahrt_ohne_endort_kein_rueckgriff_auf_aeltere(
 
 
 def test_last_trip_end_ort_leer_und_unbrauchbare_eintraege():
-    from custom_components.ev_assistant.engine import last_trip_end_ort
+    from engine import last_trip_end_ort
 
     assert last_trip_end_ort(None, None) is None
     assert last_trip_end_ort([], []) is None
@@ -5825,6 +5825,6 @@ def test_last_trip_end_ort_leer_und_unbrauchbare_eintraege():
 
 
 def test_last_trip_end_ort_ohne_end_ts_gilt_start_ts():
-    from custom_components.ev_assistant.engine import last_trip_end_ort
+    from engine import last_trip_end_ort
 
     assert last_trip_end_ort([{"start_ts": 500.0, "end_ort": "Zuhause"}], []) == "Zuhause"
