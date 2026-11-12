@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [Unreleased]
+
+### Changed
+
+- **Trip log: the start location suggestion is now the end location of the last recorded trip** (#95, idea from ksFPV). At the start of a trip the integration used to freeze the current person zone, which is already wrong when the location or vehicle report arrives late. A vehicle normally starts where it was parked last, so the suggestion is now the end location of the chronologically last trip: a confirmed trip (its end location, also if you corrected it) or a still open one (its end-location suggestion, only if it is the more recent one; on equal time the confirmed trip wins). If the last trip has no end location, or there is no trip yet, it falls back to the person zone as before (no look-back to an older trip, its end would be stale). The start location stays editable, existing trips are unchanged, there is no new option. The separate trip archive is not consulted: the last trip is practically always in the current list. If a trip was not recorded or an end location is wrong, the suggestion can be wrong too, it stays a suggestion.
+
 ## [0.99.79] - 2026-11-12
 
 ### Fixed
