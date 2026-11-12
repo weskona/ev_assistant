@@ -103,6 +103,8 @@ class ChargeBeforePvBinarySensor(EvAssistantEntity, BinarySensorEntity):
         attrs = {"verfuegbare_kwh": rec["verfuegbare_kwh"], "benoetigt_morgen_kwh": rec["benoetigt_morgen_kwh"]}
         if "pv_prognose_morgen_kwh" in rec:
             attrs["pv_prognose_morgen_kwh"] = rec["pv_prognose_morgen_kwh"]
+        if "pv_fuer_auto_morgen_kwh" in rec:
+            attrs["pv_fuer_auto_morgen_kwh"] = rec["pv_fuer_auto_morgen_kwh"]
         # km-zuerst (0.99.51), selber Verbrauch wie range_estimate_km(); ohne
         # bekannten Verbrauch fehlen die Schluessel.
         consumption = self.coordinator.range_conversion().get("verbrauch_kwh_100km")
