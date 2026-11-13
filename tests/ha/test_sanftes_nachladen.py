@@ -283,3 +283,33 @@ async def test_frist_erst_minpv_und_now_erst_gegen_ende(hass, coordinators):
     c2, _ = await _coord(hass, coordinators, "sn23", soc=32.0, sun="below_horizon")
     t = _targets(c2, _at(23))
     assert (t["modus"], t["nachladen_status"]) == ("now", "frist")
+
+
+async def test_haltezeit_frist_endet_mit_der_abfahrt_und_haelt_now_nicht_ueber_den_naechsten_tag(hass, coordinators):
+    """Fall 2026-11-13: nachts "frist" -> now, das Auto wurde nie angesteckt. Nach der Abfahrt rutscht die Frist
+    auf den naechsten Tag; die Haltezeit darf `now` dann nicht festhalten (vorher blieb es bis zum Laden)."""
+    c, _ = await _coord(hass, coordinators, "sn30", soc=32.0, sun="below_horizon")
+    t = _targets(c, _at(23))
+    assert (t["modus"], t["nachladen_status"]) == ("now", "frist")
+    c._nachladen_festschreiben(t)
+    assert c.data["evcc_now_halt"]["grund"] == "frist"
+    assert c.data["evcc_now_halt"]["frist"] == t["abfahrt_frist"]
+    # gleiche Nacht, gleiche Frist: der Halt wirkt weiter (SoC bleibt unter dem Bedarf)
+    assert _targets(c, _at(23, 30))["modus"] == "now"
+    # naechster Vormittag: Frist 06:00 vorbei, naechste Abfahrt erst morgen -> keine Haltezeit mehr
+    t = _targets(c, _at(8, 39, day=15))
+    assert t["nachladen_status"] != "frist" and t["modus"] != "now"
+
+
+async def test_haltezeit_ohne_gemerkte_frist_aus_aelterer_version_wird_neu_bewertet(hass, coordinators):
+    c, _ = await _coord(hass, coordinators, "sn31", soc=32.0, sun="below_horizon")
+    c.data["evcc_now_halt"] = {"grund": "frist", "ts": 1.0}  # ohne "frist" (vor dieser Aenderung gespeichert)
+    t = _targets(c, _at(8, 39, day=15))
+    assert t["modus"] != "now"
+
+
+async def test_haltezeit_frist_wird_bei_neuer_frist_nachgefuehrt(hass, coordinators):
+    c, _ = await _coord(hass, coordinators, "sn32", soc=32.0, sun="below_horizon")
+    c.data["evcc_now_halt"] = {"grund": "frist", "ts": 1.0, "frist": "2026-10-14T06:00:00+00:00"}
+    c._nachladen_festschreiben({"nachladen_halt": "frist", "abfahrt_frist": "2026-10-15T06:00:00+00:00"})
+    assert c.data["evcc_now_halt"]["frist"] == "2026-10-15T06:00:00+00:00"

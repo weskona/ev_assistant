@@ -5828,3 +5828,63 @@ def test_last_trip_end_ort_ohne_end_ts_gilt_start_ts():
     from engine import last_trip_end_ort
 
     assert last_trip_end_ort([{"start_ts": 500.0, "end_ort": "Zuhause"}], []) == "Zuhause"
+
+
+# ----- Haltezeit "frist" gilt nur fuer ihre Frist (Fall 2026-11-13) -----------
+
+def _dt(day, hour, minute=0):
+    return datetime(2026, 11, day, hour, minute, tzinfo=timezone.utc)
+
+
+def test_halt_frist_gilt_gleiche_frist_in_der_zukunft():
+    from engine import halt_frist_gilt
+
+    assert halt_frist_gilt(_dt(13, 7, 34), _dt(13, 7, 34), _dt(13, 2, 0)) is True
+    assert halt_frist_gilt(_dt(13, 7, 34), _dt(13, 7, 33), _dt(13, 2, 0)) is True  # Statistik rutscht um 1 min
+
+
+def test_halt_frist_gilt_nicht_mehr_nach_ablauf_der_frist():
+    from engine import halt_frist_gilt
+
+    assert halt_frist_gilt(_dt(13, 7, 34), _dt(14, 9, 15), _dt(13, 8, 39)) is False  # Frist vorbei, naechste morgen
+
+
+def test_halt_frist_gilt_nicht_bei_anderem_tag_oder_fehlenden_angaben():
+    from engine import halt_frist_gilt
+
+    assert halt_frist_gilt(_dt(13, 7, 34), _dt(14, 9, 15), _dt(13, 2, 0)) is False  # Frist auf anderen Tag gerutscht
+    assert halt_frist_gilt(None, _dt(13, 7, 34), _dt(13, 2, 0)) is False  # Haltezeit aus aelterer Version
+    assert halt_frist_gilt(_dt(13, 7, 34), None, _dt(13, 2, 0)) is False  # keine Frist mehr bekannt
+
+
+def _entsch(halt, halt_frist_gueltig, hours=24.0):
+    from engine import evcc_now_entschaerfen
+
+    # verfuegbar 7,0 < min 10,7; sofort 5,9 <= verfuegbar; Sonne oben; viel Zeit bis zur Abfahrt
+    return evcc_now_entschaerfen(
+        "now", 7.0, 5.9, 10.7, False, hours, 1.4, halt=halt, halt_frist_gueltig=halt_frist_gueltig, p_now_kw=9.0,
+    )
+
+
+def test_halt_frist_haelt_now_solange_die_frist_gilt():
+    assert _entsch("frist", True, hours=0.5)["modus"] == "now"
+    assert _entsch("frist", True, hours=24.0)["modus"] == "now"  # bisheriges Verhalten bei gueltiger Frist
+
+
+def test_halt_frist_wird_freigegeben_wenn_die_frist_nicht_mehr_gilt():
+    out = _entsch("frist", False, hours=24.0)
+    assert out == {"modus": "pv", "grund": "wartet_auf_sonnenuntergang", "halt": None}
+
+
+def test_halt_frist_ungueltig_aber_echter_fristdruck_setzt_now_erneut():
+    out = _entsch("frist", False, hours=0.5)  # 3,7 kWh in 0,5 h mit 9 kW nicht mehr sicher
+    assert (out["modus"], out["grund"], out["halt"]) == ("now", "frist", "frist")
+
+
+def test_halt_sofort_zu_langsam_bleibt_unveraendert_auch_bei_ungueltiger_frist():
+    from engine import evcc_now_entschaerfen
+
+    out = evcc_now_entschaerfen(
+        "now", 5.0, 8.0, 10.7, False, 24.0, 1.4, halt="sofort_zu_langsam", halt_frist_gueltig=False,
+    )
+    assert (out["modus"], out["grund"]) == ("now", "sofort_zu_langsam")

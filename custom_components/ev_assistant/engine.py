@@ -2814,6 +2814,23 @@ def zu_langsam(deficit_kwh: float, stunden: float, p_min_kw: float, reserve_h: f
     return max(0.0, deficit_kwh) / p_min_kw + reserve_h >= stunden
 
 
+def halt_frist_gilt(halt_frist: Optional[datetime], deadline: Optional[datetime], now: datetime) -> bool:
+    """Ob die Haltezeit "frist" (siehe evcc_now_entschaerfen()) noch zu EINER
+    Frist gehoert, die weiter gilt: die beim Setzen gemerkte Frist liegt noch
+    vor uns UND ist dieselbe Abfahrt wie die aktuelle (gleicher Kalendertag).
+    Sonst haelt `now` einen Grund fest, der nicht mehr besteht (Fall 2026-11-13:
+    Frist 07:34 war vorbei, die naechste lag 24 h entfernt, das Auto war nie
+    angesteckt -- `now` blieb, weil verfuegbar den Bedarf nicht erreichte).
+    Fehlt die gemerkte Frist (Haltezeit aus einer aelteren Version) oder die
+    aktuelle Frist, gilt sie als erledigt: die Steuerung rechnet neu und setzt
+    bei echtem Fristdruck `now` mit gemerkter Frist erneut."""
+    if halt_frist is None or deadline is None:
+        return False
+    if halt_frist <= now:
+        return False
+    return halt_frist.date() == deadline.date()
+
+
 def evcc_now_entschaerfen(
     basis_modus: str,
     available: float,
@@ -2828,6 +2845,7 @@ def evcc_now_entschaerfen(
     sofort_horizont_max_h: float = 8.0,
     abfahrt_heute: bool = False,
     p_now_kw: Optional[float] = None,
+    halt_frist_gueltig: bool = True,
 ) -> dict:
     """Entschaerft ein "now" aus determine_evcc_mode(): nur wenn das Ziel
     sonst nicht erreichbar waere, bleibt es "now". Jeder andere Basismodus
@@ -2857,10 +2875,15 @@ def evcc_now_entschaerfen(
 
     halt (Haltezeit gegen Flattern): wurde "now" wegen "frist" oder
     "sofort_zu_langsam" gewaehlt, bleibt es, bis available die jeweilige
-    Schwelle (min_kwh bzw. sofort_kwh) erreicht. Rueckgabe: {modus, grund,
+    Schwelle (min_kwh bzw. sofort_kwh) erreicht. Die Haltezeit "frist" gilt
+    nur, solange ihre Frist gilt (`halt_frist_gueltig`, siehe
+    halt_frist_gilt()): ist die Abfahrt vorbei oder rutscht die Frist auf einen
+    anderen Tag, wird neu gerechnet statt `now` festzuhalten. Rueckgabe: {modus, grund,
     halt} mit dem neuen Halte-Grund (None = keiner)."""
     if basis_modus != "now":
         return {"modus": basis_modus, "grund": None, "halt": None}
+    if halt == "frist" and not halt_frist_gueltig:
+        halt = None  # die Frist, wegen der "now" gehalten wurde, gilt nicht mehr (siehe halt_frist_gilt())
     sofort = min(sofort_kwh, min_kwh)
     if halt == "sofort_zu_langsam" and available < sofort:
         return {"modus": "now", "grund": "sofort_zu_langsam", "halt": "sofort_zu_langsam"}

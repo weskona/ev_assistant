@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.81] - 2026-11-13
+
+### Fixed
+
+- **Soft recharge: "now" is no longer held after its deadline has passed.** The hold against flapping keeps `now` once it was chosen because of the departure deadline ("frist"), until the available energy reaches the need. It did not check whether that deadline still applied. If the vehicle was not plugged in, nothing was charged, so after the departure the hold kept `now` (shown as "Schnell", "Lädt jetzt mit voller Leistung") although the next departure was almost a day away: the vehicle would have charged at full power from the grid as soon as it was plugged in (seen 2026-11-13: deadline 07:34 passed, next one Saturday 09:15, car at 14 %, never plugged in). The hold now remembers the deadline it was set for (`evcc_now_halt.frist`) and ends when that departure is over or the deadline moves to another day; then the charge control calculates again and sets `now` again only under real deadline pressure. A hold stored by an older version has no deadline and is re-evaluated once. The hold for "sofort_zu_langsam" is unchanged. Not a new interface: one more key inside the persisted `evcc_now_halt`.
+
 ## [0.99.80] - 2026-11-12
 
 ### Changed
