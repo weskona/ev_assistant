@@ -239,6 +239,7 @@ from .engine import (
     estimate_battery_capacity_kwh,
     evcc_now_entschaerfen,
     format_rejection,
+    halt_frist_gilt,
     home_capacity_sample,
     home_charging_tick_split,
     home_session_solar_and_cost,
@@ -7206,9 +7207,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         """Schreibpfad-only: Haltezeit festschreiben und Statuswechsel des
         sanften Nachladens ins Event-Log schreiben."""
         halt = targets.get("nachladen_halt")
-        alt_halt = (self.data.get("evcc_now_halt") or {}).get("grund")
-        if halt != alt_halt:
-            self.data["evcc_now_halt"] = {"grund": halt, "ts": dt_util.utcnow().timestamp()} if halt else None
+        alt = self.data.get("evcc_now_halt") or {}
+        alt_halt = alt.get("grund")
+        frist = targets.get("abfahrt_frist")
+        # Haltezeit "frist" merkt sich ihre Frist (siehe engine.halt_frist_gilt()):
+        # neu schreiben, wenn der Grund wechselt ODER dieselbe Haltezeit zu einer
+        # neuen Frist gehoert (Frist abgelaufen/naechster Tag, "now" aber weiter noetig).
+        if halt != alt_halt or (halt == "frist" and alt.get("frist") != frist):
+            self.data["evcc_now_halt"] = (
+                {"grund": halt, "ts": dt_util.utcnow().timestamp(), "frist": frist} if halt else None
+            )
             self._save_soon()
         quelle = targets.get("frist_quelle")
         if quelle is not None and quelle != self.data.get("abfahrt_frist_quelle"):
@@ -7262,6 +7270,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         below = self._sun_below_horizon()
         max_power_kw = self._evcc_max_charge_power_kw()
         p_now_kw = max_power_kw * EVCC_NOW_POWER_FACTOR if max_power_kw else None
+        halt_rec = self.data.get("evcc_now_halt") or {}
+        halt_frist_gueltig = halt_frist_gilt(dt_util.parse_datetime(str(halt_rec.get("frist") or "")), deadline, now)
         out = evcc_now_entschaerfen(
             base_mode, available, sofort_kwh, min_kwh, below,
             (deadline - now).total_seconds() / 3600.0 if deadline is not None else None,
@@ -7270,7 +7280,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             sofort_horizont_max_h=EVCC_SOFORT_HORIZON_MAX_H,
             abfahrt_heute=deadline is not None and deadline.date() == now.date(),
             p_now_kw=p_now_kw,
-            halt=(self.data.get("evcc_now_halt") or {}).get("grund"),
+            halt=halt_rec.get("grund"),
+            halt_frist_gueltig=halt_frist_gueltig,
         )
         res.update(modus=out["modus"], grund=out["grund"], halt=out["halt"])
         res["entschaerft"] = base_mode == "now" and out["modus"] != "now"
