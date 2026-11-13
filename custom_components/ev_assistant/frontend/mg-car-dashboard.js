@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=65  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=66  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "4.0.5";
+const VERSION = "4.0.6";
 // merkt sich den letzten Wechsel der Adresse (auch wenn die Karte dabei aus- und neu eingehängt wird, z. B. durch Detailfenster)
 const NAV = (window.__glowCarNav = window.__glowCarNav || (() => {
   const n = { cur: location.pathname, t: 0 };
@@ -707,9 +707,12 @@ class MgCarDashboard extends HTMLElement {
     const km = (v) => (typeof v === "number" ? `${de(this._roundKm(v), 0)} km` : null);
     const kwh = (v) => (typeof v === "number" ? `${de(v, 1)} kWh` : null);
     const pct = (v) => (typeof v === "number" ? `${de(v, 0)} %` : null);
+    // min_soc ist der Mindest-SoC, den ev_assistant in evcc schreibt – beim sanften Nachladen bewusst 0 (sonst lädt evcc
+    // sofort mit voller Leistung). Dann entspricht er nicht dem Bedarf und wird nicht gezeigt (#57).
+    const minSocBedarf = ma.nachladen_status == null && !(ma.min_soc === 0 && ma.min_km > 0);
     const it = (l, main, sub, t) => (main ? `<div title="${esc(t)}"><span>${l}</span><b>${main}${sub ? `<small>${sub}</small>` : ""}</b></div>` : "");
     const items = [
-      it(T("Mindestens"), km(ma.min_km) || pct(ma.min_soc), km(ma.min_km) ? pct(ma.min_soc) : null, T("Mindestreichweite, die bis zur Abfahrt da sein muss")),
+      it(T("Mindestens"), km(ma.min_km) || (minSocBedarf ? pct(ma.min_soc) : kwh(ma.min_kwh)), km(ma.min_km) && minSocBedarf ? pct(ma.min_soc) : null, T("Mindestreichweite, die bis zur Abfahrt da sein muss")),
       it(T("Ziel"), km(ma.target_km) || pct(ma.target_soc), km(ma.target_km) ? pct(ma.target_soc) : null, T("Zielreichweite inklusive Puffer")),
       it(T("Rest heute"), km(ma.rest_heute_km) || kwh(ma.rest_heute_kwh), null, T("Rest der heutigen Fahrten")),
       it(T("PV fürs Auto"), km(ma.pv_fuer_auto_km) || kwh(ma.pv_fuer_auto_kwh), null, T("Reichweite, die die PV-Prognose fürs Auto übrig lässt")),
@@ -1731,7 +1734,8 @@ class MgCarDashboard extends HTMLElement {
   }
   _ea(key) { const id = this._eva()[key]; return id ? this._hass?.states[id] : null; }
   _wdIdx() { const t = new Date().getDay(), today = t === 0 ? 6 : t - 1; return { today, tomorrow: (today + 1) % 7 }; }
-  _roundKm(km) { if (typeof km !== "number" || isNaN(km)) return null; km = Math.max(0, km); return km < 100 ? Math.round(km / 5) * 5 : Math.round(km / 10) * 10; }
+  // km-Schätzungen runden: unter 20 km auf ganze km (sonst springen kleine Werte sichtbar, #56), bis 100 km auf 5, darüber auf 10
+  _roundKm(km) { if (typeof km !== "number" || isNaN(km)) return null; km = Math.max(0, km); return km < 20 ? Math.round(km) : km < 100 ? Math.round(km / 5) * 5 : Math.round(km / 10) * 10; }
 
   _render_prof() {
     // die Analyse rechnet mit allen Ladungen (wie „Laden & Kosten“)
