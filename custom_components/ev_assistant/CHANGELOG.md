@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.83] - 2026-11-15
+
+### Fixed
+
+- **Automatic charge control: tomorrow's need only counts in the evening.** Until now the target (`min_kwh`/`target_kwh`) was "rest of today + tomorrow + buffer" all day, so right after midnight the car already charged from the grid for the next day (e.g. Sunday 00:43 for Monday). The need of tomorrow now only counts in the evening: sun below the horizon and not before 12:00 (without a known sun state: from 18:00). Before that, only the rest of today plus the buffer counts. At midnight the need stays continuous: the rest of the new day replaces "tomorrow" of the evening before. New helper `engine.tomorrow_need_due()`.
+
 ## [0.99.82] - 2026-11-13
 
 ### Changed

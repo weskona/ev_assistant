@@ -134,6 +134,8 @@ from .const import (
     EVCC_REALTIME_OVERRIDE_MIN_SURPLUS_PCT_DEFAULT,
     EVCC_SOFORT_HORIZON_H,
     EVCC_SOFORT_HORIZON_MAX_H,
+    EVCC_TOMORROW_NEED_EARLIEST_HOUR,
+    EVCC_TOMORROW_NEED_FALLBACK_HOUR,
     EVCC_UEBERSCHUSS_ZIEL_HEARTBEAT_SAVE_S,
     EVCC_UEBERSCHUSS_ZIEL_HOLD_S,
     EVCC_UEBERSCHUSS_ZIEL_RESTORE_MAX_AGE_S,
@@ -278,6 +280,7 @@ from .engine import (
     tankerkoenig_should_notify,
     temp_bucket_contribution,
     temperature_bucket_stable,
+    tomorrow_need_due,
     trip_avg_consumption_kwh_from_totals,
     trip_consumption_contribution,
     trip_discharge_pct,
@@ -6511,11 +6514,18 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # trotzdem sinnvoll, da rest_heute (s.o.) weiterhin vom heutigen
         # Ueberschuss profitiert.
         pv_ueberschuss_nach_heute = net_need_after_pv_kwh(pv_fuer_auto, rest_heute_roh)
-        min_raw = net_need_after_pv_kwh(rest_heute + profile.get(tomorrow_wd, 0.0), pv_ueberschuss_nach_heute)
+        # Bedarf von morgen erst am Abend (siehe tomorrow_need_due): tagsueber und
+        # nach Mitternacht zaehlt nur der Rest von heute (plus Puffer unten).
+        morgen_faellig = self._tomorrow_need_due()
+        min_raw = net_need_after_pv_kwh(
+            rest_heute + (profile.get(tomorrow_wd, 0.0) if morgen_faellig else 0.0),
+            pv_ueberschuss_nach_heute,
+        )
         min_buf = self.usage_buffer_info(min_raw)
         min_kwh = min_buf["kwh"]
         target_raw = net_need_after_pv_kwh(
-            rest_heute + weekday_usage_profile_window_kwh(profile, tomorrow_wd, EVCC_MODE_TARGET_DAYS),
+            rest_heute
+            + (weekday_usage_profile_window_kwh(profile, tomorrow_wd, EVCC_MODE_TARGET_DAYS) if morgen_faellig else 0.0),
             pv_ueberschuss_nach_heute,
         )
         target_buf = self.usage_buffer_info(target_raw)
@@ -7152,6 +7162,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         phases_configured = loadpoint.get("phasesConfigured")
         phases = phases_configured if isinstance(phases_configured, (int, float)) and phases_configured > 0 else 1
         return round(float(current) * phases * EVCC_PHASE_KW_PER_A, 3)
+
+    def _tomorrow_need_due(self) -> bool:
+        """Zaehlt der Bedarf von morgen schon zum Soll? Nur am Abend, siehe
+        engine.tomorrow_need_due()."""
+        return tomorrow_need_due(
+            self._sun_below_horizon(),
+            self._local_hour(),
+            EVCC_TOMORROW_NEED_EARLIEST_HOUR,
+            EVCC_TOMORROW_NEED_FALLBACK_HOUR,
+        )
 
     def _sun_below_horizon(self) -> Optional[bool]:
         """sun.sun: True = Sonne unten, False = oben, None bei fehlender/

@@ -1339,6 +1339,21 @@ def apply_weekly_balancing_override(
     return "minpv", 100
 
 
+def tomorrow_need_due(
+    sonne_unten: Optional[bool],
+    local_hour: int,
+    earliest_hour: int = 12,
+    fallback_hour: int = 18,
+) -> bool:
+    """Gehoert der Bedarf von morgen schon zum Soll? Nur am Abend: Sonne unten
+    UND nicht vor `earliest_hour` (die Nacht nach Mitternacht zaehlt noch zum
+    heutigen Tag, nicht als "Abend davor"). Unbekannter Sonnenstand (None):
+    ab `fallback_hour`. Tagsueber (Sonne oben) nie."""
+    if sonne_unten is None:
+        return local_hour >= fallback_hour
+    return bool(sonne_unten) and local_hour >= earliest_hour
+
+
 def weekly_balancing_time_ok(
     pv_rest_heute_kwh: Optional[float],
     now_local_hour: int,

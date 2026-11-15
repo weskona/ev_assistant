@@ -772,6 +772,15 @@ WEEKLY_BALANCING_PV_REST_THRESHOLD_KWH = 0.3
 # (CONF_PV_FORECAST_TODAY_REMAINING_ENTITY) -- Nutzerentscheidung
 # 2026-09-27: "ansonsten ab 23 uhr".
 WEEKLY_BALANCING_FALLBACK_HOUR = 23
+# Ab wann der Bedarf von MORGEN zum Soll (min_kwh/target_kwh) dazukommt: am
+# Abend, wenn die Sonne unten ist UND es nicht mehr Vormittag ist
+# (EVCC_TOMORROW_NEED_EARLIEST_HOUR); ohne bekannten Sonnenstand ab der
+# Rueckfallstunde. Vorher (seit Mitternacht) zaehlt nur der Rest von heute plus
+# Puffer -- sonst lud das Auto schon um 00:43 fuer den naechsten Tag (Nutzer-
+# feedback 2026-11-15). Um Mitternacht bleibt der Bedarf stetig: der Rest des
+# neuen Tages ersetzt dann "morgen" des Vorabends.
+EVCC_TOMORROW_NEED_EARLIEST_HOUR = 12
+EVCC_TOMORROW_NEED_FALLBACK_HOUR = 18
 # Ende der Nacht (lokale Stunde) fuer den Fallback ohne PV-Prognose: von
 # WEEKLY_BALANCING_FALLBACK_HOUR bis hierhin bleibt die Vollladung erzwungen,
 # damit sie um Mitternacht nicht abbricht.

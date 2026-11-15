@@ -23,6 +23,10 @@ async def _make_coordinator(hass, coordinators, entry_id="evcc_mc", options=None
     coordinator = EvAssistantCoordinator(hass, entry)
     coordinators.append(coordinator)
     await coordinator.async_setup()
+    # Die meisten Tests pruefen die Rechnung MIT Bedarf von morgen -- unabhaengig
+    # von der echten Wanduhrzeit "Abend" (siehe _tomorrow_need_due(); die
+    # Tageszeit-Regel selbst testet test_tomorrow_need_due_*).
+    coordinator._tomorrow_need_due = lambda: True
     return coordinator, entry
 
 
@@ -3463,3 +3467,39 @@ async def test_temperaturband_flackert_um_die_grenze_nicht(hass, coordinators):
     assert coordinator.current_temp_bucket() == "10-20°C"
     coordinator._outside_temp = 9.9
     assert coordinator.current_temp_bucket() == "10-20°C"
+
+
+# ----- Bedarf von morgen erst am Abend (Nutzerfeedback 2026-11-15) -----------
+
+async def _targets_zur_tageszeit(hass, coordinators, entry_id, sonne_unten, stunde):
+    from custom_components.ev_assistant.const import CONF_USABLE_KWH
+
+    coordinator, _ = await _make_coordinator(hass, coordinators, entry_id, options={CONF_USABLE_KWH: 50.0})
+    # die Regel selbst testen: echte Methode statt des Test-Overrides aus _make_coordinator
+    del coordinator._tomorrow_need_due
+    _seed_usage_profile(coordinator, weekday_kwh=10.0)  # jeder Wochentag 10 kWh
+    coordinator.range_conversion = lambda: {}
+    coordinator._soc = 50.0
+    coordinator._day_fraction_elapsed = lambda: 0.0
+    coordinator._local_hour = lambda: stunde
+    coordinator._sun_below_horizon = lambda: sonne_unten
+    return coordinator._evcc_mode_targets()
+
+
+async def test_bedarf_von_morgen_zaehlt_nachts_nach_mitternacht_nicht(hass, coordinators):
+    """00:43, Sonne unten: nur Rest von heute (10) mal Puffer 1,2 = 12, ohne Morgen."""
+    targets = await _targets_zur_tageszeit(hass, coordinators, "morgen_nacht", True, 0)
+    assert targets["min_kwh"] == 12.0
+    assert targets["target_kwh"] == 12.0
+
+
+async def test_bedarf_von_morgen_zaehlt_tagsueber_nicht(hass, coordinators):
+    targets = await _targets_zur_tageszeit(hass, coordinators, "morgen_tag", False, 14)
+    assert targets["min_kwh"] == 12.0
+
+
+async def test_bedarf_von_morgen_zaehlt_am_abend(hass, coordinators):
+    """Abend, Sonne unten: (Rest heute 10 + morgen 10) mal 1,2 = 24."""
+    targets = await _targets_zur_tageszeit(hass, coordinators, "morgen_abend", True, 20)
+    assert targets["min_kwh"] == 24.0
+    assert targets["target_kwh"] == 24.0
