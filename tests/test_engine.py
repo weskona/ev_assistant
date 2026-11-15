@@ -5893,7 +5893,7 @@ def test_halt_sofort_zu_langsam_bleibt_unveraendert_auch_bei_ungueltiger_frist()
 # ----- tomorrow_need_due: Bedarf von morgen erst am Abend ---------------------
 
 def test_tomorrow_need_due_nachts_nach_mitternacht_nicht():
-    from custom_components.ev_assistant.engine import tomorrow_need_due
+    from engine import tomorrow_need_due
 
     # 00:43, Sonne unten: noch der heutige Tag, nicht "Abend davor"
     assert tomorrow_need_due(True, 0) is False
@@ -5902,7 +5902,7 @@ def test_tomorrow_need_due_nachts_nach_mitternacht_nicht():
 
 
 def test_tomorrow_need_due_tagsueber_nicht_und_abends_ja():
-    from custom_components.ev_assistant.engine import tomorrow_need_due
+    from engine import tomorrow_need_due
 
     assert tomorrow_need_due(False, 14) is False  # Sonne oben
     assert tomorrow_need_due(True, 16) is True  # Sonnenuntergang im Winter
@@ -5910,7 +5910,7 @@ def test_tomorrow_need_due_tagsueber_nicht_und_abends_ja():
 
 
 def test_tomorrow_need_due_ohne_sonnenstand_ab_rueckfallstunde():
-    from custom_components.ev_assistant.engine import tomorrow_need_due
+    from engine import tomorrow_need_due
 
     assert tomorrow_need_due(None, 17) is False
     assert tomorrow_need_due(None, 18) is True
