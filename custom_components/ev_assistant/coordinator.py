@@ -288,6 +288,9 @@ from .engine import (
     trip_end_soc_correction,
     trip_weekday_kwh_parts,
     update_period_baseline,
+    vacation_ranges_add,
+    vacation_ranges_contains,
+    vacation_ranges_remove,
     vehicle_discharge_update,
     vollladung_confirm,
     vollladung_nachlauf_aktiv,
@@ -1385,6 +1388,90 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.async_set_updated_data(self.data)
         return result
 
+    def urlaub_info(self) -> dict:
+        """Stand des Urlaubskalenders fuer die Karte (WebSocket
+        ev_assistant/urlaub): gesetzte Zeitraeume, Schalter-Zustand, ob heute
+        Urlaub zaehlt."""
+        return {
+            "zeitraeume": [dict(z) for z in (self.data.get("urlaub_zeitraeume") or [])],
+            "schalter_konfiguriert": bool(self._opt(CONF_URLAUB_ENTITY)),
+            "schalter_aktiv": self._urlaub_schalter_an(),
+            "aktiv_heute": self._urlaub_aktiv(),
+        }
+
+    async def async_set_urlaub_zeitraum(
+        self, von: date, bis: Optional[date] = None, aktiv: bool = True
+    ) -> dict:
+        """Setzt (aktiv=True) oder entfernt (aktiv=False) Urlaubstage im
+        Urlaubskalender: einen Tag (bis fehlt) oder einen Zeitraum von..bis,
+        beide eingeschlossen. Gesetzte Tage zaehlen wie der Urlaubsschalter
+        (Wochentags-Profile schliessen sie aus, die evcc-Steuerung pausiert),
+        auch fuer kuenftige Tage. Zusaetzlich zum Schalter, nicht statt seiner.
+
+        Beim Setzen werden Tage bis heute rueckwirkend aus dem Live-SoC- und
+        Hausprofil genommen und im Steckerprofil als Urlaub markiert (wie
+        async_apply_vehicle_discharge_urlaub_since(), aber fuer genau diese
+        Tage). Das Entfernen stellt Verbrauchswerte nicht wieder her, die
+        beim Setzen aus dem Fenster genommen wurden."""
+        bis = bis or von
+        if bis < von:
+            von, bis = bis, von
+        ranges = self.data.get("urlaub_zeitraeume") or []
+        if aktiv:
+            self.data["urlaub_zeitraeume"] = vacation_ranges_add(ranges, von.isoformat(), bis.isoformat())
+        else:
+            self.data["urlaub_zeitraeume"] = vacation_ranges_remove(ranges, von.isoformat(), bis.isoformat())
+        heute = dt_util.now().date()
+        nachgetragen = self._urlaub_rueckwirkend(von, min(bis, heute)) if aktiv else 0
+        self._log_event(
+            "urlaub_zeitraum_gesetzt" if aktiv else "urlaub_zeitraum_entfernt",
+            f"{von.isoformat()}..{bis.isoformat()}",
+        )
+        await self._save()
+        self.async_set_updated_data(self.data)
+        return {"zeitraeume": self.data["urlaub_zeitraeume"], "rueckwirkend_bereinigt": nachgetragen}
+
+    def _urlaub_rueckwirkend(self, von: date, bis: date) -> int:
+        """Nimmt die Tage von..bis (nur Vergangenheit/heute) aus den
+        Wochentags-Fenstern (Live-SoC und Haus) und markiert die Steckeintraege
+        als Urlaub. Gibt die Zahl der betroffenen Eintraege zurueck."""
+        if von > bis:
+            return 0
+        bis = min(bis, von + timedelta(days=400))
+        vehicle = dict(self.data.get("vehicle_discharge_weekday_days") or {})
+        house = dict(self.data.get("house_weekday_days") or {})
+        resolved = set(self.data.get("vehicle_discharge_counted_dates") or [])
+        betroffen = 0
+        d = von
+        while d <= bis:
+            iso = d.isoformat()
+            vor = sum(len(v) for v in vehicle.values())
+            vehicle = remove_weekday_day(vehicle, iso)
+            if sum(len(v) for v in vehicle.values()) != vor:
+                resolved.add(iso)
+                betroffen += 1
+            vor = sum(len(v) for v in house.values())
+            house = remove_weekday_day(house, iso)
+            if sum(len(v) for v in house.values()) != vor:
+                betroffen += 1
+            d += timedelta(days=1)
+        self.data["vehicle_discharge_weekday_days"] = vehicle
+        self.data["house_weekday_days"] = house
+        self.data["vehicle_discharge_counted_dates"] = list(resolved)
+        # Steckerprofil: markieren statt loeschen (wie _mark_plug_urlaub_since()).
+        von_iso, bis_iso = von.isoformat(), bis.isoformat()
+        for entries in (self.data.get("plug_window_weekday_days") or {}).values():
+            for entry in entries:
+                if von_iso <= entry.get("date", "") <= bis_iso and not entry.get("urlaub"):
+                    entry["urlaub"] = True
+                    betroffen += 1
+        heute_plug = self.data.get("plug_window_today") or {}
+        if von_iso <= heute_plug.get("date", "") <= bis_iso and not heute_plug.get("urlaub"):
+            heute_plug["urlaub"] = True
+            self.data["plug_window_today"] = heute_plug
+            betroffen += 1
+        return betroffen
+
     def _mark_plug_urlaub_since(self, since_date: date) -> int:
         """Markiert alle Steckeintraege (und den noch offenen Tag) ab
         `since_date` als Urlaub -- idempotent; geloescht wird nichts (die
@@ -2408,9 +2495,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Tag ganz ohne Bestaetigung bekommt seinen (dann Null-) Fenster-
         Eintrag ausschliesslich vom taeglichen Rollover
         (_update_vehicle_discharge_profile())."""
-        if self._urlaub_aktiv():
-            return
         observed_date = dt_util.as_local(dt_util.utc_from_timestamp(observed_ts)).date()
+        if self._urlaub_schalter_an() or self._urlaub_tag(observed_date):
+            return
         weekday = observed_date.weekday()
         weekday_days = dict(self.data.get("vehicle_discharge_weekday_days") or {})
         avg_kwh = (weekday_profile_from_recent_days(weekday_days) or {}).get(weekday)
@@ -4052,7 +4139,8 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         ts = rec.get("start_ts")
         weekday_parts = trip_weekday_kwh_parts(rec)
         if weekday_parts is not None and ts is not None:
-            weekday = dt_util.as_local(dt_util.utc_from_timestamp(ts)).date().weekday()
+            trip_date = dt_util.as_local(dt_util.utc_from_timestamp(ts)).date()
+            weekday = trip_date.weekday()
             # "weekday_applied" wird EINMALIG bei sign>0 (Buchung/Erst-
             # Bestaetigung) ermittelt und auf dem Record eingefroren -- kind
             # +Wert wie tatsaechlich verbucht (nach Urlaubsausschluss/
@@ -4070,7 +4158,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 # keep_urlaub: erneutes Buchen eines schon gebuchten Eintrags
                 # (async_set_sonderfahrt()) behaelt den damals eingefrorenen
                 # Urlaubsstand, statt ihn am heutigen Schalter neu zu bewerten.
-                urlaub = bool(rec.get("urlaub")) if keep_urlaub and "urlaub" in rec else self._urlaub_aktiv()
+                urlaub = (
+                    bool(rec.get("urlaub")) if keep_urlaub and "urlaub" in rec
+                    else self._urlaub_schalter_an() or self._urlaub_tag(trip_date)
+                )
                 rec["urlaub"] = urlaub
                 # Sonderfahrt (Nutzerwunsch, siehe async_set_sonderfahrt()):
                 # wie Urlaub aus dem Wochentags-Profil ausgenommen, aber nur
@@ -6236,7 +6327,18 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             value /= 1000.0
         return value
 
+    def _urlaub_tag(self, day: date) -> bool:
+        """Ob `day` in einem im Urlaubskalender gesetzten Zeitraum liegt
+        ("urlaub_zeitraeume", siehe async_set_urlaub_zeitraum())."""
+        return vacation_ranges_contains(self.data.get("urlaub_zeitraeume"), day.isoformat())
+
     def _urlaub_aktiv(self) -> bool:
+        """Ob heute Urlaub ist: der Schalter (_urlaub_schalter_an()) ist "an"
+        ODER heute liegt in einem Zeitraum des Urlaubskalenders. Wirkung wie
+        beim Schalter (siehe unten)."""
+        return self._urlaub_schalter_an() or self._urlaub_tag(dt_util.now().date())
+
+    def _urlaub_schalter_an(self) -> bool:
         """Ob die optionale Urlaubs-Entitaet (CONF_URLAUB_ENTITY) gerade
         "an" ist -- siehe const.py-Kommentar dort fuer die Wirkung
         (Wochentags-Nutzungsprofile schliessen betroffene Tage aus, evcc-
@@ -6308,9 +6410,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # Retro-Abzug noetig: der Rollover-Moment IST der Buchungs-
             # zeitpunkt fuer diesen Tag, es gibt hier (anders als beim
             # Fahrtenbuch) keine spaetere Korrektur/Loeschung.
-            if self._urlaub_aktiv():
-                return
             yesterday = dt_util.now().date() - timedelta(days=1)
+            if self._urlaub_schalter_an() or self._urlaub_tag(yesterday):
+                return
             # Wurde der Rollover mehr als einen Tag verpasst (HA lag ueber
             # Mitternacht still), steckt in "prev" der Verbrauch MEHRERER Tage --
             # als ein einzelner Tageswert gebucht verfaelschte er den Wochentag
@@ -6482,7 +6584,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                     # _update_house_usage_profile() -- ein Urlaubstag zaehlt
                     # gar nicht erst als beobachteter Tag, sonst wuerde er
                     # den Schnitt als "0 kWh Tag" trotzdem nach unten ziehen.
-                    if not self._urlaub_aktiv():
+                    if not (self._urlaub_schalter_an() or self._urlaub_tag(d)):
                         weekday_days = append_recent_weekday_day(
                             weekday_days, d.weekday(), date_key, 0.0, USAGE_PROFILE_WINDOW_DAYS
                         )

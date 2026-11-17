@@ -2058,6 +2058,69 @@ def remove_weekday_day(weekday_days: dict, date_iso: str) -> dict:
     return result
 
 
+# ----- Urlaubstage als Zeitraeume (Urlaubskalender) --------------------------
+# Datenmodell: sortierte, ueberlappungsfreie Liste {"von": "YYYY-MM-DD",
+# "bis": "YYYY-MM-DD"} (beide Tage eingeschlossen; ein einzelner Tag hat
+# von == bis). Benachbarte Zeitraeume (bis + 1 Tag == von) werden
+# zusammengefasst. Reine Funktionen auf ISO-Strings, ohne HA.
+
+def normalize_vacation_ranges(ranges) -> list:
+    """Bereinigt eine Zeitraum-Liste: ungueltige Eintraege fallen weg,
+    vertauschte Grenzen werden gedreht, sortiert, ueberlappende und direkt
+    aneinander anschliessende Zeitraeume zusammengefasst."""
+    parsed = []
+    for item in ranges or []:
+        try:
+            von = date.fromisoformat(str(item["von"]))
+            bis = date.fromisoformat(str(item["bis"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if bis < von:
+            von, bis = bis, von
+        parsed.append((von, bis))
+    parsed.sort()
+    merged: list = []
+    for von, bis in parsed:
+        if merged and von <= merged[-1][1] + timedelta(days=1):
+            if bis > merged[-1][1]:
+                merged[-1] = (merged[-1][0], bis)
+        else:
+            merged.append((von, bis))
+    return [{"von": v.isoformat(), "bis": b.isoformat()} for v, b in merged]
+
+
+def vacation_ranges_add(ranges, von: str, bis: str) -> list:
+    """Fuegt den Zeitraum von..bis (einschliesslich) hinzu."""
+    return normalize_vacation_ranges(list(ranges or []) + [{"von": von, "bis": bis}])
+
+
+def vacation_ranges_remove(ranges, von: str, bis: str) -> list:
+    """Nimmt den Zeitraum von..bis (einschliesslich) heraus; ein Zeitraum, der
+    ihn in der Mitte enthaelt, wird in zwei geteilt."""
+    d_von, d_bis = date.fromisoformat(von), date.fromisoformat(bis)
+    if d_bis < d_von:
+        d_von, d_bis = d_bis, d_von
+    result = []
+    for item in normalize_vacation_ranges(ranges):
+        r_von, r_bis = date.fromisoformat(item["von"]), date.fromisoformat(item["bis"])
+        if r_bis < d_von or r_von > d_bis:
+            result.append(item)
+            continue
+        if r_von < d_von:
+            result.append({"von": r_von.isoformat(), "bis": (d_von - timedelta(days=1)).isoformat()})
+        if r_bis > d_bis:
+            result.append({"von": (d_bis + timedelta(days=1)).isoformat(), "bis": r_bis.isoformat()})
+    return normalize_vacation_ranges(result)
+
+
+def vacation_ranges_contains(ranges, day_iso: str) -> bool:
+    """Ob der Tag (ISO-Datum) in einem der Zeitraeume liegt."""
+    return any(
+        isinstance(r, dict) and str(r.get("von", "")) <= day_iso <= str(r.get("bis", ""))
+        for r in ranges or []
+    )
+
+
 def deduct_weekday_day(weekday_days: dict, date_iso: str, kwh: float) -> tuple[dict, float]:
     """Zieht bis zu `kwh` vom Eintrag zu `date_iso` ab (nie unter 0) -- fuer
     eine Sonderfahrt (siehe coordinator.py::async_set_sonderfahrt()): im

@@ -2,6 +2,14 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.85] - 2026-11-17
+
+### Added
+
+- **Vacation calendar, backend: set vacation days and ranges (`ev_assistant.set_urlaub_zeitraum`, WebSocket `ev_assistant/urlaub`).** Until now vacation was only a switch (`urlaub_entity`) that was read at the moment of booking, so there was no list of vacation days and nothing to look at afterwards. EV Assistant now stores vacation days itself as ranges. The new service sets (`aktiv` on, the default) or removes (`aktiv` off) a single day (`von` only) or a range (`von` to `bis`, both included), also for future days. Set days count exactly like the switch: the weekday profiles (live SoC, house, trip log, plug window) leave them out and the automatic evcc control pauses. The switch, if configured, still works in addition to the calendar. The WebSocket command `ev_assistant/urlaub` returns the stored ranges (`zeitraeume`, each `von`/`bis` as ISO date), `schalter_konfiguriert`, `schalter_aktiv` and `aktiv_heute`, for a calendar in the card. Ranges that overlap or touch are merged, removing a day from the middle of a range splits it.
+- When a range is set, the days up to today are removed from the live-SoC and house profile windows and marked as vacation in the plug profile, like `urlaub_seit` but for exactly those days. Removing a range later does not restore the removed values. The profile books for a day are checked against the calendar for the day itself (the day of the observation or the trip, the finished day at the nightly rollover), not against today.
+- The card has no calendar yet (it is a request to glow-dashboard); until then set days from Developer tools → Actions. No existing service, entity or config key changes. New stored key `urlaub_zeitraeume`.
+
 ## [0.99.84] - 2026-11-17
 
 ### Added

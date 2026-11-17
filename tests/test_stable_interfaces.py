@@ -41,6 +41,7 @@ def test_entitaeten_schluessel_sind_eindeutig_je_plattform():
 def test_websocket_befehle_und_panel_konfiguration():
     assert set(gen.websocket_commands()) == {
         "ev_assistant/charges", "ev_assistant/evcc_sessions", "ev_assistant/event_log", "ev_assistant/trips",
+            "ev_assistant/urlaub",
     }
     api, keys, sources = gen.panel_config()
     assert api >= 1

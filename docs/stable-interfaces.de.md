@@ -48,6 +48,7 @@ Domain `ev_assistant`. Ein angehängtes `?` kennzeichnet ein optionales Feld, al
 | `set_evcc_mode_control_pause` | `paused` | stabil |
 | `set_evcc_mode_control_target_soc_max` | `target_soc_max?` | stabil |
 | `set_evcc_realtime_override_min_solar_share` | `min_solar_share?` | stabil |
+| `set_urlaub_zeitraum` | `von`, `bis?`, `aktiv?` | stabil |
 | `set_usage_profile_buffer_km` | `buffer_km?` | stabil |
 | `set_vehicle_image` | `file_id` | stabil |
 | `set_weekly_full_charge_enabled` | `enabled?` | stabil |
@@ -216,6 +217,7 @@ Jeder Befehl nimmt `config_entry_id`. Sie sind die Schnittstelle von Panel und G
 - `ev_assistant/evcc_sessions`
 - `ev_assistant/event_log`
 - `ev_assistant/trips`
+- `ev_assistant/urlaub`
 
 ## Panel-Konfiguration
 

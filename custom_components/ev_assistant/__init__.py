@@ -9,6 +9,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
+from homeassistant.helpers import config_validation as cv
 
 from . import images
 from . import websocket_api as ev_websocket_api
@@ -65,6 +66,7 @@ from .const import (
     SERVICE_SET_EVCC_MODE_CONTROL_PAUSE,
     SERVICE_SET_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
     SERVICE_SET_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
+    SERVICE_SET_URLAUB_ZEITRAUM,
     SERVICE_SET_USAGE_PROFILE_BUFFER_KM,
     SERVICE_SET_VEHICLE_IMAGE,
     SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED,
@@ -412,6 +414,13 @@ EDIT_TRIP_SCHEMA = vol.Schema({
 DELETE_TRIP_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
     vol.Required("erfasst_ts"): vol.Coerce(int),
+})
+
+SET_URLAUB_ZEITRAUM_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("von"): cv.date,
+    vol.Optional("bis"): cv.date,
+    vol.Optional("aktiv", default=True): bool,
 })
 
 SONDERFAHRT_SCHEMA = vol.Schema({
@@ -787,6 +796,11 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_delete_trip(call.data["erfasst_ts"])
 
+    async def _handle_set_urlaub_zeitraum(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_set_urlaub_zeitraum(call.data["von"], call.data.get("bis"), call.data["aktiv"])
+
     async def _handle_sonderfahrt(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
@@ -1058,6 +1072,9 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_EDIT_TRIP, _handle_edit_trip, schema=EDIT_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DELETE_TRIP, _handle_delete_trip, schema=DELETE_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_SONDERFAHRT, _handle_sonderfahrt, schema=SONDERFAHRT_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, SERVICE_SET_URLAUB_ZEITRAUM, _handle_set_urlaub_zeitraum, schema=SET_URLAUB_ZEITRAUM_SCHEMA
+    )
     hass.services.async_register(DOMAIN, SERVICE_ADD_LADEKARTE, _handle_add_ladekarte, schema=ADD_LADEKARTE_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_EDIT_LADEKARTE, _handle_edit_ladekarte, schema=EDIT_LADEKARTE_SCHEMA)
     hass.services.async_register(
@@ -1153,7 +1170,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_LOG, SERVICE_DISCARD, SERVICE_SIMULATE, SERVICE_EDIT, SERVICE_DELETE,
                 SERVICE_LOG_TRIP, SERVICE_DISCARD_TRIP, SERVICE_EXPORT_TRIPS, SERVICE_EXPORT_EVENT_LOG,
                 SERVICE_SIMULATE_TRIP,
-                SERVICE_EDIT_TRIP, SERVICE_DELETE_TRIP, SERVICE_SONDERFAHRT, SERVICE_IMPORT_TRIPS,
+                SERVICE_EDIT_TRIP, SERVICE_DELETE_TRIP, SERVICE_SONDERFAHRT, SERVICE_SET_URLAUB_ZEITRAUM, SERVICE_IMPORT_TRIPS,
                 SERVICE_ADD_LADEKARTE, SERVICE_EDIT_LADEKARTE, SERVICE_DELETE_LADEKARTE,
                 SERVICE_ADD_LADEKARTE_PREISSTUFE, SERVICE_DELETE_LADEKARTE_PREISSTUFE,
                 SERVICE_ADD_MAINTENANCE, SERVICE_EDIT_MAINTENANCE, SERVICE_DELETE_MAINTENANCE,
