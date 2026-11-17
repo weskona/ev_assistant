@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [Unreleased]
+
+### Added
+
+- **Take back a vacation that was applied to past days (`ev_assistant.urlaub_rueckgaengig`).** The service `urlaub_seit` ("Backdate…" in the card) and setting vacation days in the calendar remove whole days from the live-SoC and house profile windows and mark them in the plug profile. That could not be undone, and the card only says "Vacation backdated" without showing which days (seen 2026-11-17: today's day with 19.0 kWh was removed by accident and would never have been booked). Now EV Assistant remembers what the last application removed or marked and the new service puts it back: removed day values return (added to what was booked for that day since), the "decided" marks and the vacation marks in the plug profile disappear, and a calendar range that caused it is removed again. After every backdated application a notification lists the affected days and kWh and names the service. Only the last application can be taken back. New stored key `urlaub_rueckgaengig`; no existing service, entity or config key changes.
+
 ## [0.99.85] - 2026-11-17
 
 ### Added

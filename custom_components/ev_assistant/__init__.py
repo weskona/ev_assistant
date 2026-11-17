@@ -73,6 +73,7 @@ from .const import (
     SERVICE_SIMULATE,
     SERVICE_SIMULATE_TRIP,
     SERVICE_SONDERFAHRT,
+    SERVICE_URLAUB_RUECKGAENGIG,
     SERVICE_URLAUB_SEIT,
 )
 from .coordinator import EvAssistantCoordinator
@@ -540,6 +541,10 @@ URLAUB_SEIT_SCHEMA = vol.Schema({
     vol.Required("seit_ts"): vol.Coerce(float),
 })
 
+URLAUB_RUECKGAENGIG_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+})
+
 # enabled absichtlich optional OHNE Default: fehlt es (oder explizit
 # null), wird CONF_WEEKLY_FULL_CHARGE_ENABLED aus entry.data entfernt
 # (zurueck auf DEFAULT_WEEKLY_FULL_CHARGE_ENABLED, siehe coordinator.py::
@@ -925,6 +930,11 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_apply_vehicle_discharge_urlaub_since(call.data["seit_ts"])
 
+    async def _handle_urlaub_rueckgaengig(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_urlaub_rueckgaengig()
+
     async def _handle_set_evcc_mode_control_pause(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
@@ -1119,6 +1129,9 @@ def _register_services(hass: HomeAssistant) -> None:
     )
     hass.services.async_register(DOMAIN, SERVICE_URLAUB_SEIT, _handle_urlaub_seit, schema=URLAUB_SEIT_SCHEMA)
     hass.services.async_register(
+        DOMAIN, SERVICE_URLAUB_RUECKGAENGIG, _handle_urlaub_rueckgaengig, schema=URLAUB_RUECKGAENGIG_SCHEMA
+    )
+    hass.services.async_register(
         DOMAIN, SERVICE_SET_EVCC_MODE_CONTROL_PAUSE, _handle_set_evcc_mode_control_pause,
         schema=SET_EVCC_MODE_CONTROL_PAUSE_SCHEMA,
     )
@@ -1174,7 +1187,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_ADD_LADEKARTE, SERVICE_EDIT_LADEKARTE, SERVICE_DELETE_LADEKARTE,
                 SERVICE_ADD_LADEKARTE_PREISSTUFE, SERVICE_DELETE_LADEKARTE_PREISSTUFE,
                 SERVICE_ADD_MAINTENANCE, SERVICE_EDIT_MAINTENANCE, SERVICE_DELETE_MAINTENANCE,
-                SERVICE_MARK_MAINTENANCE_DONE, SERVICE_URLAUB_SEIT, SERVICE_REBUILD_DEPARTURE_PROFILE,
+                SERVICE_MARK_MAINTENANCE_DONE, SERVICE_URLAUB_SEIT, SERVICE_URLAUB_RUECKGAENGIG,
+                SERVICE_REBUILD_DEPARTURE_PROFILE,
                 SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED, SERVICE_SET_EVCC_MODE_CONTROL_TARGET_SOC_MAX,
                 SERVICE_SET_EVCC_REALTIME_OVERRIDE_MIN_SOLAR_SHARE,
                 SERVICE_SET_EVCC_MODE_CONTROL_PAUSE,

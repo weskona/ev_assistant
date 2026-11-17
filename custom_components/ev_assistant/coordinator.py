@@ -1422,16 +1422,19 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         else:
             self.data["urlaub_zeitraeume"] = vacation_ranges_remove(ranges, von.isoformat(), bis.isoformat())
         heute = dt_util.now().date()
-        nachgetragen = self._urlaub_rueckwirkend(von, min(bis, heute)) if aktiv else 0
+        changes = self._urlaub_changes()
+        nachgetragen = self._urlaub_rueckwirkend(von, min(bis, heute), changes) if aktiv else 0
         self._log_event(
             "urlaub_zeitraum_gesetzt" if aktiv else "urlaub_zeitraum_entfernt",
             f"{von.isoformat()}..{bis.isoformat()}",
         )
+        self._urlaub_undo_speichern("zeitraum", von, bis, changes)
         await self._save()
         self.async_set_updated_data(self.data)
+        await self._urlaub_benachrichtigen(changes)
         return {"zeitraeume": self.data["urlaub_zeitraeume"], "rueckwirkend_bereinigt": nachgetragen}
 
-    def _urlaub_rueckwirkend(self, von: date, bis: date) -> int:
+    def _urlaub_rueckwirkend(self, von: date, bis: date, changes: Optional[dict] = None) -> int:
         """Nimmt die Tage von..bis (nur Vergangenheit/heute) aus den
         Wochentags-Fenstern (Live-SoC und Haus) und markiert die Steckeintraege
         als Urlaub. Gibt die Zahl der betroffenen Eintraege zurueck."""
@@ -1446,11 +1449,17 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         while d <= bis:
             iso = d.isoformat()
             vor = sum(len(v) for v in vehicle.values())
+            if changes is not None:
+                changes["vehicle"] += self._weekday_entries_of(vehicle, iso)
             vehicle = remove_weekday_day(vehicle, iso)
             if sum(len(v) for v in vehicle.values()) != vor:
+                if changes is not None and iso not in resolved:
+                    changes["resolved"].append(iso)
                 resolved.add(iso)
                 betroffen += 1
             vor = sum(len(v) for v in house.values())
+            if changes is not None:
+                changes["house"] += self._weekday_entries_of(house, iso)
             house = remove_weekday_day(house, iso)
             if sum(len(v) for v in house.values()) != vor:
                 betroffen += 1
@@ -1465,14 +1474,124 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 if von_iso <= entry.get("date", "") <= bis_iso and not entry.get("urlaub"):
                     entry["urlaub"] = True
                     betroffen += 1
+                    if changes is not None:
+                        changes["plug"].append(entry["date"])
         heute_plug = self.data.get("plug_window_today") or {}
         if von_iso <= heute_plug.get("date", "") <= bis_iso and not heute_plug.get("urlaub"):
             heute_plug["urlaub"] = True
             self.data["plug_window_today"] = heute_plug
             betroffen += 1
+            if changes is not None:
+                changes["plug"].append(heute_plug["date"])
         return betroffen
 
-    def _mark_plug_urlaub_since(self, since_date: date) -> int:
+    # ---- Rueckwirkender Urlaub: Spur der Aenderung, Hinweis, Rueckgaengig -------
+
+    @staticmethod
+    def _urlaub_changes() -> dict:
+        """Leere Aenderungsliste einer rueckwirkenden Urlaubs-Anwendung:
+        entfernte Fenster-Eintraege (Fahrzeug, Haus), neu als "entschieden"
+        vermerkte Tage und neu als Urlaub markierte Steckerprofil-Tage."""
+        return {"vehicle": [], "house": [], "resolved": [], "plug": []}
+
+    @staticmethod
+    def _weekday_entries_of(weekday_days: dict, date_iso: str) -> list[dict]:
+        """Die Eintraege zu `date_iso` aus allen Wochentags-Listen als
+        {"wd", "date", "kwh"} -- vor remove_weekday_day() gemerkt, damit das
+        Entfernen rueckgaengig gemacht werden kann."""
+        return [
+            {"wd": key, "date": e["date"], "kwh": e["kwh"]}
+            for key, days in (weekday_days or {}).items()
+            for e in days
+            if e["date"] == date_iso
+        ]
+
+    def _urlaub_undo_speichern(self, quelle: str, von: date, bis: date, changes: dict) -> None:
+        """Merkt sich, was die letzte rueckwirkende Urlaubs-Anwendung entfernt
+        oder markiert hat (nur das Delta, nicht den ganzen Stand), damit
+        async_urlaub_rueckgaengig() es zurueckholen kann. Nur die letzte
+        Anwendung; ohne Aenderung bleibt eine fruehere gespeicherte stehen."""
+        if not any(changes[k] for k in ("vehicle", "house", "resolved", "plug")):
+            return
+        self.data["urlaub_rueckgaengig"] = {
+            "ts": time.time(), "quelle": quelle, "von": von.isoformat(), "bis": bis.isoformat(),
+            "vehicle": changes["vehicle"], "house": changes["house"],
+            "resolved": sorted(set(changes["resolved"])), "plug": sorted(set(changes["plug"])),
+        }
+
+    async def _urlaub_benachrichtigen(self, changes: dict) -> None:
+        """Hinweis nach einer rueckwirkenden Urlaubs-Anwendung: welche Tage mit
+        wie viel kWh aus den Profilen genommen wurden und wie man es
+        zuruecknimmt. Die Karte zeigt nur "rueckwirkend angewendet" -- ohne
+        diesen Hinweis sieht man nicht, was weg ist (Vorfall 2026-11-17)."""
+        if not any(changes[k] for k in ("vehicle", "house", "plug")):
+            return
+        fahrzeug: dict[str, float] = {}
+        for e in changes["vehicle"]:
+            fahrzeug[e["date"]] = round(fahrzeug.get(e["date"], 0.0) + e["kwh"], 2)
+        tage = sorted(set(fahrzeug) | {e["date"] for e in changes["house"]} | set(changes["plug"]))
+        zeilen = []
+        for d in tage:
+            label = date.fromisoformat(d).strftime("%d.%m.")
+            zeilen.append(
+                f"{label}: {fahrzeug[d]:.1f} kWh aus dem Fahrzeugprofil genommen"
+                if d in fahrzeug else f"{label}: als Urlaub markiert"
+            )
+        message = (
+            "Urlaub rückwirkend angewendet:\n" + "\n".join(zeilen)
+            + "\nWar das falsch? Der Dienst ev_assistant.urlaub_rueckgaengig stellt es wieder her."
+        )
+        await self._notifications._persistent_notification(
+            "create",
+            {
+                "notification_id": f"{DOMAIN}_urlaub_rueckwirkend_{self.entry.entry_id}",
+                "title": "EV Assistant: Urlaub rückwirkend",
+                "message": message,
+            },
+        )
+
+    async def async_urlaub_rueckgaengig(self) -> dict:
+        """Nimmt die letzte rueckwirkende Urlaubs-Anwendung (Dienst urlaub_seit
+        oder Setzen von Urlaubstagen im Kalender) zurueck: entfernte Fenster-
+        Eintraege kommen wieder (zu schon neu gebuchten Werten desselben Tages
+        addiert, nichts geht verloren), "entschieden"-Vermerke und Urlaubs-
+        Markierungen im Steckerprofil verschwinden. Wurde die Anwendung durch
+        das Setzen eines Kalender-Zeitraums ausgeloest, wird auch dieser
+        Zeitraum wieder entfernt. Gibt es nichts zurueckzunehmen: leeres Ergebnis."""
+        undo = self.data.get("urlaub_rueckgaengig")
+        if not undo:
+            return {"wiederhergestellt": 0}
+        for key, target in (("vehicle", "vehicle_discharge_weekday_days"), ("house", "house_weekday_days")):
+            days = dict(self.data.get(target) or {})
+            for e in undo.get(key, []):
+                days = append_recent_weekday_day(days, int(e["wd"]), e["date"], e["kwh"], USAGE_PROFILE_WINDOW_DAYS)
+            self.data[target] = days
+        resolved = set(self.data.get("vehicle_discharge_counted_dates") or [])
+        self.data["vehicle_discharge_counted_dates"] = sorted(resolved - set(undo.get("resolved", [])))
+        plug = set(undo.get("plug", []))
+        for entries in (self.data.get("plug_window_weekday_days") or {}).values():
+            for entry in entries:
+                if entry.get("date") in plug:
+                    entry["urlaub"] = False
+        heute_plug = self.data.get("plug_window_today") or {}
+        if heute_plug.get("date") in plug:
+            heute_plug["urlaub"] = False
+            self.data["plug_window_today"] = heute_plug
+        if undo.get("quelle") == "zeitraum":
+            self.data["urlaub_zeitraeume"] = vacation_ranges_remove(
+                self.data.get("urlaub_zeitraeume") or [], undo["von"], undo["bis"]
+            )
+        zahl = len(undo.get("vehicle", [])) + len(undo.get("house", [])) + len(plug)
+        self.data["urlaub_rueckgaengig"] = None
+        self._log_event("urlaub_rueckwirkend_zurueckgenommen", f"{undo['von']}..{undo['bis']} ({zahl} Einträge)")
+        await self._save()
+        self.async_set_updated_data(self.data)
+        await self._notifications._persistent_notification(
+            "dismiss", {"notification_id": f"{DOMAIN}_urlaub_rueckwirkend_{self.entry.entry_id}"}
+        )
+        return {"wiederhergestellt": zahl}
+
+    def _mark_plug_urlaub_since(self, since_date: date, changes: Optional[dict] = None) -> int:
         """Markiert alle Steckeintraege (und den noch offenen Tag) ab
         `since_date` als Urlaub -- idempotent; geloescht wird nichts (die
         Rohdaten bleiben, die Statistik wertet markierte Tage nicht). Gibt
@@ -1485,11 +1604,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 if entry.get("date", "") >= since_iso and not entry.get("urlaub"):
                     entry["urlaub"] = True
                     marked += 1
+                    if changes is not None:
+                        changes["plug"].append(entry["date"])
         today = self.data.get("plug_window_today") or {}
         if today.get("date", "") >= since_iso and not today.get("urlaub"):
             today["urlaub"] = True
             self.data["plug_window_today"] = today
             marked += 1
+            if changes is not None:
+                changes["plug"].append(today["date"])
         return marked
 
     async def _apply_battery_priority_for_vehicle_presence(self) -> None:
@@ -2558,6 +2681,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         weekday_days = dict(self.data.get("vehicle_discharge_weekday_days") or {})
         reclassified_by_weekday: dict[str, float] = {}
         resolved = set(self.data.get("vehicle_discharge_counted_dates") or [])
+        changes = self._urlaub_changes()
 
         current = since_date
         while current <= today:
@@ -2568,13 +2692,16 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 reclassified_by_weekday[wd_key] = round(
                     reclassified_by_weekday.get(wd_key, 0.0) + match["kwh"], 2
                 )
+                changes["vehicle"].append({"wd": wd_key, "date": date_iso, "kwh": match["kwh"]})
                 weekday_days = remove_weekday_day(weekday_days, date_iso)
+                if date_iso not in resolved:
+                    changes["resolved"].append(date_iso)
                 resolved.add(date_iso)
             current += timedelta(days=1)
 
         # Steckerprofil (Morgen-Abfahrt): markieren statt loeschen -- unabhaengig
         # davon, ob das Entlade-Fenster etwas zu entfernen hatte.
-        plug_marked = self._mark_plug_urlaub_since(since_date)
+        plug_marked = self._mark_plug_urlaub_since(since_date, changes)
 
         if not reclassified_by_weekday and not plug_marked:
             return {"reclassified_kwh": 0.0, "wochentage": {}}
@@ -2583,6 +2710,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self.data["vehicle_discharge_weekday_days"] = weekday_days
             self.data["vehicle_discharge_counted_dates"] = list(resolved)
 
+        self._urlaub_undo_speichern("seit", since_date, today, changes)
         await self._save()
         payload = {
             "since_ts": since_ts,
@@ -2593,6 +2721,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             payload["plug_markiert"] = plug_marked
         self.hass.bus.async_fire(EVENT_VEHICLE_DISCHARGE_URLAUB_APPLIED, payload)
         self.async_set_updated_data(self.data)
+        await self._urlaub_benachrichtigen(changes)
         return payload
 
     def _maybe_correct_last_trip_end_soc(self, new_soc: float, ts: float) -> None:

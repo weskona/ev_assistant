@@ -1471,6 +1471,27 @@ urlaub_seit:
         number:
           mode: box
 
+urlaub_rueckgaengig:
+  name: Rückwirkenden Urlaub zurücknehmen
+  description: >
+    Nimmt die letzte rückwirkende Urlaubs-Anwendung zurück: entweder den
+    Dienst "Urlaub rückwirkend anwenden" (urlaub_seit) oder das Setzen von
+    Urlaubstagen im Kalender, soweit sie vergangene Tage betraf. Aus den
+    Profilen entfernte Tageswerte (Fahrzeug, Haus) kommen wieder, die
+    Urlaubs-Markierungen im Steckerprofil und die "entschieden"-Vermerke
+    verschwinden. Wurde ein Kalender-Zeitraum gesetzt, wird auch dieser wieder
+    entfernt. Zurückgenommen wird nur die letzte Anwendung. Nach jeder
+    rückwirkenden Anwendung erscheint dazu eine Benachrichtigung mit den
+    betroffenen Tagen.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+
 set_weekly_full_charge_enabled:
   name: Wöchentliche Vollladung (Balancing) umschalten
   description: >
