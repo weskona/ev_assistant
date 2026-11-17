@@ -172,6 +172,13 @@ from .const import (
     PLUG_DEPARTURE_WINDOW_START_H,
     PLUG_TICK_GAP_FACTOR,
     PLUG_WINDOW_ENTRIES,
+    RANGE_HALF_LIFE_DAYS,
+    RANGE_KERNEL_MIN_KM,
+    RANGE_LOG_MAX_DAYS,
+    RANGE_MIN_DAY_KM,
+    RANGE_MIN_TOTAL_KM,
+    RANGE_TEMP_SIGMA_C,
+    RANGE_WINDOW_DAYS,
     STORAGE_KEY,
     STORAGE_VERSION,
     TANKERKOENIG_GRACE_S,
@@ -259,6 +266,7 @@ from .engine import (
     kwh_to_soc_percent,
     last_trip_end_ort,
     latest_charge,
+    live_soc_consumption_kwh_100km,
     match_evcc_vehicle,
     max_achievable_target_soc,
     merge_pending,
@@ -279,7 +287,6 @@ from .engine import (
     remaining_today_kwh,
     remove_weekday_day,
     restore_surplus_target_active,
-    rolling_consumption_kwh_per_100km,
     round_km_display,
     session_totals_since,
     split_by_age,
@@ -361,17 +368,6 @@ _HEALTH_MONITORED_KEYS = (
     CONF_HOME_ENTITY, CONF_POWER_ENTITY, CONF_WALLBOX_ENERGY_ENTITY,
     CONF_GPS_ENTITY, CONF_HOME_PRICE_ENTITY, CONF_VERBRENNER_PRICE_ENTITY,
 )
-
-# Rolling-Fenster fuer den Realverbrauch (siehe engine.py::
-# rolling_consumption_kwh_per_100km()) -- deutlich kuerzer als der
-# Lebenszeit-Durchschnitt seit Einrichtung, damit sich Jahreszeit/aktueller
-# Fahrstil in der Reichweitenschaetzung abbilden statt ueber Monate/Jahre
-# verwaschen zu werden.
-_ROLLING_CONSUMPTION_WINDOW_DAYS = 30
-# Mindest-km im Rolling-Fenster, bevor ihm statt dem Lebenszeit-Durchschnitt
-# vertraut wird -- sonst wuerde z.B. eine einzelne kurze Kaltstart-/
-# Stadtfahrt direkt nach einer laengeren Standzeit den Verbrauch verzerren.
-_ROLLING_CONSUMPTION_MIN_KM = 50.0
 
 def _empty_data() -> dict:
     return {
@@ -729,11 +725,6 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         # _home_kwh() (siehe _check_evcc_vehicle_match_issue()) -- ebenfalls
         # rein im Arbeitsspeicher, kein Neustart-Recycling.
         self._evcc_vehicle_match_issue_active: bool = False
-        # Cache fuer den rollierenden Realverbrauch, analog
-        # _usage_profile_cache (Schluessel: _fahrten_version + heutiges
-        # Datum, da das Rolling-Fenster auch ohne Fahrtenbuch-Aenderung
-        # einmal pro Tag weiterwandert).
-        self._rolling_consumption_cache: Optional[tuple[int, str, Optional[float]]] = None
         # Cache fuer den Verbrauch je Temperaturband (siehe
         # _consumption_by_temp_bucket()) -- analog _trip_avg_cache.
         self._temp_bucket_cache: Optional[tuple[int, dict]] = None
@@ -957,6 +948,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._setup_sources()
         self._setup_evcc_client()
         self._setup_urlaub_kalender()
+        self._update_range_log()
         # Seedet die Kosten-/kWh-Perioden-Baselines sofort statt erst beim
         # naechsten taeglichen Rollover (siehe _daily_cost_period_rollover()/
         # _daily_kwh_period_rollover()) -- sonst waeren "Kosten/kWh
@@ -2689,6 +2681,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             self.data["vehicle_discharge_kwh_total"] = round(
                 self.data.get("vehicle_discharge_kwh_total", 0.0) + kwh, 4
             )
+            self._range_temp_sample(kwh)
             self._book_vehicle_discharge_weekday(kwh, pending_since)
         self._save_soon()
 
@@ -3599,6 +3592,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         dieser taegliche Rollover schreibt den abgeschlossenen Vortag
         tatsaechlich in die Wochentags-Eimer fort."""
         self._update_vehicle_discharge_profile()
+        self._update_range_log()
         self.async_set_updated_data(self.data)
         self._save_soon()
 
@@ -5442,33 +5436,6 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             return None
         return round(self._ev_kwh_total_since_setup() / km * 100.0, 2)
 
-    def _vehicle_avg_consumption_kwh_per_100km_rolling(self) -> Optional[float]:
-        """Wie _vehicle_avg_consumption_kwh_per_100km(), aber nur ueber die
-        letzten _ROLLING_CONSUMPTION_WINDOW_DAYS Tage Fahrtenbuch (siehe
-        engine.py::rolling_consumption_kwh_per_100km()) -- fuer
-        range_estimate_km(), wo der AKTUELLE Verbrauch (Jahreszeit,
-        Fahrstil) interessiert statt des ueber die gesamte Nutzungsdauer
-        gemittelten Werts. Faellt auf den Lebenszeit-Durchschnitt zurueck,
-        wenn das Rolling-Fenster zu wenig Fahrstrecke enthaelt.
-
-        Ergebnis wird pro (_fahrten_version, heutiges Datum)
-        zwischengespeichert, analog usage_profile()."""
-        today = dt_util.now().date().isoformat()
-        if (
-            self._rolling_consumption_cache is not None
-            and self._rolling_consumption_cache[0] == self._fahrten_version
-            and self._rolling_consumption_cache[1] == today
-        ):
-            return self._rolling_consumption_cache[2]
-        fahrten = self.data.get("fahrten") or []
-        result = rolling_consumption_kwh_per_100km(
-            fahrten, time.time(), _ROLLING_CONSUMPTION_WINDOW_DAYS, _ROLLING_CONSUMPTION_MIN_KM,
-        )
-        if result is None:
-            result = self._vehicle_avg_consumption_kwh_per_100km()
-        self._rolling_consumption_cache = (self._fahrten_version, today, result)
-        return result
-
     def _consumption_by_temp_bucket(self) -> dict:
         """Durchschnittsverbrauch je Temperaturband (siehe engine.
         consumption_by_temp_bucket_from_totals()) -- nur Baender mit genug
@@ -5539,17 +5506,89 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
 
     def _current_consumption_estimate_kwh_per_100km(self) -> Optional[float]:
         """Aktuell anzunehmender Verbrauchsschnitt -- gemeinsam genutzt von
-        range_estimate_km() und async_set_evcc_charge_plan_range_km(), damit
-        beide (Anzeige und Ziel-Reichweite-Umrechnung) auf demselben Wert
-        beruhen. Bandspezifisch, wenn Aussentemperatur konfiguriert und genug
-        Fahrten fuers aktuelle Temperaturband vorliegen, sonst der
-        rollierende 30-Tage-Schnitt (siehe range_estimate_km()-Docstring)."""
-        consumption = self._vehicle_avg_consumption_kwh_per_100km_rolling()
-        bucket = self.current_temp_bucket()
-        bucket_consumption = self._consumption_by_temp_bucket().get(bucket)
-        if bucket_consumption is not None:
-            consumption = bucket_consumption
-        return consumption
+        range_estimate_km(), range_conversion() (Ladesteuerung, km-Anzeigen)
+        und async_set_evcc_charge_plan_range_km(), damit alle auf demselben
+        Wert beruhen. Quelle ist der Live-SoC-Zaehler und die gefahrenen km
+        (siehe _range_consumption_live()), nach der aktuellen Aussentemperatur
+        gewichtet; solange dafuer zu wenig Tage vorliegen, gilt der
+        Lebenszeit-Durchschnitt aus der Energiebilanz. Das Fahrtenbuch geht
+        nicht mehr ein."""
+        live = self._range_consumption_live()
+        if live is not None:
+            return live[0]
+        return self._vehicle_avg_consumption_kwh_per_100km()
+
+    def _range_consumption_live(self) -> Optional[tuple]:
+        """(Verbrauch in kWh/100km, Zahl der verwendeten Tage) aus dem
+        Tageslog des Live-SoC-Zaehlers (siehe _update_range_log()), None bei
+        zu wenig Daten."""
+        return live_soc_consumption_kwh_100km(
+            self.data.get("range_tage") or [],
+            dt_util.now().date(),
+            self._outside_temp,
+            window_days=RANGE_WINDOW_DAYS,
+            min_day_km=RANGE_MIN_DAY_KM,
+            min_total_km=RANGE_MIN_TOTAL_KM,
+            plausible_min=TRIP_CONSUMPTION_MIN_KWH_100KM,
+            plausible_max=TRIP_CONSUMPTION_MAX_KWH_100KM,
+            temp_sigma_c=RANGE_TEMP_SIGMA_C,
+            half_life_days=RANGE_HALF_LIFE_DAYS,
+            kernel_min_km=RANGE_KERNEL_MIN_KM,
+        )
+
+    def _range_temp_sample(self, kwh: float) -> None:
+        """Merkt sich zu einer bestaetigten Live-SoC-Entladung die aktuelle
+        Aussentemperatur (nach kWh gewichtet, je Kalendertag), fuer die
+        Tagesmitteltemperatur im Tageslog (siehe _update_range_log())."""
+        if self._outside_temp is None or kwh <= 0:
+            return
+        today = dt_util.now().date()
+        acc = dict(self.data.get("range_temp_acc") or {})
+        entry = dict(acc.get(today.isoformat()) or {"tw": 0.0, "tk": 0.0})
+        entry["tw"] = round(entry["tw"] + self._outside_temp * kwh, 4)
+        entry["tk"] = round(entry["tk"] + kwh, 4)
+        acc[today.isoformat()] = entry
+        keep = {(today - timedelta(days=i)).isoformat() for i in range(4)}
+        self.data["range_temp_acc"] = {k: v for k, v in acc.items() if k in keep}
+
+    def _update_range_log(self) -> None:
+        """Pflegt den Tageslog fuer die Reichweite: je Kalendertag die
+        Live-SoC-Entladung (vehicle_discharge_kwh_total), die gefahrenen km
+        (Odometer) und die kWh-gewichtete Aussentemperatur. Arbeitet mit
+        Staenden der kumulativen Zaehler zu Beginn des Tages ("range_snap"):
+        beim taeglichen Rollover wird aus der Differenz der Vortag
+        abgeschlossen. Fehlt ein Rollover (HA lag still) oder der Odometer,
+        wird der Tag nicht gebucht, nur der Stand neu gesetzt. Wird auch beim
+        Start aufgerufen, damit der erste Stand sofort existiert."""
+        odo = self._odo_km()
+        if odo is None:
+            return
+        kwh_total = float(self.data.get("vehicle_discharge_kwh_total", 0.0) or 0.0)
+        today = dt_util.now().date()
+        snap = self.data.get("range_snap")
+        new_snap = {"date": today.isoformat(), "odo": round(odo, 2), "kwh": round(kwh_total, 4)}
+        if not snap:
+            self.data["range_snap"] = new_snap
+            return
+        try:
+            snap_date = date.fromisoformat(str(snap["date"]))
+        except (KeyError, ValueError):
+            self.data["range_snap"] = new_snap
+            return
+        if snap_date >= today:
+            return
+        if snap_date == today - timedelta(days=1):
+            km = odo - float(snap.get("odo", odo))
+            kwh = kwh_total - float(snap.get("kwh", kwh_total))
+            if km >= 0 and kwh >= 0:
+                temp = (self.data.get("range_temp_acc") or {}).get(snap_date.isoformat()) or {}
+                tage = [d for d in (self.data.get("range_tage") or []) if d.get("d") != snap_date.isoformat()]
+                tage.append({
+                    "d": snap_date.isoformat(), "kwh": round(kwh, 3), "km": round(km, 1),
+                    "tw": float(temp.get("tw", 0.0)), "tk": float(temp.get("tk", 0.0)),
+                })
+                self.data["range_tage"] = tage[-RANGE_LOG_MAX_DAYS:]
+        self.data["range_snap"] = new_snap
 
     def range_conversion(self) -> dict:
         """EINE Quelle der SoC/kWh->km-Umrechnung fuer Sensor-Attribute, Text

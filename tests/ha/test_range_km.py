@@ -57,7 +57,7 @@ async def test_reichweite_km_ist_der_state_von_range_estimate(hass, coordinators
     assert range_sensor.extra_state_attributes["verbrauch_kwh_100km"] == attrs["verbrauch_kwh_100km"]
 
 
-async def test_eine_verbrauchsquelle_auch_mit_temperaturband(hass, coordinators):
+async def test_fahrtenbuch_temperaturband_bestimmt_die_reichweite_nicht_mehr(hass, coordinators):
     from custom_components.ev_assistant.sensor import RangeEstimateSensor
 
     coordinator, entry = await _enabled(hass, coordinators, "rk3")
@@ -69,9 +69,11 @@ async def test_eine_verbrauchsquelle_auch_mit_temperaturband(hass, coordinators)
     with patch.object(coordinator, "_consumption_by_temp_bucket", return_value={bucket: 25.0}):
         attrs = _sensor(coordinator, entry).extra_state_attributes
         range_sensor = RangeEstimateSensor(coordinator, entry)
-        assert attrs["verbrauch_kwh_100km"] == 25.0
-        assert range_sensor.extra_state_attributes["verbrauch_kwh_100km"] == 25.0
-        assert range_sensor.native_value == attrs["reichweite_km"] == 100.0
+        # die Quelle bleibt der (hier gesetzte) Lebenszeit-Durchschnitt, das Fahrtenbuch-Band zaehlt nicht
+        assert attrs["verbrauch_kwh_100km"] == 20.0
+        assert range_sensor.extra_state_attributes["verbrauch_kwh_100km"] == 20.0
+        assert range_sensor.extra_state_attributes["verbrauch_quelle"] == "lebenszeit"
+        assert range_sensor.native_value == attrs["reichweite_km"] == 125.0
 
 
 async def test_ohne_verbrauch_fehlen_alle_km_schluessel(hass, coordinators):
