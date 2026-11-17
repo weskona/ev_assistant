@@ -1727,7 +1727,7 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
         # profile()/_update_vehicle_discharge_profile()) greift unabhaengig
         # von CONF_EVCC_MODE_CONTROL_ENABLED -- das Panel soll den Status
         # also auch ohne aktive evcc-Steuerung anzeigen koennen.
-        urlaub_aktiv = self.coordinator._urlaub_aktiv()
+        urlaub = self.coordinator.urlaub_attribute()
         # Umrechnungsgroessen (usable_kwh, Verbrauch, km pro %) haengen nur an
         # Konfiguration und Verbrauch -- Popup und Wallbox-Zeile brauchen sie
         # auch ohne aktive Steuerung. Fehlt der Verbrauch, fehlen alle
@@ -1737,12 +1737,12 @@ class EvccModeControlSensor(EvAssistantEntity, SensorEntity):
         if reichweite is not None:
             conv = {**conv, "reichweite_km": reichweite}
         if not self._enabled():
-            return {"urlaub_aktiv": urlaub_aktiv, **conv}
+            return {**urlaub, **conv}
         targets = self.coordinator._evcc_mode_targets()
         if not targets:
-            return {"urlaub_aktiv": urlaub_aktiv, **conv}
+            return {**urlaub, **conv}
         attrs = {
-            "urlaub_aktiv": urlaub_aktiv,
+            **urlaub,
             **conv,
             "min_soc": targets["min_soc"],
             "target_soc": targets["target_soc"],
