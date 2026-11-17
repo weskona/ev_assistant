@@ -5915,3 +5915,47 @@ def test_tomorrow_need_due_ohne_sonnenstand_ab_rueckfallstunde():
     assert tomorrow_need_due(None, 17) is False
     assert tomorrow_need_due(None, 18) is True
     assert tomorrow_need_due(None, 2) is False
+
+
+# ----- deduct_weekday_day / departures_from_trips: Sonderfahrt ----------------
+
+def test_deduct_weekday_day_zieht_ab_und_laesst_rest_stehen():
+    from engine import deduct_weekday_day
+
+    days = {"1": [{"date": "2026-11-10", "kwh": 5.0}, {"date": "2026-11-17", "kwh": 20.0}]}
+    neu, genommen = deduct_weekday_day(days, "2026-11-17", 16.0)
+    assert genommen == 16.0
+    assert neu["1"] == [{"date": "2026-11-10", "kwh": 5.0}, {"date": "2026-11-17", "kwh": 4.0}]
+    assert days["1"][1]["kwh"] == 20.0  # Eingabe bleibt unveraendert
+
+
+def test_deduct_weekday_day_nie_unter_null():
+    from engine import deduct_weekday_day
+
+    neu, genommen = deduct_weekday_day({"1": [{"date": "2026-11-17", "kwh": 3.0}]}, "2026-11-17", 16.0)
+    assert genommen == 3.0
+    assert neu["1"] == [{"date": "2026-11-17", "kwh": 0.0}]
+
+
+def test_deduct_weekday_day_ohne_eintrag_zieht_nichts_ab():
+    from engine import deduct_weekday_day
+
+    days = {"1": [{"date": "2026-11-10", "kwh": 5.0}]}
+    neu, genommen = deduct_weekday_day(days, "2026-11-17", 16.0)
+    assert genommen == 0.0
+    assert neu == days
+    assert deduct_weekday_day({}, "2026-11-17", 1.0) == ({}, 0.0)
+
+
+def test_departures_from_trips_ueberspringt_sonderfahrt():
+    from engine import departures_from_trips
+
+    tz = timezone.utc
+    t1 = datetime(2026, 11, 10, 7, 30, tzinfo=tz).timestamp()
+    t2 = datetime(2026, 11, 10, 18, 0, tzinfo=tz).timestamp()
+    trips = [
+        {"start_ort": "Zuhause", "start_ts": t1},
+        {"start_ort": "Zuhause", "start_ts": t2, "sonderfahrt": True},
+    ]
+    res = departures_from_trips(trips, {"zuhause"}, "2026-11-17", tz=tz)
+    assert res == {"2026-11-10": ["07:30"]}

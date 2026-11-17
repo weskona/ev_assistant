@@ -2058,6 +2058,23 @@ def remove_weekday_day(weekday_days: dict, date_iso: str) -> dict:
     return result
 
 
+def deduct_weekday_day(weekday_days: dict, date_iso: str, kwh: float) -> tuple[dict, float]:
+    """Zieht bis zu `kwh` vom Eintrag zu `date_iso` ab (nie unter 0) -- fuer
+    eine Sonderfahrt (siehe coordinator.py::async_set_sonderfahrt()): im
+    Gegensatz zu remove_weekday_day() bleibt der uebrige Verbrauch des Tages
+    im Fenster. Der Eintrag bleibt auch bei 0 kWh stehen (der Tag wurde
+    beobachtet). Rueckgabe (neues Dict, tatsaechlich abgezogene kWh); gibt es
+    keinen Eintrag zu dem Datum, ist der Abzug 0 und das Dict unveraendert."""
+    result = {k: [dict(d) for d in v] for k, v in (weekday_days or {}).items()}
+    for days in result.values():
+        for entry in days:
+            if entry["date"] == date_iso:
+                taken = round(min(max(float(kwh), 0.0), max(float(entry["kwh"]), 0.0)), 2)
+                entry["kwh"] = round(entry["kwh"] - taken, 2)
+                return result, taken
+    return result, 0.0
+
+
 # ----- Steck-Zeitfenster-Beobachtung (rein informativ) ---------------------
 # Nutzerwunsch 2026-09-23: "wäre für das nutzungsprofil nicht auch die
 # zeiten wann und wie lange am tag das auto angeschlossen ist an die
@@ -2372,7 +2389,7 @@ def departures_from_trips(
     for trip in trips or []:
         if str(trip.get("start_ort") or "").strip().lower() not in home_names:
             continue
-        if trip.get("urlaub") or not trip.get("start_ts"):
+        if trip.get("urlaub") or trip.get("sonderfahrt") or not trip.get("start_ts"):
             continue
         end_ts, seen_ts = trip.get("end_ts"), trip.get("erfasst_ts")
         if end_ts and seen_ts and (seen_ts - end_ts) / 60.0 > max_delay_min:

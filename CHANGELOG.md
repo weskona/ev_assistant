@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.84] - 2026-11-17
+
+### Added
+
+- **Mark a single trip as a special trip (`ev_assistant.sonderfahrt`).** A trip you would not normally make on that weekday (for example 69 km on a Tuesday) no longer distorts the weekday profile, and the rest of that day stays in. The new service takes the trip's `erfasst_ts` and `aktiv` (default on; off takes the mark back). A marked trip is left out of the trip-log profile and the departure times like a holiday trip, and its consumption is deducted from that day's value of the live-SoC profile (the one the charge control uses). Until now only the whole day could be dropped (`urlaub_seit`). Limits: the deducted amount is the consumption recorded in the trip log, so it is an approximation of what the live-SoC profile booked. If the trip's consumption is not yet fully in the day's value, the remainder is deducted from the next booking of that day. The service is idempotent; marking a trip again or taking the mark back restores the values. The card has no button for it yet, call the service from Developer tools → Actions. New field `sonderfahrt` (and `sonderfahrt_abzug_kwh`) on the trip record; no existing behaviour, service or config key changes.
+
 ## [0.99.83] - 2026-11-15
 
 ### Fixed

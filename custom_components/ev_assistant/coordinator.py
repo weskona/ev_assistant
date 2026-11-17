@@ -233,6 +233,7 @@ from .engine import (
     charging_location_breakdown,
     clamp_weekday_contribution,
     consumption_by_temp_bucket_from_totals,
+    deduct_weekday_day,
     departure_from_state,
     departures_from_trips,
     determine_evcc_mode,
@@ -2414,6 +2415,19 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         weekday_days = dict(self.data.get("vehicle_discharge_weekday_days") or {})
         avg_kwh = (weekday_profile_from_recent_days(weekday_days) or {}).get(weekday)
         applied_value = clamp_weekday_contribution("exact", kwh, avg_kwh, OUTLIER_DAMPING_FACTOR, None)
+        # Noch offener Abzug einer Sonderfahrt dieses Tages (siehe
+        # async_set_sonderfahrt()): ihr Verbrauch war beim Markieren noch nicht
+        # (vollstaendig) im Tageseintrag, wird hier von den neuen kWh abgezogen.
+        offen = dict(self.data.get("vehicle_discharge_abzug_offen") or {})
+        rest_abzug = float(offen.get(observed_date.isoformat(), 0.0))
+        if rest_abzug > 0.0:
+            genommen = min(rest_abzug, applied_value)
+            applied_value = round(applied_value - genommen, 4)
+            if rest_abzug - genommen > 0.005:
+                offen[observed_date.isoformat()] = round(rest_abzug - genommen, 4)
+            else:
+                offen.pop(observed_date.isoformat(), None)
+            self.data["vehicle_discharge_abzug_offen"] = offen
         self.data["vehicle_discharge_weekday_days"] = append_recent_weekday_day(
             weekday_days, weekday, observed_date.isoformat(), applied_value, USAGE_PROFILE_WINDOW_DAYS
         )
@@ -4001,7 +4015,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 )
         return rec
 
-    def _apply_trip_baselines(self, rec: dict, sign: int) -> None:
+    def _apply_trip_baselines(self, rec: dict, sign: int, keep_urlaub: bool = False) -> None:
         """Pflegt die von der fahrten-Liste selbst unabhaengigen Lebenszeit-
         Baselines (Vollzyklen-Entladeanteil, Verbrauchsschnitt,
         Temperaturband-Schnitt, Wochentags-Profil) parallel zu
@@ -4053,9 +4067,15 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # bei sign<0 auf den rohen weekday_parts-Wert zurueck -- exakt
             # das, was fuer sie damals unbedingt gebucht wurde.
             if sign > 0:
-                urlaub = self._urlaub_aktiv()
+                # keep_urlaub: erneutes Buchen eines schon gebuchten Eintrags
+                # (async_set_sonderfahrt()) behaelt den damals eingefrorenen
+                # Urlaubsstand, statt ihn am heutigen Schalter neu zu bewerten.
+                urlaub = bool(rec.get("urlaub")) if keep_urlaub and "urlaub" in rec else self._urlaub_aktiv()
                 rec["urlaub"] = urlaub
-                if urlaub:
+                # Sonderfahrt (Nutzerwunsch, siehe async_set_sonderfahrt()):
+                # wie Urlaub aus dem Wochentags-Profil ausgenommen, aber nur
+                # diese eine Fahrt, nicht der ganze Tag.
+                if urlaub or rec.get("sonderfahrt"):
                     applied = None
                 else:
                     kind, raw_value = weekday_parts
@@ -4405,6 +4425,94 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         await self._handle_pending_trip(pend)
 
     # ----- Import / Export / Backup (Umsetzung in data_transfer.py) --------
+    def _sonderfahrt_kwh(self, rec: dict) -> float:
+        """Verbrauch einer Fahrt fuers Live-SoC-Profil: verbrauch_kwh, sonst
+        aus km und dem Fahrzeug-Schnitt geschaetzt, sonst 0."""
+        kwh = rec.get("verbrauch_kwh")
+        if kwh is not None:
+            return max(0.0, float(kwh))
+        km, avg = rec.get("km"), self._vehicle_avg_consumption_kwh_per_100km()
+        if km and avg:
+            return round(float(km) * float(avg) / 100.0, 2)
+        return 0.0
+
+    async def async_set_sonderfahrt(self, erfasst_ts: int, aktiv: bool = True) -> bool:
+        """Markiert einen bestaetigten Fahrtenbuch-Eintrag als Sonderfahrt
+        (z.B. eine ungewoehnlich lange Fahrt an einem Dienstag) oder nimmt die
+        Markierung zurueck. Nur diese Fahrt faellt aus den Wochentags-
+        Profilen, nicht der ganze Tag (anders als der Urlaubsschalter bzw.
+        async_apply_vehicle_discharge_urlaub_since()):
+
+        - Fahrtenbuch-Profil: wie Urlaub (weekday_applied=None, siehe
+          _apply_trip_baselines()), ebenso die Abfahrtszeiten
+          (engine.departures_from_trips()).
+        - Live-SoC-Profil (vehicle_discharge_weekday_days): der Verbrauch der
+          Fahrt wird vom Tageseintrag abgezogen. Er stammt aus dem
+          Fahrtenbuch (verbrauch_kwh), ist also eine Naeherung des gebuchten
+          Wertes. War er beim Markieren noch nicht (voll) im Tageseintrag,
+          bleibt der Rest als offener Abzug stehen
+          ("vehicle_discharge_abzug_offen") und wird bei der naechsten Buchung
+          dieses Tages verrechnet. Das Zuruecknehmen bucht den Betrag zurueck.
+
+        Idempotent. Gibt False zurueck, wenn kein Eintrag mit erfasst_ts
+        gefunden wurde."""
+        for rec in self.data.get("fahrten") or []:
+            if rec.get("erfasst_ts") != erfasst_ts:
+                continue
+            if bool(rec.get("sonderfahrt")) == bool(aktiv):
+                return True
+            old_rec = dict(rec)
+            self._apply_trip_baselines(old_rec, -1)
+            if aktiv:
+                rec["sonderfahrt"] = True
+            else:
+                rec.pop("sonderfahrt", None)
+            self._apply_trip_baselines(rec, 1, keep_urlaub=True)
+            ts = rec.get("start_ts")
+            if ts is not None:
+                self._sonderfahrt_live_umbuchen(rec, dt_util.as_local(dt_util.utc_from_timestamp(ts)).date(), aktiv)
+            self._log_event(
+                "sonderfahrt_markiert" if aktiv else "sonderfahrt_zurueckgenommen",
+                f"{rec.get('km')} km, {rec.get('datum')}",
+            )
+            self._fahrten_version += 1
+            await self._save()
+            self.hass.bus.async_fire(EVENT_TRIP_EDITED, rec)
+            self.async_set_updated_data(self.data)
+            return True
+        return False
+
+    def _sonderfahrt_live_umbuchen(self, rec: dict, day: date, aktiv: bool) -> None:
+        """Live-SoC-Teil von async_set_sonderfahrt() (siehe dort)."""
+        date_iso = day.isoformat()
+        offen = dict(self.data.get("vehicle_discharge_abzug_offen") or {})
+        # Alte offene Abzuege (ausserhalb des Fensters) nicht ewig mitschleppen.
+        grenze = (dt_util.now().date() - timedelta(days=USAGE_PROFILE_WINDOW_DAYS * 7)).isoformat()
+        offen = {d: v for d, v in offen.items() if d >= grenze}
+        if aktiv:
+            kwh = self._sonderfahrt_kwh(rec)
+            rec["sonderfahrt_abzug_kwh"] = round(kwh, 2)
+            if kwh > 0.0:
+                days, genommen = deduct_weekday_day(self.data.get("vehicle_discharge_weekday_days"), date_iso, kwh)
+                self.data["vehicle_discharge_weekday_days"] = days
+                if kwh - genommen > 0.005:
+                    offen[date_iso] = round(offen.get(date_iso, 0.0) + kwh - genommen, 4)
+        else:
+            kwh = float(rec.pop("sonderfahrt_abzug_kwh", 0.0) or 0.0)
+            storniert = min(offen.get(date_iso, 0.0), kwh)
+            if storniert > 0.0:
+                offen[date_iso] = round(offen[date_iso] - storniert, 4)
+                if offen[date_iso] <= 0.005:
+                    offen.pop(date_iso, None)
+            zurueck = round(kwh - storniert, 2)
+            weekday_days = self.data.get("vehicle_discharge_weekday_days") or {}
+            hat_eintrag = any(e["date"] == date_iso for v in weekday_days.values() for e in v)
+            if zurueck > 0.0 and hat_eintrag:
+                self.data["vehicle_discharge_weekday_days"] = append_recent_weekday_day(
+                    weekday_days, day.weekday(), date_iso, zurueck, USAGE_PROFILE_WINDOW_DAYS
+                )
+        self.data["vehicle_discharge_abzug_offen"] = offen
+
     async def async_import_fahrtenbuch(self, trips: list) -> int:
         """Importiert historische Fahrten aus einer Fremdquelle (Format und
         Verhalten: siehe DataTransfer.import_fahrtenbuch()). Gibt die Anzahl
