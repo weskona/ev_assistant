@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=67  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=68  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "4.0.7";
+const VERSION = "4.0.8";
 // merkt sich den letzten Wechsel der Adresse (auch wenn die Karte dabei aus- und neu eingehängt wird, z. B. durch Detailfenster)
 const NAV = (window.__glowCarNav = window.__glowCarNav || (() => {
   const n = { cur: location.pathname, t: 0 };
@@ -348,7 +348,7 @@ class MgCarDashboard extends HTMLElement {
         </div>
         <div class="grid sgrid" id="pset" hidden>
           <div class="col"><section class="panel" id="swart"></section><section class="panel" id="slk"></section><section class="panel" id="slog"></section></div>
-          <div class="col"><section class="panel" id="surl"></section><section class="panel" id="simg"></section><section class="panel" id="sdata"></section></div>
+          <div class="col"><section class="panel" id="surl"></section><section class="panel" id="sucal" hidden></section><section class="panel" id="simg"></section><section class="panel" id="sdata"></section></div>
         </div>
       </div><dialog class="dlg" id="cardlg"></dialog>`;
     this._built = true;
@@ -1320,7 +1320,7 @@ class MgCarDashboard extends HTMLElement {
       const ed = edit && t.raw?.erfasst_ts != null;
       return `${head}<div class="trip${ed ? " ted" : ""}"${ed ? ` data-act="set" data-k="trip-edit" data-id="${esc(t.raw.erfasst_ts)}" title="${T("Fahrt bearbeiten")}"` : ""}>
         <span class="ttime">${s ? `${pad(s.getHours())}:${pad(s.getMinutes())}` : ""}</span>
-        <span class="troute"><b>${esc(place(t.start_ort))}</b>${icon("mdi:arrow-right")}<b>${esc(place(t.ziel_ort))}</b><small>${t.dauer != null ? `${esc(t.dauer)} min` : ""}${t.avg_speed ? ` · Ø ${de(parseFloat(t.avg_speed), 0)} km/h` : ""}</small></span>
+        <span class="troute"><b>${esc(place(t.start_ort))}</b>${icon("mdi:arrow-right")}<b>${esc(place(t.ziel_ort))}</b><small>${t.raw?.sonderfahrt ? `<em class="tsf">${T("Sonderfahrt")}</em>` : ""}${t.dauer != null ? `${esc(t.dauer)} min` : ""}${t.avg_speed ? ` · Ø ${de(parseFloat(t.avg_speed), 0)} km/h` : ""}</small></span>
         <span class="tkm"><b>${isNaN(km) ? "–" : de(km, 0)}</b><small>km</small></span>
         <span class="tkwh"><b>${isNaN(kwh) ? "–" : de(kwh, 1)}</b><small>kWh${!isNaN(avg) ? ` · ${de(avg, 1)}/100` : ""}</small></span>
       </div>`;
@@ -2214,7 +2214,7 @@ class MgCarDashboard extends HTMLElement {
 
   /* ---------- Unterseite „Einstellungen“ (Wartung, Ladekarten, Einstellungen aus ev_assistant) ---------- */
   _render_set() {
-    this._render_wart(); this._render_lk(); this._render_url(); this._render_img(); this._render_data(); this._render_log();
+    this._render_wart(); this._render_lk(); this._render_url(); this._render_ucal(); this._render_img(); this._render_data(); this._render_log();
   }
   // nur neu zeichnen, wenn sich die Daten geändert haben (sonst gingen offene Datei-Auswahlen verloren)
   _setSig(el, sig) { if (el._sig === sig) return false; el._sig = sig; return true; }
@@ -2381,6 +2381,58 @@ class MgCarDashboard extends HTMLElement {
           <button class="sbt" data-act="set" data-k="url-seit">${icon("mdi:history")}${T("Rückwirkend…")}</button></div>
           <div class="pnote">${T("Schaltet {n} ({id}).", { n: esc(st?.attributes?.friendly_name || id), id: esc(id) })}</div>`
         : `<div class="pnote warn">${T("Keine Urlaubs-Entität gefunden. In den ev_assistant-Optionen eine „Urlaubs-Entität“ eintragen (z. B. einen Helfer input_boolean.urlaub) und sie bei Bedarf in der Karte als car.urlaub_entity angeben.")}</div>`);
+  }
+  /* Urlaubskalender (ev_assistant ab 0.99.85): Zeiträume über den Websocket „ev_assistant/urlaub“, setzen und entfernen
+     über den Dienst set_urlaub_zeitraum (von, bis, aktiv). Erster Tipp = Starttag, zweiter Tipp = Endtag (derselbe Tag = nur
+     dieser Tag); ob gesetzt oder entfernt wird, entscheidet der Starttag. */
+  async _loadUrlaub() {
+    const id = this._evaEntryId(); if (!id || !this._hass?.callWS || this._ucLoading) return;
+    this._ucLoading = true;
+    try { const r = await this._hass.callWS({ type: "ev_assistant/urlaub", config_entry_id: id }); this._uc = { entry: id, t: Date.now(), ...r, zeitraeume: Array.isArray(r?.zeitraeume) ? r.zeitraeume : [] }; }
+    catch (x) { this._uc = { entry: id, t: Date.now(), err: x?.message || String(x) }; }
+    this._ucLoading = false; this._render_ucal();
+  }
+  _ucIso(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
+  _ucIs(iso) { return (this._uc?.zeitraeume || []).some((z) => z.von <= iso && iso <= (z.bis || z.von)); }
+  _ucDate(iso) { const d = new Date(`${iso}T00:00`); return isNaN(d) ? esc(iso) : d.toLocaleDateString(LOC); }
+  _render_ucal() {
+    const el = this.shadowRoot.getElementById("sucal"); if (!el) return;
+    const ok = !!this._hass?.services?.ev_assistant?.set_urlaub_zeitraum && !!this._evaEntryId();
+    el.hidden = !ok; if (!ok) return;
+    if (!this._uc || this._uc.entry !== this._evaEntryId() || Date.now() - this._uc.t > 5 * 60000) this._loadUrlaub();
+    const U = this._uc, today = this._ucIso(new Date());
+    const m = this._ucM || (this._ucM = new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+    if (!this._setSig(el, JSON.stringify([U, this._ucIso(m), this._ucSel, this._ucBusy, LANG]))) return;
+    const nav = `<span class="ucnav"><button class="sic" data-act="ucnav" data-d="-1" aria-label="${T("Zurück")}">${icon("mdi:chevron-left")}</button><b>${MON_LONG[m.getMonth()]} ${m.getFullYear()}</b><button class="sic" data-act="ucnav" data-d="1" aria-label="${T("Weiter")}">${icon("mdi:chevron-right")}</button></span>`;
+    let body;
+    if (!U) body = `<div class="empty">${T("Lädt …")}</div>`;
+    else if (U.err) body = `<div class="pnote warn">${T("Urlaubstage nicht abrufbar:")} ${esc(U.err)}</div>`;
+    else {
+      const first = (m.getDay() + 6) % 7, days = new Date(m.getFullYear(), m.getMonth() + 1, 0).getDate();
+      let cells = PWD.map(([, l]) => `<span class="ucwd">${l}</span>`).join("") + "<span></span>".repeat(first);
+      for (let d = 1; d <= days; d++) {
+        const iso = this._ucIso(new Date(m.getFullYear(), m.getMonth(), d));
+        const cls = [this._ucIs(iso) && "u", iso === today && "td", iso < today && "past", iso === this._ucSel && "sel"].filter(Boolean).join(" ");
+        cells += `<button class="${cls}" data-act="ucday" data-d="${iso}"${this._ucBusy ? " disabled" : ""}>${d}</button>`;
+      }
+      const sel = this._ucSel ? `<div class="ucsel">${icon("mdi:gesture-tap")}<span>${this._ucIs(this._ucSel) ? T("Entfernen ab {d} – Endtag antippen (oder denselben Tag für nur diesen Tag)", { d: this._ucDate(this._ucSel) }) : T("Urlaub ab {d} – Endtag antippen (oder denselben Tag für nur diesen Tag)", { d: this._ucDate(this._ucSel) })}</span><button class="sbt" data-act="ucx">${T("Abbrechen")}</button></div>` : "";
+      const list = (U.zeitraeume || []).filter((z) => (z.bis || z.von) >= today).slice(0, 5).map((z) => {
+        const n = Math.round((new Date(`${z.bis || z.von}T12:00`) - new Date(`${z.von}T12:00`)) / 86400000) + 1;
+        return `<div class="ucz"><span>${this._ucDate(z.von)}${(z.bis || z.von) !== z.von ? ` – ${this._ucDate(z.bis)}` : ""}<small>${n === 1 ? T("1 Tag") : T("{n} Tage", { n })}</small></span><button class="sic" data-act="ucdel" data-von="${esc(z.von)}" data-bis="${esc(z.bis || z.von)}" title="${T("Entfernen")}"${this._ucBusy ? " disabled" : ""}>${icon("mdi:delete-outline")}</button></div>`;
+      }).join("");
+      body = `${U.schalter_aktiv ? `<div class="pnote warn">${T("Der Urlaubsschalter ist an – heute zählt unabhängig vom Kalender als Urlaub.")}</div>` : ""}
+        <div class="ucal">${cells}</div>${sel}
+        ${list ? `<div class="uczl"><h4>${T("Aktuelle und kommende Zeiträume")}</h4>${list}</div>` : ""}
+        <div class="pnote">${T("Tag antippen und dann den Endtag (oder denselben Tag noch einmal). Vergangene Tage werden beim Setzen rückwirkend aus den Nutzungsprofilen genommen; beim Entfernen kommen diese Werte nicht zurück.")}</div>`;
+    }
+    el.innerHTML = this._hd(T("Urlaubskalender"), nav) + body;
+  }
+  _ucSet(von, bis, aktiv) {
+    const today = this._ucIso(new Date());
+    if (!aktiv && von <= today && !window.confirm(T("Bereits entfernte Verbrauchswerte kommen nicht zurück. Urlaub trotzdem entfernen?"))) return;
+    this._ucBusy = true; this._ucSel = null; this._render_ucal();
+    this._evaCall("set_urlaub_zeitraum", { von, ...(bis && bis !== von ? { bis } : {}), aktiv })
+      .catch(() => {}).finally(() => { this._ucBusy = false; this._uc = null; this._loadUrlaub(); });
   }
   _urlToggle() {
     const id = this._urlEntity(); if (!id) return;
@@ -2632,6 +2684,8 @@ class MgCarDashboard extends HTMLElement {
         + grp(T("Zeit"), fld(T("Start"), "start_ts", this._dtl(t.start_ts), "datetime-local") + fld(T("Ende"), "end_ts", this._dtl(t.end_ts), "datetime-local"))
         + grp(T("Strecke"), fld(T("Strecke (km)"), "km", t.km) + fld(T("km-Stand Start"), "odo_start", t.odo_start) + fld(T("km-Stand Ende"), "odo_end", t.odo_end))
         + grp(T("Akku"), fld(T("SoC Start (%)"), "soc_start", t.soc_start) + fld(T("SoC Ende (%)"), "soc_end", t.soc_end) + fld(T("Verbrauch (kWh)"), "verbrauch_kwh", t.verbrauch_kwh))
+        + (this._hass?.services?.ev_assistant?.sonderfahrt ? `<label class="sfld chk"><input type="checkbox" name="sonderfahrt"${t.sonderfahrt ? " checked" : ""}><span>${T("Sonderfahrt")}</span></label>
+          <div class="pnote">${T("Eine ungewöhnliche Fahrt (z. B. ein Ausflug) zählt nicht in die Wochentags-Profile – der restliche Tag bleibt drin.")}</div>` : "")
         + `<div class="srow"><button type="button" class="sbt red" data-act="set" data-k="trip-del" data-id="${esc(F.id)}">${icon("mdi:delete-outline")}${T("Fahrt löschen")}</button></div>`;
     } else if (k === "ch-edit") {
       const h = (this._charges?.list || []).map((x) => x.raw).find((x) => x && String(x.erfasst_ts) === String(F.id)) || {};
@@ -2694,7 +2748,7 @@ class MgCarDashboard extends HTMLElement {
     const err = (m) => { f.querySelector(".ferr").textContent = m; };
     const monthEnd = (m) => { const [y, mo] = m.split("-").map(Number); return `${m}-${String(new Date(y, mo, 0).getDate()).padStart(2, "0")}`; };
     const id = F.id != null ? Number(F.id) : null;
-    let svc = null, data = {};
+    let svc = null, data = {}, sf = null;   // sf: Sonderfahrt umschalten (true/false), null = unverändert
     if (k === "wt-add" || k === "wt-edit") {
       const e = k === "wt-edit", name = v("name"), km = n("km_intervall"), zeit = n("zeit_intervall_monate"), fest = v("festes_datum") || "";
       if (!name && !e) return err(T("Bitte einen Namen angeben."));
@@ -2759,6 +2813,7 @@ class MgCarDashboard extends HTMLElement {
       // Zeiten nur mitschicken, wenn geändert (das Feld kennt keine Sekunden)
       const o = (this._evaTrips?.list || []).map((x) => x.raw).find((x) => x && String(x.erfasst_ts) === String(F.id)) || {};
       for (const x of ["start_ts", "end_ts"]) { const y = this._fromDtl(v(x)); if (y != null && v(x) !== this._dtl(o[x])) data[x] = y; }
+      if (f.elements.sonderfahrt && f.elements.sonderfahrt.checked !== !!o.sonderfahrt) sf = f.elements.sonderfahrt.checked;
     } else if (k === "ch-edit") {
       svc = "edit_charge"; data = { erfasst_ts: Number(F.id) };
       for (const [x, key] of [["kwh", "kwh"], ["price_kwh", "price_kwh"], ["start_fee", "start_fee"], ["block_fee", "block_fee"], ["time_fee", "time_fee"], ["soc_start", "soc_start"], ["soc_end", "soc_end"]]) { const y = n(x); if (Number.isNaN(y)) return err(T("Bitte nur Zahlen eingeben.")); if (y !== "" && y != null) data[key] = y; }
@@ -2784,7 +2839,7 @@ class MgCarDashboard extends HTMLElement {
     }
     if (!svc) return;
     const btn = f.querySelector('[data-k="save"]'); btn.disabled = true; err("");
-    this._evaCall(svc, data).then(() => {
+    this._evaCall(svc, data).then(() => (sf != null ? this._evaCall("sonderfahrt", { erfasst_ts: Number(F.id), aktiv: sf }) : null)).then(() => {
       if (k === "restore") this._restore = null;
       if (k.startsWith("trip")) { this._loadTrips(true); return this._openTrips(); }
       if (k.startsWith("ch-")) { this._charges = null; return this._openCharges(); }
@@ -3634,6 +3689,16 @@ class MgCarDashboard extends HTMLElement {
     if (act === "page") { this._pg = el.dataset.p; try { localStorage.setItem("mg-car-page", this._pg); } catch (x) {} this._showPage(); this._update(true); requestAnimationFrame(() => { this._fit(); this._render_trips(); }); return; }
     if (act === "ana") { this._openAna(el.dataset.k); return; }
     if (act === "set") { this._setAct(el.dataset.k, el.dataset); return; }
+    if (act === "ucnav") { const m = this._ucM || new Date(); this._ucM = new Date(m.getFullYear(), m.getMonth() + Number(el.dataset.d), 1); this._render_ucal(); return; }
+    if (act === "ucx") { this._ucSel = null; this._render_ucal(); return; }
+    if (act === "ucdel") { this._ucSet(el.dataset.von, el.dataset.bis, false); return; }
+    if (act === "ucday") {   // erster Tipp: Starttag, zweiter: Endtag
+      const d = el.dataset.d;
+      if (!this._ucSel) { this._ucSel = d; this._render_ucal(); return; }
+      const a = d < this._ucSel ? d : this._ucSel, b = d < this._ucSel ? this._ucSel : d;
+      this._ucSet(a, b, !this._ucIs(this._ucSel));
+      return;
+    }
     if (act === "cardclose") { this.shadowRoot.getElementById("cardlg")?.close(); return; }
     if (!entity) return;
     if (act === "more") {
@@ -4301,6 +4366,21 @@ input[type=date],input[type=datetime-local],input[type=month]{cursor:pointer;car
 @container (max-width:1180px){.pgrid{grid-template-columns:1fr!important}.ptiles{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @container (max-width:720px){.pdays{grid-template-columns:repeat(4,minmax(0,1fr))}.pcols{grid-template-columns:1fr}}
 .sgrid{grid-template-columns:1.5fr 1fr!important;align-content:start}
+.tsf{font-style:normal;font-weight:600;color:var(--gold);margin-right:6px}
+.sfld.chk span{font-weight:600}
+.ucnav{display:inline-flex;align-items:center;gap:6px}.ucnav b{min-width:120px;text-align:center;font-size:14px}
+.ucal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px;margin:4px 0 10px}
+.ucwd{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:center;padding:2px 0}
+.ucal button{height:34px;border-radius:9px;background:var(--tile);border:1px solid var(--tileb);font-size:13.5px;font-weight:600;text-align:center;font-variant-numeric:tabular-nums}
+.ucal button.past{color:var(--muted)}
+.ucal button.u{background:rgba(56,189,248,.2);border-color:rgba(56,189,248,.55);color:#bae6fd}
+.ucal button.td{box-shadow:inset 0 0 0 2px var(--gold)}
+.ucal button.sel{background:var(--gold);border-color:var(--gold);color:#111}
+.ucsel{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;background:rgba(247,183,51,.08);border:1px solid rgba(247,183,51,.35);margin-bottom:10px;font-size:13px}
+.ucsel ha-icon{--mdc-icon-size:18px;color:var(--gold);flex:none}.ucsel span{flex:1}
+.uczl h4{margin:4px 0 6px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.ucz{display:flex;align-items:center;gap:10px;padding:6px 10px;border-radius:12px;background:var(--tile);border:1px solid var(--tileb);margin-bottom:4px;font-size:14px;font-weight:600}
+.ucz span{flex:1;display:flex;align-items:baseline;gap:8px}.ucz small{font-size:12px;color:var(--muted);font-weight:500}
 .urlon{display:inline-flex;align-items:center;gap:6px;color:var(--cyan);font-weight:600}.urlon ha-icon{--mdc-icon-size:18px}
 .pnote.warn{color:var(--orange)}.pnote.err{color:#f87171}.pnote.err ha-icon{--mdc-icon-size:16px;vertical-align:-3px}
 .fbprev{display:flex;flex-direction:column;border:1px solid var(--tileb);border-radius:14px;overflow:hidden;font-size:13px}
@@ -4937,6 +5017,17 @@ const I18N = {
     "Bitte eine Zielzeit in der Zukunft wählen.": "Please choose a target time in the future.",
     "Keine Antwort von ev_assistant – Ladeplan vermutlich nicht gesetzt.": "No response from ev_assistant – charge plan probably not set.",
     "Ladeplan konnte nicht gesetzt werden:": "Charge plan could not be set:",
+    "Sonderfahrt": "Special trip",
+    "Eine ungewöhnliche Fahrt (z. B. ein Ausflug) zählt nicht in die Wochentags-Profile – der restliche Tag bleibt drin.": "An unusual trip (e.g. an outing) is left out of the weekday profiles – the rest of the day stays in.",
+    "Urlaubskalender": "Vacation calendar",
+    "Urlaubstage nicht abrufbar:": "Vacation days not available:",
+    "Entfernen ab {d} – Endtag antippen (oder denselben Tag für nur diesen Tag)": "Remove from {d} – tap the end day (or the same day for just this day)",
+    "Urlaub ab {d} – Endtag antippen (oder denselben Tag für nur diesen Tag)": "Vacation from {d} – tap the end day (or the same day for just this day)",
+    "{n} Tage": "{n} days",
+    "Der Urlaubsschalter ist an – heute zählt unabhängig vom Kalender als Urlaub.": "The vacation switch is on – today counts as vacation regardless of the calendar.",
+    "Aktuelle und kommende Zeiträume": "Current and upcoming periods",
+    "Tag antippen und dann den Endtag (oder denselben Tag noch einmal). Vergangene Tage werden beim Setzen rückwirkend aus den Nutzungsprofilen genommen; beim Entfernen kommen diese Werte nicht zurück.": "Tap a day and then the end day (or the same day again). Past days are removed from the usage profiles retroactively when set; removing them does not bring those values back.",
+    "Bereits entfernte Verbrauchswerte kommen nicht zurück. Urlaub trotzdem entfernen?": "Consumption values already removed will not come back. Remove vacation anyway?",
     "Mindestens": "Minimum",
     "Rest heute": "Rest of today",
     "Mindestreichweite, die bis zur Abfahrt da sein muss": "Minimum range required by departure",
