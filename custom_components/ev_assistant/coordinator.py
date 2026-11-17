@@ -77,6 +77,7 @@ from .const import (
     CONF_TRIP_IDLE_TIMEOUT,
     CONF_TRIP_MIN_KM,
     CONF_URLAUB_ENTITY,
+    CONF_URLAUB_KALENDER_ENTITY,
     CONF_USABLE_KWH,
     CONF_USAGE_PROFILE_BUFFER_KM,
     CONF_USAGE_PROFILE_BUFFER_PCT,
@@ -182,6 +183,9 @@ from .const import (
     TRIP_CONSUMPTION_MIN_KWH_100KM,
     TRIP_END_SOC_CORRECTION_MAX_DELTA,
     TRIP_END_SOC_CORRECTION_WINDOW_S,
+    URLAUB_KALENDER_AHEAD_DAYS,
+    URLAUB_KALENDER_BACK_DAYS,
+    URLAUB_KALENDER_REFRESH_MIN,
     USAGE_PROFILE_BUFFER_KM_MAX,
     USAGE_PROFILE_WINDOW_DAYS,
     VEHICLE_DISCHARGE_CONFIRM_SECONDS,
@@ -225,6 +229,7 @@ from .engine import (
     calculate_co2_savings,
     calculate_range_km,
     calculate_savings,
+    calendar_events_to_intervals,
     cap_surplus_to_generation,
     charge_before_pv_decision,
     charge_cost,
@@ -247,6 +252,8 @@ from .engine import (
     home_charging_tick_split,
     home_session_solar_and_cost,
     house_weekday_usage_profile,
+    intervals_contain,
+    intervals_coverage_s,
     is_plausible_trip_consumption,
     kwh_to_km,
     kwh_to_soc_percent,
@@ -949,6 +956,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self._build_trip_detector()
         await self._setup_sources()
         self._setup_evcc_client()
+        self._setup_urlaub_kalender()
         # Seedet die Kosten-/kWh-Perioden-Baselines sofort statt erst beim
         # naechsten taeglichen Rollover (siehe _daily_cost_period_rollover()/
         # _daily_kwh_period_rollover()) -- sonst waeren "Kosten/kWh
@@ -1388,6 +1396,64 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         self.async_set_updated_data(self.data)
         return result
 
+    def _setup_urlaub_kalender(self) -> None:
+        """Startet die regelmaessige Abfrage des optionalen Urlaubs-Kalenders
+        (CONF_URLAUB_KALENDER_ENTITY): einmal kurz nach dem Start (die
+        Kalender-Integration ist dann meist schon geladen), danach alle
+        URLAUB_KALENDER_REFRESH_MIN Minuten."""
+        if not self._opt(CONF_URLAUB_KALENDER_ENTITY):
+            return
+
+        async def _refresh(_now=None) -> None:
+            await self.async_refresh_urlaub_kalender()
+
+        self._unsub.append(async_call_later(self.hass, 20, _refresh))
+        self._unsub.append(
+            async_track_time_interval(self.hass, _refresh, timedelta(minutes=URLAUB_KALENDER_REFRESH_MIN))
+        )
+
+    async def async_refresh_urlaub_kalender(self) -> bool:
+        """Liest die Termine des Urlaubs-Kalenders (calendar.get_events) und
+        speichert sie als Zeitfenster ("urlaub_kalender_intervalle"). Jeder
+        Abruf ersetzt die Liste (gelöschte Termine verschwinden). Ist der
+        Kalender nicht erreichbar, bleibt der letzte Stand bestehen. Gibt
+        True zurueck, wenn die Termine gelesen werden konnten."""
+        entity_id = self._opt(CONF_URLAUB_KALENDER_ENTITY)
+        if not entity_id:
+            if self.data.get("urlaub_kalender_intervalle"):
+                self.data["urlaub_kalender_intervalle"] = []
+                self._save_soon()
+            return False
+        now = dt_util.now()
+        try:
+            response = await self.hass.services.async_call(
+                "calendar",
+                "get_events",
+                {
+                    "entity_id": entity_id,
+                    "start_date_time": (now - timedelta(days=URLAUB_KALENDER_BACK_DAYS)).isoformat(),
+                    "end_date_time": (now + timedelta(days=URLAUB_KALENDER_AHEAD_DAYS)).isoformat(),
+                },
+                blocking=True,
+                return_response=True,
+            )
+        except Exception as err:  # noqa: BLE001 -- jede Störung der Kalender-Integration: letzter Stand bleibt
+            _LOGGER.warning("ev_assistant: Urlaubs-Kalender %s nicht lesbar: %s", entity_id, err)
+            if not self.data.get("urlaub_kalender_fehler"):
+                self._log_event("urlaub_kalender_fehler", f"{entity_id}: {err}")
+            self.data["urlaub_kalender_fehler"] = True
+            return False
+        events = ((response or {}).get(entity_id) or {}).get("events") or []
+        intervals = calendar_events_to_intervals(events, dt_util.DEFAULT_TIME_ZONE)
+        if self.data.pop("urlaub_kalender_fehler", None):
+            self._log_event("urlaub_kalender_wieder_lesbar", entity_id)
+        if intervals != (self.data.get("urlaub_kalender_intervalle") or []):
+            self.data["urlaub_kalender_intervalle"] = intervals
+            self._log_event("urlaub_kalender_aktualisiert", f"{len(intervals)} Zeitfenster")
+            await self._save()
+            self.async_set_updated_data(self.data)
+        return True
+
     def urlaub_info(self) -> dict:
         """Stand des Urlaubskalenders fuer die Karte (WebSocket
         ev_assistant/urlaub): gesetzte Zeitraeume, Schalter-Zustand, ob heute
@@ -1397,7 +1463,28 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "schalter_konfiguriert": bool(self._opt(CONF_URLAUB_ENTITY)),
             "schalter_aktiv": self._urlaub_schalter_an(),
             "aktiv_heute": self._urlaub_aktiv(),
+            "kalender_konfiguriert": bool(self._opt(CONF_URLAUB_KALENDER_ENTITY)),
+            "kalender_termine": self._urlaub_kalender_termine(),
         }
+
+    def _urlaub_kalender_termine(self) -> list:
+        """Die gelesenen Termine des Urlaubs-Kalenders fuer die Karte (nur
+        lesbar): `start`/`ende` als lokale Zeit (ISO), `von`/`bis` als die
+        lokalen Tage, die der Termin beruehrt (beide eingeschlossen; endet er
+        genau um Mitternacht, zaehlt der Vortag als letzter Tag)."""
+        termine = []
+        for i in self.data.get("urlaub_kalender_intervalle") or []:
+            start = dt_util.as_local(dt_util.utc_from_timestamp(float(i[0])))
+            ende = dt_util.as_local(dt_util.utc_from_timestamp(float(i[1])))
+            um_mitternacht = ende.hour == 0 and ende.minute == 0 and ende.second == 0
+            letzter = ende.date() - timedelta(days=1) if um_mitternacht else ende.date()
+            termine.append({
+                "start": start.isoformat(),
+                "ende": ende.isoformat(),
+                "von": start.date().isoformat(),
+                "bis": max(letzter, start.date()).isoformat(),
+            })
+        return termine
 
     async def async_set_urlaub_zeitraum(
         self, von: date, bis: Optional[date] = None, aktiv: bool = True
@@ -2619,7 +2706,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         Eintrag ausschliesslich vom taeglichen Rollover
         (_update_vehicle_discharge_profile())."""
         observed_date = dt_util.as_local(dt_util.utc_from_timestamp(observed_ts)).date()
-        if self._urlaub_schalter_an() or self._urlaub_tag(observed_date):
+        if self._urlaub_schalter_an() or self._urlaub_tag(observed_date) or self._urlaub_zeit(observed_ts):
             return
         weekday = observed_date.weekday()
         weekday_days = dict(self.data.get("vehicle_discharge_weekday_days") or {})
@@ -4289,7 +4376,10 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                 # Urlaubsstand, statt ihn am heutigen Schalter neu zu bewerten.
                 urlaub = (
                     bool(rec.get("urlaub")) if keep_urlaub and "urlaub" in rec
-                    else self._urlaub_schalter_an() or self._urlaub_tag(trip_date)
+                    else (
+                        self._urlaub_schalter_an() or self._urlaub_tag(trip_date)
+                        or self._urlaub_zeit(float(ts))
+                    )
                 )
                 rec["urlaub"] = urlaub
                 # Sonderfahrt (Nutzerwunsch, siehe async_set_sonderfahrt()):
@@ -6490,7 +6580,27 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         """Ob heute Urlaub ist: der Schalter (_urlaub_schalter_an()) ist "an"
         ODER heute liegt in einem Zeitraum des Urlaubskalenders. Wirkung wie
         beim Schalter (siehe unten)."""
-        return self._urlaub_schalter_an() or self._urlaub_tag(dt_util.now().date())
+        return (
+            self._urlaub_schalter_an()
+            or self._urlaub_tag(dt_util.now().date())
+            or self._urlaub_zeit(time.time())
+        )
+
+    def _urlaub_zeit(self, ts: float) -> bool:
+        """Ob der Zeitpunkt `ts` in einem Termin des Urlaubs-Kalenders liegt
+        (Zeitfenster von Start bis Ende, siehe async_refresh_urlaub_kalender())."""
+        return intervals_contain(self.data.get("urlaub_kalender_intervalle"), ts)
+
+    def _urlaub_tag_ueberwiegend(self, day: date) -> bool:
+        """Ob die Termine des Urlaubs-Kalenders mindestens die Haelfte des
+        lokalen Tages `day` abdecken -- fuer Profile, die einen ganzen Tag
+        als Summe fuehren (Hausverbrauch, nullte Eintraege des Fahrzeugprofils)
+        und deshalb keine Uhrzeit kennen."""
+        start = dt_util.start_of_local_day(day)
+        end = dt_util.start_of_local_day(day + timedelta(days=1))
+        return intervals_coverage_s(
+            self.data.get("urlaub_kalender_intervalle"), start.timestamp(), end.timestamp()
+        ) >= 0.5 * (end - start).total_seconds()
 
     def _urlaub_schalter_an(self) -> bool:
         """Ob die optionale Urlaubs-Entitaet (CONF_URLAUB_ENTITY) gerade
@@ -6565,7 +6675,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             # zeitpunkt fuer diesen Tag, es gibt hier (anders als beim
             # Fahrtenbuch) keine spaetere Korrektur/Loeschung.
             yesterday = dt_util.now().date() - timedelta(days=1)
-            if self._urlaub_schalter_an() or self._urlaub_tag(yesterday):
+            if self._urlaub_schalter_an() or self._urlaub_tag(yesterday) or self._urlaub_tag_ueberwiegend(yesterday):
                 return
             # Wurde der Rollover mehr als einen Tag verpasst (HA lag ueber
             # Mitternacht still), steckt in "prev" der Verbrauch MEHRERER Tage --
@@ -6738,7 +6848,7 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                     # _update_house_usage_profile() -- ein Urlaubstag zaehlt
                     # gar nicht erst als beobachteter Tag, sonst wuerde er
                     # den Schnitt als "0 kWh Tag" trotzdem nach unten ziehen.
-                    if not (self._urlaub_schalter_an() or self._urlaub_tag(d)):
+                    if not (self._urlaub_schalter_an() or self._urlaub_tag(d) or self._urlaub_tag_ueberwiegend(d)):
                         weekday_days = append_recent_weekday_day(
                             weekday_days, d.weekday(), date_key, 0.0, USAGE_PROFILE_WINDOW_DAYS
                         )

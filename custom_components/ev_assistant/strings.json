@@ -86,13 +86,15 @@
           "evcc_vehicle_name": "Fahrzeugname in evcc",
           "home_consumption_entity": "Hausverbrauch (ohne Auto/Speicher)",
           "battery_charge_entity": "Speicherladung (optional, falls nicht bereits im Hausverbrauch enthalten)",
-          "urlaub_entity": "Urlaubs-Entität (optional)"
+          "urlaub_entity": "Urlaubs-Entität (optional)",
+          "urlaub_kalender_entity": "Urlaubs-Kalender (optional)"
         },
         "data_description": {
           "evcc_host": "Optional — ohne sie bleiben Ladeleistung/Modus/Tarife/PV im Panel einfach leer, alles andere funktioniert unverändert weiter.",
           "home_consumption_entity": "Optional, kumulativer Energiezähler in kWh (aufsummierter Zählerstand, kein Leistungssensor) — speist das Haus-Nutzungsprofil für die evcc-Modus-/SoC-Steuerung oben (siehe Nutzungsprofil-Tab im Panel). Dasselbe Feld wie im Schritt \"Heimladen\", dort für die Solaranteil-/Kosten-Schätzung genutzt.",
           "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch (gleiche Einheit: kumulativer Energiezähler in kWh, kein Leistungssensor) — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
-          "urlaub_entity": "Optional, z.B. ein input_boolean/switch/binary_sensor \"an\" während Urlaub — betroffene Tage werden dann aus den Wochentags-Nutzungsprofilen (Fahrzeug & Haus) ausgeschlossen statt den Schnitt zu verzerren, und die evcc-Modus-/SoC-Steuerung pausiert."
+          "urlaub_entity": "Optional, z.B. ein input_boolean/switch/binary_sensor \"an\" während Urlaub — betroffene Tage werden dann aus den Wochentags-Nutzungsprofilen (Fahrzeug & Haus) ausgeschlossen statt den Schnitt zu verzerren, und die evcc-Modus-/SoC-Steuerung pausiert.",
+          "urlaub_kalender_entity": "Optional, eine calendar-Entität (z. B. calendar.familien_urlaub). Jeder Termin gilt als Urlaub von seiner Startzeit bis zu seinem Ende: Fahrten und Verbrauch in diesem Zeitfenster werden aus den Wochentags-Nutzungsprofilen ausgeschlossen, davor und danach zählt normal. Ganztägige Termine gelten für ganze Tage. Wirkt zusätzlich zum Urlaubs-Schalter und zu den im Panel gesetzten Urlaubstagen."
         }
       },
       "evcc_loadpoint": {
@@ -278,6 +280,7 @@
           "home_consumption_entity": "Hausverbrauch (ohne Auto/Speicher)",
           "battery_charge_entity": "Speicherladung (optional, falls nicht bereits im Hausverbrauch enthalten)",
           "urlaub_entity": "Urlaubs-Entität (optional)",
+          "urlaub_kalender_entity": "Urlaubs-Kalender (optional)",
           "weekly_full_charge_enabled": "Wöchentliche Vollladung fürs Zellbalancing",
           "weekly_full_charge_interval_days": "Intervall (Tage, seit letzter Vollladung)",
           "evcc_departure_fallback_enabled": "Rückfall-Abfahrtszeit verwenden (aus = keine Frist)",
@@ -303,6 +306,7 @@
           "home_consumption_entity": "Optional, kumulativer Energiezähler in kWh (aufsummierter Zählerstand, kein Leistungssensor) — speist das Haus-Nutzungsprofil für die evcc-Modus-/SoC-Steuerung oben (siehe Nutzungsprofil-Tab im Panel). Dasselbe Feld wie im Schritt \"Heimladen\", dort für die Solaranteil-/Kosten-Schätzung genutzt.",
           "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch (gleiche Einheit: kumulativer Energiezähler in kWh, kein Leistungssensor) — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
           "urlaub_entity": "Optional, z.B. ein input_boolean/switch/binary_sensor \"an\" während Urlaub — betroffene Tage werden dann aus den Wochentags-Nutzungsprofilen (Fahrzeug & Haus) ausgeschlossen statt den Schnitt zu verzerren, und die evcc-Modus-/SoC-Steuerung pausiert.",
+          "urlaub_kalender_entity": "Optional, eine calendar-Entität (z. B. calendar.familien_urlaub). Jeder Termin gilt als Urlaub von seiner Startzeit bis zu seinem Ende: Fahrten und Verbrauch in diesem Zeitfenster werden aus den Wochentags-Nutzungsprofilen ausgeschlossen, davor und danach zählt normal. Ganztägige Termine gelten für ganze Tage. Wirkt zusätzlich zum Urlaubs-Schalter und zu den im Panel gesetzten Urlaubstagen.",
           "weekly_full_charge_enabled": "Deaktiviert (Default): keine Änderung am bisherigen Verhalten. Aktiviert: ist seit der letzten erreichten Vollladung (98% oder mehr, egal ob manuell oder automatisch) das Intervall unten verstrichen, überstimmt die evcc-Steuerung das profilbasierte Ziel mit Ziel-SoC=100%/Modus=minpv, bis 100% erreicht sind. Steuert NUR Ziel-SoC + Modus — WOHER der Ladestrom kommt (PV/Netz/Speicher), entscheidet weiterhin evcc selbst (Mindestladeleistung im minpv-Modus, Speicher-Entladesperre als eigene evcc-Einstellung). Zusätzlich per Panel-Schalter umschaltbar, ohne diesen Options-Flow erneut öffnen zu müssen.",
           "weekly_full_charge_interval_days": "Nur relevant, wenn oben aktiviert. Eine manuelle Vollladung zählt genauso wie eine erzwungene — der Zähler unterscheidet den Grund nicht.",
           "evcc_departure_fallback_enabled": "Aus: Gibt es keine Abfahrtsstatistik und keine Entität, gibt es keine Frist, das sanfte Nachladen macht dann keinen Zeitdruck (z. B. bei unregelmäßigen Abfahrten).",

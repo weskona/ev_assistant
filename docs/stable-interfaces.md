@@ -160,6 +160,7 @@ Stored in the config entry (`data`/`options`). Existing installations keep worki
 | evcc | `home_consumption_entity` | – |
 | evcc | `pv_forecast_today_remaining_entity` | – |
 | evcc | `urlaub_entity` | – |
+| evcc | `urlaub_kalender_entity` | – |
 | evcc | `wallbox_min_power_w` | – |
 | evcc | `weekly_full_charge_enabled` | – |
 | evcc | `weekly_full_charge_interval_days` | – |

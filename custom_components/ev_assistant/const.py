@@ -59,6 +59,19 @@ CONF_PV_GENERATION_ENTITY = "pv_generation_entity"
 # unavailable wird als "nicht im Urlaub" behandelt (fail-safe, normal
 # buchen) -- siehe _urlaub_aktiv().
 CONF_URLAUB_ENTITY = "urlaub_entity"
+# Optionaler Urlaubs-Kalender (calendar.*): jeder Termin gilt von seiner
+# Startzeit bis zu seinem Ende als Urlaub (Zeitfenster, nicht ganze Tage --
+# Fahrten VOR dem Start, z.B. ein halber Arbeitstag, zaehlen normal).
+# Ganztaegige Termine decken ganze Tage ab. Wirkt zusaetzlich zum Schalter
+# (CONF_URLAUB_ENTITY) und zu den im Panel gesetzten Urlaubstagen
+# ("urlaub_zeitraeume"). Siehe coordinator.py::async_refresh_urlaub_kalender().
+CONF_URLAUB_KALENDER_ENTITY = "urlaub_kalender_entity"
+# Wie oft der Urlaubs-Kalender abgefragt wird, und das Abfragefenster
+# (Tage zurueck/voraus): zurueck, weil Fahrten und Verbrauch Tage spaeter
+# gebucht/bestaetigt werden koennen und dann das Zeitfenster kennen muessen.
+URLAUB_KALENDER_REFRESH_MIN = 30
+URLAUB_KALENDER_BACK_DAYS = 35
+URLAUB_KALENDER_AHEAD_DAYS = 400
 # Push-Benachrichtigungen: Zielgeraete (notify.*-Entitaeten der modernen,
 # entity-basierten Notify-Plattform statt der alten "notify.<service>"-
 # Aufrufe per Freitext) + welche Ereignisse ueberhaupt einen Push ausloesen

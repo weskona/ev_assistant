@@ -73,6 +73,7 @@ from .const import (
     CONF_TRIP_IDLE_TIMEOUT,
     CONF_TRIP_MIN_KM,
     CONF_URLAUB_ENTITY,
+    CONF_URLAUB_KALENDER_ENTITY,
     CONF_USABLE_KWH,
     CONF_USAGE_PROFILE_BUFFER_KM,
     CONF_VEHICLE_HERSTELLER,
@@ -189,6 +190,7 @@ _WALLBOX_CHARGING_ENTITY = selector.EntitySelector(
 _URLAUB_ENTITY = selector.EntitySelector(
     selector.EntitySelectorConfig(domain=["input_boolean", "switch", "binary_sensor"])
 )
+_URLAUB_KALENDER_ENTITY = selector.EntitySelector(selector.EntitySelectorConfig(domain=["calendar"]))
 _OUTSIDE_TEMP_ENTITY = selector.EntitySelector(
     # Kein device_class-Filter: weather.*-Entitaeten setzen "device_class"
     # nicht (die Temperatur steckt im Attribut "temperature", siehe
@@ -421,6 +423,9 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
         vol.Optional(CONF_HOME_CONSUMPTION_ENTITY, description=sv(CONF_HOME_CONSUMPTION_ENTITY)): _HOME_CONSUMPTION_ENTITY,
         vol.Optional(CONF_BATTERY_CHARGE_ENTITY, description=sv(CONF_BATTERY_CHARGE_ENTITY)): _BATTERY_CHARGE_ENTITY,
         vol.Optional(CONF_URLAUB_ENTITY, description=sv(CONF_URLAUB_ENTITY)): _URLAUB_ENTITY,
+        vol.Optional(
+            CONF_URLAUB_KALENDER_ENTITY, description=sv(CONF_URLAUB_KALENDER_ENTITY)
+        ): _URLAUB_KALENDER_ENTITY,
     })
 
 

@@ -2121,6 +2121,64 @@ def vacation_ranges_contains(ranges, day_iso: str) -> bool:
     )
 
 
+# ----- Urlaubs-Kalender: Termine als Zeitfenster -----------------------------
+# Ein Termin gilt von seiner Startzeit bis zu seinem Ende als Urlaub (Zeitfenster
+# als Unix-Zeitstempel [start, end)). Ganztaegige Termine ("YYYY-MM-DD", Ende
+# exklusiv, wie bei HA) decken ganze lokale Tage ab. Reine Funktionen ohne HA.
+
+def calendar_events_to_intervals(events, tz) -> list:
+    """Wandelt Termine (Dicts mit "start"/"end" als ISO-Datum oder -Datum/Uhrzeit,
+    wie `calendar.get_events` sie liefert) in eine sortierte, zusammengefasste
+    Liste [[start_ts, end_ts], ...]. Datum ohne Uhrzeit = lokaler Mitternachts-
+    beginn des Tages; Zeiten ohne Zeitzone gelten als lokal. Eintraege ohne
+    gueltigen Start/Ende oder mit Ende <= Start fallen weg."""
+    def _ts(value):
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            if len(text) == 10:  # nur Datum
+                return datetime.combine(date.fromisoformat(text), datetime.min.time(), tzinfo=tz).timestamp()
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=tz)
+        return parsed.timestamp()
+
+    raw = []
+    for ev in events or []:
+        if not isinstance(ev, dict):
+            continue
+        start, end = _ts(ev.get("start")), _ts(ev.get("end"))
+        if start is None or end is None or end <= start:
+            continue
+        raw.append((start, end))
+    raw.sort()
+    merged: list = []
+    for start, end in raw:
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return merged
+
+
+def intervals_contain(intervals, ts: float) -> bool:
+    """Ob der Zeitstempel in einem Zeitfenster [start, end) liegt."""
+    return any(float(i[0]) <= ts < float(i[1]) for i in intervals or [])
+
+
+def intervals_coverage_s(intervals, window_start: float, window_end: float) -> float:
+    """Wie viele Sekunden von [window_start, window_end) die Zeitfenster abdecken."""
+    total = 0.0
+    for i in intervals or []:
+        lo, hi = max(float(i[0]), window_start), min(float(i[1]), window_end)
+        if hi > lo:
+            total += hi - lo
+    return total
+
+
 def deduct_weekday_day(weekday_days: dict, date_iso: str, kwh: float) -> tuple[dict, float]:
     """Zieht bis zu `kwh` vom Eintrag zu `date_iso` ab (nie unter 0) -- fuer
     eine Sonderfahrt (siehe coordinator.py::async_set_sonderfahrt()): im

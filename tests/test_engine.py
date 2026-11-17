@@ -6012,3 +6012,75 @@ def test_normalize_vacation_ranges_verwirft_kaputte_eintraege():
     r = normalize_vacation_ranges([{"von": "kaputt", "bis": "2026-12-01"}, {"bis": "2026-12-01"}, None,
                                    {"von": "2026-12-01", "bis": "2026-12-02"}])
     assert r == [{"von": "2026-12-01", "bis": "2026-12-02"}]
+
+
+# ----- Urlaubs-Kalender: Termine als Zeitfenster -------------------------------
+
+def test_calendar_events_zeitfenster_mit_uhrzeit():
+    from datetime import timezone as tzmod
+
+    from engine import calendar_events_to_intervals
+
+    tz = tzmod(timedelta(hours=1))
+    r = calendar_events_to_intervals(
+        [{"start": "2026-12-24T14:00:00+01:00", "end": "2026-12-28T10:00:00+01:00"}], tz
+    )
+    assert r == [[datetime(2026, 12, 24, 14, 0, tzinfo=tz).timestamp(), datetime(2026, 12, 28, 10, 0, tzinfo=tz).timestamp()]]
+
+
+def test_calendar_events_ganztaegig_ende_exklusiv_und_lokale_tage():
+    from datetime import timezone as tzmod
+
+    from engine import calendar_events_to_intervals, intervals_contain
+
+    tz = tzmod(timedelta(hours=1))
+    r = calendar_events_to_intervals([{"start": "2026-12-24", "end": "2026-12-27"}], tz)
+    assert intervals_contain(r, datetime(2026, 12, 24, 0, 0, tzinfo=tz).timestamp())
+    assert intervals_contain(r, datetime(2026, 12, 26, 23, 59, tzinfo=tz).timestamp())
+    assert not intervals_contain(r, datetime(2026, 12, 27, 0, 0, tzinfo=tz).timestamp())
+    assert not intervals_contain(r, datetime(2026, 12, 23, 23, 59, tzinfo=tz).timestamp())
+
+
+def test_calendar_events_ohne_zeitzone_gilt_lokal_und_kaputtes_faellt_weg():
+    from datetime import timezone as tzmod
+
+    from engine import calendar_events_to_intervals
+
+    tz = tzmod(timedelta(hours=2))
+    r = calendar_events_to_intervals(
+        [
+            {"start": "2026-07-01T08:00:00", "end": "2026-07-01T09:00:00"},
+            {"start": "kaputt", "end": "2026-07-02"},
+            {"start": "2026-07-03T10:00:00", "end": "2026-07-03T10:00:00"},  # leer
+            None,
+        ],
+        tz,
+    )
+    assert r == [[datetime(2026, 7, 1, 8, 0, tzinfo=tz).timestamp(), datetime(2026, 7, 1, 9, 0, tzinfo=tz).timestamp()]]
+
+
+def test_calendar_events_ueberlappende_termine_werden_zusammengefasst():
+    from datetime import timezone as tzmod
+
+    from engine import calendar_events_to_intervals
+
+    tz = tzmod(timedelta(hours=1))
+    r = calendar_events_to_intervals(
+        [
+            {"start": "2026-12-24", "end": "2026-12-26"},
+            {"start": "2026-12-25T12:00:00+01:00", "end": "2026-12-28"},
+        ],
+        tz,
+    )
+    assert len(r) == 1
+    assert r[0][0] == datetime(2026, 12, 24, 0, 0, tzinfo=tz).timestamp()
+    assert r[0][1] == datetime(2026, 12, 28, 0, 0, tzinfo=tz).timestamp()
+
+
+def test_intervals_coverage_s():
+    from engine import intervals_coverage_s
+
+    assert intervals_coverage_s([[100.0, 200.0]], 150.0, 300.0) == 50.0
+    assert intervals_coverage_s([[100.0, 200.0]], 0.0, 50.0) == 0.0
+    assert intervals_coverage_s([[0.0, 10.0], [20.0, 30.0]], 0.0, 100.0) == 20.0
+    assert intervals_coverage_s(None, 0.0, 100.0) == 0.0
