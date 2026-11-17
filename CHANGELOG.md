@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [Unreleased]
+
+### Added
+
+- **Vacation days are visible without the card: the `evcc_mode_control` sensor now has the attributes `urlaub_zeitraeume` (the days set by hand) and `urlaub_kalender_termine` (the events read from the vacation calendar, with `start`, `ende`, `von`, `bis`), next to `urlaub_aktiv`.** You can see them under Developer tools → States, for example to check that the calendar is read and when an event starts, before the card shows them. Only today's and future entries (back to yesterday), at most 10 each, so the attribute set stays small. No new entity, no new setting.
+
 ## [0.99.88] - 2026-11-17
 
 ### Added

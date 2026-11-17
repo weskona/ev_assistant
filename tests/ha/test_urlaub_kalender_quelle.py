@@ -151,3 +151,38 @@ async def test_ohne_konfigurierten_kalender_bleibt_alles_wie_vorher(hass, coordi
     assert c._urlaub_zeit(dt_util.now().timestamp()) is False
     assert c.urlaub_info()["kalender_konfiguriert"] is False
     assert c.urlaub_info()["kalender_termine"] == []
+
+
+async def test_sensor_attribut_zeigt_zeitraeume_und_kalender_termine(hass, coordinators):
+    from custom_components.ev_assistant.sensor import EvccModeControlSensor
+
+    tag = dt_util.now().date() + timedelta(days=10)
+    start = dt_util.start_of_local_day(tag)
+    c, _ = await _make_coordinator(
+        hass, coordinators, "uq9", events=[_event(start + timedelta(hours=14), start + timedelta(days=3))]
+    )
+    await c.async_refresh_urlaub_kalender()
+    await c.async_set_urlaub_zeitraum(tag + timedelta(days=30), tag + timedelta(days=32))
+    entry = hass.config_entries.async_entries("ev_assistant")[-1]
+    attrs = EvccModeControlSensor(c, entry).extra_state_attributes
+    assert attrs["urlaub_aktiv"] is False
+    assert attrs["urlaub_zeitraeume"] == [
+        {"von": (tag + timedelta(days=30)).isoformat(), "bis": (tag + timedelta(days=32)).isoformat()}
+    ]
+    assert len(attrs["urlaub_kalender_termine"]) == 1
+    assert attrs["urlaub_kalender_termine"][0]["von"] == tag.isoformat()
+
+
+async def test_attribut_laesst_vergangene_eintraege_weg_und_kappt_die_laenge(hass, coordinators):
+    c, _ = await _make_coordinator(hass, coordinators, "uq10")
+    heute = dt_util.now().date()
+    c.data["urlaub_zeitraeume"] = (
+        [{"von": (heute - timedelta(days=20)).isoformat(), "bis": (heute - timedelta(days=15)).isoformat()}]
+        + [
+            {"von": (heute + timedelta(days=i * 3)).isoformat(), "bis": (heute + timedelta(days=i * 3)).isoformat()}
+            for i in range(1, 16)
+        ]
+    )
+    attrs = c.urlaub_attribute()
+    assert len(attrs["urlaub_zeitraeume"]) == 10
+    assert all(z["bis"] >= (heute - timedelta(days=1)).isoformat() for z in attrs["urlaub_zeitraeume"])

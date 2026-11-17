@@ -1467,6 +1467,21 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             "kalender_termine": self._urlaub_kalender_termine(),
         }
 
+    def urlaub_attribute(self) -> dict:
+        """Urlaub fuers Attribut-Set des evcc_mode_control-Sensors (auch ohne
+        Karte sichtbar, z.B. unter Werkzeuge > Zustaende): `urlaub_aktiv`,
+        die von Hand gesetzten Zeitraeume und die gelesenen Kalender-Termine.
+        Nur heutige und kuenftige Eintraege (bis gestern zurueck), hoechstens
+        je 10, damit das Attribut-Set klein bleibt (HA-Grenze 16 KB)."""
+        grenze = (dt_util.now().date() - timedelta(days=1)).isoformat()
+        zeitraeume = [z for z in (self.data.get("urlaub_zeitraeume") or []) if z.get("bis", "") >= grenze]
+        termine = [t for t in self._urlaub_kalender_termine() if t.get("bis", "") >= grenze]
+        return {
+            "urlaub_aktiv": self._urlaub_aktiv(),
+            "urlaub_zeitraeume": [dict(z) for z in zeitraeume[:10]],
+            "urlaub_kalender_termine": termine[:10],
+        }
+
     def _urlaub_kalender_termine(self) -> list:
         """Die gelesenen Termine des Urlaubs-Kalenders fuer die Karte (nur
         lesbar): `start`/`ende` als lokale Zeit (ISO), `von`/`bis` als die
