@@ -55,6 +55,7 @@ Domain `ev_assistant`. A trailing `?` marks an optional field, all others are re
 | `simulate_event` | `soc_start`, `soc_end`, `energy_source?` | not part of the promise (test helper) |
 | `simulate_trip` | `km` | not part of the promise (test helper) |
 | `sonderfahrt` | `erfasst_ts`, `aktiv?` | stable |
+| `urlaub_rueckgaengig` | – | stable |
 | `urlaub_seit` | `seit_ts` | stable |
 
 ## Entities

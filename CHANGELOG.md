@@ -2,6 +2,16 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.87] - 2026-11-17
+
+### Added
+
+- **Take back a vacation that was applied to past days (`ev_assistant.urlaub_rueckgaengig`).** The service `urlaub_seit` ("Backdate…" in the card) and setting vacation days in the calendar remove whole days from the live-SoC and house profile windows and mark them in the plug profile. That could not be undone, and the card only says "Vacation backdated" without showing which days (seen 2026-11-17: today's day with 19.0 kWh was removed by accident and would never have been booked). Now EV Assistant remembers what the last application removed or marked and the new service puts it back: removed day values return (added to what was booked for that day since), the "decided" marks and the vacation marks in the plug profile disappear, and a calendar range that caused it is removed again. After every backdated application a notification lists the affected days and kWh and names the service. Only the last application can be taken back. New stored key `urlaub_rueckgaengig`; no existing service, entity or config key changes.
+
+### Fixed
+
+- **Special trips of today no longer count as "used today".** Marking a trip as a special trip (`sonderfahrt`) only deducted it from the day value of the live-SoC profile, but the live counter behind "Rest heute" (used today) still contained it, so after a marked 69 km trip the rest of today looked used up. For trips of today the day baseline of that counter now moves by the trip's consumption, so "used today" is measured from the live SoC without the special trip; taking the mark back reverses it. Trips already marked before this fix: set the mark off and on again.
+
 ## [0.99.86] - 2026-11-17
 
 ### Changed
