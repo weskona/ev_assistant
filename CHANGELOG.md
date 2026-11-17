@@ -2,6 +2,13 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.86] - 2026-11-17
+
+### Changed
+
+- **Glow card updated from v4.0.7 to v4.0.8** (automatic sync from [deepblue120/glow-dashboard](https://github.com/deepblue120/glow-dashboard), [changes](https://github.com/deepblue120/glow-dashboard/compare/v4.0.7...v4.0.8)).
+- New in the card: a **"Sonderfahrt" switch** in the edit-trip dialog (shown only if ev_assistant offers the `sonderfahrt` service; it is called after `edit_trip` when the switch changed) with a badge in the trip log, and a **vacation calendar** under "Urlaub" in the settings (month view, tap a start and an end day, list of the set periods with a remove button; shown only if `set_urlaub_zeitraum` exists, reads `ev_assistant/urlaub`). They use the services of 0.99.84 and 0.99.85 and stay hidden on older versions. Removing days up to today warns that already removed consumption values do not come back.
+
 ## [0.99.85] - 2026-11-17
 
 ### Added
