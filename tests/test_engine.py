@@ -5959,3 +5959,56 @@ def test_departures_from_trips_ueberspringt_sonderfahrt():
     ]
     res = departures_from_trips(trips, {"zuhause"}, "2026-11-17", tz=tz)
     assert res == {"2026-11-10": ["07:30"]}
+
+
+# ----- Urlaubskalender: Zeitraeume ---------------------------------------------
+
+def test_vacation_ranges_add_fasst_ueberlappende_und_angrenzende_zusammen():
+    from engine import vacation_ranges_add
+
+    r = vacation_ranges_add([], "2026-12-24", "2026-12-26")
+    r = vacation_ranges_add(r, "2026-12-27", "2026-12-28")  # direkt anschliessend
+    r = vacation_ranges_add(r, "2026-12-26", "2027-01-02")  # ueberlappend
+    assert r == [{"von": "2026-12-24", "bis": "2027-01-02"}]
+
+
+def test_vacation_ranges_add_sortiert_und_dreht_grenzen():
+    from engine import vacation_ranges_add
+
+    r = vacation_ranges_add([{"von": "2026-12-01", "bis": "2026-12-03"}], "2026-11-10", "2026-11-08")
+    assert r == [{"von": "2026-11-08", "bis": "2026-11-10"}, {"von": "2026-12-01", "bis": "2026-12-03"}]
+
+
+def test_vacation_ranges_remove_teilt_zeitraum():
+    from engine import vacation_ranges_remove
+
+    r = vacation_ranges_remove([{"von": "2026-12-20", "bis": "2026-12-31"}], "2026-12-24", "2026-12-26")
+    assert r == [{"von": "2026-12-20", "bis": "2026-12-23"}, {"von": "2026-12-27", "bis": "2026-12-31"}]
+
+
+def test_vacation_ranges_remove_einzelner_tag_und_ganzer_zeitraum():
+    from engine import vacation_ranges_remove
+
+    assert vacation_ranges_remove([{"von": "2026-12-24", "bis": "2026-12-24"}], "2026-12-24", "2026-12-24") == []
+    assert vacation_ranges_remove([{"von": "2026-12-24", "bis": "2026-12-26"}], "2026-12-01", "2027-01-31") == []
+    rest = vacation_ranges_remove([{"von": "2026-12-24", "bis": "2026-12-26"}], "2027-01-01", "2027-01-05")
+    assert rest == [{"von": "2026-12-24", "bis": "2026-12-26"}]
+
+
+def test_vacation_ranges_contains_grenzen_eingeschlossen():
+    from engine import vacation_ranges_contains
+
+    r = [{"von": "2026-12-24", "bis": "2026-12-26"}]
+    assert vacation_ranges_contains(r, "2026-12-24") is True
+    assert vacation_ranges_contains(r, "2026-12-26") is True
+    assert vacation_ranges_contains(r, "2026-12-23") is False
+    assert vacation_ranges_contains(r, "2026-12-27") is False
+    assert vacation_ranges_contains(None, "2026-12-24") is False
+
+
+def test_normalize_vacation_ranges_verwirft_kaputte_eintraege():
+    from engine import normalize_vacation_ranges
+
+    r = normalize_vacation_ranges([{"von": "kaputt", "bis": "2026-12-01"}, {"bis": "2026-12-01"}, None,
+                                   {"von": "2026-12-01", "bis": "2026-12-02"}])
+    assert r == [{"von": "2026-12-01", "bis": "2026-12-02"}]

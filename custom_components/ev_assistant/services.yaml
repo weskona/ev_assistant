@@ -768,6 +768,48 @@ delete_trip:
         number:
           mode: box
 
+set_urlaub_zeitraum:
+  name: Urlaubstage setzen oder entfernen
+  description: >
+    Setzt einen Urlaubstag oder einen Zeitraum (von bis, beide Tage
+    eingeschlossen) im Urlaubskalender oder entfernt ihn wieder, auch für
+    künftige Tage. Gesetzte Tage zählen wie der Urlaubsschalter: Die
+    Wochentags-Profile schließen sie aus, die automatische evcc-Steuerung
+    pausiert. Der Schalter (falls eingerichtet) gilt weiter, zusätzlich zum
+    Kalender. Beim Setzen werden Tage bis heute rückwirkend aus dem
+    Live-SoC- und Hausprofil genommen und im Steckerprofil als Urlaub
+    markiert. Das Entfernen stellt diese Werte nicht wieder her. Der Stand
+    kommt über die WebSocket-Abfrage ev_assistant/urlaub.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    von:
+      name: Von
+      description: Erster Tag (oder der einzige Tag).
+      required: true
+      example: "2026-12-24"
+      selector:
+        date:
+    bis:
+      name: Bis
+      description: Letzter Tag (eingeschlossen). Ohne Angabe nur der Tag von "Von".
+      required: false
+      example: "2027-01-02"
+      selector:
+        date:
+    aktiv:
+      name: Urlaub
+      description: An = Tage als Urlaub setzen, aus = Tage aus dem Kalender entfernen.
+      required: false
+      default: true
+      selector:
+        boolean:
+
 sonderfahrt:
   name: Fahrt als Sonderfahrt markieren
   description: >

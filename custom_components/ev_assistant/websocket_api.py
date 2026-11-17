@@ -120,8 +120,29 @@ async def _handle_charges(hass: HomeAssistant, connection, msg) -> None:
     connection.send_result(msg["id"], {"charges": history})
 
 
+URLAUB_COMMAND_TYPE = "ev_assistant/urlaub"
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): URLAUB_COMMAND_TYPE,
+    vol.Required("config_entry_id"): str,
+})
+@websocket_api.async_response
+async def _handle_urlaub(hass: HomeAssistant, connection, msg) -> None:
+    """Liefert den Urlaubskalender: die gesetzten Zeitraeume (`von`/`bis`,
+    beide eingeschlossen, ISO-Datum), ob ein Urlaubsschalter konfiguriert und
+    an ist und ob heute Urlaub zaehlt. Setzen und Entfernen laeuft ueber den
+    Dienst `ev_assistant.set_urlaub_zeitraum`."""
+    coordinator = _lookup(hass, msg["config_entry_id"])
+    if coordinator is None:
+        connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "unknown config_entry_id")
+        return
+    connection.send_result(msg["id"], coordinator.urlaub_info())
+
+
 def async_register(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, _handle_evcc_sessions)
     websocket_api.async_register_command(hass, _handle_event_log)
     websocket_api.async_register_command(hass, _handle_trips)
     websocket_api.async_register_command(hass, _handle_charges)
+    websocket_api.async_register_command(hass, _handle_urlaub)
