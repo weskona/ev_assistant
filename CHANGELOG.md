@@ -2,6 +2,16 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.88] - 2026-11-17
+
+### Added
+
+- **Vacation calendar as a source (`urlaub_kalender_entity`).** A new optional setting in the evcc & wallbox step takes a `calendar` entity (for example `calendar.familien_urlaub`). Every event counts as vacation **from its start time to its end**, not as whole days: trips and consumption inside that time window are left out of the weekday usage profiles (live SoC, trip log, house, plug window) and the automatic evcc control pauses, while everything before the start counts as usual. A half working day before leaving, or the drive to work and back, still counts; the drive to the airport after the start does not. All-day events cover whole days (the end date is exclusive, as in Home Assistant). It works in addition to the vacation switch (`urlaub_entity`) and the days set in the panel.
+- The calendar is read at start (after a short delay) and every 30 minutes with `calendar.get_events` (35 days back to 400 days ahead). Every read replaces the stored time windows, so deleted or changed events follow. If the calendar cannot be read, the last state is kept and one entry is written to the event log (and one when it can be read again).
+- Profiles that keep a whole day as a single sum cannot tell the time of day: the house profile and the empty day entries of the vehicle profile treat a day as vacation if the events cover at least half of it (12 hours). A day that is only partly covered, like the start day at 14:00, therefore stays in the house profile if the vacation starts after noon.
+- The WebSocket command `ev_assistant/urlaub` also returns `kalender_konfiguriert` and `kalender_termine` (read-only): for every event `start` and `ende` (local time, ISO) and `von`/`bis` (the local days it touches, both included; an event that ends exactly at midnight ends on the day before), so a calendar in the card can show upcoming events next to the days set by hand.
+- Not changed: events do not remove past days retroactively (the time window applies when a booking is made); use the Vacation calendar in the panel or `urlaub_seit` for that. No existing service, entity or config key changes; without the new setting nothing changes. New stored keys `urlaub_kalender_intervalle` and `urlaub_kalender_fehler`.
+
 ## [0.99.87] - 2026-11-17
 
 ### Added
@@ -11,16 +21,6 @@ All notable changes to the EV Assistant integration. Format inspired by [Keep a 
 ### Fixed
 
 - **Special trips of today no longer count as "used today".** Marking a trip as a special trip (`sonderfahrt`) only deducted it from the day value of the live-SoC profile, but the live counter behind "Rest heute" (used today) still contained it, so after a marked 69 km trip the rest of today looked used up. For trips of today the day baseline of that counter now moves by the trip's consumption, so "used today" is measured from the live SoC without the special trip; taking the mark back reverses it. Trips already marked before this fix: set the mark off and on again.
-
-## [0.99.87] - 2026-11-17
-
-### Added
-
-- **Vacation calendar as a source (`urlaub_kalender_entity`).** A new optional setting in the evcc & wallbox step takes a `calendar` entity (for example `calendar.familien_urlaub`). Every event counts as vacation **from its start time to its end**, not as whole days: trips and consumption inside that time window are left out of the weekday usage profiles (live SoC, trip log, house, plug window) and the automatic evcc control pauses, while everything before the start counts as usual. A half working day before leaving, or the drive to work and back, still counts; the drive to the airport after the start does not. All-day events cover whole days (the end date is exclusive, as in Home Assistant). It works in addition to the vacation switch (`urlaub_entity`) and the days set in the panel.
-- The calendar is read at start (after a short delay) and every 30 minutes with `calendar.get_events` (35 days back to 400 days ahead). Every read replaces the stored time windows, so deleted or changed events follow. If the calendar cannot be read, the last state is kept and one entry is written to the event log (and one when it can be read again).
-- Profiles that keep a whole day as a single sum cannot tell the time of day: the house profile and the empty day entries of the vehicle profile treat a day as vacation if the events cover at least half of it (12 hours). A day that is only partly covered, like the start day at 14:00, therefore stays in the house profile if the vacation starts after noon.
-- The WebSocket command `ev_assistant/urlaub` also returns `kalender_konfiguriert` and `kalender_termine` (read-only): for every event `start` and `ende` (local time, ISO) and `von`/`bis` (the local days it touches, both included; an event that ends exactly at midnight ends on the day before), so a calendar in the card can show upcoming events next to the days set by hand.
-- Not changed: events do not remove past days retroactively (the time window applies when a booking is made); use the Vacation calendar in the panel or `urlaub_seit` for that. No existing service, entity or config key changes; without the new setting nothing changes. New stored keys `urlaub_kalender_intervalle` and `urlaub_kalender_fehler`.
 
 ## [0.99.86] - 2026-11-17
 
