@@ -53,6 +53,7 @@ Domain `ev_assistant`. Ein angehängtes `?` kennzeichnet ein optionales Feld, al
 | `set_weekly_full_charge_enabled` | `enabled?` | stabil |
 | `simulate_event` | `soc_start`, `soc_end`, `energy_source?` | nicht Teil der Zusage (Testwerkzeug) |
 | `simulate_trip` | `km` | nicht Teil der Zusage (Testwerkzeug) |
+| `sonderfahrt` | `erfasst_ts`, `aktiv?` | stabil |
 | `urlaub_seit` | `seit_ts` | stabil |
 
 ## Entitäten

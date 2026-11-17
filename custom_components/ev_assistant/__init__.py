@@ -70,6 +70,7 @@ from .const import (
     SERVICE_SET_WEEKLY_FULL_CHARGE_ENABLED,
     SERVICE_SIMULATE,
     SERVICE_SIMULATE_TRIP,
+    SERVICE_SONDERFAHRT,
     SERVICE_URLAUB_SEIT,
 )
 from .coordinator import EvAssistantCoordinator
@@ -411,6 +412,12 @@ EDIT_TRIP_SCHEMA = vol.Schema({
 DELETE_TRIP_SCHEMA = vol.Schema({
     vol.Required("config_entry_id"): str,
     vol.Required("erfasst_ts"): vol.Coerce(int),
+})
+
+SONDERFAHRT_SCHEMA = vol.Schema({
+    vol.Required("config_entry_id"): str,
+    vol.Required("erfasst_ts"): vol.Coerce(int),
+    vol.Optional("aktiv", default=True): bool,
 })
 
 IMPORT_TRIPS_SCHEMA = vol.Schema({
@@ -780,6 +787,11 @@ def _register_services(hass: HomeAssistant) -> None:
         if coordinator:
             await coordinator.async_delete_trip(call.data["erfasst_ts"])
 
+    async def _handle_sonderfahrt(call: ServiceCall) -> None:
+        coordinator = _coordinator_for(hass, call.data["config_entry_id"])
+        if coordinator:
+            await coordinator.async_set_sonderfahrt(call.data["erfasst_ts"], call.data["aktiv"])
+
     async def _handle_import_trips(call: ServiceCall) -> None:
         coordinator = _coordinator_for(hass, call.data["config_entry_id"])
         if coordinator:
@@ -1045,6 +1057,7 @@ def _register_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_SIMULATE_TRIP, _handle_simulate_trip, schema=SIMULATE_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_EDIT_TRIP, _handle_edit_trip, schema=EDIT_TRIP_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DELETE_TRIP, _handle_delete_trip, schema=DELETE_TRIP_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_SONDERFAHRT, _handle_sonderfahrt, schema=SONDERFAHRT_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_ADD_LADEKARTE, _handle_add_ladekarte, schema=ADD_LADEKARTE_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_EDIT_LADEKARTE, _handle_edit_ladekarte, schema=EDIT_LADEKARTE_SCHEMA)
     hass.services.async_register(
@@ -1140,7 +1153,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_LOG, SERVICE_DISCARD, SERVICE_SIMULATE, SERVICE_EDIT, SERVICE_DELETE,
                 SERVICE_LOG_TRIP, SERVICE_DISCARD_TRIP, SERVICE_EXPORT_TRIPS, SERVICE_EXPORT_EVENT_LOG,
                 SERVICE_SIMULATE_TRIP,
-                SERVICE_EDIT_TRIP, SERVICE_DELETE_TRIP, SERVICE_IMPORT_TRIPS,
+                SERVICE_EDIT_TRIP, SERVICE_DELETE_TRIP, SERVICE_SONDERFAHRT, SERVICE_IMPORT_TRIPS,
                 SERVICE_ADD_LADEKARTE, SERVICE_EDIT_LADEKARTE, SERVICE_DELETE_LADEKARTE,
                 SERVICE_ADD_LADEKARTE_PREISSTUFE, SERVICE_DELETE_LADEKARTE_PREISSTUFE,
                 SERVICE_ADD_MAINTENANCE, SERVICE_EDIT_MAINTENANCE, SERVICE_DELETE_MAINTENANCE,

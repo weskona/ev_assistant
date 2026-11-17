@@ -768,6 +768,42 @@ delete_trip:
         number:
           mode: box
 
+sonderfahrt:
+  name: Fahrt als Sonderfahrt markieren
+  description: >
+    Nimmt eine einzelne, ungewöhnliche Fahrt (z.B. 69 km an einem
+    Dienstag, an dem sonst nur wenig gefahren wird) aus den
+    Wochentags-Profilen heraus, ohne den ganzen Tag zu verwerfen: Im
+    Fahrtenbuch-Profil und bei den Abfahrtszeiten wird sie wie Urlaub nicht
+    gewertet, und ihr Verbrauch wird vom Tageswert des Live-SoC-Profils
+    abgezogen. Der Abzug nutzt den Verbrauch aus dem Fahrtenbuch und ist
+    deshalb eine Näherung. Mit aktiv=false wird die Markierung
+    zurückgenommen und der Verbrauch zurückgebucht. Mehrfaches Aufrufen
+    ändert nichts.
+  fields:
+    config_entry_id:
+      name: Fahrzeug
+      description: Welches Fahrzeug (bei mehreren EV-Assistant-Instanzen).
+      required: true
+      selector:
+        config_entry:
+          integration: ev_assistant
+    erfasst_ts:
+      name: Erfasst-Zeitstempel (Unix)
+      description: Identifiziert den bestätigten Fahrtenbuch-Eintrag (Wert aus dessen erfasst_ts-Attribut).
+      required: true
+      example: 1751884800
+      selector:
+        number:
+          mode: box
+    aktiv:
+      name: Sonderfahrt
+      description: An = als Sonderfahrt markieren, aus = Markierung zurücknehmen.
+      required: false
+      default: true
+      selector:
+        boolean:
+
 add_ladekarte:
   name: Ladekarte anlegen
   description: >
