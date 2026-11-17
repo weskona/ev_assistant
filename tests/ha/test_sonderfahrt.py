@@ -169,3 +169,31 @@ async def test_sonderfahrt_service_ruft_coordinator(hass):
     finally:
         await hass.config_entries.async_unload(entry.entry_id)
         await hass.async_block_till_done()
+
+
+async def test_sonderfahrt_heute_zaehlt_nicht_in_verbraucht_heute(hass, coordinators):
+    c = await _make_coordinator(hass, coordinators, "sf9")
+    _seed_day(c, 25.0)
+    key = c._period_keys()["day"]
+    c.data["vehicle_discharge_periods"] = {"day": {"key": key, "kwh": 100.0}}
+    c.data["vehicle_discharge_kwh_total"] = 125.0
+    _add_trip(c, 9001, 3.0, 12.0)
+    _add_trip(c, 9002, 16.0, 69.0)
+    assert c._vehicle_discharge_kwh_used_today() == 25.0
+    await c.async_set_sonderfahrt(9002)
+    assert c._vehicle_discharge_kwh_used_today() == 9.0
+    await c.async_set_sonderfahrt(9002)  # idempotent
+    assert c._vehicle_discharge_kwh_used_today() == 9.0
+    await c.async_set_sonderfahrt(9002, False)
+    assert c._vehicle_discharge_kwh_used_today() == 25.0
+
+
+async def test_sonderfahrt_frueherer_tag_laesst_tagesbasis_unberuehrt(hass, coordinators):
+    c = await _make_coordinator(hass, coordinators, "sf10")
+    key = c._period_keys()["day"]
+    c.data["vehicle_discharge_periods"] = {"day": {"key": key, "kwh": 100.0}}
+    c.data["vehicle_discharge_kwh_total"] = 110.0
+    gestern = dt_util.now().timestamp() - 86400
+    _add_trip(c, 9101, 5.0, 20.0, start_ts=gestern)
+    await c.async_set_sonderfahrt(9101)
+    assert c._vehicle_discharge_kwh_used_today() == 10.0

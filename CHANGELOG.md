@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [Unreleased]
+
+### Fixed
+
+- **Special trips of today no longer count as "used today".** Marking a trip as a special trip (`sonderfahrt`) only deducted it from the day value of the live-SoC profile, but the live counter behind "Rest heute" (used today) still contained it, so after a marked 69 km trip the rest of today looked used up. For trips of today the day baseline of that counter now moves by the trip's consumption, so "used today" is measured from the live SoC without the special trip; taking the mark back reverses it. Trips already marked before this fix: set the mark off and on again.
+
 ## [0.99.86] - 2026-11-17
 
 ### Changed

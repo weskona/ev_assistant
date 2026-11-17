@@ -4603,6 +4603,31 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
                     weekday_days, day.weekday(), date_iso, zurueck, USAGE_PROFILE_WINDOW_DAYS
                 )
         self.data["vehicle_discharge_abzug_offen"] = offen
+        self._sonderfahrt_heute_basis(rec, day, aktiv)
+
+    def _sonderfahrt_heute_basis(self, rec: dict, day: date, aktiv: bool) -> None:
+        """Haelt den "heute verbraucht"-Stand des Live-SoC-Zaehlers (siehe
+        _vehicle_discharge_kwh_used_today(), Grundlage von "Rest heute") frei
+        von Sonderfahrten: ist `day` heute, wandert die Tages-Baseline um den
+        Verbrauch der Fahrt nach oben (Markieren) bzw. wieder zurueck
+        (Zuruecknehmen). Der gemerkte Betrag steht in
+        rec["sonderfahrt_basis_kwh"], damit nur zurueckgenommen wird, was
+        wirklich verschoben wurde."""
+        if aktiv:
+            kwh = float(rec.get("sonderfahrt_abzug_kwh") or 0.0)
+            if kwh <= 0.0 or day != dt_util.now().date():
+                return
+            periods = self.data.get("vehicle_discharge_periods") or {}
+            entry = periods.get("day")
+            if not entry or entry.get("key") not in (None, self._period_keys()["day"]):
+                return
+            entry["kwh"] = round(float(entry["kwh"]) + kwh, 4)
+            rec["sonderfahrt_basis_kwh"] = round(kwh, 2)
+        else:
+            kwh = float(rec.pop("sonderfahrt_basis_kwh", 0.0) or 0.0)
+            entry = (self.data.get("vehicle_discharge_periods") or {}).get("day")
+            if kwh > 0.0 and entry and entry.get("key") in (None, self._period_keys()["day"]):
+                entry["kwh"] = round(float(entry["kwh"]) - kwh, 4)
 
     async def async_import_fahrtenbuch(self, trips: list) -> int:
         """Importiert historische Fahrten aus einer Fremdquelle (Format und
