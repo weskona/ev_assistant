@@ -579,6 +579,20 @@ DEFAULT_DROP_ENDS = 1.0
 # Plausibilitaetsband fuer aus SoC-Delta geschaetzten Fahrt-Verbrauch (siehe
 # engine.is_plausible_trip_consumption) -- bewusst kein Config-Flow-Feld,
 # analog EFF_MIN_SOC_DELTA: grobe interne Heuristik, keine Nutzer-Einstellung.
+# Reichweite aus dem Live-SoC-Zaehler (siehe engine.live_soc_consumption_kwh_100km(),
+# coordinator.py::_update_range_log()): Tage zaehlen ab RANGE_MIN_DAY_KM, ein
+# Tag gilt fuer RANGE_WINDOW_DAYS Tage mit Halbwertszeit RANGE_HALF_LIFE_DAYS,
+# die Aussentemperatur wirkt als glatter Kern (Breite RANGE_TEMP_SIGMA_C) statt
+# in harten Baendern, unter RANGE_KERNEL_MIN_KM gewichteten km bei der aktuellen
+# Temperatur entfaellt der Kern, unter RANGE_MIN_TOTAL_KM insgesamt gilt der
+# Lebenszeit-Durchschnitt aus der Energiebilanz.
+RANGE_MIN_DAY_KM = 15.0
+RANGE_WINDOW_DAYS = 60
+RANGE_HALF_LIFE_DAYS = 30.0
+RANGE_TEMP_SIGMA_C = 4.0
+RANGE_KERNEL_MIN_KM = 30.0
+RANGE_MIN_TOTAL_KM = 80.0
+RANGE_LOG_MAX_DAYS = 90
 TRIP_CONSUMPTION_MIN_KWH_100KM = 8.0
 TRIP_CONSUMPTION_MAX_KWH_100KM = 40.0
 TRIP_CONSUMPTION_CHECK_MIN_KM = 5.0

@@ -85,7 +85,6 @@ from engine import (
     remaining_today_kwh,
     remove_weekday_day,
     restore_surplus_target_active,
-    rolling_consumption_kwh_per_100km,
     rolling_km_per_day,
     session_totals_since,
     soc_reached_full_charge,
@@ -2183,54 +2182,13 @@ def test_charge_cost_mit_allen_drei_gebuehren():
     assert charge_cost(kwh=20.0, price_kwh=0.5, start_fee=1.5, block_fee=5.0, time_fee=3.0) == 19.5
 
 
-# ----- rolling_consumption_kwh_per_100km: Realverbrauch der letzten X Tage -
+# ----- Hilfsfunktion fuer Fahrtenbuch-Eintraege (rolling_km_per_day) -----------
 
 def _fahrt(start_ts, km, verbrauch_kwh=None):
     rec = {"start_ts": start_ts, "km": km}
     if verbrauch_kwh is not None:
         rec["verbrauch_kwh"] = verbrauch_kwh
     return rec
-
-
-def test_rolling_consumption_durchgerechnetes_beispiel():
-    now = 1_000_000.0
-    fahrten = [
-        _fahrt(now - 1 * 86400, km=50.0, verbrauch_kwh=10.0),
-        _fahrt(now - 2 * 86400, km=50.0, verbrauch_kwh=10.0),
-    ]
-    # 100 km gesamt, 20 kWh gesamt -> 20 kWh/100km.
-    assert rolling_consumption_kwh_per_100km(fahrten, now, window_days=30, min_km=50.0) == 20.0
-
-
-def test_rolling_consumption_fahrten_ausserhalb_des_fensters_zaehlen_nicht():
-    now = 1_000_000.0
-    fahrten = [
-        _fahrt(now - 1 * 86400, km=50.0, verbrauch_kwh=10.0),
-        _fahrt(now - 60 * 86400, km=999.0, verbrauch_kwh=999.0),  # ausserhalb 30-Tage-Fenster
-    ]
-    assert rolling_consumption_kwh_per_100km(fahrten, now, window_days=30, min_km=10.0) == 20.0
-
-
-def test_rolling_consumption_fahrt_ohne_verbrauch_kwh_zaehlt_km_nicht_mit():
-    # Eine Fahrt ohne verbrauch_kwh darf ihre km nicht in den Nenner
-    # einbringen, ohne die zugehoerige Energie zu kennen -- sonst waere das
-    # Ergebnis zu niedrig verzerrt.
-    now = 1_000_000.0
-    fahrten = [
-        _fahrt(now - 1 * 86400, km=50.0, verbrauch_kwh=10.0),
-        _fahrt(now - 1 * 86400, km=200.0),  # kein verbrauch_kwh
-    ]
-    assert rolling_consumption_kwh_per_100km(fahrten, now, window_days=30, min_km=10.0) == 20.0
-
-
-def test_rolling_consumption_unter_min_km_liefert_none():
-    now = 1_000_000.0
-    fahrten = [_fahrt(now - 1 * 86400, km=10.0, verbrauch_kwh=2.0)]
-    assert rolling_consumption_kwh_per_100km(fahrten, now, window_days=30, min_km=50.0) is None
-
-
-def test_rolling_consumption_leere_liste_liefert_none():
-    assert rolling_consumption_kwh_per_100km([], now_ts=1_000_000.0, window_days=30, min_km=50.0) is None
 
 
 # ----- rolling_km_per_day: rollierendes Fahrtempo fuer leasing_status() -----
@@ -6084,3 +6042,94 @@ def test_intervals_coverage_s():
     assert intervals_coverage_s([[100.0, 200.0]], 0.0, 50.0) == 0.0
     assert intervals_coverage_s([[0.0, 10.0], [20.0, 30.0]], 0.0, 100.0) == 20.0
     assert intervals_coverage_s(None, 0.0, 100.0) == 0.0
+
+
+# ----- live_soc_consumption_kwh_100km: Reichweite aus dem Live-SoC-Zaehler ----------
+
+_LIVE_KW = dict(
+    window_days=60, min_day_km=15.0, min_total_km=80.0, plausible_min=8.0, plausible_max=40.0,
+    temp_sigma_c=4.0, half_life_days=30.0, kernel_min_km=30.0,
+)
+
+
+def _tag(today, vor_tagen, km, kwh, temp=None):
+    rec = {"d": (today - timedelta(days=vor_tagen)).isoformat(), "km": km, "kwh": kwh, "tw": 0.0, "tk": 0.0}
+    if temp is not None:
+        rec["tw"], rec["tk"] = temp * kwh, kwh
+    return rec
+
+
+def test_live_soc_verbrauch_einfaches_beispiel():
+    from engine import live_soc_consumption_kwh_100km
+
+    today = date(2026, 11, 17)
+    days = [_tag(today, i, 40.0, 8.0) for i in range(1, 4)]
+    assert live_soc_consumption_kwh_100km(days, today, None, **_LIVE_KW) == (20.0, 3)
+
+
+def test_live_soc_verbrauch_kurzstreckentage_zaehlen_nicht():
+    from engine import live_soc_consumption_kwh_100km
+
+    today = date(2026, 11, 17)
+    days = [_tag(today, i, 40.0, 8.0) for i in range(1, 4)] + [_tag(today, i, 5.0, 3.0) for i in range(4, 12)]
+    assert live_soc_consumption_kwh_100km(days, today, None, **_LIVE_KW) == (20.0, 3)
+
+
+def test_live_soc_verbrauch_zu_wenig_km_gibt_none():
+    from engine import live_soc_consumption_kwh_100km
+
+    today = date(2026, 11, 17)
+    assert live_soc_consumption_kwh_100km([_tag(today, 1, 40.0, 8.0)], today, None, **_LIVE_KW) is None
+    assert live_soc_consumption_kwh_100km([], today, None, **_LIVE_KW) is None
+    assert live_soc_consumption_kwh_100km(None, today, None, **_LIVE_KW) is None
+
+
+def test_live_soc_verbrauch_unplausible_und_zu_alte_tage_zaehlen_nicht():
+    from engine import live_soc_consumption_kwh_100km
+
+    today = date(2026, 11, 17)
+    days = [_tag(today, i, 40.0, 8.0) for i in range(1, 4)]
+    days += [_tag(today, 5, 40.0, 0.5), _tag(today, 6, 40.0, 30.0)]  # 1,25 und 75 kWh/100km
+    days += [_tag(today, 90, 40.0, 8.0)]  # ausserhalb des Fensters
+    assert live_soc_consumption_kwh_100km(days, today, None, **_LIVE_KW) == (20.0, 3)
+
+
+def test_live_soc_verbrauch_temperatur_wirkt_glatt_ohne_sprung():
+    from engine import live_soc_consumption_kwh_100km
+
+    today = date(2026, 11, 17)
+    days = (
+        [_tag(today, i, 60.0, 18.0, temp=2.0) for i in range(1, 4)]  # kalt: 30 kWh/100km
+        + [_tag(today, i, 60.0, 12.0, temp=18.0) for i in range(4, 7)]  # warm: 20 kWh/100km
+    )
+    kalt = live_soc_consumption_kwh_100km(days, today, 2.0, **_LIVE_KW)[0]
+    warm = live_soc_consumption_kwh_100km(days, today, 18.0, **_LIVE_KW)[0]
+    mitte = live_soc_consumption_kwh_100km(days, today, 10.0, **_LIVE_KW)[0]
+    assert kalt > 28.0 and warm < 22.0
+    assert warm < mitte < kalt
+    # kein Sprung an einer frueheren Bandgrenze: 9,9 und 10,1 Grad liegen dicht beieinander
+    unter = live_soc_consumption_kwh_100km(days, today, 9.9, **_LIVE_KW)[0]
+    ueber = live_soc_consumption_kwh_100km(days, today, 10.1, **_LIVE_KW)[0]
+    assert abs(unter - ueber) < 1.0  # 0,2 Grad: nur der echte Verlauf, kein Sprung von rund 10 kWh/100km
+
+
+def test_live_soc_verbrauch_ohne_tage_bei_der_temperatur_gilt_nur_aktualitaet():
+    from engine import live_soc_consumption_kwh_100km
+
+    today = date(2026, 11, 17)
+    days = (
+        [_tag(today, i, 60.0, 18.0, temp=2.0) for i in range(1, 3)]
+        + [_tag(today, i, 60.0, 12.0, temp=18.0) for i in range(3, 5)]
+    )
+    ohne_kern = live_soc_consumption_kwh_100km(days, today, None, **_LIVE_KW)[0]
+    # -15 Grad: weit weg von allen Tagen, der Temperaturkern wuerde ins Leere greifen
+    assert live_soc_consumption_kwh_100km(days, today, -15.0, **_LIVE_KW)[0] == ohne_kern
+
+
+def test_live_soc_verbrauch_neuere_tage_zaehlen_mehr():
+    from engine import live_soc_consumption_kwh_100km
+
+    today = date(2026, 11, 17)
+    days = [_tag(today, 1, 60.0, 18.0), _tag(today, 2, 60.0, 18.0), _tag(today, 50, 60.0, 12.0)]
+    gewichtet = live_soc_consumption_kwh_100km(days, today, None, **_LIVE_KW)[0]
+    assert 25.0 < gewichtet < 30.0  # naeher an den neuen 30 als am alten 20

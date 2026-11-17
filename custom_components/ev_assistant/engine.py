@@ -2664,43 +2664,94 @@ def clamp_weekday_contribution(
     return round(value * scale, 4)
 
 
-def rolling_consumption_kwh_per_100km(
-    fahrten: list, now_ts: float, window_days: float, min_km: float,
-) -> Optional[float]:
-    """Realverbrauch (kWh/100km) nur aus Fahrtenbuch-Eintraegen der letzten
-    `window_days` Tage -- bildet den aktuellen Fahrstil/die Jahreszeit ab,
-    statt sie im Lebenszeit-Durchschnitt seit Einrichtung zu verwaschen
-    (siehe coordinator.py::_vehicle_avg_consumption_kwh_per_100km()).
+def live_soc_consumption_kwh_100km(
+    days: list,
+    today: date,
+    temp_now: Optional[float],
+    *,
+    window_days: int,
+    min_day_km: float,
+    min_total_km: float,
+    plausible_min: float,
+    plausible_max: float,
+    temp_sigma_c: float,
+    half_life_days: float,
+    kernel_min_km: float,
+) -> Optional[tuple]:
+    """Realverbrauch (kWh/100km) fuer die Reichweite aus dem Live-SoC-Zaehler:
+    je Tag die Entladung (vehicle_discharge_kwh_total) geteilt durch die
+    gefahrenen km desselben Tages (Odometer). Das Fahrtenbuch spielt dafuer
+    keine Rolle (siehe coordinator.py::_update_range_log()).
 
-    Nur Fahrten mit BEIDEN Werten (km und verbrauch_kwh) zaehlen in Zaehler
-    UND Nenner -- eine Fahrt ohne verbrauch_kwh (z.B. importiert ohne
-    SoC-Delta und ohne mitgeliefertem Wert) darf die km nicht mitzaehlen,
-    ohne die zugehoerige Energie zu kennen, sonst waere das Ergebnis zu
-    niedrig verzerrt.
+    `days`: [{"d": "YYYY-MM-DD", "kwh", "km", "tw", "tk"}, ...] -- "tw"/"tk" sind
+    die mit der gebuchten Entladung gewichtete Aussentemperatur-Summe und die
+    zugehoerige kWh (Tagesmitteltemperatur = tw / tk, fehlt ohne Temperatur).
 
-    None, wenn im Fenster weniger als `min_km` zusammenkommen (zu wenig
-    frische Fahrten fuer einen belastbaren Wert, z.B. direkt nach
-    Einrichtung oder nach laengerer Standzeit/Urlaub) -- der Aufrufer faellt
-    dann auf den Lebenszeit-Durchschnitt zurueck."""
-    cutoff = now_ts - window_days * 86400
-    km_sum = 0.0
-    kwh_sum = 0.0
-    for t in fahrten:
-        ts = t.get("start_ts")
-        km = t.get("km")
-        kwh = t.get("verbrauch_kwh")
-        if ts is None or km is None or kwh is None or ts < cutoff:
+    - Nur Tage der letzten `window_days` Tage mit mindestens `min_day_km` km:
+      reine Kurzstreckentage (Heizen und Standby je Fahrt, grobe SoC-Rundung)
+      wuerden den Schnitt je km nach oben ziehen und sind fuer "wie weit
+      komme ich" nicht typisch. Tage mit unplausiblem Verbrauch
+      (ausserhalb `plausible_min`..`plausible_max`) zaehlen nicht.
+    - Gewichtung je Tag: Aktualitaet (Halbwertszeit `half_life_days`) mal ein
+      glatter Temperatur-Kern (Gauss, Breite `temp_sigma_c`) um die aktuelle
+      Aussentemperatur -- statt harter Temperaturbaender, damit die
+      Reichweite beim Ueberschreiten einer Bandgrenze nicht springt. Gibt es
+      bei der aktuellen Temperatur weniger als `kernel_min_km` gewichtete km
+      (z.B. der erste kalte Tag), entfaellt der Temperaturkern und es gilt
+      nur die Aktualitaet. Ohne Temperatur ebenso.
+    - None, wenn insgesamt weniger als `min_total_km` zusammenkommen -- der
+      Aufrufer faellt dann auf den Lebenszeit-Durchschnitt zurueck.
+
+    Rueckgabe (kWh/100km, Zahl der verwendeten Tage)."""
+    rows = []
+    for rec in days or []:
+        try:
+            day = date.fromisoformat(str(rec["d"]))
+            km, kwh = float(rec["km"]), float(rec["kwh"])
+        except (KeyError, TypeError, ValueError):
             continue
-        km_sum += km
-        kwh_sum += kwh
-    if km_sum < min_km:
+        age = (today - day).days
+        if age < 0 or age > window_days or km < min_day_km or kwh <= 0:
+            continue
+        per_100 = kwh / km * 100.0
+        if not plausible_min <= per_100 <= plausible_max:
+            continue
+        tk = float(rec.get("tk") or 0.0)
+        day_temp = float(rec.get("tw") or 0.0) / tk if tk > 0 else None
+        rows.append((age, km, kwh, day_temp))
+    if not rows or sum(r[1] for r in rows) < min_total_km:
         return None
-    return round(kwh_sum / km_sum * 100.0, 2)
+
+    def _weights(use_kernel: bool) -> list:
+        result = []
+        for age, _km, _kwh, day_temp in rows:
+            weight = 0.5 ** (age / half_life_days)
+            if use_kernel:
+                if day_temp is None:
+                    weight *= 0.3
+                else:
+                    weight *= math.exp(-((day_temp - temp_now) ** 2) / (2.0 * temp_sigma_c ** 2))
+            result.append(weight)
+        return result
+
+    weights = _weights(False)
+    if temp_now is not None:
+        kernel_km = sum(
+            math.exp(-((r[3] - temp_now) ** 2) / (2.0 * temp_sigma_c ** 2)) * r[1]
+            for r in rows if r[3] is not None
+        )
+        if kernel_km >= kernel_min_km:
+            weights = _weights(True)
+    num = sum(w * r[2] for w, r in zip(weights, rows, strict=True))
+    den = sum(w * r[1] for w, r in zip(weights, rows, strict=True))
+    if den <= 0:
+        return None
+    return round(num / den * 100.0, 2), len(rows)
 
 
 def rolling_km_per_day(fahrten: list, now_ts: float, window_days: float) -> Optional[float]:
     """Rollierendes Fahrtempo (km/Tag) nur aus Fahrtenbuch-Eintraegen der
-    letzten `window_days` Tage -- analog rolling_consumption_kwh_per_100km(),
+    letzten `window_days` Tage -- analog live_soc_consumption_kwh_100km(),
     fuer eine Leasing-Hochrechnung (siehe leasing_status()), die sich
     schneller an zuletzt geaendertes Fahrverhalten anpasst als die lineare
     Basis seit Vertragsbeginn. None ohne jede Fahrt im Fenster (der
@@ -2908,7 +2959,7 @@ def calculate_range_km(
     kWh) ueber den tatsaechlichen Verbrauch statt eines werksseitig
     pauschalen Bordanzeige-Wertes. None ohne SoC oder ohne jeden
     Verbrauchswert (weder rollierend noch Lebenszeit-Fallback verfuegbar,
-    siehe rolling_consumption_kwh_per_100km())."""
+    siehe live_soc_consumption_kwh_100km())."""
     if soc_pct is None or consumption_kwh_per_100km is None or consumption_kwh_per_100km <= 0:
         return None
     battery_kwh = soc_pct / 100.0 * usable_kwh

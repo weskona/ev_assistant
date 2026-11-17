@@ -891,6 +891,15 @@ class RangeEstimateSensor(EvAssistantEntity, SensorEntity):
         if consumption is None:
             return attrs
         attrs["verbrauch_kwh_100km"] = consumption
+        # Woher der Verbrauch kommt: Live-SoC-Zaehler und gefahrene km (nach
+        # Aussentemperatur gewichtet) oder, solange zu wenig Tage vorliegen,
+        # der Lebenszeit-Durchschnitt aus der Energiebilanz. Das Fahrtenbuch
+        # geht nicht ein; "verbrauch_nach_temperatur" unten ist nur dessen
+        # Statistik.
+        live = coordinator._range_consumption_live()
+        attrs["verbrauch_quelle"] = "live_soc" if live is not None else "lebenszeit"
+        if live is not None:
+            attrs["live_soc_tage"] = live[1]
         if bucket is not None:
             attrs["temperaturband_aktuell"] = bucket
         if buckets:
