@@ -55,6 +55,7 @@ Domain `ev_assistant`. Ein angehängtes `?` kennzeichnet ein optionales Feld, al
 | `simulate_event` | `soc_start`, `soc_end`, `energy_source?` | nicht Teil der Zusage (Testwerkzeug) |
 | `simulate_trip` | `km` | nicht Teil der Zusage (Testwerkzeug) |
 | `sonderfahrt` | `erfasst_ts`, `aktiv?` | stabil |
+| `urlaub_rueckgaengig` | – | stabil |
 | `urlaub_seit` | `seit_ts` | stabil |
 
 ## Entitäten
