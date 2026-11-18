@@ -39,6 +39,11 @@ CONF_WALLBOX_CHARGING_ENTITY = "wallbox_charging_entity"
 # haengt direkt am PV-/Netz-Pfad) -- rein additiv-optional.
 CONF_HOME_CONSUMPTION_ENTITY = "home_consumption_entity"
 CONF_BATTERY_CHARGE_ENTITY = "battery_charge_entity"
+# Optional (Standard aus): Der Hausverbrauchszaehler misst den GESAMTverbrauch
+# INKLUSIVE Wallbox. Dann wird die Wallbox-Energie (CONF_WALLBOX_ENERGY_ENTITY)
+# vom Hausverbrauch abgezogen (Haus-Nutzungsprofil und Live-Tick der
+# Heimladung). NICHT setzen, wenn der Zaehler nur den Netzbezug misst.
+CONF_HOME_INCLUDES_WALLBOX = "home_includes_wallbox"
 # Optional, fuer die Solaranteil-/Kosten-Schaetzung von Heim-Ladesessions OHNE
 # evcc (siehe coordinator.py::_process_home_tick()/_set_home()) -- kumulativer
 # kWh-Zaehlerstand der PV-ERZEUGUNG (NICHT Momentanleistung, Konsistenz mit

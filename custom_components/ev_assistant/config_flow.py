@@ -36,6 +36,7 @@ from .const import (
     CONF_HOME_ENTITY,
     CONF_HOME_FEEDIN_PRICE_ENTITY,
     CONF_HOME_FEEDIN_PRICE_KWH,
+    CONF_HOME_INCLUDES_WALLBOX,
     CONF_HOME_PRICE_ENTITY,
     CONF_HOME_PRICE_KWH,
     CONF_IDLE_TIMEOUT,
@@ -422,6 +423,9 @@ def build_evcc_schema(cur: dict) -> vol.Schema:
         ): _PV_FORECAST_ENTITY,
         vol.Optional(CONF_HOME_CONSUMPTION_ENTITY, description=sv(CONF_HOME_CONSUMPTION_ENTITY)): _HOME_CONSUMPTION_ENTITY,
         vol.Optional(CONF_BATTERY_CHARGE_ENTITY, description=sv(CONF_BATTERY_CHARGE_ENTITY)): _BATTERY_CHARGE_ENTITY,
+        vol.Optional(
+            CONF_HOME_INCLUDES_WALLBOX, default=bool(cur.get(CONF_HOME_INCLUDES_WALLBOX, False))
+        ): bool,
         vol.Optional(CONF_URLAUB_ENTITY, description=sv(CONF_URLAUB_ENTITY)): _URLAUB_ENTITY,
         vol.Optional(
             CONF_URLAUB_KALENDER_ENTITY, description=sv(CONF_URLAUB_KALENDER_ENTITY)
@@ -472,6 +476,9 @@ def build_heimladen_schema(cur: dict) -> vol.Schema:
     return vol.Schema({
         vol.Optional(CONF_HOME_CONSUMPTION_ENTITY, description=sv(CONF_HOME_CONSUMPTION_ENTITY)): _HOME_CONSUMPTION_ENTITY,
         vol.Optional(CONF_BATTERY_CHARGE_ENTITY, description=sv(CONF_BATTERY_CHARGE_ENTITY)): _BATTERY_CHARGE_ENTITY,
+        vol.Optional(
+            CONF_HOME_INCLUDES_WALLBOX, default=bool(cur.get(CONF_HOME_INCLUDES_WALLBOX, False))
+        ): bool,
         vol.Optional(CONF_WALLBOX_ENERGY_ENTITY, description=sv(CONF_WALLBOX_ENERGY_ENTITY)): _WALLBOX_ENERGY_ENTITY,
         vol.Optional(
             CONF_WALLBOX_CONNECTED_ENTITY, description=sv(CONF_WALLBOX_CONNECTED_ENTITY)

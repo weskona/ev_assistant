@@ -86,6 +86,7 @@
           "evcc_vehicle_name": "Fahrzeugname in evcc",
           "home_consumption_entity": "Hausverbrauch (ohne Auto/Speicher)",
           "battery_charge_entity": "Speicherladung (optional, falls nicht bereits im Hausverbrauch enthalten)",
+          "home_includes_wallbox": "Hausverbrauch enthält die Wallbox (optional)",
           "urlaub_entity": "Urlaubs-Entität (optional)",
           "urlaub_kalender_entity": "Urlaubs-Kalender (optional)"
         },
@@ -93,6 +94,7 @@
           "evcc_host": "Optional — ohne sie bleiben Ladeleistung/Modus/Tarife/PV im Panel einfach leer, alles andere funktioniert unverändert weiter.",
           "home_consumption_entity": "Optional, kumulativer Energiezähler in kWh (aufsummierter Zählerstand, kein Leistungssensor) — speist das Haus-Nutzungsprofil für die evcc-Modus-/SoC-Steuerung oben (siehe Nutzungsprofil-Tab im Panel). Dasselbe Feld wie im Schritt \"Heimladen\", dort für die Solaranteil-/Kosten-Schätzung genutzt.",
           "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch (gleiche Einheit: kumulativer Energiezähler in kWh, kein Leistungssensor) — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
+          "home_includes_wallbox": "Nur ankreuzen, wenn der Hausverbrauchszähler den Gesamtverbrauch INKLUSIVE Wallbox misst: Die Energie der Wallbox (Wallbox-Energiezähler) wird dann abgezogen. Nicht ankreuzen, wenn der Zähler nur den Netzbezug misst oder das Auto schon nicht enthält. Ohne Wallbox-Energiezähler bleibt das Hausprofil leer.",
           "urlaub_entity": "Optional, z.B. ein input_boolean/switch/binary_sensor \"an\" während Urlaub — betroffene Tage werden dann aus den Wochentags-Nutzungsprofilen (Fahrzeug & Haus) ausgeschlossen statt den Schnitt zu verzerren, und die evcc-Modus-/SoC-Steuerung pausiert.",
           "urlaub_kalender_entity": "Optional, eine calendar-Entität (z. B. calendar.familien_urlaub). Jeder Termin gilt als Urlaub von seiner Startzeit bis zu seinem Ende: Fahrten und Verbrauch in diesem Zeitfenster werden aus den Wochentags-Nutzungsprofilen ausgeschlossen, davor und danach zählt normal. Ganztägige Termine gelten für ganze Tage. Wirkt zusätzlich zum Urlaubs-Schalter und zu den im Panel gesetzten Urlaubstagen."
         }
@@ -206,6 +208,7 @@
         "data": {
           "home_consumption_entity": "Hausverbrauch (ohne Auto/Speicher)",
           "battery_charge_entity": "Speicherladung (optional, falls nicht bereits im Hausverbrauch enthalten)",
+          "home_includes_wallbox": "Hausverbrauch enthält die Wallbox (optional)",
           "wallbox_energy_entity": "Wallbox-Energiezähler (kumulativer kWh-Zähler)",
           "wallbox_connected_entity": "Wallbox verbunden (optional, eigener Statussensor)",
           "wallbox_charging_entity": "Wallbox lädt (optional, eigener Statussensor)",
@@ -218,6 +221,7 @@
         "data_description": {
           "home_consumption_entity": "Optional, kumulativer Energiezähler in kWh (aufsummierter Zählerstand, kein Leistungssensor) — nur für die Solaranteil-/Kosten-Schätzung unten gebraucht.",
           "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch (gleiche Einheit: kumulativer Energiezähler in kWh, kein Leistungssensor) — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
+          "home_includes_wallbox": "Nur ankreuzen, wenn der Hausverbrauchszähler den Gesamtverbrauch INKLUSIVE Wallbox misst: Die Energie der Wallbox (Wallbox-Energiezähler) wird dann abgezogen. Nicht ankreuzen, wenn der Zähler nur den Netzbezug misst oder das Auto schon nicht enthält. Ohne Wallbox-Energiezähler bleibt das Hausprofil leer.",
           "wallbox_energy_entity": "Kalibriert daraus den echten Ladewirkungsgrad (ersetzt den Startwert aus Schritt 1) und liefert die geladene kWh-Menge für die Kostenberechnung.",
           "wallbox_connected_entity": "Optional, ein binary_sensor der Wallbox selbst (z.B. aus deren eigener Integration) für \"angesteckt/verbunden\" — ersetzt, falls gesetzt, die sonst aus Ladeleistung/Stecker-Entität abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
           "wallbox_charging_entity": "Optional, ein binary_sensor der Wallbox selbst für \"lädt gerade\" — ersetzt, falls gesetzt, die sonst aus der Ladeleistung abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
@@ -279,6 +283,7 @@
           "pv_forecast_today_remaining_entity": "PV-Restprognose für heute (optional, beliebige sensor-Entität, z.B. Solcast \"Forecast Remaining Today\")",
           "home_consumption_entity": "Hausverbrauch (ohne Auto/Speicher)",
           "battery_charge_entity": "Speicherladung (optional, falls nicht bereits im Hausverbrauch enthalten)",
+          "home_includes_wallbox": "Hausverbrauch enthält die Wallbox (optional)",
           "urlaub_entity": "Urlaubs-Entität (optional)",
           "urlaub_kalender_entity": "Urlaubs-Kalender (optional)",
           "weekly_full_charge_enabled": "Wöchentliche Vollladung fürs Zellbalancing",
@@ -305,6 +310,7 @@
           "pv_forecast_today_remaining_entity": "Optional, unabhängig von der PV-Ertragsprognose für morgen (Schritt 7) — nur relevant, wenn die evcc-Steuerung oben aktiviert ist.",
           "home_consumption_entity": "Optional, kumulativer Energiezähler in kWh (aufsummierter Zählerstand, kein Leistungssensor) — speist das Haus-Nutzungsprofil für die evcc-Modus-/SoC-Steuerung oben (siehe Nutzungsprofil-Tab im Panel). Dasselbe Feld wie im Schritt \"Heimladen\", dort für die Solaranteil-/Kosten-Schätzung genutzt.",
           "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch (gleiche Einheit: kumulativer Energiezähler in kWh, kein Leistungssensor) — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
+          "home_includes_wallbox": "Nur ankreuzen, wenn der Hausverbrauchszähler den Gesamtverbrauch INKLUSIVE Wallbox misst: Die Energie der Wallbox (Wallbox-Energiezähler) wird dann abgezogen. Nicht ankreuzen, wenn der Zähler nur den Netzbezug misst oder das Auto schon nicht enthält. Ohne Wallbox-Energiezähler bleibt das Hausprofil leer.",
           "urlaub_entity": "Optional, z.B. ein input_boolean/switch/binary_sensor \"an\" während Urlaub — betroffene Tage werden dann aus den Wochentags-Nutzungsprofilen (Fahrzeug & Haus) ausgeschlossen statt den Schnitt zu verzerren, und die evcc-Modus-/SoC-Steuerung pausiert.",
           "urlaub_kalender_entity": "Optional, eine calendar-Entität (z. B. calendar.familien_urlaub). Jeder Termin gilt als Urlaub von seiner Startzeit bis zu seinem Ende: Fahrten und Verbrauch in diesem Zeitfenster werden aus den Wochentags-Nutzungsprofilen ausgeschlossen, davor und danach zählt normal. Ganztägige Termine gelten für ganze Tage. Wirkt zusätzlich zum Urlaubs-Schalter und zu den im Panel gesetzten Urlaubstagen.",
           "weekly_full_charge_enabled": "Deaktiviert (Default): keine Änderung am bisherigen Verhalten. Aktiviert: ist seit der letzten erreichten Vollladung (98% oder mehr, egal ob manuell oder automatisch) das Intervall unten verstrichen, überstimmt die evcc-Steuerung das profilbasierte Ziel mit Ziel-SoC=100%/Modus=minpv, bis 100% erreicht sind. Steuert NUR Ziel-SoC + Modus — WOHER der Ladestrom kommt (PV/Netz/Speicher), entscheidet weiterhin evcc selbst (Mindestladeleistung im minpv-Modus, Speicher-Entladesperre als eigene evcc-Einstellung). Zusätzlich per Panel-Schalter umschaltbar, ohne diesen Options-Flow erneut öffnen zu müssen.",
@@ -429,6 +435,7 @@
         "data": {
           "home_consumption_entity": "Hausverbrauch (ohne Auto/Speicher)",
           "battery_charge_entity": "Speicherladung (optional, falls nicht bereits im Hausverbrauch enthalten)",
+          "home_includes_wallbox": "Hausverbrauch enthält die Wallbox (optional)",
           "wallbox_energy_entity": "Wallbox-Energiezähler (kumulativer kWh-Zähler)",
           "wallbox_connected_entity": "Wallbox verbunden (optional, eigener Statussensor)",
           "wallbox_charging_entity": "Wallbox lädt (optional, eigener Statussensor)",
@@ -441,6 +448,7 @@
         "data_description": {
           "home_consumption_entity": "Optional, kumulativer Energiezähler in kWh (aufsummierter Zählerstand, kein Leistungssensor) — nur für die Solaranteil-/Kosten-Schätzung unten gebraucht.",
           "battery_charge_entity": "Optional, zusätzlich zum Hausverbrauch (gleiche Einheit: kumulativer Energiezähler in kWh, kein Leistungssensor) — nur falls ein Hausspeicher vorhanden ist UND dessen Ladeenergie nicht bereits im Hausverbrauchszähler steckt.",
+          "home_includes_wallbox": "Nur ankreuzen, wenn der Hausverbrauchszähler den Gesamtverbrauch INKLUSIVE Wallbox misst: Die Energie der Wallbox (Wallbox-Energiezähler) wird dann abgezogen. Nicht ankreuzen, wenn der Zähler nur den Netzbezug misst oder das Auto schon nicht enthält. Ohne Wallbox-Energiezähler bleibt das Hausprofil leer.",
           "wallbox_energy_entity": "Kalibriert daraus den echten Ladewirkungsgrad (ersetzt den Startwert aus Schritt 1) und liefert die geladene kWh-Menge für die Kostenberechnung.",
           "wallbox_connected_entity": "Optional, ein binary_sensor der Wallbox selbst (z.B. aus deren eigener Integration) für \"angesteckt/verbunden\" — ersetzt, falls gesetzt, die sonst aus Ladeleistung/Stecker-Entität abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
           "wallbox_charging_entity": "Optional, ein binary_sensor der Wallbox selbst für \"lädt gerade\" — ersetzt, falls gesetzt, die sonst aus der Ladeleistung abgeleitete Erkennung in der Wallbox-Karte (Übersicht (Beta)).",
