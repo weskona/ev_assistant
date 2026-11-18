@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [Unreleased]
+
+### Added
+
+- **New option "Home consumption includes the wallbox" (off by default, in the evcc & wallbox step and the home charging step).** Tick it if your home consumption meter measures the total consumption including the car: the wallbox energy (wallbox energy meter) is then subtracted, both from the daily reading of the house profile and from the live tick of the solar share estimate for home charging. Do not tick it if the meter only measures grid import or already excludes the car. Without a wallbox energy reading nothing is booked into the house profile. Existing setups are unchanged.
+
 ## [0.99.89] - 2026-11-18
 
 ### Added

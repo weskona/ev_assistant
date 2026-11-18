@@ -158,6 +158,7 @@ Stored in the config entry (`data`/`options`). Existing installations keep worki
 | evcc | `evcc_soft_recharge_enabled` | – |
 | evcc | `evcc_vehicle_name` | – |
 | evcc | `home_consumption_entity` | – |
+| evcc | `home_includes_wallbox` | – |
 | evcc | `pv_forecast_today_remaining_entity` | – |
 | evcc | `urlaub_entity` | – |
 | evcc | `urlaub_kalender_entity` | – |
@@ -169,6 +170,7 @@ Stored in the config entry (`data`/`options`). Existing installations keep worki
 | heimladen | `home_consumption_entity` | – |
 | heimladen | `home_feedin_price_entity` | – |
 | heimladen | `home_feedin_price_kwh` | – |
+| heimladen | `home_includes_wallbox` | – |
 | heimladen | `home_price_entity` | – |
 | heimladen | `home_price_kwh` | – |
 | heimladen | `pv_generation_entity` | – |

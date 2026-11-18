@@ -50,6 +50,7 @@ from .const import (
     CONF_HOME_ENTITY,
     CONF_HOME_FEEDIN_PRICE_ENTITY,
     CONF_HOME_FEEDIN_PRICE_KWH,
+    CONF_HOME_INCLUDES_WALLBOX,
     CONF_HOME_PRICE_ENTITY,
     CONF_HOME_PRICE_KWH,
     CONF_HOME_TEMPLATE,
@@ -3058,6 +3059,9 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
         pv_delta = self._pv_generation - acc["last_pv"]
         home_delta = self._home_consumption_live_raw - acc["last_home"]
         auto_delta = self._wallbox_energy - acc["last_auto"]
+        if self._opt(CONF_HOME_INCLUDES_WALLBOX) and home_delta >= 0 and auto_delta >= 0:
+            # Gesamtzaehler inkl. Wallbox: nur den Rest als Haus zaehlen.
+            home_delta = max(0.0, home_delta - auto_delta)
         acc["last_pv"] = self._pv_generation
         acc["last_home"] = self._home_consumption_live_raw
         acc["last_auto"] = self._wallbox_energy
@@ -6691,6 +6695,13 @@ class EvAssistantCoordinator(DataUpdateCoordinator):
             total = float(home_state.state)
         except (TypeError, ValueError):
             return None
+        if self._opt(CONF_HOME_INCLUDES_WALLBOX):
+            # Gesamtzaehler inkl. Wallbox: Wallbox-Energie (ebenfalls
+            # kumulativ) abziehen. Ohne gueltigen Wallbox-Stand lieber gar
+            # nichts buchen als den zu hohen Gesamtwert.
+            if self._wallbox_energy is None:
+                return None
+            total -= self._wallbox_energy
         battery_id = self._opt(CONF_BATTERY_CHARGE_ENTITY)
         if battery_id:
             battery_state = self.hass.states.get(battery_id)
