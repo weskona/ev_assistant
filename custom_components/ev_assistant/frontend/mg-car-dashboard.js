@@ -1,12 +1,12 @@
 /*
  * mg-car-dashboard.js
  * Ablage:    /config/www/glow-dashboard/mg-car-dashboard.js
- * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=68  (Typ: JavaScript)
+ * Ressource: /local/glow-dashboard/mg-car-dashboard.js?v=69  (Typ: JavaScript)
  * YAML:      type: custom:mg-car-dashboard
  */
 
 window.customCards = window.customCards || [];
-const VERSION = "4.0.8";
+const VERSION = "4.0.9";
 // merkt sich den letzten Wechsel der Adresse (auch wenn die Karte dabei aus- und neu eingehängt wird, z. B. durch Detailfenster)
 const NAV = (window.__glowCarNav = window.__glowCarNav || (() => {
   const n = { cur: location.pathname, t: 0 };
@@ -1733,6 +1733,7 @@ class MgCarDashboard extends HTMLElement {
     sr.getElementById("pmain").hidden = p !== "main";
     sr.getElementById("pprof").hidden = p !== "prof";
     sr.getElementById("pset").hidden = p !== "set";
+    if (p === "set" && this._uc) this._uc.t = 0;   // Urlaubskalender beim Öffnen neu abfragen (Kalendertermine)
     sr.getElementById("pcost").hidden = p !== "cost"; sr.getElementById("kper").hidden = p !== "cost";
     sr.querySelectorAll('[data-act="page"]').forEach((b) => b.classList.toggle("sel", b.dataset.p === p));
   }
@@ -2394,6 +2395,13 @@ class MgCarDashboard extends HTMLElement {
   }
   _ucIso(d) { return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
   _ucIs(iso) { return (this._uc?.zeitraeume || []).some((z) => z.von <= iso && iso <= (z.bis || z.von)); }
+  /* Termin aus dem Urlaubs-Kalender (ev_assistant ab 0.99.87, nur Anzeige): ab = Uhrzeit am Starttag, bis = Uhrzeit am
+     letzten Tag, jeweils nur bei Teiltagen. Endet ein Termin um Mitternacht, ist „bis“ schon der Vortag (ganzer Tag). */
+  _ucKal(iso) {
+    const k = (this._uc?.kalender_termine || []).find((z) => z.von <= iso && iso <= (z.bis || z.von)); if (!k) return null;
+    const hm = (s) => { const x = String(s || "").slice(11, 16); return /^\d\d:\d\d$/.test(x) && x !== "00:00" ? x : null; };
+    return { k, ab: iso === k.von ? hm(k.start) : null, bis: iso === (k.bis || k.von) && String(k.ende || "").slice(0, 10) === iso ? hm(k.ende) : null };
+  }
   _ucDate(iso) { const d = new Date(`${iso}T00:00`); return isNaN(d) ? esc(iso) : d.toLocaleDateString(LOC); }
   _render_ucal() {
     const el = this.shadowRoot.getElementById("sucal"); if (!el) return;
@@ -2412,18 +2420,29 @@ class MgCarDashboard extends HTMLElement {
       let cells = PWD.map(([, l]) => `<span class="ucwd">${l}</span>`).join("") + "<span></span>".repeat(first);
       for (let d = 1; d <= days; d++) {
         const iso = this._ucIso(new Date(m.getFullYear(), m.getMonth(), d));
-        const cls = [this._ucIs(iso) && "u", iso === today && "td", iso < today && "past", iso === this._ucSel && "sel"].filter(Boolean).join(" ");
-        cells += `<button class="${cls}" data-act="ucday" data-d="${iso}"${this._ucBusy ? " disabled" : ""}>${d}</button>`;
+        const hand = this._ucIs(iso), kal = !hand && this._ucKal(iso);   // von Hand gesetzt zählt als ganzer Tag
+        const cls = [hand && "u", kal && "k", iso === today && "td", iso < today && "past", iso === this._ucSel && "sel"].filter(Boolean).join(" ");
+        const zt = kal && (kal.ab || kal.bis) ? `<small>${kal.ab ? T("ab {t}", { t: kal.ab }) : T("bis {t}", { t: kal.bis })}</small>` : "";
+        cells += `<button class="${cls}" data-act="ucday" data-d="${iso}"${kal ? ` title="${T("aus Kalender")}"` : ""}${this._ucBusy ? " disabled" : ""}>${d}${zt}</button>`;
       }
       const sel = this._ucSel ? `<div class="ucsel">${icon("mdi:gesture-tap")}<span>${this._ucIs(this._ucSel) ? T("Entfernen ab {d} – Endtag antippen (oder denselben Tag für nur diesen Tag)", { d: this._ucDate(this._ucSel) }) : T("Urlaub ab {d} – Endtag antippen (oder denselben Tag für nur diesen Tag)", { d: this._ucDate(this._ucSel) })}</span><button class="sbt" data-act="ucx">${T("Abbrechen")}</button></div>` : "";
-      const list = (U.zeitraeume || []).filter((z) => (z.bis || z.von) >= today).slice(0, 5).map((z) => {
+      const kt = U.kalender_termine || [];
+      const list = [...(U.zeitraeume || []), ...kt.map((z) => ({ ...z, kal: true }))].filter((z) => (z.bis || z.von) >= today)
+        .sort((a, b) => (a.von < b.von ? -1 : a.von > b.von ? 1 : 0)).slice(0, 6).map((z) => {
         const n = Math.round((new Date(`${z.bis || z.von}T12:00`) - new Date(`${z.von}T12:00`)) / 86400000) + 1;
-        return `<div class="ucz"><span>${this._ucDate(z.von)}${(z.bis || z.von) !== z.von ? ` – ${this._ucDate(z.bis)}` : ""}<small>${n === 1 ? T("1 Tag") : T("{n} Tage", { n })}</small></span><button class="sic" data-act="ucdel" data-von="${esc(z.von)}" data-bis="${esc(z.bis || z.von)}" title="${T("Entfernen")}"${this._ucBusy ? " disabled" : ""}>${icon("mdi:delete-outline")}</button></div>`;
+        const a = z.kal && this._ucKal(z.von), e = z.kal && this._ucKal(z.bis || z.von);
+        const t1 = a?.ab ? ` ${a.ab}` : "", t2 = e?.bis ? ` ${e.bis}` : "";
+        const rng = `${this._ucDate(z.von)}${t1}${(z.bis || z.von) !== z.von || t2 ? ` – ${(z.bis || z.von) !== z.von ? this._ucDate(z.bis) : ""}${t2}` : ""}`;
+        return z.kal
+          ? `<div class="ucz kal"><span>${rng}<small>${n === 1 ? T("1 Tag") : T("{n} Tage", { n })} · ${T("aus Kalender")}</small></span>${icon("mdi:calendar-sync")}</div>`
+          : `<div class="ucz"><span>${rng}<small>${n === 1 ? T("1 Tag") : T("{n} Tage", { n })}</small></span><button class="sic" data-act="ucdel" data-von="${esc(z.von)}" data-bis="${esc(z.bis || z.von)}" title="${T("Entfernen")}"${this._ucBusy ? " disabled" : ""}>${icon("mdi:delete-outline")}</button></div>`;
       }).join("");
+      const leg = U.kalender_konfiguriert || kt.length ? `<div class="ucleg"><span><i class="u"></i>${T("von Hand")}</span><span><i class="k"></i>${T("aus Kalender (nur Anzeige)")}</span></div>` : "";
       body = `${U.schalter_aktiv ? `<div class="pnote warn">${T("Der Urlaubsschalter ist an – heute zählt unabhängig vom Kalender als Urlaub.")}</div>` : ""}
-        <div class="ucal">${cells}</div>${sel}
+        <div class="ucal">${cells}</div>${leg}${sel}
         ${list ? `<div class="uczl"><h4>${T("Aktuelle und kommende Zeiträume")}</h4>${list}</div>` : ""}
-        <div class="pnote">${T("Tag antippen und dann den Endtag (oder denselben Tag noch einmal). Vergangene Tage werden beim Setzen rückwirkend aus den Nutzungsprofilen genommen; beim Entfernen kommen diese Werte nicht zurück.")}</div>`;
+        <div class="pnote">${T("Tag antippen und dann den Endtag (oder denselben Tag noch einmal). Vergangene Tage werden beim Setzen rückwirkend aus den Nutzungsprofilen genommen; beim Entfernen kommen diese Werte nicht zurück.")}</div>
+        ${U.kalender_konfiguriert ? `<div class="pnote">${T("Termine aus dem Urlaubs-Kalender werden nur angezeigt und im Kalender selbst geändert; ev_assistant gleicht alle 30 Minuten ab. Bei Teiltagen zählt nur die Zeit ab bzw. bis zur angegebenen Uhrzeit als Urlaub.")}</div>` : ""}`;
     }
     el.innerHTML = this._hd(T("Urlaubskalender"), nav) + body;
   }
@@ -4373,7 +4392,13 @@ input[type=date],input[type=datetime-local],input[type=month]{cursor:pointer;car
 .ucwd{font-size:10.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);text-align:center;padding:2px 0}
 .ucal button{height:34px;border-radius:9px;background:var(--tile);border:1px solid var(--tileb);font-size:13.5px;font-weight:600;text-align:center;font-variant-numeric:tabular-nums}
 .ucal button.past{color:var(--muted)}
-.ucal button.u{background:rgba(56,189,248,.2);border-color:rgba(56,189,248,.55);color:#bae6fd}
+.ucal button{display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.05;padding:0 2px}
+.ucal button small{font-size:9px;font-weight:600;white-space:nowrap;opacity:.9}
+.ucal button.u,.ucleg i.u{background:rgba(56,189,248,.2);border-color:rgba(56,189,248,.55);color:#bae6fd}
+.ucal button.k,.ucleg i.k{background:repeating-linear-gradient(135deg,rgba(167,139,250,.28) 0 5px,rgba(167,139,250,.1) 5px 10px);border-color:rgba(167,139,250,.6);color:#ddd6fe}
+.ucleg{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:-4px 0 10px}.ucleg span{display:inline-flex;align-items:center;gap:6px}
+.ucleg i{width:14px;height:14px;border-radius:4px;border:1px solid}
+.ucz.kal{border-style:dashed}.ucz.kal ha-icon{--mdc-icon-size:18px;color:#c4b5fd;margin-right:6px}
 .ucal button.td{box-shadow:inset 0 0 0 2px var(--gold)}
 .ucal button.sel{background:var(--gold);border-color:var(--gold);color:#111}
 .ucsel{display:flex;align-items:center;gap:10px;padding:8px 12px;border-radius:12px;background:rgba(247,183,51,.08);border:1px solid rgba(247,183,51,.35);margin-bottom:10px;font-size:13px}
@@ -5018,6 +5043,12 @@ const I18N = {
     "Keine Antwort von ev_assistant – Ladeplan vermutlich nicht gesetzt.": "No response from ev_assistant – charge plan probably not set.",
     "Ladeplan konnte nicht gesetzt werden:": "Charge plan could not be set:",
     "Sonderfahrt": "Special trip",
+    "ab {t}": "from {t}",
+    "bis {t}": "until {t}",
+    "aus Kalender": "from calendar",
+    "von Hand": "set manually",
+    "aus Kalender (nur Anzeige)": "from calendar (display only)",
+    "Termine aus dem Urlaubs-Kalender werden nur angezeigt und im Kalender selbst geändert; ev_assistant gleicht alle 30 Minuten ab. Bei Teiltagen zählt nur die Zeit ab bzw. bis zur angegebenen Uhrzeit als Urlaub.": "Events from the vacation calendar are shown for information only and are changed in the calendar itself; ev_assistant syncs every 30 minutes. On partial days only the time from or until the shown time counts as vacation.",
     "Eine ungewöhnliche Fahrt (z. B. ein Ausflug) zählt nicht in die Wochentags-Profile – der restliche Tag bleibt drin.": "An unusual trip (e.g. an outing) is left out of the weekday profiles – the rest of the day stays in.",
     "Urlaubskalender": "Vacation calendar",
     "Urlaubstage nicht abrufbar:": "Vacation days not available:",

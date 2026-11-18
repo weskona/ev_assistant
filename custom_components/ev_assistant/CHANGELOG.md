@@ -2,6 +2,16 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.90] - 2026-11-18
+
+### Added
+
+- **New option "Home consumption includes the wallbox" (off by default, in the evcc & wallbox step and the home charging step).** Tick it if your home consumption meter measures the total consumption including the car: the wallbox energy (wallbox energy meter) is then subtracted, both from the daily reading of the house profile and from the live tick of the solar share estimate for home charging. Do not tick it if the meter only measures grid import or already excludes the car. Without a wallbox energy reading nothing is booked into the house profile. Existing setups are unchanged.
+
+### Changed
+
+- **Glow card updated from v4.0.8 to v4.0.9** (automatic sync from [deepblue120/glow-dashboard](https://github.com/deepblue120/glow-dashboard), [changes](https://github.com/deepblue120/glow-dashboard/compare/v4.0.8...v4.0.9)). The vacation calendar in the settings now also shows the events of the vacation calendar (display only, hatched, with the time on partial days) and asks again each time the settings are opened.
+
 ## [0.99.89] - 2026-11-18
 
 ### Added
