@@ -2,6 +2,12 @@
 
 All notable changes to the EV Assistant integration. Format inspired by [Keep a Changelog](https://keepachangelog.com/), versioning in `manifest.json`.
 
+## [0.99.91] - 2026-11-18
+
+### Changed
+
+- **The option "Home consumption includes the wallbox" now sits directly under the home consumption field** (it was at the end of the step), is labelled "The home consumption meter includes the car (wallbox energy is subtracted)", and the home consumption field is now titled "Home consumption (excluding battery charging)" instead of "excluding vehicle/battery", since the car is included or not depending on that option.
+
 ## [0.99.90] - 2026-11-18
 
 ### Added

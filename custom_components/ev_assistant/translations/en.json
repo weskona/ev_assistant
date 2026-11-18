@@ -84,9 +84,9 @@
         "data": {
           "evcc_host": "evcc address (e.g. http://192.168.178.1:7070)",
           "evcc_vehicle_name": "Vehicle name in evcc",
-          "home_consumption_entity": "Home consumption (excluding vehicle/battery)",
+          "home_consumption_entity": "Home consumption (excluding battery charging)",
           "battery_charge_entity": "Battery charging (optional, if not already included in home consumption)",
-          "home_includes_wallbox": "Home consumption includes the wallbox (optional)",
+          "home_includes_wallbox": "The home consumption meter includes the car (wallbox energy is subtracted)",
           "urlaub_entity": "Vacation entity (optional)",
           "urlaub_kalender_entity": "Vacation calendar (optional)"
         },
@@ -94,7 +94,7 @@
           "evcc_host": "Optional — without it, charge power/mode/tariffs/PV in the panel simply stay empty; everything else keeps working as before.",
           "home_consumption_entity": "Optional, cumulative energy meter in kWh (a running counter, not a power sensor) — feeds the house usage profile for the evcc mode/SoC control above (see the Usage Profile tab in the panel). The same field as in the \"Home Charging\" step, used there for the solar share/cost estimate instead.",
           "battery_charge_entity": "Optional, in addition to home consumption (same unit: cumulative energy meter in kWh, not a power sensor) — only if a home battery exists AND its charging energy isn't already included in the home consumption meter.",
-          "home_includes_wallbox": "Only tick if the home consumption meter measures TOTAL consumption INCLUDING the wallbox: the wallbox energy (wallbox energy meter) is then subtracted. Do not tick if the meter only measures grid import or already excludes the car. Without a wallbox energy meter the house profile stays empty.",
+          "home_includes_wallbox": "Only tick if the meter above measures TOTAL consumption INCLUDING the car: the wallbox energy (wallbox energy meter) is then subtracted. Do not tick if it excludes the car or only measures grid import. Without a wallbox energy meter the house profile stays empty.",
           "urlaub_entity": "Optional, e.g. an input_boolean/switch/binary_sensor that's \"on\" during vacation — affected days are then excluded entirely from the weekday usage profiles (vehicle & house) instead of skewing the average, and evcc mode/SoC control pauses.",
           "urlaub_kalender_entity": "Optional, a calendar entity (e.g. calendar.family_vacation). Every event counts as vacation from its start time to its end: trips and consumption in that time window are left out of the weekday usage profiles, before and after count as usual. All-day events cover whole days. Works in addition to the vacation switch and the vacation days set in the panel."
         }
@@ -206,9 +206,9 @@
         "title": "EV Assistant - Home Charging",
         "description": "Step 3/9 (only with the generic home-charging method): how and how expensively you charge at home, without evcc. Additionally optional: PV generation and feed-in price — with all three (the two here plus home consumption) configured together, ev_assistant estimates the solar share and cost of every home charging session just as precisely as evcc would (tick-based integration, no rough approximation) — missing even one of them, the estimate for that session simply stays absent.",
         "data": {
-          "home_consumption_entity": "Home consumption (excluding vehicle/battery)",
+          "home_consumption_entity": "Home consumption (excluding battery charging)",
           "battery_charge_entity": "Battery charging (optional, if not already included in home consumption)",
-          "home_includes_wallbox": "Home consumption includes the wallbox (optional)",
+          "home_includes_wallbox": "The home consumption meter includes the car (wallbox energy is subtracted)",
           "wallbox_energy_entity": "Wallbox energy meter (cumulative kWh counter)",
           "wallbox_connected_entity": "Wallbox connected (optional, its own status sensor)",
           "wallbox_charging_entity": "Wallbox charging (optional, its own status sensor)",
@@ -221,7 +221,7 @@
         "data_description": {
           "home_consumption_entity": "Optional, cumulative energy meter in kWh (a rising meter reading, not a power sensor) — only needed for the solar share/cost estimate below.",
           "battery_charge_entity": "Optional, in addition to home consumption (same unit: cumulative energy meter in kWh, not a power sensor) — only if a home battery exists AND its charging energy isn't already included in the home consumption meter.",
-          "home_includes_wallbox": "Only tick if the home consumption meter measures TOTAL consumption INCLUDING the wallbox: the wallbox energy (wallbox energy meter) is then subtracted. Do not tick if the meter only measures grid import or already excludes the car. Without a wallbox energy meter the house profile stays empty.",
+          "home_includes_wallbox": "Only tick if the meter above measures TOTAL consumption INCLUDING the car: the wallbox energy (wallbox energy meter) is then subtracted. Do not tick if it excludes the car or only measures grid import. Without a wallbox energy meter the house profile stays empty.",
           "wallbox_energy_entity": "Calibrates the real charging efficiency from it (replaces the initial value from step 1) and provides the charged kWh amount for the cost calculation.",
           "wallbox_connected_entity": "Optional, a binary_sensor from the wallbox's own integration for \"plugged in/connected\" — if set, replaces the otherwise charge-power/plug-entity-derived detection in the Wallbox card (Overview (Beta)).",
           "wallbox_charging_entity": "Optional, a binary_sensor from the wallbox's own integration for \"currently charging\" — if set, replaces the otherwise charge-power-derived detection in the Wallbox card (Overview (Beta)).",
@@ -281,9 +281,9 @@
           "wallbox_min_power_w": "Wallbox minimum charge power (W, for the real-time PV override)",
           "evcc_realtime_override_min_solar_share": "Min. solar share for grid top-up (%, optional)",
           "pv_forecast_today_remaining_entity": "PV forecast remaining today (optional, any sensor entity, e.g. Solcast \"Forecast Remaining Today\")",
-          "home_consumption_entity": "Home consumption (excluding vehicle/battery)",
+          "home_consumption_entity": "Home consumption (excluding battery charging)",
           "battery_charge_entity": "Battery charging (optional, if not already included in home consumption)",
-          "home_includes_wallbox": "Home consumption includes the wallbox (optional)",
+          "home_includes_wallbox": "The home consumption meter includes the car (wallbox energy is subtracted)",
           "urlaub_entity": "Vacation entity (optional)",
           "urlaub_kalender_entity": "Vacation calendar (optional)",
           "weekly_full_charge_enabled": "Weekly full charge for cell balancing",
@@ -310,7 +310,7 @@
           "pv_forecast_today_remaining_entity": "Optional, independent of the tomorrow PV forecast (step 7) — only relevant while the evcc control above is enabled.",
           "home_consumption_entity": "Optional, cumulative energy meter in kWh (a running counter, not a power sensor) — feeds the house usage profile for the evcc mode/SoC control above (see the Usage Profile tab in the panel). The same field as in the \"Home Charging\" step, used there for the solar share/cost estimate instead.",
           "battery_charge_entity": "Optional, in addition to home consumption (same unit: cumulative energy meter in kWh, not a power sensor) — only if a home battery exists AND its charging energy isn't already included in the home consumption meter.",
-          "home_includes_wallbox": "Only tick if the home consumption meter measures TOTAL consumption INCLUDING the wallbox: the wallbox energy (wallbox energy meter) is then subtracted. Do not tick if the meter only measures grid import or already excludes the car. Without a wallbox energy meter the house profile stays empty.",
+          "home_includes_wallbox": "Only tick if the meter above measures TOTAL consumption INCLUDING the car: the wallbox energy (wallbox energy meter) is then subtracted. Do not tick if it excludes the car or only measures grid import. Without a wallbox energy meter the house profile stays empty.",
           "urlaub_entity": "Optional, e.g. an input_boolean/switch/binary_sensor that's \"on\" during vacation — affected days are then excluded entirely from the weekday usage profiles (vehicle & house) instead of skewing the average, and evcc mode/SoC control pauses.",
           "urlaub_kalender_entity": "Optional, a calendar entity (e.g. calendar.family_vacation). Every event counts as vacation from its start time to its end: trips and consumption in that time window are left out of the weekday usage profiles, before and after count as usual. All-day events cover whole days. Works in addition to the vacation switch and the vacation days set in the panel.",
           "weekly_full_charge_enabled": "Off by default: no change to existing behavior. On: once the interval below has elapsed since the last full charge reached (98% or more, manual or automatic — doesn't matter which), evcc control overrides the profile-based target with target SoC=100%/mode=minpv until 100% is reached. Controls ONLY target SoC + mode — WHERE the charging power comes from (solar/grid/battery) is still entirely evcc's own decision (minimum charge power in minpv mode, battery discharge lockout as evcc's own setting). Also toggleable from the panel switch without reopening this options flow.",
@@ -433,9 +433,9 @@
         "title": "EV Assistant - Home Charging",
         "description": "Step 3/9 (only with the generic home-charging method): how and how expensively you charge at home, without evcc. Additionally optional: PV generation and feed-in price — with all three (the two here plus home consumption) configured together, ev_assistant estimates the solar share and cost of every home charging session just as precisely as evcc would (tick-based integration, no rough approximation) — missing even one of them, the estimate for that session simply stays absent.",
         "data": {
-          "home_consumption_entity": "Home consumption (excluding vehicle/battery)",
+          "home_consumption_entity": "Home consumption (excluding battery charging)",
           "battery_charge_entity": "Battery charging (optional, if not already included in home consumption)",
-          "home_includes_wallbox": "Home consumption includes the wallbox (optional)",
+          "home_includes_wallbox": "The home consumption meter includes the car (wallbox energy is subtracted)",
           "wallbox_energy_entity": "Wallbox energy meter (cumulative kWh counter)",
           "wallbox_connected_entity": "Wallbox connected (optional, its own status sensor)",
           "wallbox_charging_entity": "Wallbox charging (optional, its own status sensor)",
@@ -448,7 +448,7 @@
         "data_description": {
           "home_consumption_entity": "Optional, cumulative energy meter in kWh (a rising meter reading, not a power sensor) — only needed for the solar share/cost estimate below.",
           "battery_charge_entity": "Optional, in addition to home consumption (same unit: cumulative energy meter in kWh, not a power sensor) — only if a home battery exists AND its charging energy isn't already included in the home consumption meter.",
-          "home_includes_wallbox": "Only tick if the home consumption meter measures TOTAL consumption INCLUDING the wallbox: the wallbox energy (wallbox energy meter) is then subtracted. Do not tick if the meter only measures grid import or already excludes the car. Without a wallbox energy meter the house profile stays empty.",
+          "home_includes_wallbox": "Only tick if the meter above measures TOTAL consumption INCLUDING the car: the wallbox energy (wallbox energy meter) is then subtracted. Do not tick if it excludes the car or only measures grid import. Without a wallbox energy meter the house profile stays empty.",
           "wallbox_energy_entity": "Calibrates the real charging efficiency from it (replaces the initial value from step 1) and provides the charged kWh amount for the cost calculation.",
           "wallbox_connected_entity": "Optional, a binary_sensor from the wallbox's own integration for \"plugged in/connected\" — if set, replaces the otherwise charge-power/plug-entity-derived detection in the Wallbox card (Overview (Beta)).",
           "wallbox_charging_entity": "Optional, a binary_sensor from the wallbox's own integration for \"currently charging\" — if set, replaces the otherwise charge-power-derived detection in the Wallbox card (Overview (Beta)).",
